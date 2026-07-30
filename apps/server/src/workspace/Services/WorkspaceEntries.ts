@@ -16,7 +16,7 @@ import type {
   ProjectListEntriesResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(
   "WorkspaceEntriesError",
@@ -76,5 +76,5 @@ export interface WorkspaceEntriesShape {
  * WorkspaceEntries - Service tag for cached workspace entry search.
  */
 export class WorkspaceEntries extends Context.Service<WorkspaceEntries, WorkspaceEntriesShape>()(
-  "forma/workspace/Services/WorkspaceEntries",
+  "t3/workspace/Services/WorkspaceEntries",
 ) {}

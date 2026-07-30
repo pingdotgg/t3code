@@ -13,7 +13,7 @@ import {
   OrchestrationThreadActivityTone,
   ThreadId,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -80,4 +80,4 @@ export interface ProjectionThreadActivityRepositoryShape {
 export class ProjectionThreadActivityRepository extends Context.Service<
   ProjectionThreadActivityRepository,
   ProjectionThreadActivityRepositoryShape
->()("forma/persistence/Services/ProjectionThreadActivities/ProjectionThreadActivityRepository") {}
+>()("t3/persistence/Services/ProjectionThreadActivities/ProjectionThreadActivityRepository") {}

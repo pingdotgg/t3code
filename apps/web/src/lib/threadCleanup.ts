@@ -1,4 +1,4 @@
-import type { ThreadCleanupInactiveDays } from "@forma/contracts/settings";
+import type { ThreadCleanupInactiveDays } from "@t3tools/contracts/settings";
 import type { SidebarThreadSummary } from "../types";
 
 export type ThreadCleanupThread = Pick<

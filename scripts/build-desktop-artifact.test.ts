@@ -80,11 +80,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                FORMA_DESKTOP_SKIP_BUILD: "true",
-                FORMA_DESKTOP_KEEP_STAGE: "true",
-                FORMA_DESKTOP_SIGNED: "true",
-                FORMA_DESKTOP_VERBOSE: "true",
-                FORMA_DESKTOP_MOCK_UPDATES: "true",
+                T3CODE_DESKTOP_SKIP_BUILD: "true",
+                T3CODE_DESKTOP_KEEP_STAGE: "true",
+                T3CODE_DESKTOP_SIGNED: "true",
+                T3CODE_DESKTOP_VERBOSE: "true",
+                T3CODE_DESKTOP_MOCK_UPDATES: "true",
               },
             }),
           ),

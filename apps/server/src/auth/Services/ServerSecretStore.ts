@@ -17,5 +17,5 @@ export interface ServerSecretStoreShape {
 }
 
 export class ServerSecretStore extends Context.Service<ServerSecretStore, ServerSecretStoreShape>()(
-  "forma/auth/Services/ServerSecretStore",
+  "t3/auth/Services/ServerSecretStore",
 ) {}

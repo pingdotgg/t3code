@@ -2,7 +2,7 @@ import {
   type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { memo, useEffect, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { IconChevronDown as ChevronDownIcon } from "symbols-react";

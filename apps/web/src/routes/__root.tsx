@@ -1,8 +1,8 @@
 import type {
   DesktopThreadAttentionActivation,
   ServerLifecycleWelcomePayload,
-} from "@forma/contracts";
-import { scopedProjectKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+} from "@t3tools/contracts";
+import { scopedProjectKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import {
   Outlet,
   createRootRouteWithContext,

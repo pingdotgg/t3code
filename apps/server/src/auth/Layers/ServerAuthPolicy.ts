@@ -1,4 +1,4 @@
-import type { ServerAuthDescriptor } from "@forma/contracts";
+import type { ServerAuthDescriptor } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 
 import { ServerConfig } from "../../config.ts";

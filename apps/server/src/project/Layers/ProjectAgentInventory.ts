@@ -4,13 +4,13 @@ import type {
   ServerLocalAgentCommand,
   ServerLocalAgentInventory,
   ServerLocalAgentSkill,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Cache, Duration, Effect, Exit, Layer, Path } from "effect";
 import {
   parseLocalAgentCommandJsonDocument,
   parseLocalAgentCommandMarkdownDocument,
   parseLocalAgentSkillDocument,
-} from "@forma/shared/localAgents";
+} from "@t3tools/shared/localAgents";
 
 import {
   ProjectAgentInventory,

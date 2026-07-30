@@ -9,7 +9,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   SourceProposedPlanReference,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";

@@ -1,11 +1,11 @@
-import { scopeThreadRef } from "@forma/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import type {
   EditorId,
   EnvironmentId,
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type { RefObject } from "react";
 import { IconEllipsis as EllipsisIcon } from "symbols-react";
 

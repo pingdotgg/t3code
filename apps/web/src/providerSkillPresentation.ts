@@ -1,4 +1,4 @@
-import type { ServerLocalAgentSkill, ServerProviderSkill } from "@forma/contracts";
+import type { ServerLocalAgentSkill, ServerProviderSkill } from "@t3tools/contracts";
 
 function titleCaseWords(value: string): string {
   return value

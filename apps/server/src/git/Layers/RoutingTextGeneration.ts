@@ -23,23 +23,23 @@ import { OpenCodeTextGenerationLive } from "./OpenCodeTextGeneration.ts";
 // ---------------------------------------------------------------------------
 
 class CodexTextGen extends Context.Service<CodexTextGen, TextGenerationShape>()(
-  "forma/git/Layers/RoutingTextGeneration/CodexTextGen",
+  "t3/git/Layers/RoutingTextGeneration/CodexTextGen",
 ) {}
 
 class ClaudeTextGen extends Context.Service<ClaudeTextGen, TextGenerationShape>()(
-  "forma/git/Layers/RoutingTextGeneration/ClaudeTextGen",
+  "t3/git/Layers/RoutingTextGeneration/ClaudeTextGen",
 ) {}
 
 class CursorTextGen extends Context.Service<CursorTextGen, TextGenerationShape>()(
-  "forma/git/Layers/RoutingTextGeneration/CursorTextGen",
+  "t3/git/Layers/RoutingTextGeneration/CursorTextGen",
 ) {}
 
 class GrokTextGen extends Context.Service<GrokTextGen, TextGenerationShape>()(
-  "forma/git/Layers/RoutingTextGeneration/GrokTextGen",
+  "t3/git/Layers/RoutingTextGeneration/GrokTextGen",
 ) {}
 
 class OpenCodeTextGen extends Context.Service<OpenCodeTextGen, TextGenerationShape>()(
-  "forma/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
+  "t3/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
 ) {}
 
 // ---------------------------------------------------------------------------

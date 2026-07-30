@@ -1,9 +1,9 @@
-import type { ServerLocalAgentSkill, ServerProviderSkill } from "@forma/contracts";
+import type { ServerLocalAgentSkill, ServerProviderSkill } from "@t3tools/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@forma/shared/searchRanking";
+} from "@t3tools/shared/searchRanking";
 
 import { formatProviderSkillDisplayName } from "./providerSkillPresentation";
 

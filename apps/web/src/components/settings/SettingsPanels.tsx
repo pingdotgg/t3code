@@ -20,8 +20,8 @@ import {
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
-} from "@forma/contracts";
-import { scopeThreadRef } from "@forma/client-runtime";
+} from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   DEFAULT_CODE_FONT_SIZE_PX,
   DEFAULT_APP_ICON_ID,
@@ -34,8 +34,8 @@ import {
   type AppIconId,
   type CodeFontSizePx,
   type UiFontSizePx,
-} from "@forma/contracts/settings";
-import { createModelSelection, normalizeModelSlug } from "@forma/shared/model";
+} from "@t3tools/contracts/settings";
+import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
 import { APP_ICON_OPTIONS, resolveAppIconOption } from "../../appIcon";

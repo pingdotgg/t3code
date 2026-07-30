@@ -1,4 +1,4 @@
-import { ServerSettings, type ServerSettingsPatch } from "@forma/contracts";
+import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
 import { Schema } from "effect";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";

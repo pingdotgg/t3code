@@ -5,7 +5,7 @@ import {
   type AuthPairingCredentialResult,
   type AuthSessionState,
   type AuthWebSocketTokenResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { DateTime, Effect, Layer, Option } from "effect";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 

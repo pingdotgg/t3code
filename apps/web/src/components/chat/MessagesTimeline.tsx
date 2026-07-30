@@ -1,4 +1,4 @@
-import { type EnvironmentId, type MessageId, type TurnId } from "@forma/contracts";
+import { type EnvironmentId, type MessageId, type TurnId } from "@t3tools/contracts";
 import {
   createContext,
   type ElementType,
@@ -55,7 +55,7 @@ import { type ParsedCodeContextEntry } from "~/lib/codeContext";
 import { type ParsedTerminalContextEntry } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { type TimestampFormat } from "@forma/contracts/settings";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,

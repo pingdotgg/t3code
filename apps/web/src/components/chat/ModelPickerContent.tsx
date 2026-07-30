@@ -3,8 +3,8 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
-} from "@forma/contracts";
-import { resolveSelectableModel } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { IconMagnifyingglass as SearchIcon } from "symbols-react";
 import { ModelListRow } from "./ModelListRow";

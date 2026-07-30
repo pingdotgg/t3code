@@ -20,10 +20,10 @@ import {
   GitStatusRemoteResult,
   GitStatusInput,
   GitStatusResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
-import type { GitManagerServiceError } from "@forma/contracts";
+import type { GitManagerServiceError } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -109,5 +109,5 @@ export interface GitManagerShape {
  * GitManager - Service tag for stacked Git workflow orchestration.
  */
 export class GitManager extends Context.Service<GitManager, GitManagerShape>()(
-  "forma/git/Services/GitManager",
+  "t3/git/Services/GitManager",
 ) {}

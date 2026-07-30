@@ -10,10 +10,10 @@
 import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { ClaudeModelSelection } from "@forma/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@forma/shared/git";
+import { ClaudeModelSelection } from "@t3tools/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
-import { TextGenerationError } from "@forma/contracts";
+import { TextGenerationError } from "@t3tools/contracts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -31,7 +31,7 @@ import {
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
-} from "@forma/shared/model";
+} from "@t3tools/shared/model";
 import {
   getClaudeModelCapabilities,
   normalizeClaudeCliEffort,

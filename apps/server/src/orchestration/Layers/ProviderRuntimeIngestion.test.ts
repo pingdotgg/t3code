@@ -6,7 +6,7 @@ import type {
   OrchestrationReadModel,
   ProviderRuntimeEvent,
   ProviderSession,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -18,7 +18,7 @@ import {
   type ServerSettings,
   ThreadId,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 

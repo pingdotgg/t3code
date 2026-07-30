@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@forma/contracts";
+import type { ContextMenuItem } from "@t3tools/contracts";
 
 function clampMenuPosition(menu: HTMLDivElement, preferredLeft: number, preferredTop: number) {
   const rect = menu.getBoundingClientRect();

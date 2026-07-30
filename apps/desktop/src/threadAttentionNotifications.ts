@@ -1,7 +1,7 @@
 import type {
   DesktopThreadAttentionActivation,
   DesktopThreadAttentionNotification,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export interface ThreadAttentionNotificationInstance {
   on(event: "click", listener: () => void): void;

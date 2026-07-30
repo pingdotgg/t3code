@@ -1,4 +1,4 @@
-import type { ProviderKind } from "@forma/contracts";
+import type { ProviderKind } from "@t3tools/contracts";
 
 /**
  * Model slugs that show a gold "NEW" chip in the model picker list.

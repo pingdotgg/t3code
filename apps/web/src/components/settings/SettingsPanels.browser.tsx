@@ -11,7 +11,7 @@ import {
   type DesktopUpdateState,
   type LocalApi,
   type ServerConfig,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { DateTime } from "effect";
 import type { ReactNode } from "react";
 import { page } from "vitest/browser";
@@ -204,13 +204,13 @@ function createBaseServerConfig(): ServerConfig {
       sessionCookieName: "t3_session",
     },
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.forma-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.t3-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [],
     availableEditors: ["cursor"],
     observability: {
-      logsDirectoryPath: "/repo/project/.forma/logs",
+      logsDirectoryPath: "/repo/project/.t3/logs",
       localTracingEnabled: true,
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpTracesEnabled: true,
@@ -525,7 +525,7 @@ describe("Settings panels", () => {
     await expect.element(page.getByText("Updates")).toBeInTheDocument();
     await expect.element(page.getByText("Open logs folder")).toBeInTheDocument();
     await expect
-      .element(page.getByText("/repo/project/.forma/logs", { exact: true }))
+      .element(page.getByText("/repo/project/.t3/logs", { exact: true }))
       .toBeInTheDocument();
     await expect
       .element(
@@ -1193,7 +1193,7 @@ describe("Settings panels", () => {
     const openLogsButton = page.getByText("Open logs folder");
     await openLogsButton.click();
 
-    expect(openInEditor).toHaveBeenCalledWith("/repo/project/.forma/logs", "cursor");
+    expect(openInEditor).toHaveBeenCalledWith("/repo/project/.t3/logs", "cursor");
   });
 
   it("shows an OpenCode server URL field in provider settings", async () => {

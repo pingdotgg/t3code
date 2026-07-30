@@ -16,7 +16,7 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Option } from "effect";
 import type { Effect } from "effect";
@@ -113,4 +113,4 @@ export interface ProjectionSnapshotQueryShape {
 export class ProjectionSnapshotQuery extends Context.Service<
   ProjectionSnapshotQuery,
   ProjectionSnapshotQueryShape
->()("forma/orchestration/Services/ProjectionSnapshotQuery") {}
+>()("t3/orchestration/Services/ProjectionSnapshotQuery") {}

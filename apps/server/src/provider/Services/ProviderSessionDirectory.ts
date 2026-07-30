@@ -3,7 +3,7 @@ import type {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Option, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -59,4 +59,4 @@ export interface ProviderSessionDirectoryShape {
 export class ProviderSessionDirectory extends Context.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape
->()("forma/provider/Services/ProviderSessionDirectory") {}
+>()("t3/provider/Services/ProviderSessionDirectory") {}

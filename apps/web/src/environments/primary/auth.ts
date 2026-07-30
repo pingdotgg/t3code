@@ -8,7 +8,7 @@ import type {
   AuthRevokePairingLinkInput,
   AuthSessionId,
   AuthSessionState,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 import {
   getPairingTokenFromUrl,

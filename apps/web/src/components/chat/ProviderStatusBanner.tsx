@@ -1,4 +1,4 @@
-import { type ServerProvider } from "@forma/contracts";
+import { type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { IconExclamationmarkCircle as CircleAlertIcon } from "symbols-react";

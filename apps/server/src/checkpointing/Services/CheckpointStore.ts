@@ -14,7 +14,7 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { CheckpointStoreError } from "../Errors.ts";
-import { CheckpointRef } from "@forma/contracts";
+import { CheckpointRef } from "@t3tools/contracts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
@@ -96,5 +96,5 @@ export interface CheckpointStoreShape {
  * CheckpointStore - Service tag for checkpoint persistence and restore operations.
  */
 export class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreShape>()(
-  "forma/checkpointing/Services/CheckpointStore",
+  "t3/checkpointing/Services/CheckpointStore",
 ) {}

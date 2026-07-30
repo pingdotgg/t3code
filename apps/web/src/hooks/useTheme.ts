@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import type { DesktopTheme } from "@forma/contracts";
+import type { DesktopTheme } from "@t3tools/contracts";
 import {
   THEME_MEDIA_QUERY,
   THEME_STORAGE_KEY,

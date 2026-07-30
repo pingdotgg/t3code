@@ -8,5 +8,5 @@ export interface GrokAdapterShape extends ProviderAdapterShape<ProviderAdapterEr
 }
 
 export class GrokAdapter extends Context.Service<GrokAdapter, GrokAdapterShape>()(
-  "forma/provider/Services/GrokAdapter",
+  "t3/provider/Services/GrokAdapter",
 ) {}

@@ -26,7 +26,7 @@ import {
   type ProjectId,
   ProjectRelativePath,
   type ProjectPreviewWorkspaceRecord,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Cause, Effect, Exit, Layer, PubSub, Ref, Stream } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -107,7 +107,7 @@ interface PreviewManagerState {
 const PREVIEW_ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PREVIEW_RUNTIME_HOST = "127.0.0.1";
 const IGNORED_DIRS = new Set([
-  ".forma",
+  ".t3",
   ".git",
   ".next",
   ".turbo",
@@ -118,9 +118,9 @@ const IGNORED_DIRS = new Set([
 ]);
 const COMPONENT_EXTENSIONS = new Set([".tsx", ".jsx", ".vue", ".ts", ".js"]);
 const BOOTSTRAP_FILE_PATHS = [
-  ".forma/preview/config.ts",
-  ".forma/preview/wrapper.tsx",
-  ".forma/preview/mocks.ts",
+  ".t3/preview/config.ts",
+  ".t3/preview/wrapper.tsx",
+  ".t3/preview/mocks.ts",
 ] as const;
 
 function resolveHarnessAssetPath(relativePath: string): string {
@@ -630,10 +630,10 @@ async function createRuntimeWorkspace(args: {
     path.join(args.projectRoot, args.previewFileRelativePath),
   );
   const wrapperModuleUrl = normalizeViteFsPath(
-    path.join(args.projectRoot, ".forma/preview/wrapper.tsx"),
+    path.join(args.projectRoot, ".t3/preview/wrapper.tsx"),
   );
   const mocksModuleUrl = normalizeViteFsPath(
-    path.join(args.projectRoot, ".forma/preview/mocks.ts"),
+    path.join(args.projectRoot, ".t3/preview/mocks.ts"),
   );
   const optimizerComponentPath = resolvePreviewComponentPath({
     projectRoot: args.projectRoot,
@@ -728,7 +728,7 @@ Selected component:
 - owner workspace: \`${workspaceLabel(args.workspaceRootRelativePath)}\`
 - detected framework: \`${args.framework}\`
 
-Create these repo-level files exactly once under \`.forma/preview/\`:
+Create these repo-level files exactly once under \`.t3/preview/\`:
 - \`config.ts\`
 - \`wrapper.tsx\`
 - \`mocks.ts\`
@@ -747,7 +747,7 @@ Requirements:
 
 The harness expects each component preview file to look like:
 \`\`\`ts
-import { defineComponentPreview } from "./relative/path/to/.forma/preview/config";
+import { defineComponentPreview } from "./relative/path/to/.t3/preview/config";
 
 export default defineComponentPreview({
   component: "./Component.tsx",
@@ -779,7 +779,7 @@ function buildPreviewGenerationPrompt(args: {
 }) {
   const configImportPath = path.posix.relative(
     path.posix.dirname(normalizeProjectPath(args.previewFileRelativePath)),
-    ".forma/preview/config.ts",
+    ".t3/preview/config.ts",
   );
   const normalizedConfigImportPath = configImportPath.startsWith(".")
     ? configImportPath
@@ -1128,16 +1128,16 @@ const makePreviewManager = Effect.gen(function* () {
         cwd: workspaceRoot,
         env: {
           ...process.env,
-          FORMA_PREVIEW_RUNTIME_ROOT: runtimeDir,
-          FORMA_PREVIEW_PROJECT_ROOT: project.workspaceRoot,
-          FORMA_PREVIEW_WORKSPACE_ROOT: workspaceRoot,
-          FORMA_PREVIEW_FRAMEWORK: target.framework,
-          FORMA_PREVIEW_HOST: PREVIEW_RUNTIME_HOST,
-          FORMA_PREVIEW_PORT: String(port),
-          FORMA_PREVIEW_CACHE_DIR: warmupPlan.cacheDir,
-          FORMA_PREVIEW_OPTIMIZE_DEPS_ENTRIES: JSON.stringify(warmupPlan.optimizeDepsEntries),
-          FORMA_PREVIEW_WARMUP_FILES: JSON.stringify(warmupPlan.warmupFiles),
-          FORMA_PREVIEW_MODULE_MOCKS: JSON.stringify(
+          T3CODE_PREVIEW_RUNTIME_ROOT: runtimeDir,
+          T3CODE_PREVIEW_PROJECT_ROOT: project.workspaceRoot,
+          T3CODE_PREVIEW_WORKSPACE_ROOT: workspaceRoot,
+          T3CODE_PREVIEW_FRAMEWORK: target.framework,
+          T3CODE_PREVIEW_HOST: PREVIEW_RUNTIME_HOST,
+          T3CODE_PREVIEW_PORT: String(port),
+          T3CODE_PREVIEW_CACHE_DIR: warmupPlan.cacheDir,
+          T3CODE_PREVIEW_OPTIMIZE_DEPS_ENTRIES: JSON.stringify(warmupPlan.optimizeDepsEntries),
+          T3CODE_PREVIEW_WARMUP_FILES: JSON.stringify(warmupPlan.warmupFiles),
+          T3CODE_PREVIEW_MODULE_MOCKS: JSON.stringify(
             Object.fromEntries(
               Object.entries(target.moduleMocks).map(([find, replacement]) => [
                 find,
@@ -1145,8 +1145,8 @@ const makePreviewManager = Effect.gen(function* () {
               ]),
             ),
           ),
-          FORMA_PREVIEW_ALIASES: JSON.stringify(target.aliasEntries),
-          FORMA_PREVIEW_REACT_ALIASES: JSON.stringify(reactAliases),
+          T3CODE_PREVIEW_ALIASES: JSON.stringify(target.aliasEntries),
+          T3CODE_PREVIEW_REACT_ALIASES: JSON.stringify(reactAliases),
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -1305,7 +1305,7 @@ const makePreviewManager = Effect.gen(function* () {
           relativePath: asProjectRelativePath(relativePath),
           workspaceRootRelativePath,
           existingThreadId: workspaceRecord?.threadId ?? null,
-          reason: "Repo-level preview bootstrap files are missing under .forma/preview/.",
+          reason: "Repo-level preview bootstrap files are missing under .t3/preview/.",
         } satisfies PreviewResolveTargetResult;
       }
 

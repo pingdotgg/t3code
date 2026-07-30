@@ -11,7 +11,7 @@ import type {
   ThreadId,
   TurnId,
   EventId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export type ForkCloneEntityKind = "message" | "turn" | "plan" | "activity";
 

@@ -3,7 +3,7 @@ import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
   type SourceControlProviderKind,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
@@ -27,7 +27,7 @@ export interface SourceControlProviderRegistryShape {
 export class SourceControlProviderRegistry extends Context.Service<
   SourceControlProviderRegistry,
   SourceControlProviderRegistryShape
->()("forma/source-control/SourceControlProviderRegistry") {}
+>()("t3/source-control/SourceControlProviderRegistry") {}
 
 function unsupportedProvider(kind: SourceControlProviderKind): SourceControlProviderShape {
   const unsupported = (operation: string) =>

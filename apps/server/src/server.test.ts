@@ -26,7 +26,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
   EditorId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import {
@@ -377,7 +377,7 @@ const buildAppUnderTest = (options?: {
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
-      otlpServiceName: "forma-server",
+      otlpServiceName: "t3-server",
       mode: "desktop",
       port: 0,
       host: "127.0.0.1",
@@ -982,7 +982,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const url = yield* getHttpServerUrl("/.well-known/forma/environment");
+      const url = yield* getHttpServerUrl("/.well-known/t3/environment");
       const response = yield* Effect.promise(() => fetch(url));
       const body = (yield* Effect.promise(() =>
         response.json(),
@@ -3964,7 +3964,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             isRepo: true,
             hasOriginRemote: true,
             isDefaultBranch: false,
-            branch: "forma/bootstrap-branch",
+            branch: "t3/bootstrap-branch",
             hasWorkingTreeChanges: false,
             workingTree: {
               files: [],
@@ -3980,7 +3980,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
           Effect.succeed({
             worktree: {
-              branch: "forma/bootstrap-branch",
+              branch: "t3/bootstrap-branch",
               path: "/tmp/bootstrap-worktree",
             },
           }),
@@ -4049,7 +4049,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 prepareWorktree: {
                   projectCwd: "/tmp/project",
                   baseBranch: "main",
-                  branch: "forma/bootstrap-branch",
+                  branch: "t3/bootstrap-branch",
                 },
                 runSetupScript: true,
               },
@@ -4072,7 +4072,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           branch: "main",
-          newBranch: "forma/bootstrap-branch",
+          newBranch: "t3/bootstrap-branch",
           path: null,
         });
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
@@ -4105,7 +4105,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.succeed({
           worktree: {
-            branch: "forma/bootstrap-branch",
+            branch: "t3/bootstrap-branch",
             path: "/tmp/bootstrap-worktree",
           },
         }),
@@ -4165,7 +4165,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               prepareWorktree: {
                 projectCwd: "/tmp/project",
                 baseBranch: "main",
-                branch: "forma/bootstrap-branch",
+                branch: "t3/bootstrap-branch",
               },
               runSetupScript: true,
             },
@@ -4198,7 +4198,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.succeed({
           worktree: {
-            branch: "forma/bootstrap-branch",
+            branch: "t3/bootstrap-branch",
             path: "/tmp/bootstrap-worktree",
           },
         }),
@@ -4281,7 +4281,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               prepareWorktree: {
                 projectCwd: "/tmp/project",
                 baseBranch: "main",
-                branch: "forma/bootstrap-branch",
+                branch: "t3/bootstrap-branch",
               },
               runSetupScript: true,
             },
@@ -4364,7 +4364,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               prepareWorktree: {
                 projectCwd: "/tmp/project",
                 baseBranch: "main",
-                branch: "forma/bootstrap-branch",
+                branch: "t3/bootstrap-branch",
               },
               runSetupScript: false,
             },

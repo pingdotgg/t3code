@@ -8,7 +8,7 @@ import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
-import { GitCommandError } from "@forma/contracts";
+import { GitCommandError } from "@t3tools/contracts";
 import { type ProcessRunResult, runProcess } from "../../processRunner.ts";
 import { ServerConfig } from "../../config.ts";
 
@@ -1216,24 +1216,24 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "forma/feat/session" });
-        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "forma/tmp-working" });
-        yield* (yield* GitCore).checkoutBranch({ cwd: tmp, branch: "forma/tmp-working" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "t3/feat/session" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "t3/tmp-working" });
+        yield* (yield* GitCore).checkoutBranch({ cwd: tmp, branch: "t3/tmp-working" });
 
         const renamed = yield* (yield* GitCore).renameBranch({
           cwd: tmp,
-          oldBranch: "forma/tmp-working",
-          newBranch: "forma/feat/session",
+          oldBranch: "t3/tmp-working",
+          newBranch: "t3/feat/session",
         });
 
-        expect(renamed.branch).toBe("forma/feat/session-1");
+        expect(renamed.branch).toBe("t3/feat/session-1");
         const branches = yield* (yield* GitCore).listBranches({ cwd: tmp });
-        expect(branches.branches.some((branch) => branch.name === "forma/feat/session")).toBe(true);
-        expect(branches.branches.some((branch) => branch.name === "forma/feat/session-1")).toBe(
+        expect(branches.branches.some((branch) => branch.name === "t3/feat/session")).toBe(true);
+        expect(branches.branches.some((branch) => branch.name === "t3/feat/session-1")).toBe(
           true,
         );
         const current = branches.branches.find((branch) => branch.current);
-        expect(current?.name).toBe("forma/feat/session-1");
+        expect(current?.name).toBe("t3/feat/session-1");
       }),
     );
 
@@ -1241,18 +1241,18 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "forma/feat/session" });
-        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "forma/feat/session-1" });
-        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "forma/tmp-working" });
-        yield* (yield* GitCore).checkoutBranch({ cwd: tmp, branch: "forma/tmp-working" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "t3/feat/session" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "t3/feat/session-1" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "t3/tmp-working" });
+        yield* (yield* GitCore).checkoutBranch({ cwd: tmp, branch: "t3/tmp-working" });
 
         const renamed = yield* (yield* GitCore).renameBranch({
           cwd: tmp,
-          oldBranch: "forma/tmp-working",
-          newBranch: "forma/feat/session",
+          oldBranch: "t3/tmp-working",
+          newBranch: "t3/feat/session",
         });
 
-        expect(renamed.branch).toBe("forma/feat/session-2");
+        expect(renamed.branch).toBe("t3/feat/session-2");
       }),
     );
 
@@ -1962,7 +1962,7 @@ it.layer(TestLayer)("git integration", (it) => {
           yield* git(tmp, [
             "checkout",
             "-b",
-            "forma/pr-488/statemachine",
+            "t3/pr-488/statemachine",
             "--track",
             "jasonLaster/statemachine",
           ]);
@@ -1984,7 +1984,7 @@ it.layer(TestLayer)("git integration", (it) => {
             yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "statemachine"]),
           ).toContain("statemachine");
           expect(
-            yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "forma/pr-488/statemachine"]),
+            yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "t3/pr-488/statemachine"]),
           ).toBe("");
         }),
     );

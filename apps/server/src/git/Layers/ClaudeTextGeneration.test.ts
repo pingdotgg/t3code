@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { createModelSelection } from "@forma/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";

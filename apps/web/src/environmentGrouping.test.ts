@@ -1,5 +1,5 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@forma/contracts";
-import { scopeProjectRef } from "@forma/client-runtime";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime";
 import { describe, expect, it } from "vitest";
 
 import {

@@ -1,4 +1,4 @@
-import type { ProviderUserInputAnswers, UserInputQuestion } from "@forma/contracts";
+import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import { Deferred, Effect, Ref, Schema } from "effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
 

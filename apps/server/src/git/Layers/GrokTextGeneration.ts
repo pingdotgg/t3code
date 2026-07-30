@@ -2,8 +2,8 @@ import { Effect, Layer, Option, Ref, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
-import { type GrokModelSelection, TextGenerationError } from "@forma/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@forma/shared/git";
+import { type GrokModelSelection, TextGenerationError } from "@t3tools/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {

@@ -12,7 +12,7 @@ import {
   type SourceControlRepositoryLookupInput,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { GitCore } from "../git/Services/GitCore.ts";
@@ -34,7 +34,7 @@ export interface SourceControlRepositoryServiceShape {
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
   SourceControlRepositoryServiceShape
->()("forma/source-control/SourceControlRepositoryService") {}
+>()("t3/source-control/SourceControlRepositoryService") {}
 
 function repositoryError(input: {
   readonly provider: SourceControlProviderKind;

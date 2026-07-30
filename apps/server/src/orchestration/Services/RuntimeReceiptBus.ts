@@ -14,7 +14,7 @@
  *
  * @module RuntimeReceiptBus
  */
-import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@forma/contracts";
+import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@t3tools/contracts";
 import { Schema, Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -60,5 +60,5 @@ export interface RuntimeReceiptBusShape {
 }
 
 export class RuntimeReceiptBus extends Context.Service<RuntimeReceiptBus, RuntimeReceiptBusShape>()(
-  "forma/orchestration/Services/RuntimeReceiptBus",
+  "t3/orchestration/Services/RuntimeReceiptBus",
 ) {}

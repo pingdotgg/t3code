@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@forma/client-runtime";
-import type { EnvironmentId, ScopedProjectRef } from "@forma/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,

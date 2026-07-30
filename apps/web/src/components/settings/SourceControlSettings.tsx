@@ -2,7 +2,7 @@ import { Option } from "effect";
 import { IconArrowClockwise as RefreshIcon } from "symbols-react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { SourceControlProviderDiscoveryItem, VcsDiscoveryItem } from "@forma/contracts";
+import type { SourceControlProviderDiscoveryItem, VcsDiscoveryItem } from "@t3tools/contracts";
 
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { sourceControlDiscoveryQueryOptions } from "../../lib/gitReactQuery";

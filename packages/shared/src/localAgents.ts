@@ -1,4 +1,4 @@
-import type { ServerLocalAgentCommand, ServerLocalAgentSkill } from "@forma/contracts";
+import type { ServerLocalAgentCommand, ServerLocalAgentSkill } from "@t3tools/contracts";
 
 type LocalAgentFrontmatter = Record<string, string>;
 

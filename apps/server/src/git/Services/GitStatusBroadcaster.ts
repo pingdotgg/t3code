@@ -6,7 +6,7 @@ import type {
   GitStatusLocalResult,
   GitStatusResult,
   GitStatusStreamEvent,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export interface GitStatusBroadcasterShape {
   readonly getStatus: (
@@ -24,4 +24,4 @@ export interface GitStatusBroadcasterShape {
 export class GitStatusBroadcaster extends Context.Service<
   GitStatusBroadcaster,
   GitStatusBroadcasterShape
->()("forma/git/Services/GitStatusBroadcaster") {}
+>()("t3/git/Services/GitStatusBroadcaster") {}

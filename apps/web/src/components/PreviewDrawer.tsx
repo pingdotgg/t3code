@@ -1,12 +1,12 @@
-import { scopedProjectKey, scopeThreadRef } from "@forma/client-runtime";
+import { scopedProjectKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type {
   ModelSelection,
   OrchestrationThreadShell,
   ProjectPreviewWorkspaceRecord,
   ScopedProjectRef,
   ThreadId,
-} from "@forma/contracts";
-import { DEFAULT_MODEL_BY_PROVIDER } from "@forma/contracts";
+} from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   IconApplepencilTip as AnnotationIcon,

@@ -1,4 +1,4 @@
-import { TurnId } from "@forma/contracts";
+import { TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 

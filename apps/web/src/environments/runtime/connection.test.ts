@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@forma/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { createEnvironmentConnection } from "./connection";

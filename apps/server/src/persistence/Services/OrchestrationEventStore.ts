@@ -9,7 +9,7 @@
  *
  * @module OrchestrationEventStore
  */
-import { OrchestrationEvent } from "@forma/contracts";
+import { OrchestrationEvent } from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -67,4 +67,4 @@ export interface OrchestrationEventStoreShape {
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   OrchestrationEventStoreShape
->()("forma/persistence/Services/OrchestrationEventStore") {}
+>()("t3/persistence/Services/OrchestrationEventStore") {}

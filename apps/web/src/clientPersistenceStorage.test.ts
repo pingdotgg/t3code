@@ -2,7 +2,7 @@ import {
   EnvironmentId,
   type PersistedSavedEnvironmentRecord,
   type ClientSettings,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");

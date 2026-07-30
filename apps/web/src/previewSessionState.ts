@@ -1,4 +1,4 @@
-import type { PreviewScenarioEntry } from "@forma/contracts";
+import type { PreviewScenarioEntry } from "@t3tools/contracts";
 
 import type {
   PreviewControlDescriptor,

@@ -20,7 +20,7 @@ import type {
   ProjectRenameEntryResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   ProjectCreateDirectoryError,
   ProjectDeleteEntryError,
@@ -31,7 +31,7 @@ import {
   ProjectReadFileError,
   ProjectRenameEntryError,
   ProjectWriteFileError,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { WorkspacePathOutsideRootError } from "./WorkspacePaths.ts";
 
 /**
@@ -95,4 +95,4 @@ export interface WorkspaceFileSystemShape {
 export class WorkspaceFileSystem extends Context.Service<
   WorkspaceFileSystem,
   WorkspaceFileSystemShape
->()("forma/workspace/Services/WorkspaceFileSystem") {}
+>()("t3/workspace/Services/WorkspaceFileSystem") {}

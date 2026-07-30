@@ -1,11 +1,11 @@
-import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import {
   type OrchestrationThreadShell,
   type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
-} from "@forma/contracts";
-import type { ThreadCleanupInactiveDays } from "@forma/contracts/settings";
+} from "@t3tools/contracts";
+import type { ThreadCleanupInactiveDays } from "@t3tools/contracts/settings";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";

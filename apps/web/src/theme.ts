@@ -1,4 +1,4 @@
-import type { DesktopTheme } from "@forma/contracts";
+import type { DesktopTheme } from "@t3tools/contracts";
 
 export const THEME_STORAGE_KEY = "forma:theme";
 export const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";

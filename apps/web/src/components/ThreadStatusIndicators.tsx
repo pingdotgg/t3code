@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
-import type { GitStatusResult } from "@forma/contracts";
+import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import type { GitStatusResult } from "@t3tools/contracts";
 import {
   CircleAlertIcon,
   CircleQuestionMarkIcon,

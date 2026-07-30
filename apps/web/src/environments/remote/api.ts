@@ -3,7 +3,7 @@ import type {
   AuthSessionState,
   AuthWebSocketTokenResult,
   ExecutionEnvironmentDescriptor,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 class RemoteEnvironmentAuthHttpError extends Error {
   readonly status: number;
@@ -112,7 +112,7 @@ export async function fetchRemoteEnvironmentDescriptor(input: {
 }): Promise<ExecutionEnvironmentDescriptor> {
   return fetchRemoteJson<ExecutionEnvironmentDescriptor>({
     httpBaseUrl: input.httpBaseUrl,
-    pathname: "/.well-known/forma/environment",
+    pathname: "/.well-known/t3/environment",
   });
 }
 

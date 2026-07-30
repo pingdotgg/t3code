@@ -64,7 +64,7 @@ const requireAuthenticatedRequest = Effect.gen(function* () {
 
 export const serverEnvironmentRouteLayer = HttpRouter.add(
   "GET",
-  "/.well-known/forma/environment",
+  "/.well-known/t3/environment",
   Effect.gen(function* () {
     const descriptor = yield* Effect.service(ServerEnvironment).pipe(
       Effect.flatMap((serverEnvironment) => serverEnvironment.getDescriptor),

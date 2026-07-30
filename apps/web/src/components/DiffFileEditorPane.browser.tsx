@@ -1,6 +1,6 @@
 import "../index.css";
 
-import { type EnvironmentApi, EnvironmentId } from "@forma/contracts";
+import { type EnvironmentApi, EnvironmentId } from "@t3tools/contracts";
 import { parsePatchFiles } from "@pierre/diffs";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";

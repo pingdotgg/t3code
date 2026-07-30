@@ -1,4 +1,4 @@
-import { WsRpcGroup } from "@forma/contracts";
+import { WsRpcGroup } from "@t3tools/contracts";
 import { Duration, Effect, Layer, Schedule } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";

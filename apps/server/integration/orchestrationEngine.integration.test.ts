@@ -12,7 +12,7 @@ import {
   ProviderKind,
   ThreadId,
   ModelSelection,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Option, Schema } from "effect";
 
@@ -83,38 +83,38 @@ function runtimeBase(eventId: string, createdAt: string, provider: IntegrationPr
 }
 
 function withHarness<A, E>(
-  use: (forma: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
+  use: (t3: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
   provider: IntegrationProvider = "codex",
 ) {
   return Effect.acquireUseRelease(
     makeOrchestrationIntegrationHarness({ provider }),
     use,
-    (forma) => forma.dispose,
+    (t3) => t3.dispose,
   ).pipe(Effect.provide(NodeServices.layer));
 }
 
 function withRealCodexHarness<A, E>(
-  use: (forma: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
+  use: (t3: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
 ) {
   return Effect.acquireUseRelease(
     makeOrchestrationIntegrationHarness({ provider: "codex", realCodex: true }),
     use,
-    (forma) => forma.dispose,
+    (t3) => t3.dispose,
   ).pipe(Effect.provide(NodeServices.layer));
 }
 
-const seedProjectAndThread = (forma: OrchestrationIntegrationHarness) =>
+const seedProjectAndThread = (t3: OrchestrationIntegrationHarness) =>
   Effect.gen(function* () {
     const createdAt = nowIso();
-    const provider = forma.adapterHarness?.provider ?? "codex";
+    const provider = t3.adapterHarness?.provider ?? "codex";
     const defaultModel = DEFAULT_MODEL_BY_PROVIDER[provider];
 
-    yield* forma.engine.dispatch({
+    yield* t3.engine.dispatch({
       type: "project.create",
       commandId: CommandId.make("cmd-project-create"),
       projectId: PROJECT_ID,
       title: "Integration Project",
-      workspaceRoot: forma.workspaceDir,
+      workspaceRoot: t3.workspaceDir,
       defaultModelSelection: {
         provider,
         model: defaultModel,
@@ -122,7 +122,7 @@ const seedProjectAndThread = (forma: OrchestrationIntegrationHarness) =>
       createdAt,
     });
 
-    yield* forma.engine.dispatch({
+    yield* t3.engine.dispatch({
       type: "thread.create",
       commandId: CommandId.make("cmd-thread-create"),
       threadId: THREAD_ID,
@@ -135,19 +135,19 @@ const seedProjectAndThread = (forma: OrchestrationIntegrationHarness) =>
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       runtimeMode: "approval-required",
       branch: null,
-      worktreePath: forma.workspaceDir,
+      worktreePath: t3.workspaceDir,
       createdAt,
     });
   });
 
 const startTurn = (input: {
-  readonly forma: OrchestrationIntegrationHarness;
+  readonly t3: OrchestrationIntegrationHarness;
   readonly commandId: string;
   readonly messageId: string;
   readonly text: string;
   readonly modelSelection?: ModelSelection;
 }) =>
-  input.forma.engine.dispatch({
+  input.t3.engine.dispatch({
     type: "thread.turn.start",
     commandId: CommandId.make(input.commandId),
     threadId: THREAD_ID,
@@ -168,9 +168,9 @@ const startTurn = (input: {
   });
 
 it.live("runs a single turn end-to-end and persists checkpoint state in sqlite + git", () =>
-  withHarness((forma) =>
+  withHarness((t3) =>
     Effect.gen(function* () {
-      yield* seedProjectAndThread(forma);
+      yield* seedProjectAndThread(t3);
 
       const turnResponse: TestTurnResponse = {
         events: [
@@ -197,14 +197,14 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
         ],
       };
 
-      yield* forma.adapterHarness!.queueTurnResponseForNextSession(turnResponse);
+      yield* t3.adapterHarness!.queueTurnResponseForNextSession(turnResponse);
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-single",
         messageId: "msg-user-single",
         text: "Say hello",
       });
-      const finalizedReceipt = yield* forma.waitForReceipt(
+      const finalizedReceipt = yield* t3.waitForReceipt(
         (receipt): receipt is CheckpointDiffFinalizedReceipt =>
           receipt.type === "checkpoint.diff.finalized" &&
           receipt.threadId === THREAD_ID &&
@@ -214,14 +214,14 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
         throw new Error("Expected checkpoint.diff.finalized receipt.");
       }
       assert.equal(finalizedReceipt.status, "ready");
-      yield* forma.waitForReceipt(
+      yield* t3.waitForReceipt(
         (receipt): receipt is TurnProcessingQuiescedReceipt =>
           receipt.type === "turn.processing.quiesced" &&
           receipt.threadId === THREAD_ID &&
           receipt.checkpointTurnCount === 1,
       );
 
-      const thread = yield* forma.waitForThread(
+      const thread = yield* t3.waitForThread(
         THREAD_ID,
         (entry) =>
           entry.session?.status === "ready" &&
@@ -233,7 +233,7 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
       assert.equal(thread.checkpoints[0]?.status, "ready");
       assert.equal(thread.checkpoints[0]?.checkpointTurnCount, 1);
 
-      const checkpointRows = yield* forma.checkpointRepository.listByThreadId({
+      const checkpointRows = yield* t3.checkpointRepository.listByThreadId({
         threadId: THREAD_ID,
       });
       assert.equal(checkpointRows.length, 1);
@@ -243,10 +243,10 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
 
       const ref0 = checkpointRefForThreadTurn(THREAD_ID, 0);
       const ref1 = checkpointRefForThreadTurn(THREAD_ID, 1);
-      assert.equal(gitRefExists(forma.workspaceDir, ref0), true);
-      assert.equal(gitRefExists(forma.workspaceDir, ref1), true);
-      assert.equal(gitShowFileAtRef(forma.workspaceDir, ref0, "README.md"), "v1\n");
-      assert.equal(gitShowFileAtRef(forma.workspaceDir, ref1, "README.md"), "v1\n");
+      assert.equal(gitRefExists(t3.workspaceDir, ref0), true);
+      assert.equal(gitRefExists(t3.workspaceDir, ref1), true);
+      assert.equal(gitShowFileAtRef(t3.workspaceDir, ref0, "README.md"), "v1\n");
+      assert.equal(gitShowFileAtRef(t3.workspaceDir, ref1, "README.md"), "v1\n");
     }),
   ),
 );
@@ -254,16 +254,16 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
 it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
   "keeps the same Codex provider thread across runtime mode switches",
   () =>
-    withRealCodexHarness((forma) =>
+    withRealCodexHarness((t3) =>
       Effect.gen(function* () {
         const createdAt = nowIso();
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "project.create",
           commandId: CommandId.make("cmd-project-create-real-codex"),
           projectId: PROJECT_ID,
           title: "Integration Project",
-          workspaceRoot: forma.workspaceDir,
+          workspaceRoot: t3.workspaceDir,
           defaultModelSelection: {
             provider: "codex",
             model: "gpt-5.3-codex",
@@ -271,7 +271,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           createdAt,
         });
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.create",
           commandId: CommandId.make("cmd-thread-create-real-codex"),
           threadId: THREAD_ID,
@@ -284,11 +284,11 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
           branch: null,
-          worktreePath: forma.workspaceDir,
+          worktreePath: t3.workspaceDir,
           createdAt,
         });
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make("cmd-turn-start-real-codex-1"),
           threadId: THREAD_ID,
@@ -303,7 +303,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           createdAt: nowIso(),
         });
 
-        const firstThread = yield* forma.waitForThread(
+        const firstThread = yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.session?.status === "ready" &&
@@ -315,7 +315,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
         );
         assert.equal(firstThread.session?.threadId, "thread-1");
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make("cmd-turn-start-real-codex-2"),
           threadId: THREAD_ID,
@@ -330,7 +330,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           createdAt: nowIso(),
         });
 
-        const secondThread = yield* forma.waitForThread(
+        const secondThread = yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.session?.status === "ready" &&
@@ -347,11 +347,11 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
 );
 
 it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
-  withHarness((forma) =>
+  withHarness((t3) =>
     Effect.gen(function* () {
-      yield* seedProjectAndThread(forma);
+      yield* seedProjectAndThread(t3);
 
-      yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+      yield* t3.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -399,24 +399,24 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
       });
 
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-multi-1",
         messageId: "msg-user-multi-1",
         text: "Make first edit",
       });
-      yield* forma.waitForReceipt(
+      yield* t3.waitForReceipt(
         (receipt): receipt is CheckpointDiffFinalizedReceipt =>
           receipt.type === "checkpoint.diff.finalized" &&
           receipt.threadId === THREAD_ID &&
           receipt.checkpointTurnCount === 1,
       );
 
-      yield* forma.waitForThread(
+      yield* t3.waitForThread(
         THREAD_ID,
         (entry) => entry.checkpoints.length === 1 && entry.session?.threadId === "thread-1",
       );
 
-      yield* forma.adapterHarness!.queueTurnResponse(THREAD_ID, {
+      yield* t3.adapterHarness!.queueTurnResponse(THREAD_ID, {
         events: [
           {
             type: "turn.started",
@@ -446,12 +446,12 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
       });
 
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-multi-2",
         messageId: "msg-user-multi-2",
         text: "Make second edit",
       });
-      const secondReceipt = yield* forma.waitForReceipt(
+      const secondReceipt = yield* t3.waitForReceipt(
         (receipt): receipt is CheckpointDiffFinalizedReceipt =>
           receipt.type === "checkpoint.diff.finalized" &&
           receipt.threadId === THREAD_ID &&
@@ -461,14 +461,14 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         throw new Error("Expected checkpoint.diff.finalized receipt.");
       }
       assert.equal(secondReceipt.status, "ready");
-      yield* forma.waitForReceipt(
+      yield* t3.waitForReceipt(
         (receipt): receipt is TurnProcessingQuiescedReceipt =>
           receipt.type === "turn.processing.quiesced" &&
           receipt.threadId === THREAD_ID &&
           receipt.checkpointTurnCount === 2,
       );
 
-      const secondTurnThread = yield* forma.waitForThread(
+      const secondTurnThread = yield* t3.waitForThread(
         THREAD_ID,
         (entry) =>
           entry.latestTurn?.turnId === "turn-2" &&
@@ -483,7 +483,7 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         true,
       );
 
-      const checkpointRows = yield* forma.checkpointRepository.listByThreadId({
+      const checkpointRows = yield* t3.checkpointRepository.listByThreadId({
         threadId: THREAD_ID,
       });
       assert.deepEqual(
@@ -491,16 +491,16 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         [1, 2],
       );
 
-      const incrementalDiff = yield* forma.checkpointStore.diffCheckpoints({
-        cwd: forma.workspaceDir,
+      const incrementalDiff = yield* t3.checkpointStore.diffCheckpoints({
+        cwd: t3.workspaceDir,
         fromCheckpointRef: checkpointRefForThreadTurn(THREAD_ID, 1),
         toCheckpointRef: checkpointRefForThreadTurn(THREAD_ID, 2),
         fallbackFromToHead: false,
       });
       assert.equal(incrementalDiff.includes("README.md"), true);
 
-      const fullDiff = yield* forma.checkpointStore.diffCheckpoints({
-        cwd: forma.workspaceDir,
+      const fullDiff = yield* t3.checkpointStore.diffCheckpoints({
+        cwd: t3.workspaceDir,
         fromCheckpointRef: checkpointRefForThreadTurn(THREAD_ID, 0),
         toCheckpointRef: checkpointRefForThreadTurn(THREAD_ID, 2),
         fallbackFromToHead: false,
@@ -508,11 +508,11 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
       assert.equal(fullDiff.includes("README.md"), true);
 
       assert.equal(
-        gitShowFileAtRef(forma.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1), "README.md"),
+        gitShowFileAtRef(t3.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1), "README.md"),
         "v2\n",
       );
       assert.equal(
-        gitShowFileAtRef(forma.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2), "README.md"),
+        gitShowFileAtRef(t3.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2), "README.md"),
         "v3\n",
       );
     }),
@@ -520,11 +520,11 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
 );
 
 it.live("tracks approval requests and resolves pending approvals on user response", () =>
-  withHarness((forma) =>
+  withHarness((t3) =>
     Effect.gen(function* () {
-      yield* seedProjectAndThread(forma);
+      yield* seedProjectAndThread(t3);
 
-      yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+      yield* t3.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -552,13 +552,13 @@ it.live("tracks approval requests and resolves pending approvals on user respons
       });
 
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-approval",
         messageId: "msg-user-approval",
         text: "Run command needing approval",
       });
 
-      const thread = yield* forma.waitForThread(THREAD_ID, (entry) =>
+      const thread = yield* t3.waitForThread(THREAD_ID, (entry) =>
         entry.activities.some((activity) => activity.kind === "approval.requested"),
       );
       assert.equal(
@@ -566,13 +566,13 @@ it.live("tracks approval requests and resolves pending approvals on user respons
         true,
       );
 
-      const pendingRow = yield* forma.waitForPendingApproval(
+      const pendingRow = yield* t3.waitForPendingApproval(
         "req-approval-1",
         (row) => row.status === "pending" && row.decision === null,
       );
       assert.equal(pendingRow.status, "pending");
 
-      yield* forma.engine.dispatch({
+      yield* t3.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond"),
         threadId: THREAD_ID,
@@ -581,7 +581,7 @@ it.live("tracks approval requests and resolves pending approvals on user respons
         createdAt: nowIso(),
       });
 
-      const resolvedRow = yield* forma.waitForPendingApproval(
+      const resolvedRow = yield* t3.waitForPendingApproval(
         "req-approval-1",
         (row) => row.status === "resolved" && row.decision === "accept",
       );
@@ -589,7 +589,7 @@ it.live("tracks approval requests and resolves pending approvals on user respons
       assert.equal(resolvedRow.decision, "accept");
 
       const approvalResponses = yield* waitForSync(
-        () => forma.adapterHarness!.getApprovalResponses(THREAD_ID),
+        () => t3.adapterHarness!.getApprovalResponses(THREAD_ID),
         (responses) => responses.length === 1,
         "provider approval response",
       );
@@ -601,11 +601,11 @@ it.live("tracks approval requests and resolves pending approvals on user respons
 );
 
 it.live("records failed turn runtime state and checkpoint status as error", () =>
-  withHarness((forma) =>
+  withHarness((t3) =>
     Effect.gen(function* () {
-      yield* seedProjectAndThread(forma);
+      yield* seedProjectAndThread(t3);
 
-      yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+      yield* t3.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -646,13 +646,13 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
       });
 
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-failure",
         messageId: "msg-user-failure",
         text: "Run risky command",
       });
 
-      const thread = yield* forma.waitForThread(
+      const thread = yield* t3.waitForThread(
         THREAD_ID,
         (entry) =>
           entry.session?.status === "error" &&
@@ -663,7 +663,7 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
       assert.equal(thread.session?.status, "error");
       assert.equal(thread.checkpoints[0]?.status, "error");
 
-      const checkpointRow = yield* forma.checkpointRepository.getByThreadAndTurnCount({
+      const checkpointRow = yield* t3.checkpointRepository.getByThreadAndTurnCount({
         threadId: THREAD_ID,
         checkpointTurnCount: 1,
       });
@@ -672,7 +672,7 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
         assert.equal(checkpointRow.value.status, "error");
       }
       assert.equal(
-        gitRefExists(forma.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
+        gitRefExists(t3.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
         true,
       );
     }),
@@ -680,11 +680,11 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
 );
 
 it.live("reverts to an earlier checkpoint and trims checkpoint projections + git refs", () =>
-  withHarness((forma) =>
+  withHarness((t3) =>
     Effect.gen(function* () {
-      yield* seedProjectAndThread(forma);
+      yield* seedProjectAndThread(t3);
 
-      yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+      yield* t3.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -731,18 +731,18 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
           }),
       });
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-revert-1",
         messageId: "msg-user-revert-1",
         text: "First edit",
       });
 
-      yield* forma.waitForThread(
+      yield* t3.waitForThread(
         THREAD_ID,
         (entry) => entry.session?.threadId === "thread-1" && entry.checkpoints.length === 1,
       );
 
-      yield* forma.adapterHarness!.queueTurnResponse(THREAD_ID, {
+      yield* t3.adapterHarness!.queueTurnResponse(THREAD_ID, {
         events: [
           {
             type: "turn.started",
@@ -789,13 +789,13 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
           }),
       });
       yield* startTurn({
-        forma,
+        t3,
         commandId: "cmd-turn-start-revert-2",
         messageId: "msg-user-revert-2",
         text: "Second edit",
       });
 
-      yield* forma.waitForThread(
+      yield* t3.waitForThread(
         THREAD_ID,
         (entry) =>
           entry.latestTurn?.turnId === "turn-2" &&
@@ -804,7 +804,7 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         8000,
       );
 
-      yield* forma.engine.dispatch({
+      yield* t3.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-checkpoint-revert"),
         threadId: THREAD_ID,
@@ -812,8 +812,8 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         createdAt: nowIso(),
       });
 
-      yield* forma.waitForDomainEvent((event) => event.type === "thread.reverted");
-      const revertedThread = yield* forma.waitForThread(
+      yield* t3.waitForDomainEvent((event) => event.type === "thread.reverted");
+      const revertedThread = yield* t3.waitForThread(
         THREAD_ID,
         (entry) =>
           entry.checkpoints.length === 1 && entry.checkpoints[0]?.checkpointTurnCount === 1,
@@ -842,14 +842,14 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         ),
         true,
       );
-      assert.equal(fs.readFileSync(path.join(forma.workspaceDir, "README.md"), "utf8"), "v2\n");
+      assert.equal(fs.readFileSync(path.join(t3.workspaceDir, "README.md"), "utf8"), "v2\n");
       assert.equal(
-        gitRefExists(forma.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
+        gitRefExists(t3.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
         false,
       );
-      assert.deepEqual(forma.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
+      assert.deepEqual(t3.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
 
-      const checkpointRows = yield* forma.checkpointRepository.listByThreadId({
+      const checkpointRows = yield* t3.checkpointRepository.listByThreadId({
         threadId: THREAD_ID,
       });
       assert.equal(checkpointRows.length, 1);
@@ -860,11 +860,11 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
 it.live(
   "appends checkpoint.revert.failed activity when revert is requested without an active session",
   () =>
-    withHarness((forma) =>
+    withHarness((t3) =>
       Effect.gen(function* () {
-        yield* seedProjectAndThread(forma);
+        yield* seedProjectAndThread(t3);
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.checkpoint.revert",
           commandId: CommandId.make("cmd-checkpoint-revert-no-session"),
           threadId: THREAD_ID,
@@ -872,7 +872,7 @@ it.live(
           createdAt: nowIso(),
         });
 
-        const thread = yield* forma.waitForThread(THREAD_ID, (entry) =>
+        const thread = yield* t3.waitForThread(THREAD_ID, (entry) =>
           entry.activities.some(
             (activity) =>
               activity.kind === "checkpoint.revert.failed" &&
@@ -896,11 +896,11 @@ it.live(
 
 it.live("starts a claudeAgent session on first turn when provider is requested", () =>
   withHarness(
-    (forma) =>
+    (t3) =>
       Effect.gen(function* () {
-        yield* seedProjectAndThread(forma);
+        yield* seedProjectAndThread(t3);
 
-        yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+        yield* t3.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -926,7 +926,7 @@ it.live("starts a claudeAgent session on first turn when provider is requested",
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-initial",
           messageId: "msg-user-claude-initial",
           text: "Use Claude",
@@ -936,7 +936,7 @@ it.live("starts a claudeAgent session on first turn when provider is requested",
           },
         });
 
-        const thread = yield* forma.waitForThread(
+        const thread = yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.session?.providerName === "claudeAgent" &&
@@ -953,11 +953,11 @@ it.live("starts a claudeAgent session on first turn when provider is requested",
 
 it.live("recovers claudeAgent sessions after provider stopAll using persisted resume state", () =>
   withHarness(
-    (forma) =>
+    (t3) =>
       Effect.gen(function* () {
-        yield* seedProjectAndThread(forma);
+        yield* seedProjectAndThread(t3);
 
-        yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+        yield* t3.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -983,7 +983,7 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-recover-1",
           messageId: "msg-user-claude-recover-1",
           text: "Before restart",
@@ -993,20 +993,20 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
           },
         });
 
-        yield* forma.waitForThread(
+        yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
         );
 
-        yield* forma.adapterHarness!.adapter.stopAll();
+        yield* t3.adapterHarness!.adapter.stopAll();
         yield* waitForSync(
-          () => forma.adapterHarness!.listActiveSessionIds(),
+          () => t3.adapterHarness!.listActiveSessionIds(),
           (sessionIds) => sessionIds.length === 0,
           "provider stopAll",
         );
 
-        yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+        yield* t3.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1032,18 +1032,18 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-recover-2",
           messageId: "msg-user-claude-recover-2",
           text: "After restart",
         });
         yield* waitForSync(
-          () => forma.adapterHarness!.getStartCount(),
+          () => t3.adapterHarness!.getStartCount(),
           (count) => count === 2,
           "claude provider recovery start",
         );
 
-        const recoveredThread = yield* forma.waitForThread(
+        const recoveredThread = yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.session?.providerName === "claudeAgent" &&
@@ -1061,11 +1061,11 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
 
 it.live("forwards claudeAgent approval responses to the provider session", () =>
   withHarness(
-    (forma) =>
+    (t3) =>
       Effect.gen(function* () {
-        yield* seedProjectAndThread(forma);
+        yield* seedProjectAndThread(t3);
 
-        yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+        yield* t3.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1093,7 +1093,7 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-approval",
           messageId: "msg-user-claude-approval",
           text: "Need approval",
@@ -1103,12 +1103,12 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
           },
         });
 
-        const thread = yield* forma.waitForThread(THREAD_ID, (entry) =>
+        const thread = yield* t3.waitForThread(THREAD_ID, (entry) =>
           entry.activities.some((activity) => activity.kind === "approval.requested"),
         );
         assert.equal(thread.session?.threadId, "thread-1");
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.approval.respond",
           commandId: CommandId.make("cmd-claude-approval-respond"),
           threadId: THREAD_ID,
@@ -1117,13 +1117,13 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
           createdAt: nowIso(),
         });
 
-        yield* forma.waitForPendingApproval(
+        yield* t3.waitForPendingApproval(
           "req-approval-1",
           (row) => row.status === "resolved" && row.decision === "accept",
         );
 
         const approvalResponses = yield* waitForSync(
-          () => forma.adapterHarness!.getApprovalResponses(THREAD_ID),
+          () => t3.adapterHarness!.getApprovalResponses(THREAD_ID),
           (responses) => responses.length === 1,
           "claude provider approval response",
         );
@@ -1135,11 +1135,11 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
 
 it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
   withHarness(
-    (forma) =>
+    (t3) =>
       Effect.gen(function* () {
-        yield* seedProjectAndThread(forma);
+        yield* seedProjectAndThread(t3);
 
-        yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+        yield* t3.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1165,7 +1165,7 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-interrupt",
           messageId: "msg-user-claude-interrupt",
           text: "Start long turn",
@@ -1175,24 +1175,24 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
           },
         });
 
-        const thread = yield* forma.waitForThread(
+        const thread = yield* t3.waitForThread(
           THREAD_ID,
           (entry) => entry.session?.threadId === "thread-1",
         );
         assert.equal(thread.session?.threadId, "thread-1");
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.turn.interrupt",
           commandId: CommandId.make("cmd-turn-interrupt-claude"),
           threadId: THREAD_ID,
           createdAt: nowIso(),
         });
-        yield* forma.waitForDomainEvent(
+        yield* t3.waitForDomainEvent(
           (event) => event.type === "thread.turn-interrupt-requested",
         );
 
         const interruptCalls = yield* waitForSync(
-          () => forma.adapterHarness!.getInterruptCalls(THREAD_ID),
+          () => t3.adapterHarness!.getInterruptCalls(THREAD_ID),
           (calls) => calls.length === 1,
           "claude provider interrupt call",
         );
@@ -1204,11 +1204,11 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
 
 it.live("reverts claudeAgent turns and rolls back provider conversation state", () =>
   withHarness(
-    (forma) =>
+    (t3) =>
       Effect.gen(function* () {
-        yield* seedProjectAndThread(forma);
+        yield* seedProjectAndThread(t3);
 
-        yield* forma.adapterHarness!.queueTurnResponseForNextSession({
+        yield* t3.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1238,7 +1238,7 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-revert-1",
           messageId: "msg-user-claude-revert-1",
           text: "First Claude edit",
@@ -1248,13 +1248,13 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
           },
         });
 
-        yield* forma.waitForThread(
+        yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
         );
 
-        yield* forma.adapterHarness!.queueTurnResponse(THREAD_ID, {
+        yield* t3.adapterHarness!.queueTurnResponse(THREAD_ID, {
           events: [
             {
               type: "turn.started",
@@ -1284,13 +1284,13 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
         });
 
         yield* startTurn({
-          forma,
+          t3,
           commandId: "cmd-turn-start-claude-revert-2",
           messageId: "msg-user-claude-revert-2",
           text: "Second Claude edit",
         });
 
-        yield* forma.waitForThread(
+        yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.latestTurn?.turnId === "turn-2" &&
@@ -1298,7 +1298,7 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
             entry.session?.providerName === "claudeAgent",
         );
 
-        yield* forma.engine.dispatch({
+        yield* t3.engine.dispatch({
           type: "thread.checkpoint.revert",
           commandId: CommandId.make("cmd-checkpoint-revert-claude"),
           threadId: THREAD_ID,
@@ -1306,21 +1306,21 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
           createdAt: nowIso(),
         });
 
-        const revertedThread = yield* forma.waitForThread(
+        const revertedThread = yield* t3.waitForThread(
           THREAD_ID,
           (entry) =>
             entry.checkpoints.length === 1 && entry.checkpoints[0]?.checkpointTurnCount === 1,
         );
         assert.equal(revertedThread.checkpoints[0]?.checkpointTurnCount, 1);
         assert.equal(
-          gitRefExists(forma.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
+          gitRefExists(t3.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
           true,
         );
         assert.equal(
-          gitRefExists(forma.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
+          gitRefExists(t3.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
           false,
         );
-        assert.deepEqual(forma.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
+        assert.deepEqual(t3.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
       }),
     "claudeAgent",
   ),

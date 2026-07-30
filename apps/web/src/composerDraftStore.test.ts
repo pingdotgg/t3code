@@ -3,7 +3,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@forma/client-runtime";
+} from "@t3tools/client-runtime";
 import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
@@ -12,8 +12,8 @@ import {
   type ModelSelection,
   type ProviderKind,
   type ProviderOptionSelection,
-} from "@forma/contracts";
-import { createModelSelection } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 
 type ProviderOptionSelectionBag = ReadonlyArray<ProviderOptionSelection>;
 type ProviderOptionSelectionsByProvider = Partial<Record<ProviderKind, ProviderOptionSelectionBag>>;

@@ -6,7 +6,7 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ProviderKind,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export interface SelectableModelOption {
   slug: string;

@@ -4,14 +4,14 @@ import {
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   createModelSelection,
   normalizeModelSlug,
   resolveSelectableModel,
-} from "@forma/shared/model";
+} from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { UnifiedSettings } from "@forma/contracts/settings";
+import { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   getDefaultServerModel,
   getProviderModels,

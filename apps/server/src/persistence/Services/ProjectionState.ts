@@ -6,7 +6,7 @@
  *
  * @module ProjectionStateRepository
  */
-import { IsoDateTime, NonNegativeInt } from "@forma/contracts";
+import { IsoDateTime, NonNegativeInt } from "@t3tools/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -61,4 +61,4 @@ export interface ProjectionStateRepositoryShape {
 export class ProjectionStateRepository extends Context.Service<
   ProjectionStateRepository,
   ProjectionStateRepositoryShape
->()("forma/persistence/Services/ProjectionState/ProjectionStateRepository") {}
+>()("t3/persistence/Services/ProjectionState/ProjectionStateRepository") {}

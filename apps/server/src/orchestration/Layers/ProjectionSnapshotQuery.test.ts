@@ -6,7 +6,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

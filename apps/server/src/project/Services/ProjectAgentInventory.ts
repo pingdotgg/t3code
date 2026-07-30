@@ -1,4 +1,4 @@
-import type { ServerLocalAgentInventory } from "@forma/contracts";
+import type { ServerLocalAgentInventory } from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -10,4 +10,4 @@ export interface ProjectAgentInventoryShape {
 export class ProjectAgentInventory extends Context.Service<
   ProjectAgentInventory,
   ProjectAgentInventoryShape
->()("forma/project/ProjectAgentInventory") {}
+>()("t3/project/ProjectAgentInventory") {}

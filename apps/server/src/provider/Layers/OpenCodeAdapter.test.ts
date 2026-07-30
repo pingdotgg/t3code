@@ -5,7 +5,7 @@ import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { beforeEach } from "vitest";
 
-import { ThreadId } from "@forma/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";

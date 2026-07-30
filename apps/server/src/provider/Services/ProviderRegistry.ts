@@ -6,7 +6,7 @@
  *
  * @module ProviderRegistry
  */
-import type { ProviderKind, ServerProvider } from "@forma/contracts";
+import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -28,5 +28,5 @@ export interface ProviderRegistryShape {
 }
 
 export class ProviderRegistry extends Context.Service<ProviderRegistry, ProviderRegistryShape>()(
-  "forma/provider/Services/ProviderRegistry",
+  "t3/provider/Services/ProviderRegistry",
 ) {}

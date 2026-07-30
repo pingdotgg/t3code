@@ -4,7 +4,7 @@ import type {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   ServerProviderModel,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,

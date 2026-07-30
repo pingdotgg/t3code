@@ -5,7 +5,7 @@
  *
  * @module ProviderSessionRuntimeRepository
  */
-import { IsoDateTime, ProviderSessionRuntimeStatus, RuntimeMode, ThreadId } from "@forma/contracts";
+import { IsoDateTime, ProviderSessionRuntimeStatus, RuntimeMode, ThreadId } from "@t3tools/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -73,4 +73,4 @@ export interface ProviderSessionRuntimeRepositoryShape {
 export class ProviderSessionRuntimeRepository extends Context.Service<
   ProviderSessionRuntimeRepository,
   ProviderSessionRuntimeRepositoryShape
->()("forma/persistence/Services/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}
+>()("t3/persistence/Services/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}

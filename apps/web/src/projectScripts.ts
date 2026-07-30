@@ -3,7 +3,7 @@ import {
   SCRIPT_RUN_COMMAND_PATTERN,
   type KeybindingCommand,
   type ProjectScript,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Schema } from "effect";
 
 function normalizeScriptId(value: string): string {

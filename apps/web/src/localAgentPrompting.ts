@@ -2,13 +2,13 @@ import type {
   EnvironmentApi,
   ServerLocalAgentCommand,
   ServerLocalAgentInventory,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   parseLocalAgentCommandJsonDocument,
   parseLocalAgentCommandMarkdownDocument,
   parseLocalAgentSkillDocument,
   renderLocalAgentCommandPromptTemplate,
-} from "@forma/shared/localAgents";
+} from "@t3tools/shared/localAgents";
 
 const LOCAL_SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 

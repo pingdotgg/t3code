@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { SourceControlProviderError } from "@forma/contracts";
+import { SourceControlProviderError } from "@t3tools/contracts";
 
 import { GitLabCli } from "./GitLabCli.ts";
 import type { SourceControlProviderShape } from "./SourceControlProvider.ts";

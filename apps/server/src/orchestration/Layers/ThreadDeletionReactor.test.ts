@@ -1,4 +1,4 @@
-import { ThreadId } from "@forma/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 

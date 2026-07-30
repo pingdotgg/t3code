@@ -1,6 +1,6 @@
 import { networkInterfaces } from "node:os";
 
-import { QrCode } from "@forma/shared/qrCode";
+import { QrCode } from "@t3tools/shared/qrCode";
 import { Effect } from "effect";
 import { HttpServer } from "effect/unstable/http";
 

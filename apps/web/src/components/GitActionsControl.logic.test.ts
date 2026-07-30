@@ -1,4 +1,4 @@
-import type { GitStatusResult } from "@forma/contracts";
+import type { GitStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vitest";
 import {
   buildGitActionProgressStages,
@@ -1023,8 +1023,8 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
   it("does not regress a semantic thread branch back to a temporary worktree branch", () => {
     const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "forma/github-query-rate-limit",
-      gitStatus: status({ branch: "forma/bda76797" }),
+      threadBranch: "t3/github-query-rate-limit",
+      gitStatus: status({ branch: "t3/bda76797" }),
     });
 
     assert.equal(update, null);

@@ -97,7 +97,7 @@ export function resolvePreviewComponentPath(input: {
 export function buildPreviewRuntimeWarmupPlan(
   input: PreviewRuntimeWarmupInput,
 ): PreviewRuntimeWarmupPlan {
-  const projectPreviewRoot = path.join(input.projectRoot, ".forma", "preview");
+  const projectPreviewRoot = path.join(input.projectRoot, ".t3", "preview");
   const previewFilePath = path.join(input.projectRoot, input.previewFileRelativePath);
   const componentFilePath = resolvePreviewComponentPath({
     projectRoot: input.projectRoot,

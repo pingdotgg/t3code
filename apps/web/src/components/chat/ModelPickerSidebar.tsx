@@ -1,4 +1,4 @@
-import { type ProviderKind, type ServerProvider } from "@forma/contracts";
+import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import {
   IconClock as Clock3Icon,

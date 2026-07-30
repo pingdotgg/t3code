@@ -1,5 +1,5 @@
-import { scopedProjectKey, scopeProjectRef } from "@forma/client-runtime";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@forma/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
+import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";

@@ -1,11 +1,11 @@
-import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type {
   ClientSettings,
   DesktopThreadAttentionKind,
   DesktopThreadAttentionNotification,
   EnvironmentId,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 type ThreadAttentionState = "approval" | "user-input" | "both" | null;
 

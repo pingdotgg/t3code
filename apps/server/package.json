@@ -1,14 +1,14 @@
 {
-  "name": "forma",
+  "name": "t3",
   "version": "0.0.21",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/forma",
+    "url": "https://github.com/pingdotgg/t3code",
     "directory": "apps/server"
   },
   "bin": {
-    "forma": "./dist/bin.mjs"
+    "t3": "./dist/bin.mjs"
   },
   "files": [
     "dist"
@@ -40,9 +40,9 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "@forma/contracts": "workspace:*",
-    "@forma/shared": "workspace:*",
-    "@forma/web": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",

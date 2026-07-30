@@ -2,8 +2,8 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@forma/client-runtime";
-import type { TurnId } from "@forma/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import type { TurnId } from "@t3tools/contracts";
 import {
   IconChevronLeft as ChevronLeftIcon,
   IconChevronRight as ChevronRightIcon,

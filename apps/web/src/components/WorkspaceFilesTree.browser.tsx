@@ -1,6 +1,6 @@
 import "../index.css";
 
-import { type EnvironmentApi, EnvironmentId } from "@forma/contracts";
+import { type EnvironmentApi, EnvironmentId } from "@t3tools/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";

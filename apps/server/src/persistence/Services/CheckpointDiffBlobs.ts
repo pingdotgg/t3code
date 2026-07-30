@@ -1,4 +1,4 @@
-import { IsoDateTime, NonNegativeInt, ThreadId } from "@forma/contracts";
+import { IsoDateTime, NonNegativeInt, ThreadId } from "@t3tools/contracts";
 import { Context, Option, Schema } from "effect";
 import type { Effect } from "effect";
 
@@ -39,4 +39,4 @@ export interface CheckpointDiffBlobRepositoryShape {
 export class CheckpointDiffBlobRepository extends Context.Service<
   CheckpointDiffBlobRepository,
   CheckpointDiffBlobRepositoryShape
->()("forma/persistence/Services/CheckpointDiffBlobs/CheckpointDiffBlobRepository") {}
+>()("t3/persistence/Services/CheckpointDiffBlobs/CheckpointDiffBlobRepository") {}

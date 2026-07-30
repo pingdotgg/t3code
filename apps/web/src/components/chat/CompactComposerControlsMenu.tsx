@@ -1,4 +1,4 @@
-import { ProviderInteractionMode } from "@forma/contracts";
+import { ProviderInteractionMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
 import { IconEllipsis as EllipsisIcon } from "symbols-react";
 import { Button } from "../ui/button";

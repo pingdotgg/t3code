@@ -1,8 +1,8 @@
-import { scopeProjectRef, scopedThreadKey } from "@forma/client-runtime";
-import type { ResolvedKeybindingsConfig, ScopedThreadRef, ThreadId } from "@forma/contracts";
+import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime";
+import type { ResolvedKeybindingsConfig, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@forma/shared/projectScripts";
+import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { randomUUID } from "~/lib/utils";
 import { readEnvironmentApi } from "../environmentApi";
 import { useComposerHandleContext } from "../composerHandleContext";

@@ -1,4 +1,4 @@
-import { type ProviderApprovalDecision, type ProviderKind, type ThreadId } from "@forma/contracts";
+import { type ProviderApprovalDecision, type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import { Schema } from "effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 

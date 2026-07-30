@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import type { EnvironmentId, GitBranch, ThreadId } from "@forma/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, GitBranch, ThreadId } from "@t3tools/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { IconChevronDown as ChevronDownIcon, IconPlus as PlusIcon } from "symbols-react";

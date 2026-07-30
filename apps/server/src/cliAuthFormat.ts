@@ -1,4 +1,4 @@
-import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@forma/contracts";
+import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
 import { DateTime } from "effect";
 
 import type { IssuedBearerSession, IssuedPairingLink } from "./auth/Services/AuthControlPlane.ts";

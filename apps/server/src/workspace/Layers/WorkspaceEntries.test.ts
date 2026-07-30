@@ -12,7 +12,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
-import { getProtectedDirectoryNames } from "@forma/shared/protectedPaths";
+import { getProtectedDirectoryNames } from "@t3tools/shared/protectedPaths";
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(

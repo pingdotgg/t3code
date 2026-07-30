@@ -1,4 +1,4 @@
-import type { ProviderInteractionMode } from "@forma/contracts";
+import type { ProviderInteractionMode } from "@t3tools/contracts";
 import { memo } from "react";
 import {
   IconCheckmark as CheckIcon,

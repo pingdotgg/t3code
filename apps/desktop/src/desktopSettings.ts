@@ -1,6 +1,6 @@
 import * as FS from "node:fs";
 import * as Path from "node:path";
-import type { DesktopServerExposureMode, DesktopUpdateChannel } from "@forma/contracts";
+import type { DesktopServerExposureMode, DesktopUpdateChannel } from "@t3tools/contracts";
 
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 

@@ -1,13 +1,13 @@
-import { type ProviderKind, type ServerProvider } from "@forma/contracts";
-import { EnvironmentId } from "@forma/contracts";
-import { createModelCapabilities } from "@forma/shared/model";
+import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { getCustomModelOptionsByProvider } from "../../modelSelection";
-import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@forma/contracts/settings";
+import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { __resetLocalApiForTests } from "../../localApi";
 
 // Mock the environments/runtime module to provide a mock primary environment connection

@@ -22,10 +22,10 @@ import type {
   ModelCapabilities,
   ServerProviderModel,
   ServerProviderSkill,
-} from "@forma/contracts";
-import { ServerSettingsError } from "@forma/contracts";
+} from "@t3tools/contracts";
+import { ServerSettingsError } from "@t3tools/contracts";
 
-import { createModelCapabilities } from "@forma/shared/model";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { buildServerProvider } from "../providerSnapshot.ts";

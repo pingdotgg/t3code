@@ -7,7 +7,7 @@ import {
   type MacOsFontSmoothing,
   type CodeFontSizePx,
   type UiFontSizePx,
-} from "@forma/contracts/settings";
+} from "@t3tools/contracts/settings";
 
 export interface InterfaceAppearanceSettings {
   uiFontScale?: UiFontSizePx | null | undefined;

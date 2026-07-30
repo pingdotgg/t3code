@@ -1,5 +1,5 @@
-import type { OrchestrationEvent } from "@forma/contracts";
-import { makeDrainableWorker } from "@forma/shared/DrainableWorker";
+import type { OrchestrationEvent } from "@t3tools/contracts";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { Cause, Effect, Layer, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";

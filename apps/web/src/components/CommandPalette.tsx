@@ -1,13 +1,13 @@
 "use client";
 
-import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
   type SourceControlProviderKind,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {

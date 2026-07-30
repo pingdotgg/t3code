@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ModelCapabilities } from "@forma/contracts";
-import { createModelCapabilities } from "@forma/shared/model";
+import type { ModelCapabilities } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { providerModelsFromSettings } from "./providerSnapshot.ts";
 

@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ServerProvider } from "@forma/contracts";
-import { createModelCapabilities } from "@forma/shared/model";
+import type { ServerProvider } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 

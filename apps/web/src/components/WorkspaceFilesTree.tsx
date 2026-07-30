@@ -1,4 +1,4 @@
-import { type EnvironmentId, type ProjectEntry } from "@forma/contracts";
+import { type EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
 import {
   IconCheckmark as CheckIcon,
@@ -18,7 +18,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import type { ContextMenuItem } from "@forma/contracts";
+import type { ContextMenuItem } from "@t3tools/contracts";
 import { replaceExpandedDirectoryPrefix } from "../lib/projectExplorerEntries";
 import { prefetchProjectFileForEditor } from "../lib/projectFileReadCache";
 import { projectListEntriesQueryOptions } from "../lib/projectReactQuery";

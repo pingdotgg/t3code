@@ -5,8 +5,8 @@ import type {
   ProjectEntry,
   ProjectListEntriesResult,
   ScopedProjectRef,
-} from "@forma/contracts";
-import { scopeThreadRef } from "@forma/client-runtime";
+} from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import * as Schema from "effect/Schema";
 import { Diff as DiffIcon } from "lucide-react";
 import {

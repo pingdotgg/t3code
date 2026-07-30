@@ -1,4 +1,4 @@
-import { TurnId } from "@forma/contracts";
+import { TurnId } from "@t3tools/contracts";
 
 export interface WorkspacePanelRouteSearch {
   panel?: "1" | undefined;

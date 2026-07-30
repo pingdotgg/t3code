@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@forma/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let serviceModule: Awaited<typeof import("./service")>;

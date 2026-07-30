@@ -16,8 +16,8 @@ import {
   ProviderRuntimeEvent,
   type RuntimeMode,
   ThreadId,
-} from "@forma/contracts";
-import { createModelSelection } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Random, Stream } from "effect";
 

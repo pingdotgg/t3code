@@ -1,4 +1,4 @@
-import { type EnvironmentApi, EnvironmentId, type ProjectEntry } from "@forma/contracts";
+import { type EnvironmentApi, EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {

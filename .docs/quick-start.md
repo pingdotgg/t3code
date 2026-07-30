@@ -8,7 +8,7 @@ bun run dev
 bun run dev:desktop
 
 # Desktop development on an isolated port set
-FORMA_DEV_INSTANCE=feature-xyz bun run dev:desktop
+T3CODE_DEV_INSTANCE=feature-xyz bun run dev:desktop
 
 # Production
 bun run build

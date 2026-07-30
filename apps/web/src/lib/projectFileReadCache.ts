@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectReadFileResult } from "@forma/contracts";
+import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 
 import { readEnvironmentApi } from "../environmentApi";
 

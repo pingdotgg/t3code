@@ -19,7 +19,7 @@ import {
   ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ServerConfigIssue,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type { Mutable } from "effect/Types";
 import {
   Array,
@@ -46,7 +46,7 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config.ts";
-import { fromLenientJson } from "@forma/shared/schemaJson";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 
 type WhenToken =
@@ -532,7 +532,7 @@ export interface KeybindingsShape {
  * Keybindings - Service tag for keybinding configuration operations.
  */
 export class Keybindings extends Context.Service<Keybindings, KeybindingsShape>()(
-  "forma/keybindings",
+  "t3/keybindings",
 ) {}
 
 const makeKeybindings = Effect.gen(function* () {

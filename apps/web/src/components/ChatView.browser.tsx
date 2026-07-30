@@ -20,9 +20,9 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   CheckpointRef,
-} from "@forma/contracts";
-import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import { createModelCapabilities, createModelSelection } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -65,7 +65,7 @@ import { __resetWorkspaceFilesTreeSessionStateForTests } from "./WorkspaceFilesT
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 
-import { DEFAULT_CLIENT_SETTINGS } from "@forma/contracts/settings";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 vi.mock("../lib/gitStatusState", () => ({
   useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
@@ -181,7 +181,7 @@ function createBaseServerConfig(): ServerConfig {
       sessionCookieName: "t3_session",
     },
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.forma-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.t3-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [
@@ -200,7 +200,7 @@ function createBaseServerConfig(): ServerConfig {
     ],
     availableEditors: [],
     observability: {
-      logsDirectoryPath: "/repo/project/.forma/logs",
+      logsDirectoryPath: "/repo/project/.t3/logs",
       localTracingEnabled: true,
       otlpTracesEnabled: false,
       otlpMetricsEnabled: false,
@@ -3046,10 +3046,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             worktreePath: null,
             env: {
-              FORMA_PROJECT_ROOT: "/repo/project",
+              T3CODE_PROJECT_ROOT: "/repo/project",
             },
           });
-          expect(openRequest?.env?.FORMA_WORKTREE_PATH).toBeUndefined();
+          expect(openRequest?.env?.T3CODE_WORKTREE_PATH).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3363,7 +3363,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/project",
             env: {
-              FORMA_PROJECT_ROOT: "/repo/project",
+              T3CODE_PROJECT_ROOT: "/repo/project",
             },
           });
         },
@@ -3442,8 +3442,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/worktrees/feature-draft",
             env: {
-              FORMA_PROJECT_ROOT: "/repo/project",
-              FORMA_WORKTREE_PATH: "/repo/worktrees/feature-draft",
+              T3CODE_PROJECT_ROOT: "/repo/project",
+              T3CODE_WORKTREE_PATH: "/repo/worktrees/feature-draft",
             },
           });
         },
@@ -5947,7 +5947,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           thread.id === THREAD_ID
             ? Object.assign({}, thread, {
                 branch: "feature/existing",
-                worktreePath: "/repo/.forma/worktrees/existing",
+                worktreePath: "/repo/.t3/worktrees/existing",
               })
             : thread,
         ),

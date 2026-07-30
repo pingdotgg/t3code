@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@forma/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -10,9 +10,9 @@ import type {
   ServerProvider,
   ThreadId,
   TurnId,
-} from "@forma/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@forma/contracts/settings";
-import { createModelCapabilities, createModelSelection } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import * as React from "react";
 
 import type { CodeContextDraft } from "../../lib/codeContext";

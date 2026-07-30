@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectEntry } from "@forma/contracts";
+import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 
 import { loadProjectFileForEditor } from "./projectFileReadCache";
 

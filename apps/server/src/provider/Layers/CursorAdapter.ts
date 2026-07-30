@@ -18,7 +18,7 @@ import {
   type RuntimeMode,
   type ThreadId,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   DateTime,
   Deferred,
@@ -489,7 +489,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
-            clientInfo: { name: "forma", version: "0.0.0" },
+            clientInfo: { name: "t3", version: "0.0.0" },
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),

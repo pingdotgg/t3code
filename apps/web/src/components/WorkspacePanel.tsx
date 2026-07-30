@@ -1,4 +1,4 @@
-import type { EnvironmentId, ScopedProjectRef } from "@forma/contracts";
+import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 
 import { type ThreadRouteTarget } from "../threadRoutes";
 import { preloadDiffFileEditorRuntime } from "./DiffFileEditorPane";

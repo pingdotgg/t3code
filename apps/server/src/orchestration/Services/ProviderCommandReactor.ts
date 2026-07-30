@@ -37,4 +37,4 @@ export interface ProviderCommandReactorShape {
 export class ProviderCommandReactor extends Context.Service<
   ProviderCommandReactor,
   ProviderCommandReactorShape
->()("forma/orchestration/Services/ProviderCommandReactor") {}
+>()("t3/orchestration/Services/ProviderCommandReactor") {}

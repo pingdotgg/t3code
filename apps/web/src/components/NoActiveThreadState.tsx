@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import type { GitStatusPr, ScopedThreadRef } from "@forma/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import type { GitStatusPr, ScopedThreadRef } from "@t3tools/contracts";
 import { useQueries } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {

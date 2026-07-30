@@ -1,6 +1,6 @@
-import type { RepositoryIdentity } from "@forma/contracts";
+import type { RepositoryIdentity } from "@t3tools/contracts";
 import { Cache, Duration, Effect, Exit, Layer } from "effect";
-import { detectGitHostingProviderFromRemoteUrl, normalizeGitRemoteUrl } from "@forma/shared/git";
+import { detectGitHostingProviderFromRemoteUrl, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 
 import { runProcess } from "../../processRunner.ts";
 import {

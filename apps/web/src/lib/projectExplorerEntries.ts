@@ -1,4 +1,4 @@
-import type { ProjectEntry, ProjectListEntriesResult } from "@forma/contracts";
+import type { ProjectEntry, ProjectListEntriesResult } from "@t3tools/contracts";
 
 export function compareProjectEntries(left: ProjectEntry, right: ProjectEntry): number {
   if (left.kind !== right.kind) {

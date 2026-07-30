@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type DesktopThreadAttentionNotification, EnvironmentId, ThreadId } from "@forma/contracts";
+import { type DesktopThreadAttentionNotification, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
   __resetThreadAttentionNotificationsForTests,

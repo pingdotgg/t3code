@@ -8,7 +8,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderTurnStartResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   EventId,
@@ -16,8 +16,8 @@ import {
   ProviderSessionStartInput,
   ThreadId,
   TurnId,
-} from "@forma/contracts";
-import { createModelSelection } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, vi } from "@effect/vitest";
 
 import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effect";

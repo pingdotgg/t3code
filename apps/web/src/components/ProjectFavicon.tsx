@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@forma/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { IconFolder as FolderIcon } from "symbols-react";
 import { useState } from "react";
 import { resolveEnvironmentHttpUrl } from "../environments/runtime";

@@ -1,10 +1,10 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@forma/contracts";
+import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";

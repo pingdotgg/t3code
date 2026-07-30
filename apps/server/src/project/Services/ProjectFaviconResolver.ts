@@ -27,4 +27,4 @@ export interface ProjectFaviconResolverShape {
 export class ProjectFaviconResolver extends Context.Service<
   ProjectFaviconResolver,
   ProjectFaviconResolverShape
->()("forma/project/Services/ProjectFaviconResolver") {}
+>()("t3/project/Services/ProjectFaviconResolver") {}

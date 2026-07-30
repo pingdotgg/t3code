@@ -1,4 +1,4 @@
-import { type ThreadId } from "@forma/contracts";
+import { type ThreadId } from "@t3tools/contracts";
 import {
   countInlineComposerContextPlaceholders,
   ensureInlineComposerContextPlaceholders,

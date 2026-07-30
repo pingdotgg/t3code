@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema, SchemaIssue } from "effect";
-import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@forma/contracts";
+import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@t3tools/contracts";
 
 import { runProcess, type ProcessRunResult } from "../processRunner.ts";
 
@@ -39,7 +39,7 @@ export interface GitLabCliShape {
 }
 
 export class GitLabCli extends Context.Service<GitLabCli, GitLabCliShape>()(
-  "forma/source-control/GitLabCli",
+  "t3/source-control/GitLabCli",
 ) {}
 
 function normalizeGitLabCliError(operation: "execute" | "stdout", error: unknown): GitLabCliError {

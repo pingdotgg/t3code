@@ -1,4 +1,4 @@
-import type { TurnId } from "@forma/contracts";
+import type { TurnId } from "@t3tools/contracts";
 import {
   buildWorkspacePanelClosedSearch,
   buildWorkspacePanelDiffSearch,

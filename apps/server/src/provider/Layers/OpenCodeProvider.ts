@@ -3,10 +3,10 @@ import type {
   OpenCodeSettings,
   ServerProvider,
   ServerProviderModel,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Cause, Data, Effect, Equal, Layer, Stream } from "effect";
 
-import { createModelCapabilities } from "@forma/shared/model";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";

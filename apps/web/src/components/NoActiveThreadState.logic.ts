@@ -1,4 +1,4 @@
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@forma/contracts/settings";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { orderItemsByPreferredIds, sortProjectsForSidebar } from "./Sidebar.logic";
 import { getProjectOrderKey } from "../logicalProject";
 import { sortThreads } from "../lib/threadSort";

@@ -1,4 +1,4 @@
-import type { ProjectScript, ProjectScriptIcon, ResolvedKeybindingsConfig } from "@forma/contracts";
+import type { ProjectScript, ProjectScriptIcon, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   IconLadybug as BugIcon,
   IconChevronDown as ChevronDownIcon,

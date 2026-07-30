@@ -4,8 +4,8 @@ import {
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
-} from "@forma/contracts";
-import { createModelCapabilities, normalizeModelSlug } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

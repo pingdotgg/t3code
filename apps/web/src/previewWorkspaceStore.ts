@@ -1,11 +1,11 @@
-import { scopedProjectKey } from "@forma/client-runtime";
+import { scopedProjectKey } from "@t3tools/client-runtime";
 import type {
   PreviewProjectEvent,
   PreviewProjectInspectionResult,
   PreviewResolveTargetResult,
   PreviewScenarioEntry,
   ScopedProjectRef,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import type { PreviewFeedbackAnnotation } from "./previewFeedback";
 

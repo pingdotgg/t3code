@@ -2,7 +2,7 @@
 
 Forma reads keybindings from:
 
-- `~/.forma/keybindings.json`
+- `~/.t3/keybindings.json`
 
 The file must be a JSON array of rules:
 

@@ -8,4 +8,4 @@ export {
   type SourceControlDiscoveryManagerConfig,
   type SourceControlDiscoveryState,
   type SourceControlDiscoveryTarget,
-} from "@forma/client-runtime";
+} from "@t3tools/client-runtime";

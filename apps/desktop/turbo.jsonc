@@ -11,12 +11,12 @@
       "persistent": true,
     },
     "start": {
-      "dependsOn": ["build", "@forma/web#build", "forma#build"],
+      "dependsOn": ["build", "@t3tools/web#build", "forma#build"],
       "cache": false,
       "persistent": true,
     },
     "smoke-test": {
-      "dependsOn": ["build", "@forma/web#build", "forma#build"],
+      "dependsOn": ["build", "@t3tools/web#build", "forma#build"],
       "cache": false,
       "outputs": [],
     },

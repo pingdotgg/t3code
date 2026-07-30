@@ -22,16 +22,16 @@ import {
   type GitStatusLocalResult,
   type GitStatusRemoteResult,
   ModelSelection,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   detectGitHostingProviderFromRemoteUrl,
   mergeGitStatusParts,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
-} from "@forma/shared/git";
+} from "@t3tools/shared/git";
 
-import { GitManagerError } from "@forma/contracts";
+import { GitManagerError } from "@t3tools/contracts";
 import {
   GitManager,
   type GitActionProgressReporter,
@@ -45,7 +45,7 @@ import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { GitManagerServiceError } from "@forma/contracts";
+import type { GitManagerServiceError } from "@t3tools/contracts";
 import {
   decodeGitHubPullRequestListJson,
   formatGitHubJsonDecodeError,
@@ -141,7 +141,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `forma/pr-${pullRequest.number}/${suffix}`;
+  return `t3code/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {

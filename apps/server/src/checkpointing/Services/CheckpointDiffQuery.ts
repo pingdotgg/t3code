@@ -11,7 +11,7 @@ import type {
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -46,4 +46,4 @@ export interface CheckpointDiffQueryShape {
 export class CheckpointDiffQuery extends Context.Service<
   CheckpointDiffQuery,
   CheckpointDiffQueryShape
->()("forma/checkpointing/Services/CheckpointDiffQuery") {}
+>()("t3/checkpointing/Services/CheckpointDiffQuery") {}

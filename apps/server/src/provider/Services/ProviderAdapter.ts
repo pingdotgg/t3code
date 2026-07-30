@@ -19,7 +19,7 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type { Effect } from "effect";
 import type { Stream } from "effect";
 

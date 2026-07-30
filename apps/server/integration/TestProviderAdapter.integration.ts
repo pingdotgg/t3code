@@ -11,7 +11,7 @@ import {
   ThreadId,
   TurnId,
   ProviderKind,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Effect, Queue, Stream } from "effect";
 
 import {

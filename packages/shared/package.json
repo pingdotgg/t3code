@@ -1,5 +1,5 @@
 {
-  "name": "@forma/shared",
+  "name": "@t3tools/shared",
   "version": "0.0.0-alpha.1",
   "private": true,
   "type": "module",
@@ -91,7 +91,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@forma/contracts": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

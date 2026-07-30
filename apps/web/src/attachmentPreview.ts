@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@forma/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 

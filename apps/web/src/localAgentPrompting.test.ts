@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { EnvironmentApi, ServerLocalAgentInventory } from "@forma/contracts";
+import type { EnvironmentApi, ServerLocalAgentInventory } from "@t3tools/contracts";
 
 import { expandProjectLocalAgentsPrompt } from "./localAgentPrompting";
 

@@ -1,4 +1,4 @@
-import type { ScopedProjectRef } from "@forma/contracts";
+import type { ScopedProjectRef } from "@t3tools/contracts";
 
 import { useBottomDrawerUiStore } from "./bottomDrawerUiStore";
 import { usePreviewWorkspaceStore } from "./previewWorkspaceStore";

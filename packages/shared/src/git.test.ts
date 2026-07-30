@@ -1,4 +1,4 @@
-import type { GitStatusRemoteResult, GitStatusResult } from "@forma/contracts";
+import type { GitStatusRemoteResult, GitStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

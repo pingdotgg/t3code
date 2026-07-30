@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import type { DesktopUpdateState } from "@forma/contracts";
+import type { DesktopUpdateState } from "@t3tools/contracts";
 import {
   desktopUpdateQueryKeys,
   desktopUpdateStateQueryOptions,

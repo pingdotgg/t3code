@@ -1,7 +1,7 @@
 import { readBrowserClientSettings } from "./clientPersistenceStorage";
 import { applyAppIconPreferenceToDocument } from "./appIcon";
 import { applyInterfaceSettingsToDocument } from "./interfaceAppearance";
-import { DEFAULT_APP_ICON_ID } from "@forma/contracts/settings";
+import { DEFAULT_APP_ICON_ID } from "@t3tools/contracts/settings";
 import {
   THEME_MEDIA_QUERY,
   applyThemePreferenceToDocument,

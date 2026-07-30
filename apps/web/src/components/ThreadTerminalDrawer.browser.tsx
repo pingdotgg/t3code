@@ -1,7 +1,7 @@
 import "../index.css";
 
-import { scopeThreadRef } from "@forma/client-runtime";
-import { ThreadId } from "@forma/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import { ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { useEffect } from "react";

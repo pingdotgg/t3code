@@ -4,7 +4,7 @@ import type {
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export function scopeProjectRef(
   environmentId: EnvironmentId,

@@ -1,4 +1,4 @@
-import { defineComponentPreview } from "../../../../../.forma/preview/config.ts";
+import { defineComponentPreview } from "../../../../../.t3/preview/config.ts";
 
 export default defineComponentPreview({
   component: "./ChatComposer.preview.mocks.ts",

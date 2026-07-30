@@ -1,4 +1,4 @@
-import type { ServerAuthDescriptor } from "@forma/contracts";
+import type { ServerAuthDescriptor } from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -7,5 +7,5 @@ export interface ServerAuthPolicyShape {
 }
 
 export class ServerAuthPolicy extends Context.Service<ServerAuthPolicy, ServerAuthPolicyShape>()(
-  "forma/auth/Services/ServerAuthPolicy",
+  "t3/auth/Services/ServerAuthPolicy",
 ) {}

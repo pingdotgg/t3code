@@ -1,4 +1,4 @@
-import { type ProviderKind } from "@forma/contracts";
+import { type ProviderKind } from "@t3tools/contracts";
 import { memo } from "react";
 import { IconStar as StarIcon, IconStarFill as StarFillIcon } from "symbols-react";
 import {

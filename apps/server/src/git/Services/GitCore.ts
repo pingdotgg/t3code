@@ -22,9 +22,9 @@ import type {
   GitRemoveWorktreeInput,
   GitStatusInput,
   GitStatusResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
-import type { GitCommandError } from "@forma/contracts";
+import type { GitCommandError } from "@t3tools/contracts";
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -311,5 +311,5 @@ export interface GitCoreShape {
  * GitCore - Service tag for low-level Git repository operations.
  */
 export class GitCore extends Context.Service<GitCore, GitCoreShape>()(
-  "forma/git/Services/GitCore",
+  "t3/git/Services/GitCore",
 ) {}

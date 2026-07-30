@@ -1,6 +1,6 @@
 import { describe, it, assert } from "@effect/vitest";
-import type { ServerProvider } from "@forma/contracts";
-import { createModelCapabilities } from "@forma/shared/model";
+import type { ServerProvider } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
 
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";

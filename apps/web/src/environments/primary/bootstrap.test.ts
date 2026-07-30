@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EnvironmentId } from "@forma/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import {
   getPrimaryKnownEnvironment,
@@ -97,7 +97,7 @@ describe("environmentBootstrap", () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost/.well-known/forma/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost/.well-known/t3/environment");
   });
 
   it("uses https descriptor urls when the primary environment uses wss", async () => {
@@ -108,7 +108,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://remote.example.com/.well-known/forma/environment",
+      "https://remote.example.com/.well-known/t3/environment",
     );
   });
 
@@ -119,7 +119,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://remote.example.com/.well-known/forma/environment",
+      "https://remote.example.com/.well-known/t3/environment",
     );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
@@ -134,7 +134,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://remote.example.com/.well-known/forma/environment",
+      "https://remote.example.com/.well-known/t3/environment",
     );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
@@ -148,7 +148,7 @@ describe("environmentBootstrap", () => {
     installTestBrowser("http://localhost:5735/");
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:5735/.well-known/forma/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:5735/.well-known/t3/environment");
   });
 
   it("uses the vite proxy for desktop-managed loopback descriptor requests during local dev", async () => {
@@ -171,6 +171,6 @@ describe("environmentBootstrap", () => {
     });
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/.well-known/forma/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/.well-known/t3/environment");
   });
 });

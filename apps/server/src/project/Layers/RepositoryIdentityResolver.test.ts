@@ -48,7 +48,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/forma/forma");
       expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(cwd));
-      expect(identity?.displayName).toBe("forma/forma");
+      expect(identity?.displayName).toBe("t3/forma");
       expect(identity?.provider).toBe("github");
       expect(identity?.owner).toBe("forma");
       expect(identity?.name).toBe("forma");
@@ -114,7 +114,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity).not.toBeNull();
       expect(identity?.locator.remoteName).toBe("upstream");
       expect(identity?.canonicalKey).toBe("github.com/forma/forma");
-      expect(identity?.displayName).toBe("forma/forma");
+      expect(identity?.displayName).toBe("t3/forma");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
@@ -133,7 +133,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("gitlab.com/forma/platform/forma");
-      expect(identity?.displayName).toBe("forma/platform/forma");
+      expect(identity?.displayName).toBe("t3/platform/forma");
       expect(identity?.owner).toBe("forma");
       expect(identity?.name).toBe("forma");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
@@ -206,7 +206,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const refreshedIdentity = yield* resolver.resolve(cwd);
       expect(refreshedIdentity).not.toBeNull();
       expect(refreshedIdentity?.canonicalKey).toBe("github.com/forma/forma-next");
-      expect(refreshedIdentity?.displayName).toBe("forma/forma-next");
+      expect(refreshedIdentity?.displayName).toBe("t3/forma-next");
       expect(refreshedIdentity?.name).toBe("forma-next");
     }).pipe(
       Effect.provide(

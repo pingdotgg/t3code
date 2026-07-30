@@ -5,5 +5,5 @@ import type { ServerProviderShape } from "./ServerProvider.ts";
 export interface CodexProviderShape extends ServerProviderShape {}
 
 export class CodexProvider extends Context.Service<CodexProvider, CodexProviderShape>()(
-  "forma/provider/Services/CodexProvider",
+  "t3/provider/Services/CodexProvider",
 ) {}

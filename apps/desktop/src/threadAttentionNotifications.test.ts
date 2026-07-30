@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EnvironmentId, ThreadId } from "@forma/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
   buildThreadAttentionNotificationCopy,

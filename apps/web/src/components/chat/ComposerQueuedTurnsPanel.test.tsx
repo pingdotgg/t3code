@@ -1,4 +1,4 @@
-import { MessageId } from "@forma/contracts";
+import { MessageId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 

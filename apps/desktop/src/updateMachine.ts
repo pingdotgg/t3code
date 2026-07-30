@@ -2,7 +2,7 @@ import type {
   DesktopRuntimeInfo,
   DesktopUpdateChannel,
   DesktopUpdateState,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState.ts";
 

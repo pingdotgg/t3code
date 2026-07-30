@@ -3,7 +3,7 @@ import type {
   DesktopBridge,
   DesktopMenuAction,
   DesktopThreadAttentionActivation,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";

@@ -5,9 +5,9 @@ import {
   TextGenerationError,
   type ChatAttachment,
   type OpenCodeModelSelection,
-} from "@forma/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@forma/shared/git";
-import { getModelSelectionStringOptionValue } from "@forma/shared/model";
+} from "@t3tools/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { ServerConfig } from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";

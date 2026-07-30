@@ -68,7 +68,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
         "C:/Users/mike/dev-stuff/forma",
       ),
     ).toMatchObject({
-      displayPath: "forma/apps/web/src/session-logic.ts:501",
+      displayPath: "t3/apps/web/src/session-logic.ts:501",
     });
   });
 
@@ -79,7 +79,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
         "C:/Users/mike/dev-stuff/forma",
       ),
     ).toMatchObject({
-      displayPath: "forma/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+      displayPath: "t3/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
     });
   });
 

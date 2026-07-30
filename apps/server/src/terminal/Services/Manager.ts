@@ -21,7 +21,7 @@ import {
   TerminalSessionLookupError,
   TerminalSessionStatus,
   TerminalWriteInput,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type { PtyProcess } from "./PTY.ts";
 import { Effect, Context } from "effect";
 
@@ -123,5 +123,5 @@ export interface TerminalManagerShape {
  * TerminalManager - Service tag for terminal session orchestration.
  */
 export class TerminalManager extends Context.Service<TerminalManager, TerminalManagerShape>()(
-  "forma/terminal/Services/Manager/TerminalManager",
+  "t3/terminal/Services/Manager/TerminalManager",
 ) {}

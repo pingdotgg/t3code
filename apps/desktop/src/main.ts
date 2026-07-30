@@ -35,12 +35,12 @@ import {
   type DesktopUpdateActionResult,
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
-import type { ContextMenuItem } from "@forma/contracts";
-import { RotatingFileSink } from "@forma/shared/logging";
-import { parsePersistedServerObservabilitySettings } from "@forma/shared/serverSettings";
+import type { ContextMenuItem } from "@t3tools/contracts";
+import { RotatingFileSink } from "@t3tools/shared/logging";
+import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backendPort.ts";
 import {
   DEFAULT_DESKTOP_SETTINGS,
@@ -120,7 +120,7 @@ const APP_ICON_IDS = new Set<AppIconId>([
   "forma-foil",
   "forma-blueprint",
 ]);
-const BASE_DIR = process.env.FORMA_HOME?.trim() || Path.join(OS.homedir(), ".forma");
+const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
 const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
@@ -318,13 +318,13 @@ function resolveDesktopDevServerUrl(): string {
 
 function backendChildEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  delete env.FORMA_PORT;
-  delete env.FORMA_MODE;
-  delete env.FORMA_NO_BROWSER;
-  delete env.FORMA_HOST;
-  delete env.FORMA_DESKTOP_WS_URL;
-  delete env.FORMA_DESKTOP_LAN_ACCESS;
-  delete env.FORMA_DESKTOP_LAN_HOST;
+  delete env.T3CODE_PORT;
+  delete env.T3CODE_MODE;
+  delete env.T3CODE_NO_BROWSER;
+  delete env.T3CODE_HOST;
+  delete env.T3CODE_DESKTOP_WS_URL;
+  delete env.T3CODE_DESKTOP_LAN_ACCESS;
+  delete env.T3CODE_DESKTOP_LAN_HOST;
   return env;
 }
 
@@ -345,7 +345,7 @@ function getDesktopSecretStorage() {
 }
 
 function resolveAdvertisedHostOverride(): string | undefined {
-  const override = process.env.FORMA_DESKTOP_LAN_HOST?.trim();
+  const override = process.env.T3CODE_DESKTOP_LAN_HOST?.trim();
   return override && override.length > 0 ? override : undefined;
 }
 
@@ -768,8 +768,8 @@ function resolveEmbeddedCommitHash(): string | null {
 
   try {
     const raw = FS.readFileSync(packageJsonPath, "utf8");
-    const parsed = JSON.parse(raw) as { formaCommitHash?: unknown };
-    return normalizeCommitHash(parsed.formaCommitHash);
+    const parsed = JSON.parse(raw) as { t3codeCommitHash?: unknown };
+    return normalizeCommitHash(parsed.t3codeCommitHash);
   } catch {
     return null;
   }
@@ -780,7 +780,7 @@ function resolveAboutCommitHash(): string | null {
     return aboutCommitHashCache;
   }
 
-  const envCommitHash = normalizeCommitHash(process.env.FORMA_COMMIT_HASH);
+  const envCommitHash = normalizeCommitHash(process.env.T3CODE_COMMIT_HASH);
   if (envCommitHash) {
     aboutCommitHashCache = envCommitHash;
     return aboutCommitHashCache;
@@ -935,13 +935,13 @@ function dispatchMenuAction(action: DesktopMenuAction): void {
 
 function handleCheckForUpdatesMenuClick(): void {
   const hasUpdateFeedConfig =
-    readAppUpdateYml() !== null || Boolean(process.env.FORMA_DESKTOP_MOCK_UPDATES);
+    readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
   const disabledReason = getAutoUpdateDisabledReason({
     isDevelopment,
     isPackaged: app.isPackaged,
     platform: process.platform,
     appImage: process.env.APPIMAGE,
-    disabledByEnv: process.env.FORMA_DISABLE_AUTO_UPDATE === "1",
+    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
     hasUpdateFeedConfig,
   });
   if (disabledReason) {
@@ -1273,14 +1273,14 @@ function applyAutoUpdaterChannel(channel: DesktopUpdateChannel): void {
 
 function shouldEnableAutoUpdates(): boolean {
   const hasUpdateFeedConfig =
-    readAppUpdateYml() !== null || Boolean(process.env.FORMA_DESKTOP_MOCK_UPDATES);
+    readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
   return (
     getAutoUpdateDisabledReason({
       isDevelopment,
       isPackaged: app.isPackaged,
       platform: process.platform,
       appImage: process.env.APPIMAGE,
-      disabledByEnv: process.env.FORMA_DISABLE_AUTO_UPDATE === "1",
+      disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
       hasUpdateFeedConfig,
     }) === null
   );
@@ -1366,7 +1366,7 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 
 function configureAutoUpdater(): void {
   const githubToken =
-    process.env.FORMA_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
+    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
   if (githubToken) {
     // When a token is provided, re-configure the feed with `private: true` so
     // electron-updater uses the GitHub API (api.github.com) instead of the
@@ -1382,10 +1382,10 @@ function configureAutoUpdater(): void {
     }
   }
 
-  if (process.env.FORMA_DESKTOP_MOCK_UPDATES) {
+  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
     autoUpdater.setFeedURL({
       provider: "generic",
-      url: `http://localhost:${process.env.FORMA_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
+      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
     });
   }
 
@@ -1532,7 +1532,7 @@ function startBackend(): void {
         mode: "desktop",
         noBrowser: true,
         port: backendPort,
-        formaHome: BASE_DIR,
+        t3Home: BASE_DIR,
         host: backendBindHost,
         desktopBootstrapToken: backendBootstrapToken,
         ...(backendObservabilitySettings.otlpTracesUrl
@@ -2206,9 +2206,9 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
-  const configuredBackendPort = resolveConfiguredDesktopBackendPort(process.env.FORMA_PORT);
+  const configuredBackendPort = resolveConfiguredDesktopBackendPort(process.env.T3CODE_PORT);
   if (isDevelopment && configuredBackendPort === undefined) {
-    throw new Error("FORMA_PORT is required in desktop development.");
+    throw new Error("T3CODE_PORT is required in desktop development.");
   }
 
   backendPort =

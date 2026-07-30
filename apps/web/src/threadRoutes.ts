@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@forma/client-runtime";
-import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@forma/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =

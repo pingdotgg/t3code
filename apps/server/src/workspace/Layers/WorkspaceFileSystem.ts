@@ -13,7 +13,7 @@ import {
   ProjectReadFileError,
   ProjectRenameEntryError,
   ProjectWriteFileError,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 import {
   WorkspaceFileSystem,

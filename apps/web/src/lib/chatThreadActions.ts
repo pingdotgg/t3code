@@ -1,6 +1,6 @@
-import { scopeProjectRef } from "@forma/client-runtime";
-import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@forma/contracts";
-import type { SidebarThreadSortOrder } from "@forma/contracts/settings";
+import { scopeProjectRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
+import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { getLatestThreadForProject, type ThreadSortInput } from "./threadSort";
 import type { Project, SidebarThreadSummary } from "../types";

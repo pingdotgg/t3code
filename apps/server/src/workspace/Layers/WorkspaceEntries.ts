@@ -4,15 +4,15 @@ import type { Dirent } from "node:fs";
 
 import { Cache, Duration, Effect, Exit, Layer, Option, Path } from "effect";
 
-import { type FilesystemBrowseInput, type ProjectEntry } from "@forma/contracts";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@forma/shared/path";
+import { type FilesystemBrowseInput, type ProjectEntry } from "@t3tools/contracts";
+import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
   type RankedSearchResult,
-} from "@forma/shared/searchRanking";
-import { getProtectedDirectoryNames, isProtectedPath } from "@forma/shared/protectedPaths";
+} from "@t3tools/shared/searchRanking";
+import { getProtectedDirectoryNames, isProtectedPath } from "@t3tools/shared/protectedPaths";
 
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";

@@ -11,7 +11,7 @@ import type {
   ServerProviderModel,
   ServerProviderState,
   ServerSettingsError,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { Cause, Effect, Equal, Exit, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -19,7 +19,7 @@ import {
   createModelCapabilities,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
-} from "@forma/shared/model";
+} from "@t3tools/shared/model";
 
 import {
   buildBooleanOptionDescriptor,

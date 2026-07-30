@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@forma/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import { QueryClient } from "@tanstack/react-query";
 import {
   EnvironmentId,
@@ -6,7 +6,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationShellSnapshot,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let serviceModule: Awaited<typeof import("./service")>;

@@ -15,7 +15,7 @@ import {
   OrchestrationCheckpointStatus,
   ThreadId,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Option, Context, Schema } from "effect";
 import type { Effect } from "effect";
 
@@ -90,4 +90,4 @@ export interface ProjectionCheckpointRepositoryShape {
 export class ProjectionCheckpointRepository extends Context.Service<
   ProjectionCheckpointRepository,
   ProjectionCheckpointRepositoryShape
->()("forma/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}
+>()("t3/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}

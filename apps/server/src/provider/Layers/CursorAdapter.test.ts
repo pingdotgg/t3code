@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
-import { createModelSelection } from "@forma/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
 
-import { ApprovalRequestId, type ProviderRuntimeEvent, ThreadId } from "@forma/contracts";
+import { ApprovalRequestId, type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";

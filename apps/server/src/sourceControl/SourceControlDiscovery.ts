@@ -2,7 +2,7 @@ import {
   SourceControlRepositoryError,
   type SourceControlDiscoveryResult,
   type VcsDiscoveryItem,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 
 import { ServerConfig } from "../config.ts";
@@ -55,7 +55,7 @@ export interface SourceControlDiscoveryShape {
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   SourceControlDiscoveryShape
->()("forma/source-control/SourceControlDiscovery") {}
+>()("t3/source-control/SourceControlDiscovery") {}
 
 export const SourceControlDiscoveryLive = Layer.effect(
   SourceControlDiscovery,

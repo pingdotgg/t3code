@@ -40,20 +40,20 @@ import {
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
   type ThreadEnvMode,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   parseScopedThreadKey,
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@forma/client-runtime";
+} from "@t3tools/client-runtime";
 import { Link, useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
   type ThreadCleanupInactiveDays,
-} from "@forma/contracts/settings";
+} from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";

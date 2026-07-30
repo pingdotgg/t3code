@@ -2,7 +2,7 @@ import {
   type OrchestrationGetSnapshotError,
   type OrchestrationThread,
   type ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Duration, Effect, Option } from "effect";
 
 export function waitForThreadDetailSnapshot(input: {

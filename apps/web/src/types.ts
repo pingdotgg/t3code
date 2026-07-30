@@ -19,7 +19,7 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";

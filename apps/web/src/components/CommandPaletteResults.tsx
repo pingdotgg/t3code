@@ -1,4 +1,4 @@
-import { type ResolvedKeybindingsConfig } from "@forma/contracts";
+import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { IconChevronRight as ChevronRightIcon } from "symbols-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {

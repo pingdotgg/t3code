@@ -1,5 +1,5 @@
-import { scopedProjectKey, scopeProjectRef } from "@forma/client-runtime";
-import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@forma/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
+import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import type { Project } from "./types";
 

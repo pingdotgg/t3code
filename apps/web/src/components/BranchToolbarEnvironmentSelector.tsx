@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@forma/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { IconCloud as CloudIcon, IconDesktopcomputer as MonitorIcon } from "symbols-react";
 import { memo, useMemo } from "react";
 

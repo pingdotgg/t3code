@@ -6,7 +6,7 @@ import {
   type SourceControlPublishRepositoryInput,
   type SourceControlRepositoryLookupInput,
   type ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   infiniteQueryOptions,
   mutationOptions,

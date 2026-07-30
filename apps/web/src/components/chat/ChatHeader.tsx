@@ -4,7 +4,7 @@ import {
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type { RefObject } from "react";
 import { memo } from "react";
 import { type DraftId } from "~/composerDraftStore";

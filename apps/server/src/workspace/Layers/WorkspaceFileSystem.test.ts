@@ -12,7 +12,7 @@ import { WorkspaceFileSystem } from "../Services/WorkspaceFileSystem.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
-import { PROJECT_TEXT_FILE_MAX_BYTES } from "@forma/contracts";
+import { PROJECT_TEXT_FILE_MAX_BYTES } from "@t3tools/contracts";
 
 const ProjectLayer = WorkspaceFileSystemLive.pipe(
   Layer.provide(WorkspacePathsLive),

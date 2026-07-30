@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
-import { EnvironmentId } from "@forma/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import { invalidateProjectEntryQueries, projectQueryKeys } from "./projectReactQuery";
 

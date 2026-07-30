@@ -4,11 +4,11 @@ import type {
   ServerProvider,
   ServerProviderModel,
   ServerSettingsError,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { Cause, Effect, Equal, Exit, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@forma/shared/model";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";

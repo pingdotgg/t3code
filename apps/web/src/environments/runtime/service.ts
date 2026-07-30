@@ -8,7 +8,7 @@ import {
   type ServerConfig,
   type TerminalEvent,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 import {
@@ -17,7 +17,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@forma/client-runtime";
+} from "@t3tools/client-runtime";
 
 import {
   markPromotedDraftThreadByRef,

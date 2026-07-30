@@ -7,7 +7,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context, Schema } from "effect";
 import type { Effect, Option } from "effect";
 
@@ -73,4 +73,4 @@ export interface ProjectionThreadTurnQueueRepositoryShape {
 export class ProjectionThreadTurnQueueRepository extends Context.Service<
   ProjectionThreadTurnQueueRepository,
   ProjectionThreadTurnQueueRepositoryShape
->()("forma/persistence/Services/ProjectionThreadTurnQueue/ProjectionThreadTurnQueueRepository") {}
+>()("t3/persistence/Services/ProjectionThreadTurnQueue/ProjectionThreadTurnQueueRepository") {}

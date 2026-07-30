@@ -1,12 +1,12 @@
 import Mime from "@effect/platform-node/Mime";
-import { makeDrainableWorker } from "@forma/shared/DrainableWorker";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import {
   CommandId,
   EventId,
   type ChatAttachment,
   type OrchestrationEvent,
   ThreadId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { basename } from "node:path";
 import { statSync } from "node:fs";
 import { Cause, Effect, Layer, Stream } from "effect";

@@ -3,7 +3,7 @@ import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   setupProjectScript,
-} from "@forma/shared/projectScripts";
+} from "@t3tools/shared/projectScripts";
 
 import {
   commandForProjectScript,
@@ -55,8 +55,8 @@ describe("projectScripts helpers", () => {
     });
 
     expect(env).toMatchObject({
-      FORMA_PROJECT_ROOT: "/repo",
-      FORMA_WORKTREE_PATH: "/repo/worktree-a",
+      T3CODE_PROJECT_ROOT: "/repo",
+      T3CODE_WORKTREE_PATH: "/repo/worktree-a",
     });
   });
 
@@ -64,14 +64,14 @@ describe("projectScripts helpers", () => {
     const env = projectScriptRuntimeEnv({
       project: { cwd: "/repo" },
       extraEnv: {
-        FORMA_PROJECT_ROOT: "/custom-root",
+        T3CODE_PROJECT_ROOT: "/custom-root",
         CUSTOM_FLAG: "1",
       },
     });
 
-    expect(env.FORMA_PROJECT_ROOT).toBe("/custom-root");
+    expect(env.T3CODE_PROJECT_ROOT).toBe("/custom-root");
     expect(env.CUSTOM_FLAG).toBe("1");
-    expect(env.FORMA_WORKTREE_PATH).toBeUndefined();
+    expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
   });
 
   it("prefers the worktree path for script cwd resolution", () => {

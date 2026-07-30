@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Duration, Effect, Layer } from "effect";
 import { TestClock } from "effect/testing";
-import { NetService } from "@forma/shared/Net";
+import { NetService } from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";

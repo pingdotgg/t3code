@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@forma/contracts";
+import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
 import { Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

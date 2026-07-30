@@ -20,7 +20,7 @@ import {
   type PreviewSubscribeProjectInput,
   PreviewRpcError,
   type ProjectId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context, type Effect, type Stream } from "effect";
 
 export interface PreviewRuntimeTarget {
@@ -67,5 +67,5 @@ export interface PreviewManagerShape {
 }
 
 export class PreviewManager extends Context.Service<PreviewManager, PreviewManagerShape>()(
-  "forma/preview/Services/PreviewManager",
+  "t3/preview/Services/PreviewManager",
 ) {}

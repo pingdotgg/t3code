@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@forma/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   CheckpointRef,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -9,7 +9,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

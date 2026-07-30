@@ -1,4 +1,4 @@
-import type { GitKeybindingCommand, KeybindingCommand } from "@forma/contracts";
+import type { GitKeybindingCommand, KeybindingCommand } from "@t3tools/contracts";
 
 export const GIT_ACTION_KEYBINDING_COMMANDS = [
   "git.init",

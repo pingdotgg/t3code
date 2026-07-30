@@ -291,7 +291,7 @@ export interface ServerAuthShape {
 }
 
 export class ServerAuth extends ServiceMap.Service<ServerAuth, ServerAuthShape>()(
-  "forma/ServerAuth",
+  "t3/ServerAuth",
 ) {}
 ```
 

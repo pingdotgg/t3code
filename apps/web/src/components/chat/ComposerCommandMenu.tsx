@@ -5,7 +5,7 @@ import {
   type ServerLocalAgentSkill,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { IconMessage as BotIcon } from "symbols-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 

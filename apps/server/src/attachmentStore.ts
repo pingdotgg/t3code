@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 
-import type { ChatAttachment } from "@forma/contracts";
+import type { ChatAttachment } from "@t3tools/contracts";
 
 import {
   normalizeAttachmentRelativePath,

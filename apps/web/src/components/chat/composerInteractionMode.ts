@@ -1,4 +1,4 @@
-import type { ProviderInteractionMode } from "@forma/contracts";
+import type { ProviderInteractionMode } from "@t3tools/contracts";
 import { createElement, type ComponentType } from "react";
 import {
   IconCursorarrowClick2 as AgentIcon,

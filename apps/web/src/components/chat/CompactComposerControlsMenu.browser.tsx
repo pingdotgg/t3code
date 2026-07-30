@@ -3,14 +3,14 @@ import {
   EnvironmentId,
   ModelSelection,
   ThreadId,
-} from "@forma/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
+} from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import "../../index.css";
 
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { createModelCapabilities, createModelSelection } from "@forma/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { TraitsMenuContent } from "./TraitsPicker";

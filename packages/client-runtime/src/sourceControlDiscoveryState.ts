@@ -1,4 +1,4 @@
-import type { SourceControlDiscoveryResult } from "@forma/contracts";
+import type { SourceControlDiscoveryResult } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 export interface SourceControlDiscoveryState {

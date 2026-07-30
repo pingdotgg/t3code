@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@forma/contracts";
+import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -210,7 +210,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("forma/apps/web/src/session-logic.ts");
+    expect(markup).toContain("t3/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/forma/apps/web/src/session-logic.ts");
   });
 

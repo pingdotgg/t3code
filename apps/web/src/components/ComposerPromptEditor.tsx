@@ -5,7 +5,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
-import { type ServerLocalAgentSkill, type ServerProviderSkill } from "@forma/contracts";
+import { type ServerLocalAgentSkill, type ServerProviderSkill } from "@t3tools/contracts";
 import {
   $applyNodeReplacement,
   $createRangeSelection,

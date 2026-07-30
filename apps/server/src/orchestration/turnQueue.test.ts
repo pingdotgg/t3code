@@ -4,7 +4,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { canPromoteQueuedTurnAfterLifecycleBarrier } from "./turnQueue.ts";

@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import type { EnvironmentId, RuntimeMode, ThreadId } from "@forma/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, RuntimeMode, ThreadId } from "@t3tools/contracts";
 import { memo, useMemo } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";

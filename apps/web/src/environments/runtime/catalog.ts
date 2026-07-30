@@ -1,11 +1,11 @@
-import { getKnownEnvironmentHttpBaseUrl } from "@forma/client-runtime";
+import { getKnownEnvironmentHttpBaseUrl } from "@t3tools/client-runtime";
 import type {
   AuthSessionRole,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   PersistedSavedEnvironmentRecord,
   ServerConfig,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { ensureLocalApi } from "../../localApi";

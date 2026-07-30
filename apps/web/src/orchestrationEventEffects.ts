@@ -1,4 +1,4 @@
-import type { OrchestrationEvent, ThreadId } from "@forma/contracts";
+import type { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
 
 export interface OrchestrationBatchEffects {
   promoteDraftThreadIds: ThreadId[];

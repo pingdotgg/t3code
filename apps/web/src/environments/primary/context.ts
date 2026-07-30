@@ -2,15 +2,15 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@forma/client-runtime";
-import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@forma/contracts";
+} from "@t3tools/client-runtime";
+import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { BootstrapHttpError, retryTransientBootstrap } from "./auth";
 
 import { readPrimaryEnvironmentTarget, resolvePrimaryEnvironmentHttpUrl } from "./target";
 
-const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/forma/environment";
+const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/t3/environment";
 
 interface PrimaryEnvironmentBootstrapState {
   readonly descriptor: ExecutionEnvironmentDescriptor | null;

@@ -1,4 +1,4 @@
-import type { SourceControlProviderKind } from "@forma/contracts";
+import type { SourceControlProviderKind } from "@t3tools/contracts";
 
 export interface SourceControlProviderPresentation {
   readonly label: string;

@@ -1,5 +1,5 @@
-import { scopedThreadKey } from "@forma/client-runtime";
-import type { ScopedThreadRef, ThreadId } from "@forma/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime";
+import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useCallback } from "react";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useUiStateStore } from "../uiStateStore";

@@ -26,5 +26,5 @@ export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterE
  * CodexAdapter - Service tag for Codex provider adapter operations.
  */
 export class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
-  "forma/provider/Services/CodexAdapter",
+  "t3/provider/Services/CodexAdapter",
 ) {}

@@ -1,4 +1,4 @@
-import type { ProviderKind, ServerProvider } from "@forma/contracts";
+import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
 import type { Stream } from "effect";
 import type { ProviderAdapterError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";

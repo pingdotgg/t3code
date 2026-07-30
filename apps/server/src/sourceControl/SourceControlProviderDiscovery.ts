@@ -2,7 +2,7 @@ import type {
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Effect, Option, Schema } from "effect";
 
 import { runProcess, type ProcessRunResult } from "../processRunner.ts";

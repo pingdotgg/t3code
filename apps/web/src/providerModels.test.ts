@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderKind, ServerProvider } from "@forma/contracts";
+import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
 import { getDefaultServerModel, resolveSelectableProvider } from "./providerModels";
 
 function provider(input: {

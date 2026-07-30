@@ -3,7 +3,7 @@ import os from "node:os";
 import { assert, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { NetService } from "@forma/shared/Net";
+import { NetService } from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "./config.ts";
 import { resolveServerConfig } from "./cli.ts";
@@ -18,7 +18,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
     otlpExportIntervalMs: 10_000,
-    otlpServiceName: "forma-server",
+    otlpServiceName: "t3-server",
   } as const;
 
   const openBootstrapFd = Effect.fn(function* (payload: Record<string, unknown>) {
@@ -57,15 +57,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  FORMA_LOG_LEVEL: "Warn",
-                  FORMA_MODE: "desktop",
-                  FORMA_PORT: "4001",
-                  FORMA_HOST: "0.0.0.0",
-                  FORMA_HOME: baseDir,
+                  T3CODE_LOG_LEVEL: "Warn",
+                  T3CODE_MODE: "desktop",
+                  T3CODE_PORT: "4001",
+                  T3CODE_HOST: "0.0.0.0",
+                  T3CODE_HOME: baseDir,
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-                  FORMA_NO_BROWSER: "true",
-                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-                  FORMA_LOG_WS_EVENTS: "true",
+                  T3CODE_NO_BROWSER: "true",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+                  T3CODE_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -119,15 +119,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  FORMA_LOG_LEVEL: "Warn",
-                  FORMA_MODE: "desktop",
-                  FORMA_PORT: "4001",
-                  FORMA_HOST: "0.0.0.0",
-                  FORMA_HOME: join(os.tmpdir(), "ignored-base"),
+                  T3CODE_LOG_LEVEL: "Warn",
+                  T3CODE_MODE: "desktop",
+                  T3CODE_PORT: "4001",
+                  T3CODE_HOST: "0.0.0.0",
+                  T3CODE_HOME: join(os.tmpdir(), "ignored-base"),
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-                  FORMA_NO_BROWSER: "false",
-                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-                  FORMA_LOG_WS_EVENTS: "false",
+                  T3CODE_NO_BROWSER: "false",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+                  T3CODE_LOG_WS_EVENTS: "false",
                 },
               }),
             ),
@@ -187,10 +187,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  FORMA_BOOTSTRAP_FD: String(fd),
-                  FORMA_NO_BROWSER: "true",
-                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
-                  FORMA_LOG_WS_EVENTS: "true",
+                  T3CODE_BOOTSTRAP_FD: String(fd),
+                  T3CODE_NO_BROWSER: "true",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  T3CODE_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -227,7 +227,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "desktop",
         port: 4888,
         host: "127.0.0.2",
-        formaHome: baseDir,
+        t3Home: baseDir,
         devUrl: "http://127.0.0.1:5173",
         noBrowser: true,
         autoBootstrapProjectFromCwd: false,
@@ -257,7 +257,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  FORMA_BOOTSTRAP_FD: String(fd),
+                  T3CODE_BOOTSTRAP_FD: String(fd),
                 },
               }),
             ),
@@ -344,7 +344,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "desktop",
         port: 4888,
         host: "127.0.0.2",
-        formaHome: "/tmp/forma-bootstrap-home",
+        t3Home: "/tmp/forma-bootstrap-home",
         devUrl: "http://127.0.0.1:5173",
         noBrowser: false,
         autoBootstrapProjectFromCwd: false,
@@ -372,12 +372,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  FORMA_MODE: "web",
-                  FORMA_BOOTSTRAP_FD: String(fd),
-                  FORMA_HOME: baseDir,
-                  FORMA_NO_BROWSER: "true",
-                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
-                  FORMA_LOG_WS_EVENTS: "true",
+                  T3CODE_MODE: "web",
+                  T3CODE_BOOTSTRAP_FD: String(fd),
+                  T3CODE_HOME: baseDir,
+                  T3CODE_NO_BROWSER: "true",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  T3CODE_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -499,8 +499,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  FORMA_NO_BROWSER: "false",
-                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  T3CODE_NO_BROWSER: "false",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                 },
               }),
             ),

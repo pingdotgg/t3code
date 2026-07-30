@@ -4,7 +4,7 @@ import type {
   SourceControlProviderKind,
   SourceControlRepositoryCloneUrls,
   SourceControlRepositoryVisibility,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 
 export interface SourceControlProviderShape {
   readonly kind: SourceControlProviderKind;
@@ -22,4 +22,4 @@ export interface SourceControlProviderShape {
 export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   SourceControlProviderShape
->()("forma/source-control/SourceControlProvider") {}
+>()("t3/source-control/SourceControlProvider") {}

@@ -19,7 +19,7 @@ import {
   type SDKUserMessage,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { parseCliArgs } from "@forma/shared/cliArgs";
+import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -40,14 +40,14 @@ import {
   ThreadId,
   TurnId,
   type UserInputQuestion,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
-} from "@forma/shared/model";
+} from "@t3tools/shared/model";
 import {
   Cause,
   DateTime,

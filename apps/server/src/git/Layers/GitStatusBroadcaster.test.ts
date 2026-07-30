@@ -5,7 +5,7 @@ import type {
   GitStatusRemoteResult,
   GitStatusResult,
   GitStatusStreamEvent,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { describe } from "vitest";
 
 import { GitStatusBroadcaster } from "../Services/GitStatusBroadcaster.ts";

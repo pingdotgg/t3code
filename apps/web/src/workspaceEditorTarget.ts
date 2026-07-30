@@ -1,4 +1,4 @@
-import { isWindowsAbsolutePath } from "@forma/shared/path";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget, splitPathAndPosition } from "./terminal-links";
 
 export interface WorkspaceEditorTarget {

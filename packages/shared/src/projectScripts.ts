@@ -1,4 +1,4 @@
-import type { ProjectScript } from "@forma/contracts";
+import type { ProjectScript } from "@t3tools/contracts";
 
 interface ProjectScriptRuntimeEnvInput {
   project: {
@@ -21,10 +21,10 @@ export function projectScriptRuntimeEnv(
   input: ProjectScriptRuntimeEnvInput,
 ): Record<string, string> {
   const env: Record<string, string> = {
-    FORMA_PROJECT_ROOT: input.project.cwd,
+    T3CODE_PROJECT_ROOT: input.project.cwd,
   };
   if (input.worktreePath) {
-    env.FORMA_WORKTREE_PATH = input.worktreePath;
+    env.T3CODE_WORKTREE_PATH = input.worktreePath;
   }
   if (input.extraEnv) {
     return { ...env, ...input.extraEnv };

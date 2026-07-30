@@ -1,9 +1,9 @@
-import { type GrokSettings } from "@forma/contracts";
+import { type GrokSettings } from "@t3tools/contracts";
 import { Effect, Layer, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { normalizeModelSlug } from "@forma/shared/model";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import {
   AcpSessionRuntime,
@@ -15,7 +15,7 @@ import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
-const FORMA_OAUTH_REFERRER = "forma";
+const T3CODE_OAUTH_REFERRER = "forma";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 
@@ -41,7 +41,7 @@ export function buildGrokAcpSpawnInput(
     cwd,
     env: {
       ...environment,
-      [GROK_OAUTH2_REFERRER_ENV]: FORMA_OAUTH_REFERRER,
+      [GROK_OAUTH2_REFERRER_ENV]: T3CODE_OAUTH_REFERRER,
     },
   };
 }

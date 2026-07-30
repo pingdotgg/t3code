@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@forma/client-runtime";
+import { scopeProjectRef } from "@t3tools/client-runtime";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ChatView from "../components/ChatView";

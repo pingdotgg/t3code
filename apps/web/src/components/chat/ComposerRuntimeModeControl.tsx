@@ -1,4 +1,4 @@
-import type { RuntimeMode } from "@forma/contracts";
+import type { RuntimeMode } from "@t3tools/contracts";
 import {
   IconLock as LockIcon,
   IconLockOpen as LockOpenIcon,

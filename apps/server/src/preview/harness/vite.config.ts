@@ -22,26 +22,26 @@ function parseJsonEnv<T>(name: string, fallback: T): T {
   return JSON.parse(raw) as T;
 }
 
-const runtimeRoot = requireEnv("FORMA_PREVIEW_RUNTIME_ROOT");
-const projectRoot = requireEnv("FORMA_PREVIEW_PROJECT_ROOT");
-const workspaceRoot = process.env.FORMA_PREVIEW_WORKSPACE_ROOT?.trim() || projectRoot;
-const host = process.env.FORMA_PREVIEW_HOST?.trim() || "127.0.0.1";
-const port = Number(process.env.FORMA_PREVIEW_PORT ?? "0");
-const framework = process.env.FORMA_PREVIEW_FRAMEWORK?.trim() || "unsupported";
-const moduleMocks = parseJsonEnv<Record<string, string>>("FORMA_PREVIEW_MODULE_MOCKS", {});
+const runtimeRoot = requireEnv("T3CODE_PREVIEW_RUNTIME_ROOT");
+const projectRoot = requireEnv("T3CODE_PREVIEW_PROJECT_ROOT");
+const workspaceRoot = process.env.T3CODE_PREVIEW_WORKSPACE_ROOT?.trim() || projectRoot;
+const host = process.env.T3CODE_PREVIEW_HOST?.trim() || "127.0.0.1";
+const port = Number(process.env.T3CODE_PREVIEW_PORT ?? "0");
+const framework = process.env.T3CODE_PREVIEW_FRAMEWORK?.trim() || "unsupported";
+const moduleMocks = parseJsonEnv<Record<string, string>>("T3CODE_PREVIEW_MODULE_MOCKS", {});
 const cacheDir =
-  process.env.FORMA_PREVIEW_CACHE_DIR?.trim() || path.join(runtimeRoot, "node_modules", ".vite");
-const optimizeDepsEntries = parseJsonEnv<string[]>("FORMA_PREVIEW_OPTIMIZE_DEPS_ENTRIES", [
+  process.env.T3CODE_PREVIEW_CACHE_DIR?.trim() || path.join(runtimeRoot, "node_modules", ".vite");
+const optimizeDepsEntries = parseJsonEnv<string[]>("T3CODE_PREVIEW_OPTIMIZE_DEPS_ENTRIES", [
   "src/main.tsx",
 ]);
-const warmupFiles = parseJsonEnv<string[]>("FORMA_PREVIEW_WARMUP_FILES", []);
+const warmupFiles = parseJsonEnv<string[]>("T3CODE_PREVIEW_WARMUP_FILES", []);
 const extraAliases = parseJsonEnv<Array<{ find: string; replacement: string }>>(
-  "FORMA_PREVIEW_ALIASES",
+  "T3CODE_PREVIEW_ALIASES",
   [],
 );
 
 const harnessDir = path.dirname(fileURLToPath(import.meta.url));
-const reactAliases = parseJsonEnv<Record<string, string>>("FORMA_PREVIEW_REACT_ALIASES", {});
+const reactAliases = parseJsonEnv<Record<string, string>>("T3CODE_PREVIEW_REACT_ALIASES", {});
 const workspacePublicDir = path.join(workspaceRoot, "public");
 const workspaceRequire = createRequire(path.join(workspaceRoot, "package.json"));
 const projectRequire = createRequire(path.join(projectRoot, "package.json"));
@@ -85,7 +85,7 @@ function workspaceBareImportResolver(): Plugin {
 function tailwindSourceInjector(): Plugin {
   const sourceRoots = [
     workspaceRoot,
-    path.join(projectRoot, ".forma", "preview"),
+    path.join(projectRoot, ".t3", "preview"),
     path.join(projectRoot, "packages"),
   ].filter(
     (sourceRoot, index, roots) => existsSync(sourceRoot) && roots.indexOf(sourceRoot) === index,

@@ -1,4 +1,4 @@
-import { type EnvironmentId, type ScopedThreadRef } from "@forma/contracts";
+import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import type {
   GitKeybindingCommand,
   GitActionProgressEvent,
@@ -6,7 +6,7 @@ import type {
   GitStackedAction,
   GitStatusResult,
   ResolvedKeybindingsConfig,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   forwardRef,

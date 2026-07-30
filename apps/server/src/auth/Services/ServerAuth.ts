@@ -11,7 +11,7 @@ import type {
   ServerAuthDescriptor,
   ServerAuthSessionMethod,
   AuthWebSocketTokenResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Data, DateTime, Context } from "effect";
 import type { Effect } from "effect";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -80,5 +80,5 @@ export interface ServerAuthShape {
 }
 
 export class ServerAuth extends Context.Service<ServerAuth, ServerAuthShape>()(
-  "forma/auth/Services/ServerAuth",
+  "t3/auth/Services/ServerAuth",
 ) {}

@@ -8,7 +8,7 @@ import {
   RuntimeRequestId,
   type ThreadId,
   TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import {
   Deferred,
   Effect,
@@ -591,7 +591,7 @@ export function makeGrokAdapter(options?: GrokAdapterLiveOptions) {
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
-            clientInfo: { name: "forma", version: "0.0.0" },
+            clientInfo: { name: "t3", version: "0.0.0" },
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),

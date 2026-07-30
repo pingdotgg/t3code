@@ -1,4 +1,4 @@
-import type { ContextMenuItem, LocalApi } from "@forma/contracts";
+import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";

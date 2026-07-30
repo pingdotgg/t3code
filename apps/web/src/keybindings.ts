@@ -7,7 +7,7 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {

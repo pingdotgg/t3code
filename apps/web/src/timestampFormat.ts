@@ -1,4 +1,4 @@
-import { type TimestampFormat } from "@forma/contracts/settings";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
 
 export function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,

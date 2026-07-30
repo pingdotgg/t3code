@@ -3,7 +3,7 @@ import type {
   ProjectListEntriesResult,
   ProjectLocalAgentInventoryResult,
   ProjectSearchEntriesResult,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "~/environmentApi";
 

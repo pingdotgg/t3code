@@ -1,4 +1,4 @@
-import type { DesktopAppBranding } from "@forma/contracts";
+import type { DesktopAppBranding } from "@t3tools/contracts";
 
 function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
   if (typeof window === "undefined") {

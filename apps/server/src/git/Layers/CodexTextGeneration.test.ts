@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Result } from "effect";
-import { createModelSelection } from "@forma/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
-import { TextGenerationError } from "@forma/contracts";
+import { TextGenerationError } from "@t3tools/contracts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
@@ -137,9 +137,9 @@ function makeFakeCodexBinary(
           ? [`printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`]
           : []),
         'if [ -n "$output_path" ]; then',
-        "  cat > \"$output_path\" <<'__FORMA_FAKE_CODEX_OUTPUT__'",
+        "  cat > \"$output_path\" <<'__T3CODE_FAKE_CODEX_OUTPUT__'",
         input.output,
-        "__FORMA_FAKE_CODEX_OUTPUT__",
+        "__T3CODE_FAKE_CODEX_OUTPUT__",
         "fi",
         `exit ${input.exitCode ?? 0}`,
         "",

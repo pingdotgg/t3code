@@ -1,5 +1,5 @@
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
-import type { EnvironmentId, ProjectReadFileResult } from "@forma/contracts";
+import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
   IconExclamationmarkTriangle as AlertTriangleIcon,

@@ -6,10 +6,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { createModelSelection } from "@forma/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
-import { ServerSettingsError } from "@forma/contracts";
+import { ServerSettingsError } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";

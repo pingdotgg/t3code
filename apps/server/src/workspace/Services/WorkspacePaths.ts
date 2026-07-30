@@ -98,5 +98,5 @@ export interface WorkspacePathsShape {
  * WorkspacePaths - Service tag for workspace path normalization and resolution.
  */
 export class WorkspacePaths extends Context.Service<WorkspacePaths, WorkspacePathsShape>()(
-  "forma/workspace/Services/WorkspacePaths",
+  "t3/workspace/Services/WorkspacePaths",
 ) {}

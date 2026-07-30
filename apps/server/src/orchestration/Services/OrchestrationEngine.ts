@@ -14,7 +14,7 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -77,4 +77,4 @@ export interface OrchestrationEngineShape {
 export class OrchestrationEngineService extends Context.Service<
   OrchestrationEngineService,
   OrchestrationEngineShape
->()("forma/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}
+>()("t3/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}

@@ -1,4 +1,4 @@
-import { type OrchestrationThread, ProjectId, ThreadId } from "@forma/contracts";
+import { type OrchestrationThread, ProjectId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 

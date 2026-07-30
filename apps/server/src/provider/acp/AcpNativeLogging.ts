@@ -1,4 +1,4 @@
-import type { ProviderKind, ThreadId } from "@forma/contracts";
+import type { ProviderKind, ThreadId } from "@t3tools/contracts";
 import { Cause, Effect } from "effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 

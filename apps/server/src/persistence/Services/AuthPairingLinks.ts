@@ -73,4 +73,4 @@ export interface AuthPairingLinkRepositoryShape {
 export class AuthPairingLinkRepository extends Context.Service<
   AuthPairingLinkRepository,
   AuthPairingLinkRepositoryShape
->()("forma/persistence/Services/AuthPairingLinks/AuthPairingLinkRepository") {}
+>()("t3/persistence/Services/AuthPairingLinks/AuthPairingLinkRepository") {}

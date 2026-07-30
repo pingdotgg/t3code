@@ -1,4 +1,4 @@
-import type { SourceControlProviderInfo, SourceControlProviderKind } from "@forma/contracts";
+import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
   readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";

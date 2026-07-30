@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@forma/contracts";
+import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;

@@ -2,7 +2,7 @@ import {
   DEFAULT_APP_ICON_ID,
   type AppIconId,
   type ClientSettings,
-} from "@forma/contracts/settings";
+} from "@t3tools/contracts/settings";
 import { APP_DEFAULT_ICON_ID, APP_STAGE_LABEL } from "./branding";
 
 export interface AppIconOption {

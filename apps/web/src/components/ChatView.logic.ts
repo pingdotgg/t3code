@@ -6,7 +6,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
-} from "@forma/contracts";
+} from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
