@@ -442,8 +442,16 @@ export function createServerEnvironmentAtoms<R, E>(
     execute: (target, atomRegistry) => {
       const stateAtom = serverUpdateStateAtom(target.environmentId);
       const targetVersion = target.input.targetVersion;
-      let fromVersion = targetVersion;
+      let fromVersion =
+        atomRegistry.get(configValueAtom(target.environmentId))?.environment.serverVersion ??
+        targetVersion;
       let currentStage: ServerUpdateStage = "downloading";
+      atomRegistry.set(stateAtom, {
+        status: "running",
+        stage: currentStage,
+        fromVersion,
+        targetVersion,
+      });
 
       return Effect.gen(function* () {
         const environmentRegistry = yield* EnvironmentRegistry;
