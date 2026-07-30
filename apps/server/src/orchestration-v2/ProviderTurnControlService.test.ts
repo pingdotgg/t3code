@@ -215,6 +215,7 @@ it.effect(
         ProjectionStoreV2.of({
           apply: () => Effect.void,
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          getThreadShell: () => Effect.die("unused getThreadShell"),
           getThreadProjection: () => Ref.get(projection),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
         }),
