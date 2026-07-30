@@ -13,7 +13,8 @@
 - Spec: `docs/superpowers/specs/2026-07-30-github-enterprise-connector-design.md`. Read it before starting.
 - Effect-heavy server code: read `.repos/effect-smol/LLMS.md` before writing Effect code. Never import from `.repos/`.
 - Run only targeted checks: `vp test run <files>` for tests you touched, plus targeted lint/typecheck. **Never** run `vp check`, `vp run -r test`, or `vp run -r typecheck`.
-- Test style is `@effect/vitest`: `import { describe, expect, it } from "@effect/vitest"`, `it.effect` for Effect-returning tests, `Layer.mock(Service)({...})` for fakes. Match the surrounding file.
+- Test style varies by file and the file you are editing wins. `apps/server/src/sourceControl/*.test.ts` uses `@effect/vitest` (`it.effect` for Effect-returning tests, `Layer.mock(Service)({...})` for fakes). `packages/shared/src/sourceControl.test.ts`, `packages/client-runtime/src/operations/projects.test.ts`, and `apps/web/src/pullRequestReference.test.ts` use `vite-plus/test`. Check the first line of the file before writing; for a genuinely new file, copy its nearest sibling.
+- **Every test file this plan touches already exists.** Merge new cases into the existing `describe` blocks — never overwrite a file, never add a parallel duplicate block, never delete existing coverage.
 - `packages/contracts` holds Effect/Schema contracts plus small derived helpers — no heavy runtime logic. `packages/shared` has subpath exports and no barrel.
 - Inferred types over annotations. `any` is the enemy.
 - Branch is `feat/github-enterprise-connector`, already created and checked out. Commit after each task.
@@ -24,27 +25,33 @@
 ## File Structure
 
 **Contracts**
+
 - Modify `packages/contracts/src/sourceControl.ts` — new kind literal; `id`/`host` on the discovery item; optional `host` on three inputs.
 
 **Shared**
+
 - Modify `packages/shared/src/sourceControl.ts` — enterprise host classification, enterprise presentation.
 - Create `packages/shared/src/sourceControl.test.ts` — detection + presentation tests (no test file exists for this module today).
 
 **Server — discovery plumbing**
+
 - Modify `apps/server/src/sourceControl/SourceControlProviderDiscovery.ts` — `expandInstances` hook; probe returns an array.
 - Modify `apps/server/src/sourceControl/SourceControlProviderRegistry.ts` — optional discovery spec; flatten discovery; register `github-enterprise`.
 
 **Server — GitHub**
+
 - Modify `apps/server/src/sourceControl/GitHubSourceControlProvider.ts` — `refineUnknownRemote`, `expandInstances`, kind-parametrized provider factory.
 - Modify `apps/server/src/sourceControl/GitHubCli.ts` — optional `host` → `GH_HOST`; host-aware clone-url fallback.
 - Modify `apps/server/src/sourceControl/SourceControlRepositoryService.ts` — thread `host`; reject hostless `github-enterprise`.
 
 **Web**
+
 - Modify `apps/web/src/pullRequestReference.ts` — host-agnostic PR URL pattern.
 - Modify `apps/web/src/components/settings/SourceControlSettings.tsx` — key rows on `id`, render `host`, enterprise icon.
 - Modify `apps/web/src/components/GitActionsControl.tsx` — enterprise entries in the publish picker.
 
 **Client runtime + mobile**
+
 - Modify `packages/client-runtime/src/operations/projects.ts` — dynamic add-project sources keyed by discovery `id`.
 - Modify `apps/mobile/src/features/projects/AddProjectScreen.tsx` and `AddProjectRepositoryRoute.tsx` — accept enterprise sources.
 
@@ -59,9 +66,11 @@
 ### Task 1: Contract — new kind and discovery identity
 
 **Files:**
+
 - Modify: `packages/contracts/src/sourceControl.ts:5-11`, `:52-104`, `:140-145`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `SourceControlProviderKind` now includes `"github-enterprise"`. `SourceControlProviderDiscoveryItem` gains `id: string` and `host: Option.Option<string>`. `SourceControlRepositoryLookupInput`, `SourceControlCloneRepositoryInput`, and `SourceControlPublishRepositoryInput` each gain `host?: string`.
 
@@ -126,10 +135,12 @@ git commit -m "feat(contracts): add github-enterprise kind and discovery identit
 ### Task 2: Shared — enterprise host detection and presentation
 
 **Files:**
+
 - Modify: `packages/shared/src/sourceControl.ts:24-33`, `:77-93`, `:170-232`
-- Create: `packages/shared/src/sourceControl.test.ts`
+- Modify: `packages/shared/src/sourceControl.test.ts` (exists; uses `vite-plus/test`)
 
 **Interfaces:**
+
 - Consumes: `SourceControlProviderKind` from Task 1.
 - Produces: `detectSourceControlProviderFromRemoteUrl` returns `kind: "github-enterprise"` for `*.ghe.com` and `github.*` hosts. `resolveChangeRequestPresentation` handles the new kind, returning `icon: "github"`.
 
@@ -155,11 +166,13 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
   });
 
   it("classifies a ghe.com tenant as github-enterprise", () => {
-    expect(detectSourceControlProviderFromRemoteUrl("https://acme.ghe.com/owner/repo.git")).toEqual({
-      kind: "github-enterprise",
-      name: "acme.ghe.com",
-      baseUrl: "https://acme.ghe.com",
-    });
+    expect(detectSourceControlProviderFromRemoteUrl("https://acme.ghe.com/owner/repo.git")).toEqual(
+      {
+        kind: "github-enterprise",
+        name: "acme.ghe.com",
+        baseUrl: "https://acme.ghe.com",
+      },
+    );
   });
 
   // Previously classified as kind "github" / name "GitHub Self-Hosted".
@@ -173,11 +186,13 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
   });
 
   it("leaves an arbitrary GHES hostname unknown for CLI refinement", () => {
-    expect(detectSourceControlProviderFromRemoteUrl("https://git.corp.com/owner/repo.git")).toEqual({
-      kind: "unknown",
-      name: "git.corp.com",
-      baseUrl: "https://git.corp.com",
-    });
+    expect(detectSourceControlProviderFromRemoteUrl("https://git.corp.com/owner/repo.git")).toEqual(
+      {
+        kind: "unknown",
+        name: "git.corp.com",
+        baseUrl: "https://git.corp.com",
+      },
+    );
   });
 
   it("still classifies gitlab hosts as gitlab", () => {
@@ -250,21 +265,21 @@ function isGitHubEnterpriseHost(host: string): boolean {
 In `detectSourceControlProviderFromRemoteUrl`, replace the existing GitHub block with:
 
 ```ts
-  if (isGitHubHost(hostname)) {
-    return {
-      kind: "github",
-      name: "GitHub",
-      baseUrl: toBaseUrl(host),
-    };
-  }
+if (isGitHubHost(hostname)) {
+  return {
+    kind: "github",
+    name: "GitHub",
+    baseUrl: toBaseUrl(host),
+  };
+}
 
-  if (isGitHubEnterpriseHost(hostname)) {
-    return {
-      kind: "github-enterprise",
-      name: hostname,
-      baseUrl: toBaseUrl(host),
-    };
-  }
+if (isGitHubEnterpriseHost(hostname)) {
+  return {
+    kind: "github-enterprise",
+    name: hostname,
+    baseUrl: toBaseUrl(host),
+  };
+}
 ```
 
 Leave the GitLab, Azure DevOps, Bitbucket, and `unknown` branches exactly as they are.
@@ -286,11 +301,13 @@ git commit -m "feat(shared): detect and present GitHub Enterprise hosts"
 ### Task 3: Discovery plumbing — one spec, many rows
 
 **Files:**
+
 - Modify: `apps/server/src/sourceControl/SourceControlProviderDiscovery.ts:31-40`, `:203-268`
 - Modify: `apps/server/src/sourceControl/SourceControlProviderRegistry.ts:31-35`, `:196-284`
 - Test: `apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SourceControlProviderDiscoveryItem` from Task 1.
 - Produces: `SourceControlCliDiscoverySpec` gains optional `expandInstances`. `probeSourceControlProvider` returns `Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>` (was a single item). `SourceControlProviderRegistration.discovery` becomes optional. `SourceControlProviderRegistry.discover` stays `Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>`, now flattened.
 
@@ -409,66 +426,68 @@ Change `probeSourceControlProvider`'s return type to `Effect.Effect<ReadonlyArra
 The `api` branch wraps its single item in an array and sets identity fields:
 
 ```ts
-  if (input.spec.type === "api") {
-    return input.spec.probeAuth.pipe(
-      Effect.map((auth) => [
-        {
-          kind: input.spec.kind,
-          id: input.spec.kind,
-          host: Option.none<string>(),
-          label: input.spec.label,
-          status: "available" as const,
-          version: Option.none<string>(),
-          installHint: input.spec.installHint,
-          detail: Option.none<string>(),
-          auth,
-        } satisfies SourceControlProviderDiscoveryItem,
-      ]),
-    );
-  }
+if (input.spec.type === "api") {
+  return input.spec.probeAuth.pipe(
+    Effect.map((auth) => [
+      {
+        kind: input.spec.kind,
+        id: input.spec.kind,
+        host: Option.none<string>(),
+        label: input.spec.label,
+        status: "available" as const,
+        version: Option.none<string>(),
+        installHint: input.spec.installHint,
+        detail: Option.none<string>(),
+        auth,
+      } satisfies SourceControlProviderDiscoveryItem,
+    ]),
+  );
+}
 ```
 
 In the `cli` branch, the missing-executable path returns a one-element array with `id: spec.kind` and `host: Option.none()`. On the auth-probe success path, consult `expandInstances`:
 
 ```ts
-      return input.process
-        .run({ /* unchanged auth probe arguments */ })
-        .pipe(
-          Effect.map((result) => {
-            const instances = spec.expandInstances?.(result);
-            if (instances) {
-              return instances.map(
-                (instance) =>
-                  ({
-                    ...item,
-                    kind: instance.kind,
-                    id: instance.id,
-                    host: instance.host === null ? Option.none<string>() : Option.some(instance.host),
-                    label: instance.label,
-                    auth: instance.auth,
-                  }) satisfies SourceControlProviderDiscoveryItem,
-              );
-            }
-            return [
-              {
-                ...item,
-                id: spec.kind,
-                host: Option.none<string>(),
-                auth: spec.parseAuth(result),
-              } satisfies SourceControlProviderDiscoveryItem,
-            ];
-          }),
-          Effect.catch((cause) =>
-            Effect.succeed([
-              {
-                ...item,
-                id: spec.kind,
-                host: Option.none<string>(),
-                auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
-              } satisfies SourceControlProviderDiscoveryItem,
-            ]),
-          ),
+return input.process
+  .run({
+    /* unchanged auth probe arguments */
+  })
+  .pipe(
+    Effect.map((result) => {
+      const instances = spec.expandInstances?.(result);
+      if (instances) {
+        return instances.map(
+          (instance) =>
+            ({
+              ...item,
+              kind: instance.kind,
+              id: instance.id,
+              host: instance.host === null ? Option.none<string>() : Option.some(instance.host),
+              label: instance.label,
+              auth: instance.auth,
+            }) satisfies SourceControlProviderDiscoveryItem,
         );
+      }
+      return [
+        {
+          ...item,
+          id: spec.kind,
+          host: Option.none<string>(),
+          auth: spec.parseAuth(result),
+        } satisfies SourceControlProviderDiscoveryItem,
+      ];
+    }),
+    Effect.catch((cause) =>
+      Effect.succeed([
+        {
+          ...item,
+          id: spec.kind,
+          host: Option.none<string>(),
+          auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
+        } satisfies SourceControlProviderDiscoveryItem,
+      ]),
+    ),
+  );
 ```
 
 `DiscoveryProbeResult` (the internal `probeCli` result) is unchanged — identity fields are attached here, not there.
@@ -488,9 +507,9 @@ export interface SourceControlProviderRegistration {
 Filter out registrations without a spec:
 
 ```ts
-    const discoverySpecs = registrations.flatMap((registration) =>
-      registration.discovery ? [registration.discovery] : [],
-    );
+const discoverySpecs = registrations.flatMap((registration) =>
+  registration.discovery ? [registration.discovery] : [],
+);
 ```
 
 Flatten the discovery result:
@@ -525,10 +544,12 @@ git commit -m "feat(server): let a discovery spec expand into multiple provider 
 ### Task 4: GitHub spec — enterprise expansion and unknown-remote refinement
 
 **Files:**
+
 - Modify: `apps/server/src/sourceControl/GitHubSourceControlProvider.ts:85-95`
 - Test: `apps/server/src/sourceControl/GitHubSourceControlProvider.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SourceControlDiscoveryInstance` and the `expandInstances` hook from Task 3; `parseGitHubAuthStatus` / `findAuthenticatedGitHubAccount` from `./gitHubAuthStatus.ts` (unchanged).
 - Produces: `discovery` gains `expandInstances: expandGitHubInstances` and `refineUnknownRemote: refineUnknownGitHubRemote`. Both are module-local functions, exported for test access.
 
@@ -558,7 +579,9 @@ const probe = (stdout: string) => ({
 describe("expandGitHubInstances", () => {
   it("emits only a github row when no enterprise host is logged in", () => {
     const instances = GitHubSourceControlProvider.expandGitHubInstances(
-      probe(authStatusJson({ "github.com": [{ login: "octocat", state: "success", active: true }] })),
+      probe(
+        authStatusJson({ "github.com": [{ login: "octocat", state: "success", active: true }] }),
+      ),
     );
 
     expect(instances.map((instance) => instance.id)).toEqual(["github"]);
@@ -617,7 +640,9 @@ describe("refineUnknownGitHubRemote", () => {
     const refined = GitHubSourceControlProvider.refineUnknownGitHubRemote({
       cwd: "/repo",
       context,
-      auth: probe(authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] })),
+      auth: probe(
+        authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] }),
+      ),
     });
 
     expect(refined).toEqual({
@@ -677,7 +702,8 @@ function githubComAuth(status: ReturnType<typeof parseGitHubAuthStatus>) {
     status: "unauthenticated",
     host: "github.com",
     detail:
-      accounts[0]?.error ?? "Run `gh auth login` to authenticate GitHub CLI with an active account.",
+      accounts[0]?.error ??
+      "Run `gh auth login` to authenticate GitHub CLI with an active account.",
   });
 }
 
@@ -787,10 +813,12 @@ git commit -m "feat(server): expand gh auth hosts into enterprise connections"
 ### Task 5: GitHubCli — host targeting via `GH_HOST`
 
 **Files:**
+
 - Modify: `apps/server/src/sourceControl/GitHubCli.ts:199-248`, `:269-304`, `:306-453`
 - Test: `apps/server/src/sourceControl/GitHubCli.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces: `GitHubCli.execute`, `getRepositoryCloneUrls`, and `createRepository` accept an optional `host?: string`. When present, the spawned process env is `{ ...process.env, GH_HOST: host }`; when absent, no `env` key is passed at all. `deriveRepositoryCloneUrlsFromCreateOutput(stdout, repository, host)` takes the fallback host as its third parameter.
 
@@ -882,17 +910,17 @@ In the `GitHubCli` service declaration, add `readonly host?: string;` to the inp
 - [ ] **Step 4: Set `GH_HOST` in `execute`**
 
 ```ts
-  const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: input.args,
-        cwd: input.cwd,
-        ...(input.host ? { env: { ...globalThis.process.env, GH_HOST: input.host } } : {}),
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      })
-      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+const execute: GitHubCli["Service"]["execute"] = (input) =>
+  process
+    .run({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      args: input.args,
+      cwd: input.cwd,
+      ...(input.host ? { env: { ...globalThis.process.env, GH_HOST: input.host } } : {}),
+      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    })
+    .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 ```
 
 `globalThis.process` is required because `process` is shadowed by the `VcsProcess` service binding in this scope.
@@ -938,11 +966,13 @@ git commit -m "feat(server): target enterprise hosts with GH_HOST in GitHubCli"
 ### Task 6: Kind-parametrized GitHub provider and registration
 
 **Files:**
+
 - Modify: `apps/server/src/sourceControl/GitHubSourceControlProvider.ts:23-43`, `:97-301`
 - Modify: `apps/server/src/sourceControl/SourceControlProviderRegistry.ts:286-314`
 - Test: `apps/server/src/sourceControl/GitHubSourceControlProvider.test.ts`
 
 **Interfaces:**
+
 - Consumes: `host` on `GitHubCli` from Task 5; optional `discovery` on registrations from Task 3.
 - Produces: `makeProvider(kind: "github" | "github-enterprise")` returns the provider effect. `make` is kept as `makeProvider("github")` so existing importers (including `layer`) keep working. `SourceControlProvider.getRepositoryCloneUrls` and `createRepository` accept an optional `host?: string` in their input, forwarded to `GitHubCli`.
 
@@ -1088,10 +1118,12 @@ git commit -m "feat(server): register github-enterprise provider on the gh CLI"
 ### Task 7: Repository service — host threading and validation
 
 **Files:**
+
 - Modify: `apps/server/src/sourceControl/SourceControlRepositoryService.ts:97-127`, `:180-232`
 - Test: `apps/server/src/sourceControl/SourceControlRepositoryService.test.ts`
 
 **Interfaces:**
+
 - Consumes: `host` on the three contract inputs (Task 1); `host` on provider operations (Task 6).
 - Produces: `lookupRepository`, `cloneRepository`, and `publishRepository` forward `input.host`. `ensureConcreteProvider` gains a `host` parameter and fails when `provider === "github-enterprise"` and no host is present.
 
@@ -1108,9 +1140,7 @@ describe("github-enterprise host requirement", () => {
         .lookupRepository({ provider: "github-enterprise", repository: "owner/repo" })
         .pipe(Effect.flip);
 
-      expect(error.detail).toBe(
-        "Choose a GitHub Enterprise host before continuing.",
-      );
+      expect(error.detail).toBe("Choose a GitHub Enterprise host before continuing.");
     }),
   );
 
@@ -1139,33 +1169,33 @@ Expected: FAIL — the hostless lookup succeeds instead of failing, and `host` n
 - [ ] **Step 3: Validate the host**
 
 ```ts
-  const ensureConcreteProvider = (input: {
-    readonly operation: string;
-    readonly provider: SourceControlProviderKind;
-    readonly host?: string | undefined;
-  }) => {
-    if (input.provider === "unknown") {
-      return Effect.fail(
-        new SourceControlRepositoryError({
-          operation: input.operation,
-          provider: input.provider,
-          detail: "Choose a source control provider before continuing.",
-        }),
-      );
-    }
+const ensureConcreteProvider = (input: {
+  readonly operation: string;
+  readonly provider: SourceControlProviderKind;
+  readonly host?: string | undefined;
+}) => {
+  if (input.provider === "unknown") {
+    return Effect.fail(
+      new SourceControlRepositoryError({
+        operation: input.operation,
+        provider: input.provider,
+        detail: "Choose a source control provider before continuing.",
+      }),
+    );
+  }
 
-    if (input.provider === "github-enterprise" && !input.host?.trim()) {
-      return Effect.fail(
-        new SourceControlRepositoryError({
-          operation: input.operation,
-          provider: input.provider,
-          detail: "Choose a GitHub Enterprise host before continuing.",
-        }),
-      );
-    }
+  if (input.provider === "github-enterprise" && !input.host?.trim()) {
+    return Effect.fail(
+      new SourceControlRepositoryError({
+        operation: input.operation,
+        provider: input.provider,
+        detail: "Choose a GitHub Enterprise host before continuing.",
+      }),
+    );
+  }
 
-    return Effect.succeed(input.provider);
-  };
+  return Effect.succeed(input.provider);
+};
 ```
 
 - [ ] **Step 4: Forward the host at all three call sites**
@@ -1173,17 +1203,21 @@ Expected: FAIL — the hostless lookup succeeds instead of failing, and `host` n
 In `lookupRepository`:
 
 ```ts
-    const providerKind = yield* ensureConcreteProvider({
-      operation: "lookupRepository",
-      provider: input.provider,
-      host: input.host,
-    });
-    const provider = yield* providers.get(providerKind);
-    const urls = yield* provider.getRepositoryCloneUrls({
-      cwd: input.cwd ?? config.cwd,
-      repository: input.repository.trim(),
-      ...(input.host ? { host: input.host } : {}),
-    });
+const providerKind =
+  yield *
+  ensureConcreteProvider({
+    operation: "lookupRepository",
+    provider: input.provider,
+    host: input.host,
+  });
+const provider = yield * providers.get(providerKind);
+const urls =
+  yield *
+  provider.getRepositoryCloneUrls({
+    cwd: input.cwd ?? config.cwd,
+    repository: input.repository.trim(),
+    ...(input.host ? { host: input.host } : {}),
+  });
 ```
 
 In `cloneRepository`, add `...(input.host ? { host: input.host } : {})` to the inner `lookupRepository({...})` call.
@@ -1212,16 +1246,18 @@ git commit -m "feat(server): route repository operations to an enterprise host"
 ### Task 8: Web — accept enterprise pull request URLs
 
 **Files:**
+
 - Modify: `apps/web/src/pullRequestReference.ts:1-2`
-- Test: `apps/web/src/pullRequestReference.test.ts` (create if absent)
+- Test: `apps/web/src/pullRequestReference.test.ts` (exists; uses `vite-plus/test`)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `parsePullRequestReference` accepts `https://<any-host>/<owner>/<repo>/pull/<n>`.
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `apps/web/src/pullRequestReference.test.ts`, creating the file with `import { describe, expect, it } from "@effect/vitest";` and `import { parsePullRequestReference } from "./pullRequestReference.ts";` if it does not exist:
+Merge these cases into the existing `apps/web/src/pullRequestReference.test.ts` (it already imports `describe`/`expect`/`it` from `vite-plus/test` and `parsePullRequestReference` from `./pullRequestReference`). Fold them into the existing describe blocks where one fits; do not overwrite the file or duplicate existing assertions:
 
 ```ts
 describe("parsePullRequestReference enterprise hosts", () => {
@@ -1288,9 +1324,11 @@ git commit -m "fix(web): accept enterprise pull request urls"
 ### Task 9: Web settings — one row per connection
 
 **Files:**
+
 - Modify: `apps/web/src/components/settings/SourceControlSettings.tsx:64-69`, `:565-575`, `:266-300`
 
 **Interfaces:**
+
 - Consumes: `id` and `host` on `SourceControlProviderDiscoveryItem` (Task 1).
 - Produces: no exports; UI only.
 
@@ -1309,9 +1347,11 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
 - [ ] **Step 2: Key rows on the item id**
 
 ```tsx
-              {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.id}`} item={item} />
-              ))}
+{
+  result.sourceControlProviders.map((item) => (
+    <DiscoveryItemRow key={`provider:${item.id}`} item={item} />
+  ));
+}
 ```
 
 Two enterprise connections previously collided on `kind` and React would have warned about duplicate keys.
@@ -1321,13 +1361,15 @@ Two enterprise connections previously collided on `kind` and React would have wa
 In `DiscoveryItemRow`, next to the `{item.label}` span, render the host when the item is a provider item, has a host, and the host differs from the label (so the `github` row does not read "GitHub github.com" and an enterprise row does not repeat its own hostname):
 
 ```tsx
-  const host = isProviderDiscoveryItem(item) ? optionLabel(item.host) : null;
+const host = isProviderDiscoveryItem(item) ? optionLabel(item.host) : null;
 ```
 
 ```tsx
-              {host && host !== item.label ? (
-                <code className="text-xs text-muted-foreground">{host}</code>
-              ) : null}
+{
+  host && host !== item.label ? (
+    <code className="text-xs text-muted-foreground">{host}</code>
+  ) : null;
+}
 ```
 
 - [ ] **Step 4: Typecheck the web app**
@@ -1347,9 +1389,11 @@ git commit -m "feat(web): list each GitHub Enterprise connection in settings"
 ### Task 10: Web — publish to an enterprise host
 
 **Files:**
+
 - Modify: `apps/web/src/components/GitActionsControl.tsx:158-198` and the publish submit path
 
 **Interfaces:**
+
 - Consumes: discovery `id`/`host` (Task 1); `host` on `SourceControlPublishRepositoryInput` (Task 1); server-side validation (Task 7).
 - Produces: no exports; UI only.
 
@@ -1427,10 +1471,12 @@ git commit -m "feat(web): publish repositories to a GitHub Enterprise host"
 ### Task 11: Client runtime — add-project sources per connection
 
 **Files:**
+
 - Modify: `packages/client-runtime/src/operations/projects.ts:25-172`
 - Test: `packages/client-runtime/src/operations/projects.test.ts`
 
 **Interfaces:**
+
 - Consumes: discovery `id`/`host` (Task 1), enterprise discovery rows (Task 4).
 - Produces:
   - `AddProjectRemoteSource` stays `AddProjectRemoteProviderKind | "url"`, unchanged.
@@ -1654,12 +1700,14 @@ git commit -m "feat(client-runtime): derive add-project sources from discovered 
 ### Task 12: Consumers — web command palette and mobile add project
 
 **Files:**
+
 - Modify: `apps/web/src/components/CommandPalette.tsx:179-230`
 - Modify: `apps/mobile/src/features/projects/AddProjectScreen.tsx:95-106`, `:371-390`, `:505-515`, `:605-640`
 - Modify: `apps/mobile/src/features/projects/AddProjectRepositoryRoute.tsx:15-24`
 - Modify: `apps/mobile/src/components/SourceControlIcon.tsx:3-16`
 
 **Interfaces:**
+
 - Consumes: `AddProjectRemoteTarget`, `buildAddProjectRemoteTargets`, `addProjectRemoteTargetLabel`, `addProjectRemoteTargetReadiness`, and the new `sortAddProjectProviderSources` signature from Task 11.
 - Produces: no exports; UI only.
 
@@ -1672,16 +1720,16 @@ git commit -m "feat(client-runtime): derive add-project sources from discovered 
 In `AddProjectRepositoryRoute.tsx`, add `host` to `AddProjectRepositoryRouteParams` and replace the hardcoded source check with a target-aware title:
 
 ```tsx
-  const source = Array.isArray(params.source) ? params.source[0] : params.source;
-  const host = Array.isArray(params.host) ? params.host[0] : params.host;
-  const title =
-    source === "github" ||
-    source === "github-enterprise" ||
-    source === "gitlab" ||
-    source === "bitbucket" ||
-    source === "azure-devops"
-      ? addProjectRemoteTargetLabel({ id: source, source, host: host ?? null })
-      : "Git URL";
+const source = Array.isArray(params.source) ? params.source[0] : params.source;
+const host = Array.isArray(params.host) ? params.host[0] : params.host;
+const title =
+  source === "github" ||
+  source === "github-enterprise" ||
+  source === "gitlab" ||
+  source === "bitbucket" ||
+  source === "azure-devops"
+    ? addProjectRemoteTargetLabel({ id: source, source, host: host ?? null })
+    : "Git URL";
 ```
 
 - [ ] **Step 3: Accept the enterprise source in mobile param parsing**
@@ -1707,14 +1755,14 @@ Replace the `["url", ...sortAddProjectProviderSources(readiness)]` mapping at li
 In `lookupRepository` (line ~608), include the host:
 
 ```ts
-    const result = await lookupRepositoryQuery({
-      environmentId: environment.environmentId,
-      input: {
-        provider,
-        repository: repositoryInput.trim(),
-        ...(host ? { host } : {}),
-      },
-    });
+const result = await lookupRepositoryQuery({
+  environmentId: environment.environmentId,
+  input: {
+    provider,
+    repository: repositoryInput.trim(),
+    ...(host ? { host } : {}),
+  },
+});
 ```
 
 - [ ] **Step 6: Accept the enterprise kind in the mobile icon**
