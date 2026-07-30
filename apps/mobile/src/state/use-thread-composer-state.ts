@@ -10,6 +10,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import { deriveBackgroundTasks } from "@t3tools/client-runtime/state/background-tasks";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
@@ -128,6 +129,18 @@ export function useThreadComposerState() {
       null,
     );
   }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
+
+  // Provider subagents outlive the parent turn: the fold reads "Worked for …"
+  // while children are still running, so the swarm rail needs its own signal
+  // rather than the turn/session timing above (#4962).
+  const backgroundTasks = useMemo(
+    () =>
+      deriveBackgroundTasks(
+        selectedThreadDetail?.activities ?? [],
+        selectedThreadDetail?.session ?? null,
+      ),
+    [selectedThreadDetail],
+  );
 
   const activeThreadBusy =
     !!selectedThread &&
@@ -303,6 +316,7 @@ export function useThreadComposerState() {
     selectedThreadFeed,
     selectedThreadQueueCount,
     activeWorkStartedAt,
+    backgroundTasks,
     draftMessage,
     draftAttachments,
     modelSelection,

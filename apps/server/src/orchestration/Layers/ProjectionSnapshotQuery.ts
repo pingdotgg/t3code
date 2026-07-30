@@ -390,6 +390,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          outstanding_background_task_count AS "outstandingBackgroundTaskCount",
+          outstanding_background_task_started_at AS "outstandingBackgroundTaskStartedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -424,6 +426,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          outstanding_background_task_count AS "outstandingBackgroundTaskCount",
+          outstanding_background_task_started_at AS "outstandingBackgroundTaskStartedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -460,6 +464,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          outstanding_background_task_count AS "outstandingBackgroundTaskCount",
+          outstanding_background_task_started_at AS "outstandingBackgroundTaskStartedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -896,6 +902,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          outstanding_background_task_count AS "outstandingBackgroundTaskCount",
+          outstanding_background_task_started_at AS "outstandingBackgroundTaskStartedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -1671,6 +1679,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       hasPendingApprovals: row.pendingApprovalCount > 0,
                       hasPendingUserInput: row.pendingUserInputCount > 0,
                       hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                      outstandingBackgroundTaskCount: row.outstandingBackgroundTaskCount,
+                      outstandingBackgroundTaskStartedAt: row.outstandingBackgroundTaskStartedAt,
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1810,6 +1820,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  outstandingBackgroundTaskCount: row.outstandingBackgroundTaskCount,
+                  outstandingBackgroundTaskStartedAt: row.outstandingBackgroundTaskStartedAt,
                 }),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
@@ -2081,6 +2093,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+        outstandingBackgroundTaskCount: threadRow.value.outstandingBackgroundTaskCount,
+        outstandingBackgroundTaskStartedAt: threadRow.value.outstandingBackgroundTaskStartedAt,
       } satisfies OrchestrationThreadShell);
     });
 

@@ -109,6 +109,21 @@ export function resolveThreadStatus(
     };
   }
 
+  // Subagents outlive the parent turn: keep the Working presentation (and its
+  // pulse) while background tasks are outstanding instead of letting the row
+  // fall quiet (#4962). Legacy servers send no count, which reads as "none".
+  if ((thread.outstandingBackgroundTaskCount ?? 0) > 0) {
+    return {
+      kind: "working",
+      label: "Working",
+      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
+      textClassName: "text-sky-700 dark:text-sky-300",
+      iconColor: "#0a84ff",
+      iconBackground: "rgba(10,132,255,0.22)",
+      pulse: true,
+    };
+  }
+
   const hasPlanReadyPrompt =
     thread.interactionMode === "plan" &&
     isLatestTurnSettled(thread.latestTurn, thread.session) &&

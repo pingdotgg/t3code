@@ -39,6 +39,10 @@
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
     },
+    "./state/background-tasks": {
+      "types": "./src/state/backgroundTasks.ts",
+      "default": "./src/state/backgroundTasks.ts"
+    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"

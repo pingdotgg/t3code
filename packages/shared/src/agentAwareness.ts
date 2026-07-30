@@ -40,6 +40,7 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "outstandingBackgroundTaskCount"
   >;
 }
 
@@ -90,6 +91,12 @@ function resolveThreadAwarenessPhase(
     return "starting";
   }
   if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
+    return "running";
+  }
+  // Background subagents outlive the parent turn: while any are still open the
+  // agent is working, even though the session already settled back to ready
+  // and the turn reads as completed (#4962).
+  if ((thread.outstandingBackgroundTaskCount ?? 0) > 0) {
     return "running";
   }
   if (thread.latestTurn?.state === "completed") {

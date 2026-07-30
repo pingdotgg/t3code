@@ -1,3 +1,4 @@
+import type { BackgroundTaskState } from "@t3tools/client-runtime/state/background-tasks";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
@@ -41,6 +42,7 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import { SWARM_RAIL_CHROME, ThreadSwarmRail } from "./thread-swarm-rail";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -50,6 +52,9 @@ export interface ThreadDetailScreenProps {
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
+  /** Provider subagents for this thread; drives the swarm rail above the composer. */
+  readonly backgroundTasks: BackgroundTaskState;
+  readonly onOpenBackgroundAgents: () => void;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
@@ -201,8 +206,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
+  const showSwarmRail = props.backgroundTasks.running.length > 0;
   const composerOverlapHeight = composerChrome + composerBottomInset;
-  const estimatedOverlayHeight = composerOverlapHeight;
+  // The rail is part of the measured overlay, so its block height has to enter
+  // the estimate too — otherwise the feed floor sits a rail short until the
+  // next layout pass lands.
+  const estimatedOverlayHeight = composerOverlapHeight + (showSwarmRail ? SWARM_RAIL_CHROME : 0);
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
@@ -413,6 +422,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     />
                   ) : null}
                 </Animated.View>
+              ) : null}
+
+              {showSwarmRail ? (
+                <ThreadSwarmRail
+                  runningCount={props.backgroundTasks.running.length}
+                  startedAt={props.backgroundTasks.startedAt}
+                  onPress={props.onOpenBackgroundAgents}
+                />
               ) : null}
             </View>
 

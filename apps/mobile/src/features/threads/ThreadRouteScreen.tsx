@@ -479,6 +479,16 @@ function ThreadRouteContent(
     });
   }, [interruptThreadTurn, selectedThread]);
 
+  const handleOpenBackgroundAgents = useCallback(() => {
+    if (!selectedThread) {
+      return;
+    }
+    navigation.navigate("BackgroundAgents", {
+      environmentId: String(selectedThread.environmentId),
+      threadId: String(selectedThread.id),
+    });
+  }, [navigation, selectedThread]);
+
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
       terminalDebugLog("terminal-menu:open-existing", {
@@ -756,6 +766,8 @@ function ThreadRouteContent(
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           selectedThreadFeed={composer.selectedThreadFeed}
           activeWorkStartedAt={composer.activeWorkStartedAt}
+          backgroundTasks={composer.backgroundTasks}
+          onOpenBackgroundAgents={handleOpenBackgroundAgents}
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}

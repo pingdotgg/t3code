@@ -176,6 +176,89 @@ function derivePendingUserInputCountFromActivities(
   return openRequestIds.size;
 }
 
+/**
+ * Session states under which a provider's background tasks (subagents) can
+ * still be alive. Anything else (stopped, interrupted, error, idle, or no
+ * session at all) means the provider process is gone and its children with
+ * it — counting tasks past that point would strand a permanent Working state.
+ *
+ * Mirrors TASK_BEARING_SESSION_STATUSES in the client-side twin at
+ * packages/client-runtime/src/state/backgroundTasks.ts; keep the two in sync.
+ */
+const TASK_BEARING_SESSION_STATUSES: ReadonlySet<OrchestrationSessionStatus> = new Set([
+  "starting",
+  "running",
+  "ready",
+]);
+
+interface OutstandingBackgroundTasks {
+  readonly count: number;
+  /** Start of the oldest still-outstanding task, or null when none are. */
+  readonly startedAt: string | null;
+}
+
+/**
+ * Replays task.started/task.progress/task.completed into the set of provider
+ * background tasks still running for a thread. Duplicate lifecycle events are
+ * idempotent, a completed for a task we never saw start is stale noise, and a
+ * started/progress arriving after its task settled stays settled — so repeated
+ * or out-of-order events cannot strand a thread as permanently working (#4962).
+ */
+function deriveOutstandingBackgroundTasks(
+  activities: ReadonlyArray<ProjectionThreadActivity>,
+): OutstandingBackgroundTasks {
+  // Insertion-ordered, so the first surviving entry is the oldest open task.
+  const openStartedAt = new Map<string, string>();
+  const settledTaskIds = new Set<string>();
+  const ordered = [...activities].toSorted((left, right) =>
+    left.sequence !== undefined && right.sequence !== undefined && left.sequence !== right.sequence
+      ? left.sequence - right.sequence
+      : left.createdAt.localeCompare(right.createdAt) ||
+        left.activityId.localeCompare(right.activityId),
+  );
+
+  for (const activity of ordered) {
+    if (
+      activity.kind !== "task.started" &&
+      activity.kind !== "task.progress" &&
+      activity.kind !== "task.completed"
+    ) {
+      continue;
+    }
+    const payload =
+      typeof activity.payload === "object" && activity.payload !== null
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const taskId =
+      typeof payload?.taskId === "string" && payload.taskId.trim().length > 0
+        ? payload.taskId
+        : null;
+    if (taskId === null) {
+      continue;
+    }
+
+    if (activity.kind === "task.completed") {
+      // Every terminal status (completed/failed/stopped) clears the task.
+      if (!openStartedAt.has(taskId)) {
+        continue;
+      }
+      openStartedAt.delete(taskId);
+      settledTaskIds.add(taskId);
+      continue;
+    }
+
+    // Progress implies running, so it opens an unseen task. Settled wins: a
+    // late or duplicated started/progress never reopens one.
+    if (settledTaskIds.has(taskId) || openStartedAt.has(taskId)) {
+      continue;
+    }
+    openStartedAt.set(taskId, activity.createdAt);
+  }
+
+  const [oldestOpenStartedAt] = openStartedAt.values();
+  return { count: openStartedAt.size, startedAt: oldestOpenStartedAt ?? null };
+}
+
 function deriveHasActionableProposedPlan(input: {
   readonly latestTurnId: string | null;
   readonly proposedPlans: ReadonlyArray<ProjectionThreadProposedPlan>;
@@ -554,11 +637,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
+      const [messages, proposedPlans, activities, pendingApprovals, session] = yield* Effect.all([
         projectionThreadMessageRepository.listByThreadId({ threadId }),
         projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
         projectionThreadActivityRepository.listByThreadId({ threadId }),
         projectionPendingApprovalRepository.listByThreadId({ threadId }),
+        projectionThreadSessionRepository.getByThreadId({ threadId }),
       ]);
 
       let latestUserMessageAt: string | null = null;
@@ -579,6 +663,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         latestTurnId: existingRow.value.latestTurnId,
         proposedPlans,
       });
+      // No live provider process means no live children, whatever the
+      // timeline still shows as open.
+      const outstandingBackgroundTasks =
+        Option.isSome(session) && TASK_BEARING_SESSION_STATUSES.has(session.value.status)
+          ? deriveOutstandingBackgroundTasks(activities)
+          : { count: 0, startedAt: null };
 
       yield* projectionThreadRepository.upsert({
         ...existingRow.value,
@@ -586,6 +676,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         pendingApprovalCount,
         pendingUserInputCount,
         hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
+        outstandingBackgroundTaskCount: outstandingBackgroundTasks.count,
+        outstandingBackgroundTaskStartedAt: outstandingBackgroundTasks.startedAt,
       });
     });
 
@@ -617,6 +709,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            outstandingBackgroundTaskCount: 0,
+            outstandingBackgroundTaskStartedAt: null,
             deletedAt: null,
           });
           return;

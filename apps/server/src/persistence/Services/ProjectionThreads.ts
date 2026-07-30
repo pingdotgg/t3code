@@ -47,6 +47,11 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
+  // Provider background tasks (subagents) still running for this thread, and
+  // the oldest outstanding one's start. Lets a thread read as working while
+  // child work outlives the parent turn (#4962).
+  outstandingBackgroundTaskCount: NonNegativeInt,
+  outstandingBackgroundTaskStartedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

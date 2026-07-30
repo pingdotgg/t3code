@@ -26,6 +26,7 @@ import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKey
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
+import { BackgroundAgentsSheet } from "./features/threads/BackgroundAgentsSheet";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -437,6 +438,15 @@ export const RootStack = createNativeStackNavigator({
       screen: ThreadFileScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: SOLID_HEADER_OPTIONS,
+    }),
+    BackgroundAgents: createNativeStackScreen({
+      screen: BackgroundAgentsSheet,
+      linking: `${THREAD_LINKING_PREFIX}/agents`,
+      options: {
+        presentation: "formSheet",
+        sheetAllowedDetents: [0.5, 0.9],
+        sheetGrabberVisible: true,
+      },
     }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,

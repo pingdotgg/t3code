@@ -2775,3 +2775,281 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+/**
+ * Harness for the #4962 outstanding-background-task scenarios: seeds a project
+ * and thread, then drives session and task lifecycle events through the
+ * pipeline. Every id derives from `suffix`, so scenarios stay isolated inside
+ * the layer's shared in-memory database.
+ */
+const makeBackgroundTaskHarness = Effect.fn("makeBackgroundTaskHarness")(function* (
+  suffix: string,
+) {
+  const eventStore = yield* OrchestrationEventStore;
+  const projectionPipeline = yield* OrchestrationProjectionPipeline;
+  const sql = yield* SqlClient.SqlClient;
+
+  const projectId = ProjectId.make(`project-${suffix}`);
+  const threadId = ThreadId.make(`thread-${suffix}`);
+  let tick = 0;
+  const nextAt = () => {
+    tick += 1;
+    return `2026-07-01T00:00:${String(tick).padStart(2, "0")}.000Z`;
+  };
+
+  const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+    eventStore
+      .append(event)
+      .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+  const projectCreatedAt = nextAt();
+  yield* appendAndProject({
+    type: "project.created",
+    eventId: EventId.make(`evt-${suffix}-project`),
+    aggregateKind: "project",
+    aggregateId: projectId,
+    occurredAt: projectCreatedAt,
+    commandId: CommandId.make(`cmd-${suffix}-project`),
+    causationEventId: null,
+    correlationId: CorrelationId.make(`cmd-${suffix}-project`),
+    metadata: {},
+    payload: {
+      projectId,
+      title: `Project ${suffix}`,
+      workspaceRoot: `/tmp/project-${suffix}`,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: projectCreatedAt,
+      updatedAt: projectCreatedAt,
+    },
+  });
+
+  const threadCreatedAt = nextAt();
+  yield* appendAndProject({
+    type: "thread.created",
+    eventId: EventId.make(`evt-${suffix}-thread`),
+    aggregateKind: "thread",
+    aggregateId: threadId,
+    occurredAt: threadCreatedAt,
+    commandId: CommandId.make(`cmd-${suffix}-thread`),
+    causationEventId: null,
+    correlationId: CorrelationId.make(`cmd-${suffix}-thread`),
+    metadata: {},
+    payload: {
+      threadId,
+      projectId,
+      title: `Thread ${suffix}`,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-4-6",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: threadCreatedAt,
+      updatedAt: threadCreatedAt,
+    },
+  });
+
+  let sessionRevision = 0;
+  const setSessionStatus = (
+    status: "starting" | "running" | "ready" | "idle" | "interrupted" | "stopped" | "error",
+  ) => {
+    sessionRevision += 1;
+    const occurredAt = nextAt();
+    return appendAndProject({
+      type: "thread.session-set",
+      eventId: EventId.make(`evt-${suffix}-session-${sessionRevision}`),
+      aggregateKind: "thread",
+      aggregateId: threadId,
+      occurredAt,
+      commandId: CommandId.make(`cmd-${suffix}-session-${sessionRevision}`),
+      causationEventId: null,
+      correlationId: CorrelationId.make(`cmd-${suffix}-session-${sessionRevision}`),
+      metadata: {},
+      payload: {
+        threadId,
+        session: {
+          threadId,
+          status,
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: occurredAt,
+        },
+      },
+    });
+  };
+
+  let activityRevision = 0;
+  const appendTaskActivity = (kind: string, payload: Record<string, unknown>) => {
+    activityRevision += 1;
+    const createdAt = nextAt();
+    return appendAndProject({
+      type: "thread.activity-appended",
+      eventId: EventId.make(`evt-${suffix}-activity-${activityRevision}`),
+      aggregateKind: "thread",
+      aggregateId: threadId,
+      occurredAt: createdAt,
+      commandId: CommandId.make(`cmd-${suffix}-activity-${activityRevision}`),
+      causationEventId: null,
+      correlationId: CorrelationId.make(`cmd-${suffix}-activity-${activityRevision}`),
+      metadata: {},
+      payload: {
+        threadId,
+        activity: {
+          id: EventId.make(`activity-${suffix}-${activityRevision}`),
+          tone: "info",
+          kind,
+          summary: kind,
+          payload,
+          turnId: null,
+          createdAt,
+        },
+      },
+    }).pipe(Effect.as(createdAt));
+  };
+
+  const readOutstanding = () =>
+    sql<{
+      readonly count: number;
+      readonly startedAt: string | null;
+    }>`
+      SELECT
+        outstanding_background_task_count AS "count",
+        outstanding_background_task_started_at AS "startedAt"
+      FROM projection_threads
+      WHERE thread_id = ${threadId}
+    `;
+
+  return {
+    setSessionStatus,
+    startTask: (taskId: string) => appendTaskActivity("task.started", { taskId }),
+    progressTask: (taskId: string, detail: string) =>
+      appendTaskActivity("task.progress", { taskId, detail }),
+    completeTask: (taskId: string, status: "completed" | "failed" | "stopped") =>
+      appendTaskActivity("task.completed", { taskId, status }),
+    readOutstanding,
+  };
+});
+
+it.layer(makeProjectionPipelinePrefixedTestLayer("t3-projection-background-tasks-test-"))(
+  "OrchestrationProjectionPipeline background tasks",
+  (it) => {
+    it.effect("counts a child task started under a running parent turn", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeBackgroundTaskHarness("bg-running");
+        yield* harness.setSessionStatus("running");
+        const startedAt = yield* harness.startTask("task-1");
+
+        assert.deepEqual(yield* harness.readOutstanding(), [{ count: 1, startedAt }]);
+      }),
+    );
+
+    it.effect("keeps counting a child task after the parent turn completes", () =>
+      Effect.gen(function* () {
+        // The core #4962 regression: the parent session settles back to ready
+        // while its subagent is still working, and the thread must not read
+        // as idle.
+        const harness = yield* makeBackgroundTaskHarness("bg-outlives-turn");
+        yield* harness.setSessionStatus("running");
+        const startedAt = yield* harness.startTask("task-1");
+        yield* harness.setSessionStatus("ready");
+
+        assert.deepEqual(yield* harness.readOutstanding(), [{ count: 1, startedAt }]);
+      }),
+    );
+
+    it.effect("keeps a progressing child task counted with its original start", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeBackgroundTaskHarness("bg-progress");
+        yield* harness.setSessionStatus("ready");
+        const startedAt = yield* harness.startTask("task-1");
+        yield* harness.progressTask("task-1", "Reading files");
+
+        assert.deepEqual(yield* harness.readOutstanding(), [{ count: 1, startedAt }]);
+
+        // Progress implies running, so it opens a task we never saw start.
+        const progressOnly = yield* makeBackgroundTaskHarness("bg-progress-only");
+        yield* progressOnly.setSessionStatus("ready");
+        const progressedAt = yield* progressOnly.progressTask("task-2", "Grepping");
+
+        assert.deepEqual(yield* progressOnly.readOutstanding(), [
+          { count: 1, startedAt: progressedAt },
+        ]);
+      }),
+    );
+
+    it.effect("clears the count on every terminal task status", () =>
+      Effect.gen(function* () {
+        for (const status of ["completed", "failed", "stopped"] as const) {
+          const harness = yield* makeBackgroundTaskHarness(`bg-terminal-${status}`);
+          yield* harness.setSessionStatus("ready");
+          yield* harness.startTask("task-1");
+          yield* harness.completeTask("task-1", status);
+
+          assert.deepEqual(yield* harness.readOutstanding(), [{ count: 0, startedAt: null }]);
+        }
+      }),
+    );
+
+    it.effect("clears only after the last of several tasks settles", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeBackgroundTaskHarness("bg-two-tasks");
+        yield* harness.setSessionStatus("running");
+        const firstStartedAt = yield* harness.startTask("task-1");
+        const secondStartedAt = yield* harness.startTask("task-2");
+
+        assert.deepEqual(yield* harness.readOutstanding(), [
+          { count: 2, startedAt: firstStartedAt },
+        ]);
+
+        // The oldest OPEN task drives the aggregate elapsed label.
+        yield* harness.completeTask("task-1", "completed");
+        assert.deepEqual(yield* harness.readOutstanding(), [
+          { count: 1, startedAt: secondStartedAt },
+        ]);
+
+        yield* harness.completeTask("task-2", "stopped");
+        assert.deepEqual(yield* harness.readOutstanding(), [{ count: 0, startedAt: null }]);
+      }),
+    );
+
+    it.effect("does not drift on duplicate, stale, or unknown task events", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeBackgroundTaskHarness("bg-noise");
+        yield* harness.setSessionStatus("running");
+        const startedAt = yield* harness.startTask("task-1");
+
+        // A duplicate start and a terminal event for a task we never saw
+        // start are both no-ops.
+        yield* harness.startTask("task-1");
+        yield* harness.completeTask("task-unknown", "completed");
+        assert.deepEqual(yield* harness.readOutstanding(), [{ count: 1, startedAt }]);
+
+        // Settled wins: neither a repeated completion nor a late start reopens.
+        yield* harness.completeTask("task-1", "completed");
+        yield* harness.completeTask("task-1", "failed");
+        yield* harness.startTask("task-1");
+        assert.deepEqual(yield* harness.readOutstanding(), [{ count: 0, startedAt: null }]);
+      }),
+    );
+
+    it.effect("forces the count to zero when the provider process dies", () =>
+      Effect.gen(function* () {
+        // A crashed or stopped adapter takes its children with it — without
+        // the session gate the thread would be Working forever.
+        for (const status of ["stopped", "error"] as const) {
+          const harness = yield* makeBackgroundTaskHarness(`bg-dead-${status}`);
+          yield* harness.setSessionStatus("running");
+          yield* harness.startTask("task-1");
+          yield* harness.setSessionStatus(status);
+
+          assert.deepEqual(yield* harness.readOutstanding(), [{ count: 0, startedAt: null }]);
+        }
+      }),
+    );
+  },
+);

@@ -42,7 +42,10 @@ export function resolveThreadListV2Enabled(input: {
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "outstandingBackgroundTaskCount" | "session"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -55,6 +58,12 @@ export function resolveThreadListV2Status(
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  // The parent turn can settle while its subagents keep going; the row stays
+  // Working until they finish rather than resolving to ready (#4962). Servers
+  // that predate the aggregate send no count, which reads as "none".
+  if ((thread.outstandingBackgroundTaskCount ?? 0) > 0) {
+    return "working";
   }
   return "ready";
 }

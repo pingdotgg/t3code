@@ -425,6 +425,59 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
   }),
 );
 
+it.effect("round-trips outstanding background task fields on the thread shell", () =>
+  Effect.gen(function* () {
+    const common = {
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread with subagents",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    };
+
+    const shell = yield* decodeOrchestrationThreadShell({
+      ...common,
+      outstandingBackgroundTaskCount: 2,
+      outstandingBackgroundTaskStartedAt: "2026-01-01T00:00:05.000Z",
+    });
+    assert.strictEqual(shell.outstandingBackgroundTaskCount, 2);
+    assert.strictEqual(shell.outstandingBackgroundTaskStartedAt, "2026-01-01T00:00:05.000Z");
+
+    // Servers with no outstanding tasks still emit the fields, with a null start.
+    const idle = yield* decodeOrchestrationThreadShell({
+      ...common,
+      outstandingBackgroundTaskCount: 0,
+      outstandingBackgroundTaskStartedAt: null,
+    });
+    assert.strictEqual(idle.outstandingBackgroundTaskCount, 0);
+    assert.strictEqual(idle.outstandingBackgroundTaskStartedAt, null);
+
+    // Payloads from older servers omit both fields entirely.
+    const legacy = yield* decodeOrchestrationThreadShell(common);
+    assert.strictEqual(legacy.outstandingBackgroundTaskCount, undefined);
+    assert.strictEqual(legacy.outstandingBackgroundTaskStartedAt, undefined);
+
+    // A negative count is not a count.
+    const invalid = yield* decodeOrchestrationThreadShell({
+      ...common,
+      outstandingBackgroundTaskCount: -1,
+    }).pipe(Effect.flip);
+    assert.ok(invalid);
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({

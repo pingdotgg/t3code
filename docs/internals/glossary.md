@@ -116,6 +116,10 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+#### Background task
+
+A subagent a provider spawns that can outlive the foreground turn. Its lifecycle arrives as `task.started` / `task.progress` / `task.completed` runtime events in [the provider runtime contracts][25], and the outstanding set is projected onto the thread shell so clients keep showing Working while children run. See [background-agents.md](../user/background-agents.md).
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -179,3 +183,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../packages/contracts/src/providerRuntime.ts

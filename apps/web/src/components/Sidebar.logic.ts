@@ -142,6 +142,8 @@ type ThreadStatusInput = Pick<
   | "hasPendingUserInput"
   | "interactionMode"
   | "latestTurn"
+  | "outstandingBackgroundTaskCount"
+  | "outstandingBackgroundTaskStartedAt"
   | "session"
 > & {
   lastVisitedAt?: string | undefined;
@@ -540,13 +542,19 @@ export function sortSettledThreadsForSidebarV2<
     last transition when the turn projection lags behind. Malformed
     timestamps fall through to the next candidate, not just missing ones. */
 export function resolveWorkingStartedAt(
-  thread: Pick<SidebarThreadSummary, "latestTurn" | "session">,
+  thread: Pick<
+    SidebarThreadSummary,
+    "latestTurn" | "outstandingBackgroundTaskStartedAt" | "session"
+  >,
 ): string | null {
   const turn = thread.latestTurn;
   if (turn && turn.completedAt === null) {
     return firstValidTimestamp(turn.startedAt, turn.requestedAt, thread.session?.updatedAt);
   }
-  return firstValidTimestamp(thread.session?.updatedAt);
+  // A thread can be Working purely because its subagents are: with the turn
+  // settled, the oldest outstanding task is what the elapsed label counts
+  // from, so it keeps ticking instead of freezing at the session transition.
+  return firstValidTimestamp(thread.outstandingBackgroundTaskStartedAt, thread.session?.updatedAt);
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {
@@ -592,6 +600,18 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "starting") {
     return {
       label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  // Subagents outlive the parent turn, so a thread whose own session has gone
+  // quiet is still Working while background tasks are outstanding (#4962).
+  // Servers that predate the aggregate send no count, which reads as "none".
+  if ((thread.outstandingBackgroundTaskCount ?? 0) > 0) {
+    return {
+      label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,

@@ -836,6 +836,26 @@ describe("resolveWorkingStartedAt", () => {
   it("returns null with neither a running turn nor a session", () => {
     expect(resolveWorkingStartedAt({ latestTurn: null, session: null })).toBeNull();
   });
+
+  it("counts from the oldest outstanding subagent once the parent turn settled", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn(),
+        outstandingBackgroundTaskStartedAt: "2026-03-09T10:01:00.000Z",
+        session,
+      }),
+    ).toBe("2026-03-09T10:01:00.000Z");
+  });
+
+  it("keeps the session transition when no subagent start is reported", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn(),
+        outstandingBackgroundTaskStartedAt: null,
+        session,
+      }),
+    ).toBe("2026-03-09T10:02:00.000Z");
+  });
 });
 
 describe("formatWorkingDurationLabel", () => {
@@ -899,6 +919,24 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("stays working while subagents run past the parent turn", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          outstandingBackgroundTaskCount: 2,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            activeTurnId: null,
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });

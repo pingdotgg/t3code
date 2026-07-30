@@ -441,6 +441,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          outstandingBackgroundTaskCount: 0,
+          outstandingBackgroundTaskStartedAt: null,
         },
       ]);
 

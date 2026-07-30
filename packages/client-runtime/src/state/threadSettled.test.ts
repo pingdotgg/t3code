@@ -205,6 +205,32 @@ describe("effectiveSettled", () => {
     ).toBe(false);
   });
 
+  it("never settles a thread whose background subagents are still running", () => {
+    // #4962: the parent session already went ready and the turn is stale, but
+    // child work is outstanding — the thread is not idle.
+    const working: OrchestrationThreadShell = {
+      ...makeShell({ settledOverride: "settled", activityAt: STALE }),
+      outstandingBackgroundTaskCount: 1,
+      outstandingBackgroundTaskStartedAt: FRESH,
+    };
+    expect(
+      effectiveSettled(working, {
+        now: NOW,
+        autoSettleAfterDays: 3,
+        changeRequestState: "merged",
+      }),
+    ).toBe(false);
+    expect(canSettle(working, { now: NOW })).toBe(false);
+
+    // Once the last task settles, the override applies again.
+    expect(
+      effectiveSettled(
+        { ...working, outstandingBackgroundTaskCount: 0, outstandingBackgroundTaskStartedAt: null },
+        { now: NOW, autoSettleAfterDays: 3 },
+      ),
+    ).toBe(true);
+  });
+
   it("keeps a new turn active from queued through starting and running", () => {
     const requestedAt = "2026-04-09T12:00:00.000Z";
     const transitionNow = "2026-04-09T12:00:30.000Z";
@@ -347,6 +373,19 @@ describe("canSettle", () => {
     expect(canSettle(makeShell({ activityAt: FRESH, pending: "user-input" }), { now: NOW })).toBe(
       false,
     );
+    expect(
+      canSettle(
+        { ...makeShell({ activityAt: FRESH }), outstandingBackgroundTaskCount: 1 },
+        { now: NOW },
+      ),
+    ).toBe(false);
+    // Shells from older servers omit the field entirely.
+    expect(
+      canSettle(
+        { ...makeShell({ activityAt: FRESH }), outstandingBackgroundTaskCount: undefined },
+        { now: NOW },
+      ),
+    ).toBe(true);
   });
 
   it("blocks settling a queued turn start, only within the grace window", () => {

@@ -50,6 +50,21 @@ function makeThread(
 
 const NOW = "2026-06-02T00:00:00.000Z";
 
+type ThreadSession = NonNullable<EnvironmentThreadShell["session"]>;
+
+function makeSession(status: ThreadSession["status"]): ThreadSession {
+  return {
+    threadId: ThreadId.make("t"),
+    status,
+    providerName: "Codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    runtimeMode: "full-access",
+    activeTurnId: null,
+    lastError: null,
+    updatedAt: NOW,
+  };
+}
+
 describe("resolveThreadListV2Enabled", () => {
   it("defaults on when the device has never chosen", () => {
     expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true })).toBe(
@@ -75,16 +90,7 @@ describe("resolveThreadListV2Status", () => {
       id: ThreadId.make("t"),
       title: "t",
       hasPendingApprovals: true,
-      session: {
-        threadId: ThreadId.make("t"),
-        status: "running",
-        providerName: "Codex",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: "full-access",
-        activeTurnId: null,
-        lastError: null,
-        updatedAt: NOW,
-      },
+      session: makeSession("running"),
     });
     expect(resolveThreadListV2Status(thread)).toBe("approval");
   });
@@ -93,6 +99,56 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",
     );
+  });
+
+  it("stays working while subagents run past the parent turn", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      outstandingBackgroundTaskCount: 2,
+      session: makeSession("ready"),
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("working");
+  });
+
+  it("resolves ready once the outstanding count drains to zero", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      outstandingBackgroundTaskCount: 0,
+      session: makeSession("ready"),
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("ready");
+  });
+
+  it("keeps approval ahead of background work", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      hasPendingApprovals: true,
+      outstandingBackgroundTaskCount: 3,
+      session: makeSession("ready"),
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("approval");
+  });
+
+  it("keeps a failed session ahead of background work", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      outstandingBackgroundTaskCount: 1,
+      session: makeSession("error"),
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("failed");
+  });
+
+  it("reads a legacy server's missing count as no background work", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      session: makeSession("ready"),
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("ready");
   });
 });
 

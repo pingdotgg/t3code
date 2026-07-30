@@ -434,6 +434,13 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  // Background provider tasks (subagents) still running for this thread.
+  // Projected from task.started/task.completed activities so a list row can
+  // stay Working while child work outlives the parent turn. startedAt is the
+  // oldest outstanding task's start, for elapsed labels. Optional so payloads
+  // from older servers still decode.
+  outstandingBackgroundTaskCount: Schema.optional(NonNegativeInt),
+  outstandingBackgroundTaskStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

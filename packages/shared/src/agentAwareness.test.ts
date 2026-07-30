@@ -29,6 +29,7 @@ function thread(
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "outstandingBackgroundTaskCount"
 > {
   return {
     id: "thread-1" as ThreadId,
@@ -39,6 +40,7 @@ function thread(
     updatedAt: NOW,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
+    outstandingBackgroundTaskCount: 0,
     ...overrides,
   };
 }
@@ -152,6 +154,75 @@ describe("projectThreadAwareness", () => {
     });
 
     expect(state?.phase).toBe("completed");
+  });
+
+  it("keeps working while background subagents outlive the parent turn", () => {
+    // #4962: the parent session settles back to ready and the turn reads as
+    // completed while spawned subagents are still running.
+    const readySessionWithTasks = thread({
+      outstandingBackgroundTaskCount: 2,
+      latestTurn: {
+        turnId: "turn-1" as TurnId,
+        state: "completed",
+        requestedAt: NOW,
+        startedAt: NOW,
+        completedAt: NOW,
+        assistantMessageId: null,
+      },
+      session: {
+        threadId: "thread-1" as ThreadId,
+        status: "ready",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: readySessionWithTasks,
+      }),
+    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+
+    // Once the last task settles the thread reports Done again.
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: { ...readySessionWithTasks, outstandingBackgroundTaskCount: 0 },
+      })?.phase,
+    ).toBe("completed");
+  });
+
+  it("keeps blocked and failed phases above outstanding background tasks", () => {
+    const blocked = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({ outstandingBackgroundTaskCount: 1, hasPendingUserInput: true }),
+    });
+    expect(blocked?.phase).toBe("waiting_for_input");
+
+    const failed = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        outstandingBackgroundTaskCount: 1,
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "error",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Provider process exited.",
+          updatedAt: NOW,
+        },
+      }),
+    });
+    expect(failed?.phase).toBe("failed");
   });
 
   it("projects failures with the session error detail", () => {
