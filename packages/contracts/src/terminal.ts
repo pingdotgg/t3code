@@ -60,6 +60,15 @@ export type TerminalAttachInput = Schema.Codec.Encoded<typeof TerminalAttachInpu
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+  /**
+   * Where the bytes came from.
+   *
+   * TUI keyboard input is decoded by the outer terminal first, which can
+   * accidentally surface that outer terminal's replies as key sequences. The
+   * server uses this transport-level hint while retaining all terminal-response
+   * parsing and process-ownership policy in the terminal manager.
+   */
+  inputSource: Schema.optional(Schema.Literals(["terminal", "keyboard", "paste"])),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 

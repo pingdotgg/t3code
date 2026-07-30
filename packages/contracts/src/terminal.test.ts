@@ -134,6 +134,28 @@ describe("TerminalWriteInput", () => {
     ).toBe(true);
   });
 
+  it("accepts an explicit keyboard input source", () => {
+    expect(
+      decodes(TerminalWriteInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\u001b[?1;2c",
+        inputSource: "keyboard",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects an unknown input source", () => {
+    expect(
+      decodes(TerminalWriteInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "q",
+        inputSource: "automation",
+      }),
+    ).toBe(false);
+  });
+
   it("rejects empty data", () => {
     expect(
       decodes(TerminalWriteInput, {

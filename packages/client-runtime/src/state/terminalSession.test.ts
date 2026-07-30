@@ -7,6 +7,7 @@ import {
   applyTerminalMetadataStreamEvent,
   combineTerminalSessionState,
   EMPTY_TERMINAL_BUFFER_STATE,
+  resolveTerminalBufferRenderUpdate,
   selectRunningSubprocessTerminalIds,
 } from "./terminalSession.ts";
 
@@ -127,6 +128,8 @@ describe("terminal session reducers", () => {
 
     expect(output).toMatchObject({
       buffer: "lo world",
+      bufferEpoch: 1,
+      appendedLength: 6,
       status: "running",
       error: null,
       version: 2,
@@ -183,5 +186,52 @@ describe("terminal session reducers", () => {
     );
 
     expect(state.buffer).toBe("🙂");
+  });
+
+  it("keeps rolling history as an append instead of resetting the renderer", () => {
+    const first = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "abcde",
+      },
+      5,
+    );
+    const rolled = applyTerminalAttachStreamEvent(
+      first,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "fg",
+      },
+      5,
+    );
+
+    expect(rolled.buffer).toBe("cdefg");
+    expect(resolveTerminalBufferRenderUpdate(first, rolled)).toEqual({
+      type: "append",
+      data: "fg",
+    });
+  });
+
+  it("replaces the renderer when more than the retained tail was missed", () => {
+    const rolled = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "abcdefg",
+      },
+      5,
+    );
+
+    expect(resolveTerminalBufferRenderUpdate(EMPTY_TERMINAL_BUFFER_STATE, rolled)).toEqual({
+      type: "replace",
+      data: "cdefg",
+    });
   });
 });
