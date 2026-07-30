@@ -14,7 +14,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
-import { HomeHeader } from "./HomeHeader";
+import { HomeBottomSearchToolbar, HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
@@ -184,6 +184,25 @@ export function HomeRouteScreen() {
           selectedProjectKey={selectedProjectKey}
           threads={threads}
           threadSortOrder={listOptions.threadSortOrder}
+        />
+
+        {/* Must mount after HomeScreen: the glass toolbar overlays the list
+            and its filter menu needs real UIKit z-order (see HomeHeader). */}
+        <HomeBottomSearchToolbar
+          environments={environments}
+          projects={projectFilterOptions}
+          searchQuery={searchQuery}
+          selectedEnvironmentId={selectedEnvironmentId}
+          selectedProjectKey={selectedProjectKey}
+          projectSortOrder={listOptions.projectSortOrder}
+          threadSortOrder={listOptions.threadSortOrder}
+          onEnvironmentChange={setSelectedEnvironmentId}
+          onProjectChange={setSelectedProjectKey}
+          onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
+          onProjectSortOrderChange={setProjectSortOrder}
+          onSearchQueryChange={setSearchQuery}
+          onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          onThreadSortOrderChange={setThreadSortOrder}
         />
       </>
     </AndroidHomeFabLayout>

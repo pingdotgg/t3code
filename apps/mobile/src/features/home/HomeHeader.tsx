@@ -13,10 +13,8 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
-} from "../layout/native-mail-search-toolbar";
+import { NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED } from "../layout/native-mail-search-toolbar";
+import { HomeGlassSearchToolbar } from "./HomeGlassSearchToolbar";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import {
   buildHomeListFilterMenu,
@@ -30,6 +28,40 @@ import {
 } from "./home-list-options";
 
 export type HomeHeaderEnvironment = HomeListFilterMenuEnvironment;
+
+/**
+ * Floating glass bottom bar (filter / search / compose) for liquid-glass
+ * iOS. Rendered by HomeRouteScreen AFTER HomeScreen — the anchor views must
+ * sit above the list in real UIKit z-order (not lifted via zIndex from an
+ * earlier sibling), otherwise the filter UIMenu presents invisibly.
+ */
+export function HomeBottomSearchToolbar(props: HomeHeaderProps) {
+  const threadListV2Enabled = useThreadListV2Enabled();
+  if (Platform.OS !== "ios" || !NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED) {
+    return null;
+  }
+  const hasCustomListOptions = threadListV2Enabled
+    ? props.selectedEnvironmentId !== null || props.selectedProjectKey !== null
+    : hasCustomHomeListOptions(props);
+  const filterMenu = buildHomeListFilterMenu({
+    ...props,
+    listOrganization: !threadListV2Enabled,
+  });
+
+  return (
+    <HomeGlassSearchToolbar
+      searchQuery={props.searchQuery}
+      filterMenu={filterMenu}
+      filterIcon={
+        hasCustomListOptions
+          ? "line.3.horizontal.decrease.circle.fill"
+          : "line.3.horizontal.decrease"
+      }
+      onSearchQueryChange={props.onSearchQueryChange}
+      onStartNewTask={props.onStartNewTask}
+    />
+  );
+}
 
 export function HomeHeader(props: {
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
@@ -326,23 +358,10 @@ function IosHomeHeader(props: HomeHeaderProps) {
           // The keys below are set per-branch (not `undefined`) so a later
           // reapply cannot clobber options owned by NativeHeaderToolbar.
           ...(NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
-            ? {
-                unstable_headerToolbarItems: () => [
-                  createNativeMailSearchToolbarItem({
-                    composeButtonId: "home-new-task",
-                    composeSystemImageName: "square.and.pencil",
-                    filterMenu,
-                    filterButtonId: "home-filter",
-                    filterSystemImageName: hasCustomListOptions
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease",
-                    onComposePress: props.onStartNewTask,
-                    onSearchTextChange: props.onSearchQueryChange,
-                    placeholder: "Search",
-                    searchTextChangeId: "home-search-text",
-                  }),
-                ],
-              }
+            ? // Liquid-glass iOS: the bottom bar is the JS
+              // HomeGlassSearchToolbar rendered below, so no native toolbar
+              // items are sent.
+              {}
             : {
                 // Pre-Liquid-Glass iOS: standard pull-down search in the nav
                 // bar; create + sort live in the plain bottom toolbar below.
