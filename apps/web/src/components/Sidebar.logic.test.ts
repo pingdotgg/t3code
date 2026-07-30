@@ -875,7 +875,7 @@ describe("resolveThreadStatusPill", () => {
           hasPendingUserInput: true,
         },
       }),
-    ).toMatchObject({ label: "Pending Approval", pulse: false });
+    ).toMatchObject({ label: "Pending Approval", glyph: "circle-alert", pulse: false });
   });
 
   it("shows awaiting input when plan mode is blocked on user answers", () => {
@@ -886,7 +886,7 @@ describe("resolveThreadStatusPill", () => {
           hasPendingUserInput: true,
         },
       }),
-    ).toMatchObject({ label: "Awaiting Input", pulse: false });
+    ).toMatchObject({ label: "Awaiting Input", glyph: "circle-question-mark", pulse: false });
   });
 
   it("falls back to working when the thread is actively running without blockers", () => {
@@ -894,7 +894,7 @@ describe("resolveThreadStatusPill", () => {
       resolveThreadStatusPill({
         thread: baseThread,
       }),
-    ).toMatchObject({ label: "Working", pulse: true });
+    ).toMatchObject({ label: "Working", glyph: "grid", pulse: true });
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
@@ -911,7 +911,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Plan Ready", pulse: false });
+    ).toMatchObject({ label: "Plan Ready", glyph: "file-text", pulse: false });
   });
 
   it("does not manufacture completed state without a client visit marker", () => {
@@ -945,7 +945,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toMatchObject({ label: "Completed", glyph: "check-check", pulse: false });
   });
 });
 
@@ -983,24 +983,24 @@ describe("resolveProjectStatusIndicator", () => {
       resolveProjectStatusIndicator([
         {
           label: "Completed",
-          colorClass: "text-emerald-600",
-          dotClass: "bg-emerald-500",
+          toneClass: "text-emerald-600",
+          glyph: "check-check",
           pulse: false,
         },
         {
           label: "Pending Approval",
-          colorClass: "text-amber-600",
-          dotClass: "bg-amber-500",
+          toneClass: "text-amber-600",
+          glyph: "circle-alert",
           pulse: false,
         },
         {
           label: "Working",
-          colorClass: "text-sky-600",
-          dotClass: "bg-sky-500",
+          toneClass: "text-sky-600",
+          glyph: "grid",
           pulse: true,
         },
       ]),
-    ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
+    ).toMatchObject({ label: "Pending Approval", glyph: "circle-alert" });
   });
 
   it("prefers plan-ready over completed when no stronger action is needed", () => {
@@ -1008,18 +1008,18 @@ describe("resolveProjectStatusIndicator", () => {
       resolveProjectStatusIndicator([
         {
           label: "Completed",
-          colorClass: "text-emerald-600",
-          dotClass: "bg-emerald-500",
+          toneClass: "text-emerald-600",
+          glyph: "check-check",
           pulse: false,
         },
         {
           label: "Plan Ready",
-          colorClass: "text-violet-600",
-          dotClass: "bg-violet-500",
+          toneClass: "text-violet-600",
+          glyph: "file-text",
           pulse: false,
         },
       ]),
-    ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });
+    ).toMatchObject({ label: "Plan Ready", glyph: "file-text" });
   });
 });
 

@@ -15,9 +15,11 @@ import {
 import { SIDEBAR_LIST_AUTO_ANIMATE_OPTIONS } from "../lib/motion";
 import {
   ChangeRequestStatusIcon,
+  getSidebarIndicatorClassName,
   prStatusIndicator,
   PrStatusTooltipContent,
   resolveThreadPr,
+  SidebarStatusGlyph,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
@@ -77,7 +79,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { isElectron } from "../env";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform } from "../lib/utils";
+import { cn, isMacPlatform } from "../lib/utils";
 import {
   readThreadShell,
   useProject,
@@ -2324,30 +2326,27 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           onContextMenu={handleProjectButtonContextMenu}
         >
           {!projectExpanded && projectStatus ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    aria-label={projectStatus.label}
-                    className={`-ml-0.5 relative inline-flex size-2.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
-                  />
-                }
-              >
-                <span className="absolute inset-0 flex items-center justify-center transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-0">
-                  <span
-                    className={`size-2.5 rounded-full ${projectStatus.dotClass} ${
-                      projectStatus.pulse ? "animate-status-pulse" : ""
-                    }`}
-                  />
-                </span>
-                {isProjectReorderingEnabled ? (
-                  <SidebarGrabHandleIcon className="absolute inset-0 m-auto size-2 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
-                ) : (
-                  <ChevronRightIcon className="absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup side="top">{projectStatus.label}</TooltipPopup>
-            </Tooltip>
+            <span
+              aria-hidden="true"
+              title={projectStatus.label}
+              className={cn(
+                getSidebarIndicatorClassName({
+                  toneClass: projectStatus.toneClass,
+                }),
+                "-ml-0.5 relative",
+              )}
+            >
+              <SidebarStatusGlyph
+                compact
+                status={projectStatus}
+                className="absolute inset-0 m-auto transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-0"
+              />
+              {isProjectReorderingEnabled ? (
+                <SidebarGrabHandleIcon className="absolute inset-0 m-auto size-2 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
+              ) : (
+                <ChevronRightIcon className="absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
+              )}
+            </span>
           ) : (
             <span className="-ml-0.5 relative inline-flex size-2.5 shrink-0 items-center justify-center">
               <ChevronRightIcon

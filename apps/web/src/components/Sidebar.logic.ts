@@ -132,10 +132,19 @@ export interface ThreadStatusPill {
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
-  colorClass: string;
-  dotClass: string;
+  toneClass: string;
+  glyph: "grid" | "circle-alert" | "circle-question-mark" | "file-text" | "check-check";
   pulse: boolean;
 }
+
+const THREAD_STATUS_TONE_BY_LABEL: Record<ThreadStatusPill["label"], string> = {
+  "Pending Approval": "text-amber-600 dark:text-amber-300/90",
+  "Awaiting Input": "text-indigo-600 dark:text-indigo-300/90",
+  Working: "text-sky-600 dark:text-sky-300/80",
+  Connecting: "text-sky-600 dark:text-sky-300/80",
+  "Plan Ready": "text-violet-600 dark:text-violet-300/90",
+  Completed: "text-emerald-600 dark:text-emerald-300/90",
+};
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
@@ -573,8 +582,8 @@ export function resolveThreadStatusPill(input: {
   if (thread.hasPendingApprovals) {
     return {
       label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
+      toneClass: THREAD_STATUS_TONE_BY_LABEL["Pending Approval"],
+      glyph: "circle-alert",
       pulse: false,
     };
   }
@@ -582,8 +591,8 @@ export function resolveThreadStatusPill(input: {
   if (thread.hasPendingUserInput) {
     return {
       label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      toneClass: THREAD_STATUS_TONE_BY_LABEL["Awaiting Input"],
+      glyph: "circle-question-mark",
       pulse: false,
     };
   }
@@ -591,8 +600,8 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "running") {
     return {
       label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      toneClass: THREAD_STATUS_TONE_BY_LABEL.Working,
+      glyph: "grid",
       pulse: true,
     };
   }
@@ -600,8 +609,8 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "starting") {
     return {
       label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      toneClass: THREAD_STATUS_TONE_BY_LABEL.Connecting,
+      glyph: "grid",
       pulse: true,
     };
   }
@@ -614,8 +623,8 @@ export function resolveThreadStatusPill(input: {
   if (hasPlanReadyPrompt) {
     return {
       label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
+      toneClass: THREAD_STATUS_TONE_BY_LABEL["Plan Ready"],
+      glyph: "file-text",
       pulse: false,
     };
   }
@@ -623,8 +632,8 @@ export function resolveThreadStatusPill(input: {
   if (hasUnseenCompletion(thread)) {
     return {
       label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      toneClass: THREAD_STATUS_TONE_BY_LABEL.Completed,
+      glyph: "check-check",
       pulse: false,
     };
   }

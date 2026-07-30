@@ -4,7 +4,15 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  CircleQuestionMarkIcon,
+  CloudIcon,
+  FolderGit2Icon,
+  GitPullRequestIcon,
+  TerminalIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
@@ -16,6 +24,9 @@ import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
+import { cn } from "../lib/utils";
+import { SidebarCompletedIcon, SidebarPlanReadyIcon } from "./icons/custom";
+import { PixelGridLoader } from "./ui/pixel-grid-loader";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface PrStatusIndicator {
@@ -34,6 +45,14 @@ export interface TerminalStatusIndicator {
 }
 
 export type ThreadPr = VcsStatusResult["pr"];
+
+const THREAD_STATUS_ICON_BY_GLYPH: Record<
+  Exclude<ThreadStatusPill["glyph"], "grid" | "file-text" | "check-check">,
+  LucideIcon
+> = {
+  "circle-alert": CircleAlertIcon,
+  "circle-question-mark": CircleQuestionMarkIcon,
+};
 
 export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
   switch (state) {
@@ -139,6 +158,53 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+export function getSidebarIndicatorClassName(input: {
+  toneClass: string;
+  className?: string | undefined;
+}) {
+  return cn(
+    "inline-flex size-4 shrink-0 items-center justify-center",
+    input.toneClass,
+    input.className,
+  );
+}
+
+export function SidebarStatusGlyph({
+  status,
+  compact = false,
+  className,
+}: {
+  status: ThreadStatusPill;
+  compact?: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center",
+        compact ? "size-3.5" : "size-3",
+        className,
+      )}
+      data-slot="sidebar-status-glyph"
+      data-status-glyph={status.glyph}
+    >
+      {status.glyph === "grid" ? (
+        <PixelGridLoader variant="sidebar" className="text-current" />
+      ) : status.glyph === "file-text" ? (
+        <SidebarPlanReadyIcon className="size-3" />
+      ) : status.glyph === "check-check" ? (
+        <SidebarCompletedIcon className="size-3" />
+      ) : (
+        (() => {
+          const Icon = THREAD_STATUS_ICON_BY_GLYPH[status.glyph];
+          return <Icon className="size-3" strokeWidth={2.25} />;
+        })()
+      )}
+    </span>
+  );
+}
+
 export function ThreadWorktreeIndicator({
   thread,
 }: {
@@ -176,51 +242,42 @@ export function ThreadWorktreeIndicator({
 export function ThreadStatusLabel({
   status,
   compact = false,
+  className,
 }: {
   status: ThreadStatusPill;
   compact?: boolean;
+  className?: string;
 }) {
   if (compact) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              aria-label={status.label}
-              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
-            />
-          }
-        >
-          <span
-            className={`size-[9px] rounded-full ${status.dotClass} ${
-              status.pulse ? "animate-status-pulse" : ""
-            }`}
-          />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
-      </Tooltip>
+      <span
+        title={status.label}
+        className={getSidebarIndicatorClassName({
+          toneClass: status.toneClass,
+          className,
+        })}
+      >
+        <SidebarStatusGlyph compact status={status} />
+        <span className="sr-only">{status.label}</span>
+      </span>
     );
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            aria-label={status.label}
-            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
-          />
-        }
+    <span title={status.label} className={cn("inline-flex items-center gap-1.5", className)}>
+      <span
+        className={getSidebarIndicatorClassName({
+          toneClass: status.toneClass,
+        })}
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-status-pulse" : ""
-          }`}
-        />
-        <span className="hidden md:inline">{status.label}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{status.label}</TooltipPopup>
-    </Tooltip>
+        <SidebarStatusGlyph status={status} />
+      </span>
+      <span
+        className={cn("hidden text-ui-2xs font-medium tracking-tight md:inline", status.toneClass)}
+      >
+        {status.label}
+      </span>
+    </span>
   );
 }
 
