@@ -31,14 +31,14 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "com.t3tools.t3code.dev";
-const APP_SCHEME = "t3code-dev";
+const ANDROID_PACKAGE = "com.t3tools.t3code";
+const APP_SCHEME = "t3code";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
-  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3CodeDev.app",
+  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3Code.app",
 );
 const ANDROID_APK_PATH = NodePath.join(
   MOBILE_ROOT,
@@ -58,7 +58,7 @@ const ANDROID_SDK_ROOT = resolveAndroidSdkRoot(NodeProcess.env);
 const MOBILE_BUILD_ENV = {
   ...NodeProcess.env,
   ANDROID_HOME: ANDROID_SDK_ROOT,
-  APP_VARIANT: "development",
+  APP_VARIANT: "production",
   EXPO_NO_GIT_STATUS: "1",
   JAVA_HOME:
     NodeProcess.env.JAVA_HOME ??
@@ -664,9 +664,9 @@ async function buildIos(): Promise<string> {
     "xcodebuild",
     [
       "-workspace",
-      NodePath.join(MOBILE_ROOT, "ios/T3CodeDev.xcworkspace"),
+      NodePath.join(MOBILE_ROOT, "ios/T3Code.xcworkspace"),
       "-scheme",
-      "T3CodeDev",
+      "T3Code",
       "-configuration",
       "Debug",
       "-sdk",
