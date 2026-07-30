@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareSemverVersions, normalizeSemverVersion, satisfiesSemverRange } from "./semver.ts";
+import {
+  compareSemverVersions,
+  normalizeSemverVersion,
+  parseSemver,
+  satisfiesSemverRange,
+} from "./semver.ts";
 
 describe("semver helpers", () => {
   it("matches supported range groups", () => {
@@ -16,6 +21,25 @@ describe("semver helpers", () => {
 
   it("normalizes versions with a missing patch segment", () => {
     expect(normalizeSemverVersion("2.1")).toBe("2.1.0");
+  });
+
+  it("normalizes and parses shorthand major-only versions", () => {
+    expect(normalizeSemverVersion("20")).toBe("20.0.0");
+    expect(normalizeSemverVersion("v18")).toBe("v18.0.0");
+    expect(normalizeSemverVersion("20-rc.1")).toBe("20.0.0-rc.1");
+    expect(parseSemver("20")).toEqual({ major: 20, minor: 0, patch: 0, prerelease: [] });
+  });
+
+  it("compares shorthand versions numerically instead of lexically", () => {
+    // Regression: "20" vs "9" previously fell back to string comparison, which
+    // ordered "20" before "9" ("2" < "9").
+    expect(compareSemverVersions("20", "9")).toBeGreaterThan(0);
+    expect(compareSemverVersions("18", "18.0.0")).toBe(0);
+  });
+
+  it("still rejects non-numeric shorthand and keeps empty input empty", () => {
+    expect(parseSemver("abc")).toBeNull();
+    expect(normalizeSemverVersion("")).toBe("");
   });
 
   it("compares prerelease versions before stable versions", () => {
