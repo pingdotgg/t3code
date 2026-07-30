@@ -35,6 +35,7 @@ function makeElectronAppLayer(
     setAboutPanelOptions: () => Effect.void,
     setAppUserModelId: () => Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
+    releaseSingleInstanceLock: Effect.void,
     getAppMetrics: Effect.sync(() => {
       onMetricsRead();
       return metrics;
