@@ -3,7 +3,6 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -104,6 +103,7 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { formatWorkingTimelineDuration } from "../../lib/workingTimelineDuration";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -842,7 +842,7 @@ function renderFeedEntry(
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
+    return <WorkingTimelineRow key={entry.createdAt} startedAt={entry.createdAt} />;
   }
 
   if (entry.type === "turn-fold") {
@@ -1023,16 +1023,17 @@ function renderFeedEntry(
 }
 
 const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [observedAtMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(observedAtMs);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
       setNowMs(Date.now());
     }, 1_000);
     return () => clearInterval(intervalId);
-  }, [props.startedAt]);
+  }, []);
 
-  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+  const durationLabel = formatWorkingTimelineDuration(props.startedAt, observedAtMs, nowMs);
 
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
