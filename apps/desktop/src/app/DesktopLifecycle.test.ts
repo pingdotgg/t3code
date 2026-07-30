@@ -29,7 +29,6 @@ describe("DesktopLifecycle", () => {
         setName: () => Effect.void,
         setAboutPanelOptions: () => Effect.void,
         setAppUserModelId: () => Effect.void,
-        requestSingleInstanceLock: Effect.succeed(true),
         getAppMetrics: Effect.succeed([]),
         isDefaultProtocolClient: () => Effect.succeed(false),
         setAsDefaultProtocolClient: () => Effect.succeed(true),
