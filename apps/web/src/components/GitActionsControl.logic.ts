@@ -37,11 +37,33 @@ export interface DefaultBranchActionDialogCopy {
   continueLabel: string;
 }
 
+export interface GitActionProgressPresentation {
+  readonly status: string;
+  readonly output: string | null;
+  readonly startedAtMs: number | null;
+}
+
+export interface GitActionResultToastTiming {
+  readonly timeout: 0;
+  readonly dismissAfterVisibleMs: number | null;
+}
+
 export type DefaultBranchConfirmableAction =
   | "push"
   | "create_pr"
   | "commit_push"
   | "commit_push_pr";
+
+const GIT_ACTION_SUCCESS_TOAST_VISIBLE_MS = 10_000;
+
+export function resolveGitActionResultToastTiming(
+  type: "error" | "success",
+): GitActionResultToastTiming {
+  return {
+    timeout: 0,
+    dismissAfterVisibleMs: type === "success" ? GIT_ACTION_SUCCESS_TOAST_VISIBLE_MS : null,
+  };
+}
 
 function resolveChangeRequestTerminology(
   gitStatus: VcsStatusResult | null,
@@ -49,6 +71,53 @@ function resolveChangeRequestTerminology(
   return gitStatus?.sourceControlProvider
     ? getChangeRequestTerminology(gitStatus.sourceControlProvider)
     : DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
+}
+
+export function resolveGitActionProgressPresentation(input: {
+  readonly isRunning: boolean;
+  readonly operation: string | null;
+  readonly currentLabel: string | null;
+  readonly lastOutputLine: string | null;
+  readonly phaseStartedAtMs: number | null;
+  readonly hookStartedAtMs: number | null;
+}): GitActionProgressPresentation | null {
+  if (
+    !input.isRunning ||
+    (input.operation !== "run_change_request" && input.operation !== "pull")
+  ) {
+    return null;
+  }
+
+  const currentLabel = input.currentLabel?.trim();
+  const output = input.lastOutputLine?.trim();
+  const isPull = input.operation === "pull";
+  return {
+    status:
+      currentLabel && currentLabel !== "Running source control action"
+        ? currentLabel
+        : isPull
+          ? "Pulling latest changes..."
+          : "Starting source control action...",
+    output: !isPull && output ? output : null,
+    startedAtMs: isPull
+      ? input.phaseStartedAtMs
+      : (input.hookStartedAtMs ?? input.phaseStartedAtMs),
+  };
+}
+
+export function formatGitActionElapsed(startedAtMs: number | null, nowMs: number): string | null {
+  if (startedAtMs === null) {
+    return null;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000));
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s`;
+  }
+
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return `${minutes}m ${seconds}s`;
 }
 
 export function buildGitActionProgressStages(input: {
