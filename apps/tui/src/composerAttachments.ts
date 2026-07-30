@@ -55,6 +55,22 @@ export function isSupportedImagePath(relativePath: string): boolean {
   return imageMimeTypeForPath(relativePath) !== null;
 }
 
+function hasUnescapedWhitespace(value: string): boolean {
+  let escaped = false;
+  for (const character of value) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (/\s/u.test(character)) return true;
+  }
+  return false;
+}
+
 /**
  * Resolve a complete prompt paste into either a workspace-relative path or an
  * explicit local path.
@@ -81,6 +97,19 @@ export function resolvePastedImagePath(
   const wasQuoted = (quote === "'" || quote === '"') && candidate.at(-1) === quote;
   if (wasQuoted) {
     candidate = candidate.slice(1, -1);
+  }
+  const isAnchoredPosixPath =
+    candidate.startsWith("/") ||
+    candidate.startsWith("~/") ||
+    candidate.startsWith("./") ||
+    candidate.startsWith("../");
+  if (
+    platform !== "win32" &&
+    !wasQuoted &&
+    hasUnescapedWhitespace(candidate) &&
+    !isAnchoredPosixPath
+  ) {
+    return null;
   }
   const wasShellEscaped = platform !== "win32" && /\\./u.test(candidate);
   if (platform !== "win32") {
@@ -119,7 +148,56 @@ export interface PromptImagePathLine {
   readonly imagePath: string;
 }
 
-/** Find path-only image lines in prompt text, including content returned by `$EDITOR`. */
+export interface PastedImagePath {
+  readonly imagePath: string;
+  readonly remainingText: string;
+}
+
+/**
+ * Find one image path in pasted prompt text.
+ *
+ * A path-only paste is consumed completely. When a terminal paste also includes
+ * prose, keep that prose in the composer and consume only an anchored local
+ * path (`~/`, `/`, `./`, or `../`). This avoids treating the entire sentence as
+ * a filename while still staging the image the user pasted.
+ */
+export function extractPastedImagePath(
+  pastedText: string,
+  workspaceRoot: string,
+  homeDirectory: string,
+  platform: NodeJS.Platform,
+): PastedImagePath | null {
+  const completePath = resolvePastedImagePath(pastedText, workspaceRoot, homeDirectory, platform);
+  if (completePath) return { imagePath: completePath, remainingText: "" };
+
+  const pathStartPattern =
+    platform === "win32"
+      ? /(^|[\s([{])(?:[a-z]:[\\/]|\\\\)(?=\S)/giu
+      : /(^|[\s([{])(?:~\/|\/|\.\.?\/)(?=\S)/gu;
+  const extensionPattern = /\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?=$|[\s,;:!?)}\]])/giu;
+
+  for (const startMatch of pastedText.matchAll(pathStartPattern)) {
+    const prefixLength = startMatch[1]?.length ?? 0;
+    const pathStart = (startMatch.index ?? 0) + prefixLength;
+    extensionPattern.lastIndex = pathStart;
+    const extensionMatch = extensionPattern.exec(pastedText);
+    if (!extensionMatch) continue;
+
+    const pathEnd = extensionMatch.index + extensionMatch[0].length;
+    const rawPath = pastedText.slice(pathStart, pathEnd);
+    if (rawPath.includes("\n") || rawPath.includes("\0")) continue;
+    const imagePath = resolvePastedImagePath(rawPath, workspaceRoot, homeDirectory, platform);
+    if (!imagePath) continue;
+
+    const before = pastedText.slice(0, pathStart);
+    let after = pastedText.slice(pathEnd);
+    if (before.endsWith(" ") && after.startsWith(" ")) after = after.slice(1);
+    return { imagePath, remainingText: `${before}${after}` };
+  }
+  return null;
+}
+
+/** Find image paths in prompt lines, including content returned by `$EDITOR`. */
 export function findPromptImagePathLines(
   prompt: string,
   workspaceRoot: string,
@@ -128,10 +206,21 @@ export function findPromptImagePathLines(
 ): ReadonlyArray<PromptImagePathLine> {
   const matches: PromptImagePathLine[] = [];
   for (const [lineIndex, text] of prompt.split("\n").entries()) {
-    const imagePath = resolvePastedImagePath(text, workspaceRoot, homeDirectory, platform);
-    if (imagePath) matches.push({ lineIndex, text, imagePath });
+    const pastedImage = extractPastedImagePath(text, workspaceRoot, homeDirectory, platform);
+    if (pastedImage) matches.push({ lineIndex, text, imagePath: pastedImage.imagePath });
   }
   return matches;
+}
+
+/** Replace successfully attached image-path lines with their remaining prompt text. */
+export function replacePromptLines(
+  prompt: string,
+  replacements: ReadonlyMap<number, string>,
+): string {
+  return prompt
+    .split("\n")
+    .map((line, index) => replacements.get(index) ?? line)
+    .join("\n");
 }
 
 /** Remove only successfully attached path lines while preserving all other editor text. */

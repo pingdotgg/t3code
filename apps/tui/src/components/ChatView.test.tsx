@@ -1363,12 +1363,16 @@ describe("ChatView acknowledged submissions", () => {
       });
 
       await selectThread(setup, fake.connect);
+      const escapedImagePath = imagePath.replaceAll(" ", "\\ ");
       await React.act(async () => {
-        await setup.mockInput.pasteBracketedText(`'${imagePath}'`);
+        await setup.mockInput.pasteBracketedText(`Please inspect ${escapedImagePath}`);
         await setup.renderOnce();
       });
       await setup.waitForFrame(
-        (frame) => frame.includes("outside workspace.png") && !frame.includes(directory),
+        (frame) =>
+          frame.includes("outside wor") &&
+          frame.includes("Please inspect") &&
+          !frame.includes(directory),
       );
       expect(workspaceReads).toBe(0);
       setup.renderer.destroy();

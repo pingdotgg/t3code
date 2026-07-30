@@ -276,7 +276,7 @@ describe("ChatComposer", () => {
           }}
           onPasteImagePath={(value) => {
             pastedPath = value;
-            return Promise.resolve(true);
+            return Promise.resolve({ attached: true, textToInsert: "" });
           }}
         />
       );
@@ -302,7 +302,7 @@ describe("ChatComposer", () => {
           reply={reply}
           inputFocused
           onReplyInput={setReply}
-          onPasteImagePath={() => Promise.resolve(false)}
+          onPasteImagePath={(value) => Promise.resolve({ attached: false, textToInsert: value })}
         />
       );
     }
@@ -310,6 +310,32 @@ describe("ChatComposer", () => {
     await t.renderOnce();
     await t.mockInput.pasteBracketedText("./screenshots/missing.png");
     await t.waitForFrame((frame) => frame.includes("./screenshots/missing.png"));
+    t.renderer.destroy();
+  });
+
+  it("Given prose and an image path are pasted together, when attached, then only the prose remains in the prompt", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={setReply}
+          onPasteImagePath={() =>
+            Promise.resolve({ attached: true, textToInsert: "Explain this screenshot " })
+          }
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText(
+      "Explain this screenshot ~/Downloads/Screenshot\\ 2026.png",
+    );
+    const frame = await t.waitForFrame((value) => value.includes("Explain this screenshot"));
+    expect(frame).not.toContain("~/Downloads");
     t.renderer.destroy();
   });
 

@@ -96,6 +96,11 @@ function ComposerImageAttachments({
   );
 }
 
+export interface PasteImagePathResult {
+  readonly attached: boolean;
+  readonly textToInsert: string;
+}
+
 export const ChatComposer = React.memo(function ChatComposer({
   mode,
   reply,
@@ -172,9 +177,9 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onPasteImage: (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => void;
   /**
    * Returns null for an ordinary text paste, otherwise resolves whether a
-   * complete pasted path was staged as a workspace image.
+   * pasted path was staged and which non-path text should remain in the prompt.
    */
-  readonly onPasteImagePath: (pastedText: string) => Promise<boolean> | null;
+  readonly onPasteImagePath: (pastedText: string) => Promise<PasteImagePathResult> | null;
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
@@ -312,8 +317,8 @@ export const ChatComposer = React.memo(function ChatComposer({
               if (!attachment) return;
               event.preventDefault();
               event.stopPropagation();
-              void attachment.then((attached) => {
-                if (!attached) replyRef.current?.insertText(pastedText);
+              void attachment.then(({ textToInsert }) => {
+                if (textToInsert.length > 0) replyRef.current?.insertText(textToInsert);
               });
             }}
           />

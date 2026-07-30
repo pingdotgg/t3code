@@ -43,12 +43,12 @@ import {
   findPromptImagePathLines,
   imageExtensionForMimeType,
   imageMimeTypeForPath,
+  extractPastedImagePath,
   isSupportedImagePath,
   prepareComposerImage,
   prepareComposerImageBytes,
   removeComposerImage,
-  removePromptLines,
-  resolvePastedImagePath,
+  replacePromptLines,
 } from "../composerAttachments.ts";
 import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
 import type { TuiClient } from "../connection.ts";
@@ -2256,27 +2256,30 @@ export function ChatView({
       });
   };
 
-  const pasteComposerImagePath = (pastedText: string): Promise<boolean> | null => {
-    const imagePath = resolvePastedImagePath(
+  const pasteComposerImagePath = (pastedText: string) => {
+    const pastedImage = extractPastedImagePath(
       pastedText,
       composerCwd,
       NodeOS.homedir(),
       client.hostPlatform,
     );
-    if (!imagePath) return null;
+    if (!pastedImage) return null;
+    const { imagePath, remainingText } = pastedImage;
+    const failed = { attached: false, textToInsert: pastedText } as const;
+    const attached = { attached: true, textToInsert: remainingText } as const;
 
     return (async () => {
       if (!detail && focus !== "new") {
         store.setStatus("Select a thread before attaching an image path.", "error");
-        return false;
+        return failed;
       }
       if (userInputActive) {
         store.setStatus("Answer the pending question before attaching an image.", "error");
-        return false;
+        return failed;
       }
       if (activeComposerImages.some((image) => image.relativePath === imagePath)) {
         store.setStatus(`${NodePath.basename(imagePath)} is already attached.`, "info");
-        return true;
+        return attached;
       }
       if (
         activeComposerImages.length + clipboardImageLoadsRef.current >=
@@ -2286,7 +2289,7 @@ export function ChatView({
           `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
           "error",
         );
-        return false;
+        return failed;
       }
 
       clipboardImageLoadsRef.current += 1;
@@ -2324,13 +2327,13 @@ export function ChatView({
           return [...current, image];
         });
         store.setStatus(`Attached ${image.upload.name}.`, "success");
-        return true;
+        return attached;
       } catch (error) {
         store.setStatus(
           error instanceof Error ? error.message : "Could not attach the pasted image path.",
           "error",
         );
-        return false;
+        return failed;
       } finally {
         clipboardImageLoadsRef.current = Math.max(0, clipboardImageLoadsRef.current - 1);
       }
@@ -2404,20 +2407,21 @@ export function ChatView({
           NodeOS.homedir(),
           client.hostPlatform,
         ).slice(0, availableImageSlots);
-        const attachedLineIndexes = new Set<number>();
+        const attachedLineReplacements = new Map<number, string>();
         for (const imagePathLine of imagePathLines) {
           const attachment = pasteComposerImagePath(imagePathLine.text);
-          if (attachment && (await attachment)) {
-            attachedLineIndexes.add(imagePathLine.lineIndex);
+          const result = attachment ? await attachment : null;
+          if (result?.attached) {
+            attachedLineReplacements.set(imagePathLine.lineIndex, result.textToInsert);
           }
         }
-        const prompt = normalizeEditedPrompt(removePromptLines(edited, attachedLineIndexes));
+        const prompt = normalizeEditedPrompt(replacePromptLines(edited, attachedLineReplacements));
         if (focus === "new") setDraft(prompt);
         else setReply(prompt);
         setComposerEpoch((epoch) => epoch + 1);
         store.setStatus(
-          attachedLineIndexes.size > 0
-            ? `Prompt updated; attached ${attachedLineIndexes.size} image path${attachedLineIndexes.size === 1 ? "" : "s"}.`
+          attachedLineReplacements.size > 0
+            ? `Prompt updated; attached ${attachedLineReplacements.size} image path${attachedLineReplacements.size === 1 ? "" : "s"}.`
             : "Prompt updated from $EDITOR.",
           "success",
         );
