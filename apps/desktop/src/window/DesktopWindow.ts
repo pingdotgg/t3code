@@ -189,8 +189,7 @@ function getWindowTitleBarOptions(
 ): WindowTitleBarOptions {
   if (platform === "darwin") {
     return {
-      titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 16, y: 18 },
+      titleBarStyle: "hidden",
     };
   }
 
@@ -351,6 +350,7 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
+      window.setWindowButtonVisibility(false);
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;

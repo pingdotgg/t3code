@@ -98,6 +98,7 @@ function makeFakeBrowserWindow() {
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
     setAutoHideCursor: vi.fn(),
+    setWindowButtonVisibility: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
     show: vi.fn(),
@@ -118,6 +119,7 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     send: webContents.send,
     setAutoHideCursor: window.setAutoHideCursor,
+    setWindowButtonVisibility: window.setWindowButtonVisibility,
     webContentsListeners,
     windowListeners,
   };
@@ -434,8 +436,11 @@ describe("DesktopWindow", () => {
         assert.isUndefined(createdWindowOptions[0]?.x);
         assert.isUndefined(createdWindowOptions[0]?.y);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
+        assert.equal(createdWindowOptions[0]?.titleBarStyle, "hidden");
+        assert.isUndefined(createdWindowOptions[0]?.trafficLightPosition);
         assert.isFalse(createdWindowOptions[0]?.webPreferences?.backgroundThrottling);
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
+        assert.deepEqual(fakeWindow.setWindowButtonVisibility.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
