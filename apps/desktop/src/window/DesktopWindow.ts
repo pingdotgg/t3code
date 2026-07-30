@@ -15,7 +15,11 @@ import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  DEEP_LINK_CHANNEL,
+  MENU_ACTION_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
@@ -80,6 +84,8 @@ export class DesktopWindow extends Context.Service<
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    // Resolves false when no renderer was available to receive the link.
+    readonly dispatchDeepLink: (target: string) => Effect.Effect<boolean, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -674,6 +680,34 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
+  // Pushes a renderer message and reveals the window it landed in. Reports
+  // whether the payload reached a renderer so callers holding something they
+  // cannot regenerate — a deep link, say — can keep it until a window exists.
+  const sendToMainWindow = Effect.fn("desktop.window.sendToMainWindow")(function* (
+    channel: string,
+    payload: string,
+  ) {
+    const existingWindow = yield* focusedMainWindow;
+    if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
+      return false;
+    }
+    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+
+    const send = () => {
+      if (targetWindow.isDestroyed()) return;
+      targetWindow.webContents.send(channel, payload);
+      void runPromise(electronWindow.reveal(targetWindow));
+    };
+
+    if (targetWindow.webContents.isLoadingMainFrame()) {
+      targetWindow.webContents.once("did-finish-load", send);
+      return true;
+    }
+
+    send();
+    return true;
+  });
+
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
@@ -768,24 +802,11 @@ export const make = Effect.gen(function* () {
     ),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
-      const existingWindow = yield* focusedMainWindow;
-      if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
-        return;
-      }
-      const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
-
-      if (targetWindow.webContents.isLoadingMainFrame()) {
-        targetWindow.webContents.once("did-finish-load", send);
-        return;
-      }
-
-      send();
+      yield* sendToMainWindow(MENU_ACTION_CHANNEL, action);
+    }),
+    dispatchDeepLink: Effect.fn("desktop.window.dispatchDeepLink")(function* (target) {
+      yield* Effect.annotateCurrentSpan({ target });
+      return yield* sendToMainWindow(DEEP_LINK_CHANNEL, target);
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

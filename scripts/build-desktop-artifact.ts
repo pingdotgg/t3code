@@ -640,6 +640,14 @@ export const DESKTOP_FILE_EXCLUSIONS = [
 // The Windows primary backend reads the same files through the asar redirect,
 // so nothing is duplicated.
 export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
+// Both schemes ship in every artifact so a dev build and an installed build can
+// each own their own scheme without fighting over one registration.
+export const DESKTOP_URL_PROTOCOLS = [
+  {
+    name: "T3 Code",
+    schemes: ["t3code", "t3code-dev"],
+  },
+] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
@@ -1549,6 +1557,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // extracts native libraries, which fff-node finds in app.asar.unpacked.
     ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
     extraResources: DESKTOP_EXTRA_RESOURCES,
+    // Declared at the top level, not per-platform: electron-builder feeds this
+    // to the macOS Info.plist and the Linux desktop entry's MimeType, and the
+    // Linux desktop entry is what makes xdg resolve t3code:// to the app. NSIS
+    // ignores it, so Windows registers the scheme at runtime instead.
+    protocols: DESKTOP_URL_PROTOCOLS,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1568,12 +1581,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
-      protocols: [
-        {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
-        },
-      ],
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,

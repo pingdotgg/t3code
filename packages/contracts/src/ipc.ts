@@ -1008,6 +1008,9 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  // Receives the in-app path from a t3code:// link opened outside the app. The
+  // main process only ever forwards a path within the renderer's own origin.
+  onDeepLink?: (listener: (target: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

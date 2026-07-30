@@ -78,6 +78,7 @@ describe("DesktopLifecycle", () => {
         handleBackendNotReady: Effect.void,
         flushMainWindowBounds: Effect.void,
         dispatchMenuAction: () => Effect.void,
+        dispatchDeepLink: () => Effect.succeed(true),
         syncAppearance: Effect.void,
       });
 

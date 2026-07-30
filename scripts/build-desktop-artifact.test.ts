@@ -16,6 +16,7 @@ import {
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
+  DESKTOP_URL_PROTOCOLS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
@@ -44,8 +45,15 @@ import {
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
 } from "./build-desktop-artifact.ts";
+
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+const PLATFORM_DEFAULT_TARGETS = {
+  mac: "dmg",
+  linux: "AppImage",
+  win: "nsis",
+} as const;
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -511,7 +519,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(error.message, secret);
   });
 
-  it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
+  it.effect("adds passkey entitlements to signed macOS builds", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
         entitlementsPath: "/tmp/entitlements.mac.plist",
@@ -522,7 +530,35 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
-      assert.deepStrictEqual(mac.protocols, [
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  // Declared once at the top level so the macOS Info.plist and the Linux
+  // desktop entry are both generated from it; a per-platform block would leave
+  // Linux with no x-scheme-handler and nothing for xdg to resolve.
+  it.effect("registers both renderer protocols on every platform", () =>
+    Effect.gen(function* () {
+      for (const platform of ["mac", "linux", "win"] as const) {
+        const config = yield* createBuildConfig(
+          platform,
+          PLATFORM_DEFAULT_TARGETS[platform],
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+
+        assert.deepStrictEqual(
+          config.protocols,
+          DESKTOP_URL_PROTOCOLS,
+          `expected renderer protocols for ${platform}`,
+        );
+        assert.notProperty(config.mac ?? {}, "protocols");
+        assert.notProperty(config.linux ?? {}, "protocols");
+      }
+
+      assert.deepStrictEqual(DESKTOP_URL_PROTOCOLS, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
