@@ -169,6 +169,50 @@ describe("runAppUpdateCheck", () => {
     expect(manualStates).toEqual(["checking", "idle"]);
     reportError.mockRestore();
   });
+
+  it("publishes the in-flight check before a state callback can re-enter", async () => {
+    let resolveCheck!: (result: {
+      readonly isAvailable: boolean;
+      readonly isRollBackToEmbedded: boolean;
+    }) => void;
+    const checkResult = new Promise<{
+      readonly isAvailable: boolean;
+      readonly isRollBackToEmbedded: boolean;
+    }>((resolve) => {
+      resolveCheck = resolve;
+    });
+    const client = makeUpdateClient({
+      checkForUpdateAsync: vi.fn(() => checkResult),
+    });
+    const reentrantStates: AppUpdateCheckState[] = [];
+    let reentrantCheck: Promise<void> | undefined;
+    let didReenter = false;
+
+    const initialCheck = runAppUpdateCheck({
+      client,
+      onStateChange: (state) => {
+        if (state !== "checking" || didReenter) return;
+        didReenter = true;
+        reentrantCheck = runAppUpdateCheck({
+          client,
+          onStateChange: (reentrantState) => reentrantStates.push(reentrantState),
+        });
+      },
+    });
+
+    expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+    expect(reentrantCheck).toBeDefined();
+    expect(reentrantStates).toEqual(["checking"]);
+
+    resolveCheck({
+      isAvailable: false,
+      isRollBackToEmbedded: false,
+    });
+    await Promise.all([initialCheck, reentrantCheck]);
+
+    expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+    expect(reentrantStates).toEqual(["checking", "current"]);
+  });
 });
 
 describe("createAppUpdateLaunchCheck", () => {

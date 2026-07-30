@@ -41,6 +41,12 @@ interface AppUpdateCheckInFlight {
   readonly stateListeners: Set<NonNullable<AppUpdateCheckOptions["onStateChange"]>>;
 }
 
+interface Deferred {
+  readonly promise: Promise<void>;
+  readonly reject: (cause: unknown) => void;
+  readonly resolve: () => void;
+}
+
 const HIDDEN_UPDATE_TAP_COUNT = 5;
 let appUpdateCheckInFlight: AppUpdateCheckInFlight | undefined;
 
@@ -83,30 +89,52 @@ export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Pr
   if (options.onFailure) failureListeners.add(options.onFailure);
   if (options.onStateChange) stateListeners.add(options.onStateChange);
 
-  const promise = performAppUpdateCheck(client, {
-    onFailure: (message) => {
-      progress.failure = message;
-      for (const listener of failureListeners) listener(message);
-    },
-    onStateChange: (state) => {
-      progress.state = state;
-      for (const listener of stateListeners) listener(state);
-    },
-  });
+  const deferred = createDeferred();
   const inFlight: AppUpdateCheckInFlight = {
     failureListeners,
     progress,
-    promise,
+    promise: deferred.promise,
     stateListeners,
   };
+  // Publish the operation before any state listener can synchronously re-enter.
   appUpdateCheckInFlight = inFlight;
+
+  const execution = performAppUpdateCheck(client, {
+    onFailure: (message) => {
+      progress.failure = message;
+      notifyListeners(failureListeners, message);
+    },
+    onStateChange: (state) => {
+      progress.state = state;
+      notifyListeners(stateListeners, state);
+    },
+  });
+  void execution.then(deferred.resolve, deferred.reject);
+
   try {
-    await promise;
+    await deferred.promise;
   } finally {
     if (appUpdateCheckInFlight === inFlight) {
       appUpdateCheckInFlight = undefined;
     }
   }
+}
+
+function createDeferred(): Deferred {
+  let reject!: Deferred["reject"];
+  let resolve!: Deferred["resolve"];
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = () => resolvePromise();
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+function notifyListeners<A>(listeners: ReadonlySet<(value: A) => void>, value: A): void {
+  // A listener can synchronously subscribe another caller. Snapshot so that
+  // caller receives only observeAppUpdateCheck's explicit current-value replay.
+  const snapshot = Array.from(listeners);
+  for (const listener of snapshot) listener(value);
 }
 
 async function observeAppUpdateCheck(
