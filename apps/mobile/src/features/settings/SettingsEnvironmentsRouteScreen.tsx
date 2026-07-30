@@ -58,6 +58,16 @@ export function SettingsEnvironmentsRouteScreen() {
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   }, []);
+  // Retries every environment at once. This is not a placebo refresh: the
+  // underlying command is `retryNow`, which short-circuits the reconnect
+  // backoff, so it is the one way to escape a long backoff delay without
+  // waiting it out.
+  const handleRefreshAll = useCallback(() => {
+    for (const environment of connectedEnvironments) {
+      onReconnectEnvironment(environment.environmentId);
+    }
+  }, [connectedEnvironments, onReconnectEnvironment]);
+  const canRefreshAll = connectedEnvironments.length > 0;
   const handleUpdateEnvironment = useCallback(
     (
       environmentId: EnvironmentId,
@@ -94,7 +104,15 @@ export function SettingsEnvironmentsRouteScreen() {
           <AndroidScreenHeader
             title="Environments"
             onBack={() => navigation.goBack()}
+            // Rendered in array order, left to right — the reverse of the iOS
+            // toolbar below. Same result on screen: (refresh, add).
             actions={[
+              {
+                accessibilityLabel: "Refresh all environments",
+                disabled: !canRefreshAll,
+                icon: "arrow.clockwise",
+                onPress: handleRefreshAll,
+              },
               {
                 accessibilityLabel: "Add environment",
                 icon: "plus",
@@ -105,12 +123,23 @@ export function SettingsEnvironmentsRouteScreen() {
           />
         </>
       ) : (
+        // UIKit orders right-side bar items from the right edge inward, so
+        // this reads right-to-left on screen: add stays outermost, refresh
+        // sits inside it. Visually: (refresh, add).
         <NativeHeaderToolbar placement="right">
           <NativeHeaderToolbar.Button
             icon="plus"
             onPress={() =>
               navigation.navigate("SettingsSheet", { screen: "SettingsEnvironmentNew" })
             }
+            separateBackground
+            tintColor={headerIconColor}
+          />
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Refresh all environments"
+            disabled={!canRefreshAll}
+            icon="arrow.clockwise"
+            onPress={handleRefreshAll}
             separateBackground
             tintColor={headerIconColor}
           />
