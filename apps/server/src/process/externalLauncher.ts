@@ -264,24 +264,16 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
-  const available: EditorId[] = [];
+  const availability = yield* Effect.forEach(
+    EDITORS,
+    (editor) =>
+      editor.commands === null
+        ? isCommandAvailable(fileManagerCommandForPlatform(platform), { env })
+        : Effect.map(resolveAvailableCommand(editor.commands, env), Option.isSome),
+    { concurrency: EDITORS.length },
+  );
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      const command = fileManagerCommandForPlatform(platform);
-      if (yield* isCommandAvailable(command, { env })) {
-        available.push(editor.id);
-      }
-      continue;
-    }
-
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
-
-  return available;
+  return EDITORS.filter((_, index) => availability[index]).map((editor) => editor.id);
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
@@ -443,8 +435,15 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
+  // Discovery probes every editor command across PATH, which can take seconds
+  // on hosts with long PATHs. Cache the result so only the first caller pays;
+  // the installed-editor set only changes across server restarts.
+  const cachedAvailableEditors = yield* Effect.cached(
+    provideCommandResolutionServices(resolveAvailableEditors()),
+  );
+
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
+    resolveAvailableEditors: () => cachedAvailableEditors,
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
