@@ -250,6 +250,69 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("syncs refined Cursor plan markdown before the follow-up turn completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-refined-plan-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_CREATE_PLAN: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const planEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.proposed.completed" || event.type === "turn.completed"),
+        ),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const initialTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "create a plan",
+        attachments: [],
+        interactionMode: "plan",
+      });
+      const refinedTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "refine the plan",
+        attachments: [],
+        interactionMode: "plan",
+      });
+
+      const planEvents = Array.from(yield* Fiber.join(planEventsFiber));
+      const proposedPlans = planEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }> =>
+          event.type === "turn.proposed.completed",
+      );
+
+      assert.equal(proposedPlans.length, 2);
+      assert.equal(proposedPlans[0]?.turnId, initialTurn.turnId);
+      assert.equal(proposedPlans[0]?.payload.planMarkdown, "# Mock plan\n\n- initial step");
+      assert.equal(proposedPlans[1]?.turnId, refinedTurn.turnId);
+      assert.equal(proposedPlans[1]?.payload.planMarkdown, "# Mock plan\n\n- refined step");
+      assert.deepStrictEqual(
+        planEvents.map((event) => event.type),
+        ["turn.proposed.completed", "turn.completed", "turn.proposed.completed", "turn.completed"],
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import {
+  CursorCreatePlanResponse,
   CursorListAvailableModelsResponse,
   extractAskQuestions,
   extractPlanMarkdown,
   extractTodosAsPlan,
 } from "./CursorAcpExtension.ts";
+
+const decodeCursorCreatePlanResponse = Schema.decodeUnknownSync(CursorCreatePlanResponse);
 
 describe("CursorAcpExtension", () => {
   it("extracts ask-question prompts from the real Cursor ACP payload shape", () => {
@@ -82,6 +86,23 @@ describe("CursorAcpExtension", () => {
     });
 
     expect(planMarkdown).toBe("# Plan\n\n1. Add schemas\n2. Remove casts");
+  });
+
+  it("decodes the documented accepted create-plan response shape", () => {
+    expect(
+      decodeCursorCreatePlanResponse({
+        outcome: {
+          outcome: "accepted",
+          planUri: "file:///tmp/plan.md",
+        },
+      }),
+    ).toEqual({
+      outcome: {
+        outcome: "accepted",
+        planUri: "file:///tmp/plan.md",
+      },
+    });
+    expect(() => decodeCursorCreatePlanResponse({ accepted: true })).toThrow();
   });
 
   it("projects todo updates into a plan shape and drops invalid entries", () => {

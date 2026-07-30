@@ -48,6 +48,22 @@ export const CursorCreatePlanRequest = Schema.Struct({
   phases: Schema.optional(Schema.Array(CursorPlanPhase)),
 });
 
+export const CursorCreatePlanResponse = Schema.Struct({
+  outcome: Schema.Union([
+    Schema.Struct({
+      outcome: Schema.Literal("accepted"),
+      planUri: Schema.optional(Schema.String),
+    }),
+    Schema.Struct({
+      outcome: Schema.Literal("rejected"),
+      reason: Schema.optional(Schema.String),
+    }),
+    Schema.Struct({
+      outcome: Schema.Literal("cancelled"),
+    }),
+  ]),
+});
+
 export const CursorUpdateTodosRequest = Schema.Struct({
   toolCallId: Schema.String,
   todos: Schema.Array(CursorTodo),

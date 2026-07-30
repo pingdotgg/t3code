@@ -69,6 +69,7 @@ import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/Curso
 import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
+  CursorCreatePlanResponse,
   CursorUpdateTodosRequest,
   extractAskQuestions,
   extractPlanMarkdown,
@@ -132,6 +133,8 @@ interface CursorSessionContext {
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
+  readonly proposedPlanFilePath: string;
+  lastProposedPlanMarkdown: string | undefined;
   activeTurnId: TurnId | undefined;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
@@ -364,6 +367,47 @@ export function makeCursorAdapter(
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
+    const normalizeProposedPlanMarkdown = (planMarkdown: string) => planMarkdown.trim();
+
+    const emitProposedPlanCompleted = Effect.fn("CursorAdapter.emitProposedPlanCompleted")(
+      function* (ctx: CursorSessionContext, planMarkdown: string) {
+        const normalizedPlanMarkdown = normalizeProposedPlanMarkdown(planMarkdown);
+        if (
+          normalizedPlanMarkdown.length === 0 ||
+          normalizedPlanMarkdown === ctx.lastProposedPlanMarkdown
+        ) {
+          return;
+        }
+        ctx.lastProposedPlanMarkdown = normalizedPlanMarkdown;
+        yield* offerRuntimeEvent({
+          type: "turn.proposed.completed",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId: ctx.activeTurnId,
+          payload: { planMarkdown: normalizedPlanMarkdown },
+        });
+      },
+    );
+
+    const syncProposedPlanFromFile = Effect.fn("CursorAdapter.syncProposedPlanFromFile")(
+      function* (ctx: CursorSessionContext) {
+        if (!(yield* fileSystem.exists(ctx.proposedPlanFilePath))) {
+          return;
+        }
+        const planMarkdown = yield* fileSystem.readFileString(ctx.proposedPlanFilePath);
+        yield* emitProposedPlanCompleted(ctx, planMarkdown);
+      },
+      (effect, ctx) =>
+        Effect.catch(effect, (cause) =>
+          Effect.logWarning("Failed to refresh Cursor proposed plan from its backing file.", {
+            cause,
+            threadId: ctx.threadId,
+            proposedPlanFilePath: ctx.proposedPlanFilePath,
+          }),
+        ),
+    );
+
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
         const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
@@ -496,6 +540,20 @@ export function makeCursorAdapter(
           }
 
           const cwd = path.resolve(input.cwd.trim());
+          const proposedPlanFilePath = path.join(
+            serverConfig.stateDir,
+            "plans",
+            "cursor",
+            `${encodeURIComponent(input.threadId)}.md`,
+          );
+          const lastProposedPlanMarkdown = yield* fileSystem
+            .readFileString(proposedPlanFilePath)
+            .pipe(
+              Effect.map(
+                (planMarkdown) => normalizeProposedPlanMarkdown(planMarkdown) || undefined,
+              ),
+              Effect.orElseSucceed(() => undefined),
+            );
           const cursorModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const existing = sessions.get(input.threadId);
@@ -622,20 +680,22 @@ export function makeCursorAdapter(
                     params,
                     "acp.cursor.extension",
                   );
-                  yield* offerRuntimeEvent({
-                    type: "turn.proposed.completed",
-                    ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    turnId: ctx?.activeTurnId,
-                    payload: { planMarkdown: extractPlanMarkdown(params) },
-                    raw: {
-                      source: "acp.cursor.extension",
-                      method: "cursor/create_plan",
-                      payload: params,
+                  const planMarkdown = extractPlanMarkdown(params);
+                  yield* fileSystem.makeDirectory(path.dirname(ctx.proposedPlanFilePath), {
+                    recursive: true,
+                  });
+                  yield* fileSystem.writeFileString(
+                    ctx.proposedPlanFilePath,
+                    `${planMarkdown.trimEnd()}\n`,
+                  );
+                  yield* emitProposedPlanCompleted(ctx, planMarkdown);
+                  const planUri = yield* path.toFileUrl(ctx.proposedPlanFilePath);
+                  return CursorCreatePlanResponse.make({
+                    outcome: {
+                      outcome: "accepted",
+                      planUri: planUri.href,
                     },
                   });
-                  return { accepted: true } as const;
                 }),
               ),
             );
@@ -777,6 +837,8 @@ export function makeCursorAdapter(
             pendingUserInputs,
             turns: [],
             lastPlanFingerprint: undefined,
+            proposedPlanFilePath,
+            lastProposedPlanMarkdown,
             activeTurnId: undefined,
             promptsInFlight: 0,
             stopped: false,
@@ -1031,6 +1093,7 @@ export function makeCursorAdapter(
           // superseded prompt resolving (usually cancelled) while another is
           // in flight or pending must leave the merged turn running.
           if (ctx.promptsInFlight === 1) {
+            yield* syncProposedPlanFromFile(ctx);
             yield* offerRuntimeEvent({
               type: "turn.completed",
               ...(yield* makeEventStamp()),

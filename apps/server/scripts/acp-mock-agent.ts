@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
 import * as Effect from "effect/Effect";
 
@@ -18,6 +19,7 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitCreatePlan = process.env.T3_ACP_EMIT_CREATE_PLAN === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
@@ -55,6 +57,7 @@ let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
+let proposedPlanUri: string | undefined;
 const cancelledSessions = new Set<string>();
 
 function promptIdFromRequestMeta(
@@ -463,6 +466,47 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (emitCreatePlan && promptCount === 1) {
+        const response = yield* agent.client.extRequest("cursor/create_plan", {
+          toolCallId: "create-plan-tool-call-1",
+          name: "Mock plan",
+          overview: "Verify plan refinements",
+          plan: "# Mock plan\n\n- initial step",
+          todos: [{ id: "step-1", content: "Initial step", status: "pending" }],
+          isProject: false,
+        });
+        const outcome =
+          typeof response === "object" && response !== null && "outcome" in response
+            ? response.outcome
+            : undefined;
+        if (
+          typeof outcome !== "object" ||
+          outcome === null ||
+          !("outcome" in outcome) ||
+          outcome.outcome !== "accepted" ||
+          !("planUri" in outcome) ||
+          typeof outcome.planUri !== "string"
+        ) {
+          throw new Error(
+            "Expected cursor/create_plan to return an accepted outcome with planUri.",
+          );
+        }
+        proposedPlanUri = outcome.planUri;
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitCreatePlan && promptCount === 2) {
+        if (!proposedPlanUri) {
+          throw new Error("Expected the first create-plan prompt to capture planUri.");
+        }
+        NodeFS.writeFileSync(
+          NodeURL.fileURLToPath(proposedPlanUri),
+          "# Mock plan\n\n- refined step\n",
+          "utf8",
+        );
+        return { stopReason: "end_turn" };
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
