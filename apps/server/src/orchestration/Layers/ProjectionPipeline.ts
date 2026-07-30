@@ -210,12 +210,18 @@ function deriveOutstandingBackgroundTasks(
   // Insertion-ordered, so the first surviving entry is the oldest open task.
   const openStartedAt = new Map<string, string>();
   const settledTaskIds = new Set<string>();
-  const ordered = [...activities].toSorted((left, right) =>
-    left.sequence !== undefined && right.sequence !== undefined && left.sequence !== right.sequence
-      ? left.sequence - right.sequence
-      : left.createdAt.localeCompare(right.createdAt) ||
-        left.activityId.localeCompare(right.activityId),
-  );
+  // Total order: unsequenced (pre-sequence) rows sort first as a group, so
+  // mixing them with sequenced rows cannot produce a non-transitive
+  // comparison and an arbitrary replay order.
+  const ordered = [...activities].toSorted((left, right) => {
+    const leftSequence = left.sequence ?? Number.NEGATIVE_INFINITY;
+    const rightSequence = right.sequence ?? Number.NEGATIVE_INFINITY;
+    if (leftSequence !== rightSequence) return leftSequence < rightSequence ? -1 : 1;
+    return (
+      left.createdAt.localeCompare(right.createdAt) ||
+      left.activityId.localeCompare(right.activityId)
+    );
+  });
 
   for (const activity of ordered) {
     if (
@@ -255,8 +261,16 @@ function deriveOutstandingBackgroundTasks(
     openStartedAt.set(taskId, activity.createdAt);
   }
 
-  const [oldestOpenStartedAt] = openStartedAt.values();
-  return { count: openStartedAt.size, startedAt: oldestOpenStartedAt ?? null };
+  // Min-scan rather than first-inserted: replay order follows sequence, which
+  // can disagree with createdAt under clock skew, and the elapsed label must
+  // count from the genuinely oldest open task.
+  let oldestOpenStartedAt: string | null = null;
+  for (const startedAt of openStartedAt.values()) {
+    if (oldestOpenStartedAt === null || startedAt < oldestOpenStartedAt) {
+      oldestOpenStartedAt = startedAt;
+    }
+  }
+  return { count: openStartedAt.size, startedAt: oldestOpenStartedAt };
 }
 
 function deriveHasActionableProposedPlan(input: {

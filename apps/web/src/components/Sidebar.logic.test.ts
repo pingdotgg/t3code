@@ -689,6 +689,36 @@ describe("resolveSidebarV2Status", () => {
   it("defaults to ready with no session", () => {
     expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
   });
+
+  it("stays working while background tasks outlive a settled session", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "ready" as const },
+        outstandingBackgroundTaskCount: 2,
+      }),
+    ).toBe("working");
+  });
+
+  it("keeps failed above background-task working and ignores zero or legacy counts", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+        outstandingBackgroundTaskCount: 2,
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "ready" as const },
+        outstandingBackgroundTaskCount: 0,
+      }),
+    ).toBe("ready");
+    expect(
+      resolveSidebarV2Status({ ...idle, session: { ...session, status: "ready" as const } }),
+    ).toBe("ready");
+  });
 });
 
 describe("sortThreadsForSidebarV2", () => {

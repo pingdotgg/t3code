@@ -180,6 +180,73 @@ layer("036_ProjectionThreadsOutstandingBackgroundTasks", (it) => {
         createdAt: "2026-07-01T00:02:00.000Z",
       });
 
+      // Malformed ids never count: empty, whitespace-only, and non-string
+      // taskIds match the live derivation's rejects, not the Working state.
+      yield* insertThread("thread-malformed");
+      yield* insertSession("thread-malformed", "ready");
+      yield* insertActivity({
+        activityId: "activity-malformed-1",
+        threadId: "thread-malformed",
+        kind: "task.started",
+        payload: '{"taskId":""}',
+        createdAt: "2026-07-01T00:02:00.000Z",
+      });
+      yield* insertActivity({
+        activityId: "activity-malformed-2",
+        threadId: "thread-malformed",
+        kind: "task.started",
+        payload: '{"taskId":"   "}',
+        createdAt: "2026-07-01T00:03:00.000Z",
+      });
+      yield* insertActivity({
+        activityId: "activity-malformed-3",
+        threadId: "thread-malformed",
+        kind: "task.progress",
+        payload: '{"taskId":7,"detail":"numeric id"}',
+        createdAt: "2026-07-01T00:04:00.000Z",
+      });
+
+      // A stale completed BEFORE the task's first start does not settle it
+      // (the live replay ignores a completed for a task it has not seen), and
+      // a progress row after a real completed does not reopen it.
+      yield* insertThread("thread-out-of-order");
+      yield* insertSession("thread-out-of-order", "ready");
+      yield* insertActivity({
+        activityId: "activity-ooo-1",
+        threadId: "thread-out-of-order",
+        kind: "task.completed",
+        payload: '{"taskId":"task-6","status":"completed"}',
+        createdAt: "2026-07-01T00:02:00.000Z",
+      });
+      yield* insertActivity({
+        activityId: "activity-ooo-2",
+        threadId: "thread-out-of-order",
+        kind: "task.started",
+        payload: '{"taskId":"task-6"}',
+        createdAt: "2026-07-01T00:03:00.000Z",
+      });
+      yield* insertActivity({
+        activityId: "activity-ooo-3",
+        threadId: "thread-out-of-order",
+        kind: "task.started",
+        payload: '{"taskId":"task-7"}',
+        createdAt: "2026-07-01T00:04:00.000Z",
+      });
+      yield* insertActivity({
+        activityId: "activity-ooo-4",
+        threadId: "thread-out-of-order",
+        kind: "task.completed",
+        payload: '{"taskId":"task-7","status":"completed"}',
+        createdAt: "2026-07-01T00:05:00.000Z",
+      });
+      yield* insertActivity({
+        activityId: "activity-ooo-5",
+        threadId: "thread-out-of-order",
+        kind: "task.progress",
+        payload: '{"taskId":"task-7","detail":"late echo"}',
+        createdAt: "2026-07-01T00:06:00.000Z",
+      });
+
       yield* runMigrations({ toMigrationInclusive: 36 });
 
       const rows = yield* sql<{
@@ -203,6 +270,18 @@ layer("036_ProjectionThreadsOutstandingBackgroundTasks", (it) => {
         },
         {
           threadId: "thread-live",
+          outstandingBackgroundTaskCount: 1,
+          outstandingBackgroundTaskStartedAt: "2026-07-01T00:03:00.000Z",
+        },
+        {
+          threadId: "thread-malformed",
+          outstandingBackgroundTaskCount: 0,
+          outstandingBackgroundTaskStartedAt: null,
+        },
+        {
+          // task-6: stale completed precedes its start, so it stays open;
+          // task-7: settled, and the late progress echo does not reopen it.
+          threadId: "thread-out-of-order",
           outstandingBackgroundTaskCount: 1,
           outstandingBackgroundTaskStartedAt: "2026-07-01T00:03:00.000Z",
         },

@@ -59,10 +59,14 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+// Total order: unsequenced (pre-sequence) rows sort first as a group, so
+// mixing them with sequenced rows cannot produce a non-transitive comparison
+// and an arbitrary replay order. Mirrors the server-side comparator in
+// ProjectionPipeline's deriveOutstandingBackgroundTasks.
 function compareActivities(a: OrchestrationThreadActivity, b: OrchestrationThreadActivity): number {
-  if (a.sequence !== undefined && b.sequence !== undefined && a.sequence !== b.sequence) {
-    return a.sequence - b.sequence;
-  }
+  const aSequence = a.sequence ?? Number.NEGATIVE_INFINITY;
+  const bSequence = b.sequence ?? Number.NEGATIVE_INFINITY;
+  if (aSequence !== bSequence) return aSequence < bSequence ? -1 : 1;
   if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
@@ -150,9 +154,13 @@ export function deriveBackgroundTasks(
   }
   settled.sort((a, b) => (a.settledAt! < b.settledAt! ? 1 : a.settledAt! > b.settledAt! ? -1 : 0));
 
-  return {
-    running,
-    settled,
-    startedAt: running.length > 0 ? running[0]!.startedAt : null,
-  };
+  // Min-scan rather than first-inserted: replay order follows sequence, which
+  // can disagree with createdAt under clock skew, and the elapsed label must
+  // count from the genuinely oldest running task.
+  let startedAt: string | null = null;
+  for (const task of running) {
+    if (startedAt === null || task.startedAt < startedAt) startedAt = task.startedAt;
+  }
+
+  return { running, settled, startedAt };
 }

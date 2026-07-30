@@ -426,7 +426,7 @@ export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "rea
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session"
+  "hasPendingApprovals" | "hasPendingUserInput" | "outstandingBackgroundTaskCount" | "session"
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
@@ -441,6 +441,12 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  // Subagents outlive the parent turn: background tasks keep the row in
+  // motion after the session settles (#4962). Below failed so a broken
+  // session is never masked by a stale count.
+  if ((thread.outstandingBackgroundTaskCount ?? 0) > 0) {
+    return "working";
   }
   return "ready";
 }

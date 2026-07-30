@@ -211,4 +211,46 @@ describe("deriveBackgroundTasks", () => {
 
     expect(deriveBackgroundTasks([settleEvent, openEvent], READY).running).toEqual([]);
   });
+
+  it("orders unsequenced legacy activities as a group before sequenced ones", () => {
+    // A pairwise sequence-else-createdAt comparator is non-transitive on
+    // mixed collections; the total order sorts the unsequenced group first,
+    // so this legacy start is settled by the later sequenced completion even
+    // though its wall clock is newer.
+    const legacyStart: OrchestrationThreadActivity = {
+      id: EventId.make("legacy-start"),
+      tone: "info",
+      kind: "task.started",
+      summary: "task.started",
+      payload: { taskId: "task-1" },
+      turnId: null,
+      createdAt: "2026-06-01T09:00:00.000Z",
+    };
+    const sequencedSettle = activity(
+      "task.completed",
+      { taskId: "task-1", status: "completed" },
+      { sequence: 1, createdAt: "2026-06-01T08:00:00.000Z" },
+    );
+
+    const state = deriveBackgroundTasks([sequencedSettle, legacyStart], READY);
+    expect(state.running).toEqual([]);
+    expect(state.settled.map((task) => task.taskId)).toEqual(["task-1"]);
+  });
+
+  it("reports the oldest running start by timestamp, not replay order", () => {
+    const openedFirstButNewer = activity(
+      "task.started",
+      { taskId: "task-newer" },
+      { sequence: 1, createdAt: "2026-06-01T10:00:00.000Z" },
+    );
+    const openedSecondButOlder = activity(
+      "task.started",
+      { taskId: "task-older" },
+      { sequence: 2, createdAt: "2026-06-01T05:00:00.000Z" },
+    );
+
+    const state = deriveBackgroundTasks([openedFirstButNewer, openedSecondButOlder], READY);
+    expect(state.running).toHaveLength(2);
+    expect(state.startedAt).toBe("2026-06-01T05:00:00.000Z");
+  });
 });
