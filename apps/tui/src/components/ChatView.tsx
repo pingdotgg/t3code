@@ -219,13 +219,7 @@ export function ChatView({
   const settingsScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Shared popover picker for composer controls and new-thread checkout context.
   const [picker, setPicker] = React.useState<{
-    readonly kind:
-      | "model"
-      | "runtime"
-      | "reasoning"
-      | "workspace"
-      | "branch"
-      | "project-scope";
+    readonly kind: "model" | "runtime" | "reasoning" | "workspace" | "branch" | "project-scope";
     readonly target: "thread" | "new" | "sidebar";
     readonly title: string;
     readonly status: SelectStatus;
@@ -725,10 +719,9 @@ export function ChatView({
   ]);
 
   React.useEffect(() => {
-    if (focus !== "compose" || selectedProjectId === null) return;
-    if (!state.expanded.has(selectedProjectId)) store.toggleProject(selectedProjectId);
+    if (focus !== "compose" || state.selection?.kind !== "project") return;
     openNewThread();
-  }, [focus, openNewThread, selectedProjectId, state.expanded, store]);
+  }, [focus, openNewThread, state.selection?.kind]);
 
   const implementPlan = () => {
     if (!detail || !actionablePlan) return;
@@ -747,6 +740,10 @@ export function ChatView({
 
   const openWorkspacePicker = () => {
     if (focus !== "new") return;
+    if (picker?.kind === "workspace" && picker.target === "new") {
+      setPicker(null);
+      return;
+    }
     const currentWorkspaceLabel = newContextWorktreePath ? "Current worktree" : "Current checkout";
     setPicker({
       kind: "workspace",
@@ -772,6 +769,10 @@ export function ChatView({
   };
 
   const openProjectScopePicker = () => {
+    if (picker?.kind === "project-scope" && picker.target === "sidebar") {
+      setPicker(null);
+      return;
+    }
     const options: SelectOption[] = [
       {
         name: "All projects",
@@ -801,6 +802,10 @@ export function ChatView({
 
   const openBranchPicker = () => {
     if (focus !== "new") return;
+    if (picker?.kind === "branch" && picker.target === "new") {
+      setPicker(null);
+      return;
+    }
     const options = branchPickerOptions(newBranchRefs);
     setPicker({
       kind: "branch",
@@ -818,6 +823,10 @@ export function ChatView({
   const openRuntimePicker = () => {
     const target = focus === "new" ? "new" : "thread";
     if (target === "thread" && !detail) return;
+    if (picker?.kind === "runtime" && picker.target === target) {
+      setPicker(null);
+      return;
+    }
     const runtimeMode = target === "new" ? newRuntimeMode : (detail?.runtimeMode ?? "full-access");
     setPicker({
       kind: "runtime",
@@ -837,6 +846,10 @@ export function ChatView({
     const target = focus === "new" ? "new" : "thread";
     const selection = target === "new" ? resolvedNewModelSelection : threadModelSelection;
     if (target === "thread" && !detail) return;
+    if (picker?.kind === "model" && picker.target === target) {
+      setPicker(null);
+      return;
+    }
     setPicker({
       kind: "model",
       target,
@@ -875,6 +888,10 @@ export function ChatView({
     const selection = target === "new" ? resolvedNewModelSelection : threadModelSelection;
     if ((target === "thread" && !detail) || !selection) {
       store.setStatus("Select a model first.", "info");
+      return;
+    }
+    if (picker?.kind === "reasoning" && picker.target === target) {
+      setPicker(null);
       return;
     }
     setPicker({
@@ -1230,8 +1247,7 @@ export function ChatView({
       if (state.selection?.kind === "project") store.toggleProject(state.selection.id);
       else if (state.selection?.kind === "section") {
         store.toggleSection(state.selection.id.includes("snoozed") ? "snoozed" : "settled");
-      }
-      else if (state.selection?.kind === "more") store.loadMore(state.selection.id);
+      } else if (state.selection?.kind === "more") store.loadMore(state.selection.id);
       return;
     }
     if (!detail) {
@@ -1376,6 +1392,15 @@ export function ChatView({
       })
       .then(
         (threadId) => {
+          // Move the shared shell selection first. Keeping external-store writes
+          // together avoids notifying React halfway through the local composer
+          // state transition.
+          if (store.getState().projectScopeId !== project.id) {
+            store.setProjectScope(project.id);
+          }
+          store.select({ kind: "thread", id: threadId });
+          store.setStatus("Thread created.", "success");
+
           setDraft("");
           setNewComposerImages([]);
           setNewBranch(null);
@@ -1383,9 +1408,6 @@ export function ChatView({
           newDraftOriginSelectionRef.current = null;
           setComposerEpoch((epoch) => epoch + 1);
           setFocus("compose");
-          if (!store.getState().expanded.has(project.id)) store.toggleProject(project.id);
-          store.select({ kind: "thread", id: threadId });
-          store.setStatus("Thread created.", "success");
         },
         (error) => {
           store.setStatus(`create failed: ${String(error)}`, "error");
@@ -1752,8 +1774,21 @@ export function ChatView({
       });
   };
 
+  const focusComposer = () => {
+    setTerminalFocused(false);
+    setRightPanelFocused(false);
+    setPicker(null);
+    setOverlay("none");
+    setDiffOpen(false);
+    setFilesOpen(false);
+    setSettingsOpen(false);
+    if (expandedImage) closeExpandedImage();
+    setFocus(newDraftOriginSelectionRef.current === null ? "compose" : "new");
+  };
+
   const toggleFocus = () => {
     if (activeTerminal) setTerminalFocused((focused) => !focused);
+    else focusComposer();
   };
 
   const resizeTerminal = (delta: number) => {
@@ -2037,7 +2072,6 @@ export function ChatView({
       run: () => runCommand(() => setSettingsOpen(true)),
     });
     return list;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     detail,
     checkpoints.length,
@@ -2111,6 +2145,7 @@ export function ChatView({
     onTerminalScroll: (action) => terminalScrollRef.current?.(action),
     onImagePreviewClose: closeExpandedImage,
     onToggleFocus: toggleFocus,
+    onFocusComposer: focusComposer,
     // Plain arrows stay with the composer except while choosing between multiple
     // pending approvals. Threads use the explicit Alt+↑/↓ shortcuts or mouse.
     approvalNavigation: focus !== "new" && approvals.length > 1 && reply.length === 0,
@@ -2558,6 +2593,7 @@ export function ChatView({
               uiSelectedLabels={uiSelectedLabels}
               answerDraft={customAnswer}
               onAnswerInput={setCustomAnswer}
+              onFocusInput={focusComposer}
               onReplyInput={focus === "new" ? setDraft : setReply}
               onReplySubmit={focus === "new" ? submitNewThread : sendReply}
               onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}

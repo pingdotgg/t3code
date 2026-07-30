@@ -32,6 +32,7 @@ const base = {
   uiSelectedLabels: [],
   answerDraft: "",
   onAnswerInput: noop,
+  onFocusInput: noop,
   onReplyInput: noop,
   onReplySubmit: noop,
   onAuxInput: noop,

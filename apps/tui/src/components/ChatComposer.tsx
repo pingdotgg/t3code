@@ -113,6 +113,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   uiSelectedLabels,
   answerDraft,
   onAnswerInput,
+  onFocusInput,
   onReplyInput,
   onReplySubmit,
   onAuxInput,
@@ -152,6 +153,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   /** The free-text custom answer typed while a question is pending. */
   readonly answerDraft: string;
   readonly onAnswerInput: (value: string) => void;
+  /** Restore prompt focus when the static editor surface is clicked. */
+  readonly onFocusInput: () => void;
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
   readonly onAuxInput: (value: string) => void;
@@ -167,13 +170,12 @@ export const ChatComposer = React.memo(function ChatComposer({
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
-  // On (re)mount with a seeded draft — restored after an overlay or pulled back
-  // from $EDITOR — drop the cursor at the end so typing continues from there.
+  // On (re)mount with a seeded draft — restored after an overlay, prompt focus,
+  // or $EDITOR — drop the cursor at the end so typing continues from there.
   React.useEffect(() => {
-    if (reply.length > 0) replyRef.current?.gotoBufferEnd();
-    // Mount/epoch only; not on every keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [composerEpoch]);
+    if (inputFocused && reply.length > 0) replyRef.current?.gotoBufferEnd();
+    // Mount/focus/epoch only; not on every keystroke.
+  }, [composerEpoch, inputFocused]);
 
   if (mode === "rename" || mode === "filter" || mode === "commit") {
     const label = mode === "rename" ? "rename ▸ " : mode === "commit" ? "commit ▸ " : "find ▸ ";
@@ -260,6 +262,7 @@ export const ChatComposer = React.memo(function ChatComposer({
       />
       <box
         flexDirection="row"
+        onMouseDown={onFocusInput}
         {...(!answering ? { height: Math.max(1, editorRows) } : {})}
         flexShrink={0}
         overflow="hidden"

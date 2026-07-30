@@ -36,6 +36,8 @@ export interface KeyBindingActions {
   // Terminal
   readonly onToggleTerminal: () => void;
   readonly onToggleFocus: () => void;
+  /** Leave an auxiliary input/overlay and restore the prompt editor. */
+  readonly onFocusComposer: () => void;
   readonly onGrowTerminal: () => void;
   readonly onShrinkTerminal: () => void;
   readonly onTerminalCopy: () => void;
@@ -159,6 +161,11 @@ export function useKeyBindings(actions: KeyBindingActions): void {
 
     // Ctrl+C always exits cleanly (outside the terminal).
     if (key.ctrl && key.name === "c") return actions.onExit();
+    // Search, pickers, and other auxiliary modes must never trap the prompt.
+    // In compose mode ^P retains its prompt⇄terminal meaning below.
+    if (key.ctrl && key.name === "p" && actions.mode !== "compose") {
+      return actions.onFocusComposer();
+    }
 
     if (actions.mode === "imagePreview") {
       if (key.name === "escape") return actions.onImagePreviewClose();

@@ -231,16 +231,7 @@ async function selectThread(
     await setup.flush();
   });
   await setup.waitForFrame((frame) => frame.includes("Project one"));
-
-  // Selecting a project automatically opens its new-thread composer and expands
-  // the project, so Alt+Down can move directly into its first thread.
-  await React.act(async () => {
-    setup.mockInput.pressKey("\x1b\x1b[B");
-    await setup.renderOnce();
-  });
-  await setup.waitForFrame(
-    (frame) => frame.includes("Thread one") && !frame.includes("Enter to expand"),
-  );
+  await setup.waitForFrame((frame) => frame.includes("Thread one"));
 }
 
 describe("ChatView responsive shell", () => {
@@ -284,18 +275,101 @@ describe("ChatView responsive shell", () => {
       await setup.renderOnce();
       await setup.flush();
     });
-    expect(setup.captureCharFrame()).not.toContain("Projects");
+    expect(setup.captureCharFrame()).not.toContain("Threads");
     await React.act(async () => {
       setup.mockInput.pressKey("f", { ctrl: true });
       await setup.renderOnce();
     });
-    const sidebarFrame = await setup.waitForFrame((frame) => frame.includes("Search projects"));
-    expect(sidebarFrame).toContain("Projects");
+    const sidebarFrame = await setup.waitForFrame((frame) => frame.includes("Search threads"));
+    expect(sidebarFrame).toContain("Threads");
     await React.act(async () => {
       setup.mockInput.pressEnter();
       await setup.renderOnce();
     });
-    await setup.waitForFrame((frame) => !frame.includes("Projects"));
+    await setup.waitForFrame((frame) => !frame.includes("Threads"));
+    setup.renderer.destroy();
+  });
+
+  it("Given sidebar search owns focus, clicking the prompt or pressing Ctrl+P restores typing", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+
+    const focusSearch = async () => {
+      const lines = setup.captureCharFrame().split("\n");
+      const row = lines.findIndex((line) => line.includes("Search threads"));
+      const column = row < 0 ? -1 : (lines[row]?.indexOf("Search threads") ?? -1);
+      expect(row).toBeGreaterThanOrEqual(0);
+      expect(column).toBeGreaterThanOrEqual(0);
+      await React.act(async () => {
+        await setup.mockMouse.click(column, row);
+        await setup.flush();
+      });
+      await setup.waitForFrame((frame) => frame.includes("^P prompt"));
+    };
+
+    await focusSearch();
+    let lines = setup.captureCharFrame().split("\n");
+    let row = lines.findIndex((line) => line.includes("^P prompt"));
+    let column = row < 0 ? -1 : (lines[row]?.indexOf("^P prompt") ?? -1);
+    expect(row).toBeGreaterThanOrEqual(0);
+    expect(column).toBeGreaterThanOrEqual(0);
+    await React.act(async () => {
+      await setup.mockMouse.click(column, row);
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => !frame.includes("^P prompt"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("clicked prompt");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("clicked prompt") && !frame.includes("^P prompt"),
+    );
+
+    await focusSearch();
+    await React.act(async () => {
+      setup.mockInput.pressKey("p", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => !frame.includes("^P prompt"));
+    await React.act(async () => {
+      await setup.mockInput.typeText(" then keyboard");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("clicked prompt then keyboard") && !frame.includes("^P prompt"),
+    );
+    setup.renderer.destroy();
+  });
+
+  it("Given the model picker is open, clicking its model chip again closes it", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+
+    const clickModelChip = async () => {
+      const lines = setup.captureCharFrame().split("\n");
+      const row = lines.findIndex((line) => line.includes("model gpt-5"));
+      const column = row < 0 ? -1 : (lines[row]?.indexOf("model gpt-5") ?? -1);
+      expect(row).toBeGreaterThanOrEqual(0);
+      expect(column).toBeGreaterThanOrEqual(0);
+      await React.act(async () => {
+        await setup.mockMouse.click(column, row);
+        await setup.flush();
+      });
+    };
+
+    await clickModelChip();
+    await setup.waitForFrame((frame) => frame.includes("model ▸") && frame.includes("GPT-5"));
+    await clickModelChip();
+    await setup.waitForFrame((frame) => !frame.includes("model ▸"));
     setup.renderer.destroy();
   });
 
