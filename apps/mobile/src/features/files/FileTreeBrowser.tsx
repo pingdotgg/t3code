@@ -108,6 +108,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
 export function FileTreeBrowser(props: {
   readonly entries: ReadonlyArray<ProjectEntry>;
   readonly error: string | null;
+  readonly isInitialLoad: boolean;
   readonly isPending: boolean;
   readonly searchQuery: string;
   readonly selectedPath: string | null;
@@ -256,16 +257,17 @@ export function FileTreeBrowser(props: {
       updateCellsBatchingPeriod={16}
       windowSize={5}
       contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      // Refreshing at mount leaves iOS with a frozen indicator; initial load uses the empty state.
       refreshControl={
         <RefreshControl
-          refreshing={props.isPending && props.entries.length > 0}
+          refreshing={props.isPending && !props.isInitialLoad}
           onRefresh={props.onRefresh}
         />
       }
       renderItem={renderItem}
       ListEmptyComponent={
         <View className="px-4 py-5">
-          {props.isPending ? (
+          {props.isPending && props.isInitialLoad ? (
             <ActivityIndicator size="small" />
           ) : (
             <>

@@ -444,6 +444,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
+        isInitialLoad={entriesData === null}
         isPending={entriesQuery.isPending}
         searchQuery={searchQuery}
         selectedPath={null}
