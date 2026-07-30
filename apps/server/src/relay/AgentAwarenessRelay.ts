@@ -376,9 +376,14 @@ export const make = Effect.gen(function* () {
         });
       });
 
-    const shell = yield* threads.getShellSnapshot();
-    const threadValue = shell.threads.find((candidate) => candidate.id === threadId);
-    const thread = threadValue === undefined ? Option.none() : Option.some(threadValue);
+    // Per-thread shell read: this publish runs for every activity-relevant
+    // domain event, so materializing the full shell here would make the cost
+    // of one thread's activity proportional to how many threads exist.
+    const threadShell = yield* threads.getThreadShell(threadId);
+    const thread =
+      threadShell === null || threadShell.archivedAt !== null
+        ? Option.none<OrchestrationV2ThreadShell>()
+        : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
