@@ -665,6 +665,26 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const v2KeyExtractor = useCallback((item: ThreadListV2ListItem) => item.key, []);
 
+  // FlatList treats a changed extraData identity as "re-render every visible
+  // row", so an inline object literal would invalidate all rows on every
+  // HomeScreen render.
+  const v2ExtraData = useMemo(
+    () => ({
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey: v2ProjectTitleByProjectKey,
+      serverConfigs,
+      savedConnectionsById: props.savedConnectionsById,
+    }),
+    [
+      projectByKey,
+      projectCwdByKey,
+      props.savedConnectionsById,
+      serverConfigs,
+      v2ProjectTitleByProjectKey,
+    ],
+  );
+
   const extraData = useMemo(
     () => ({ savedConnectionsById: props.savedConnectionsById, projectCwdByKey }),
     [props.savedConnectionsById, projectCwdByKey],
@@ -900,13 +920,7 @@ export function HomeScreen(props: HomeScreenProps) {
             data={threadListV2Items}
             renderItem={renderV2Item}
             keyExtractor={v2KeyExtractor}
-            extraData={{
-              projectByKey,
-              projectCwdByKey,
-              projectTitleByProjectKey: v2ProjectTitleByProjectKey,
-              serverConfigs,
-              savedConnectionsById: props.savedConnectionsById,
-            }}
+            extraData={v2ExtraData}
             ListHeaderComponent={v2ListHeader}
             ListFooterComponent={
               threadListV2Layout.hiddenSettledCount > 0 ? (

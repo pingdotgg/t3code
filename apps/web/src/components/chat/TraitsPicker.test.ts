@@ -35,39 +35,48 @@ const CONTEXT_WINDOW = selectDescriptor(
 
 const CODEX = ProviderDriverKind.make("codex");
 
-function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>, fastModeEnabled: boolean) {
+function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
   return buildTraitsTriggerDisplay({
     provider: CODEX,
     descriptors,
     primarySelectDescriptorId: "reasoningEffort",
     ultrathinkPromptControlled: false,
-    fastModeEnabled,
   });
 }
 
 describe("buildTraitsTriggerDisplay", () => {
   it("omits fast mode from the label entirely when it is off", () => {
-    expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW], false)).toEqual({
+    expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",
       showFastModeIcon: false,
     });
   });
 
   it("shows the bolt instead of a text label when fast mode is on", () => {
-    expect(display([EFFORT, fastModeDescriptor(true), CONTEXT_WINDOW], true)).toEqual({
+    expect(display([EFFORT, fastModeDescriptor(true), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",
       showFastModeIcon: true,
     });
   });
 
-  it("omits Codex's default Standard tier beside reasoning", () => {
+  it("renders Codex's Standard and Fast service tiers as fast mode", () => {
     const serviceTier = selectDescriptor(
       "serviceTier",
-      [{ id: "default", label: "Standard", isDefault: true }],
+      [
+        { id: "default", label: "Standard", isDefault: true },
+        { id: "priority", label: "Fast" },
+      ],
       "default",
     );
 
-    expect(display([EFFORT, serviceTier], false).label).toBe("High");
+    expect(display([EFFORT, serviceTier])).toEqual({
+      label: "High",
+      showFastModeIcon: false,
+    });
+    expect(display([EFFORT, { ...serviceTier, currentValue: "priority" }])).toEqual({
+      label: "High",
+      showFastModeIcon: true,
+    });
   });
 
   it("keeps non-fastMode booleans as text labels", () => {
@@ -77,18 +86,18 @@ describe("buildTraitsTriggerDisplay", () => {
       type: "boolean",
       currentValue: true,
     };
-    expect(display([EFFORT, thinking], false)).toEqual({
+    expect(display([EFFORT, thinking])).toEqual({
       label: "High · Thinking On",
       showFastModeIcon: false,
     });
   });
 
   it("falls back to a text label when fast mode is the only trait", () => {
-    expect(display([fastModeDescriptor(true)], true)).toEqual({
+    expect(display([fastModeDescriptor(true)])).toEqual({
       label: "Fast",
       showFastModeIcon: false,
     });
-    expect(display([fastModeDescriptor(false)], false)).toEqual({
+    expect(display([fastModeDescriptor(false)])).toEqual({
       label: "Normal",
       showFastModeIcon: false,
     });
@@ -107,7 +116,7 @@ describe("buildTraitsTriggerDisplay", () => {
         { id: "high", label: "High" },
       ],
     };
-    expect(display([unresolved], false)).toEqual({ label: "", showFastModeIcon: false });
+    expect(display([unresolved])).toEqual({ label: "", showFastModeIcon: false });
   });
 
   it("still renders the prompt-controlled ultrathink label alongside the bolt", () => {
@@ -117,7 +126,6 @@ describe("buildTraitsTriggerDisplay", () => {
         descriptors: [EFFORT, fastModeDescriptor(true)],
         primarySelectDescriptorId: "reasoningEffort",
         ultrathinkPromptControlled: true,
-        fastModeEnabled: true,
       }),
     ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
   });
