@@ -946,7 +946,11 @@ export function NewTaskDraftScreen(props: {
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
-      autoFocus={!isAndroid}
+      // Native autoFocus fires becomeFirstResponder in didMoveToWindow, which
+      // forces the iOS keyboard bring-up during the formSheet present
+      // animation and stalls it. The runAfterInteractions effect above focuses
+      // the editor once the transition settles instead.
+      autoFocus={false}
       editable={!isIncomingShareTransferPending}
       multiline
       scrollEnabled={isExpanded}
