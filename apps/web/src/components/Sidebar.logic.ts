@@ -238,6 +238,25 @@ export function buildSidebarV2ThreadContextMenuSlots(input: {
   };
 }
 
+export function composeSidebarV2ThreadContextMenuItems(input: {
+  slots: SidebarV2ThreadContextMenuSlots;
+  leadingItems: readonly ContextMenuItem<string>[];
+  snoozeItems: readonly ContextMenuItem<string>[];
+  titleRegenerationItems: readonly ContextMenuItem<string>[];
+  copyItems: readonly ContextMenuItem<string>[];
+}): readonly ContextMenuItem<string>[] {
+  return [
+    ...input.leadingItems,
+    ...input.slots.lifecycleItems,
+    ...input.snoozeItems,
+    input.slots.renameItem,
+    ...input.titleRegenerationItems,
+    input.slots.markUnreadItem,
+    ...input.copyItems,
+    ...input.slots.destructiveItems,
+  ];
+}
+
 export function isThreadSessionRunning(
   session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined,
 ): boolean {

@@ -111,6 +111,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildSidebarV2ThreadContextMenuSlots,
   canArchiveSettledSidebarThread,
+  composeSidebarV2ThreadContextMenuItems,
   filterArchivableSidebarThreads,
   formatArchiveSkippedDescription,
   formatWorkingDurationLabel,
@@ -2473,17 +2474,17 @@ export default function SidebarV2() {
         });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...(thread.branch
+            composeSidebarV2ThreadContextMenuItems({
+              slots: threadContextMenuSlots,
+              leadingItems: thread.branch
                 ? [
                     {
                       id: "new-thread-on-branch",
                       label: `New thread on ${thread.branch}`,
                     },
                   ]
-                : []),
-              ...threadContextMenuSlots.lifecycleItems,
-              ...(supportsSnooze
+                : [],
+              snoozeItems: supportsSnooze
                 ? [
                     isSnoozed
                       ? { id: "unsnooze", label: "Wake thread" }
@@ -2497,9 +2498,8 @@ export default function SidebarV2() {
                           })),
                         },
                   ]
-                : []),
-              threadContextMenuSlots.renameItem,
-              ...(supportsTitleRegeneration
+                : [],
+              titleRegenerationItems: supportsTitleRegeneration
                 ? [
                     {
                       id: "regenerate-title",
@@ -2507,12 +2507,14 @@ export default function SidebarV2() {
                       disabled: isRegeneratingTitle,
                     },
                   ]
-                : []),
-              threadContextMenuSlots.markUnreadItem,
-              { id: "copy-path", label: "Copy path", icon: "copy" },
-              ...(thread.branch ? [{ id: "copy-branch", label: "Copy branch", icon: "copy" }] : []),
-              ...threadContextMenuSlots.destructiveItems,
-            ],
+                : [],
+              copyItems: [
+                { id: "copy-path", label: "Copy path", icon: "copy" },
+                ...(thread.branch
+                  ? [{ id: "copy-branch", label: "Copy branch", icon: "copy" }]
+                  : []),
+              ],
+            }),
             position,
           ),
         );

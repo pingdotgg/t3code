@@ -5,6 +5,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   buildSidebarV2ThreadContextMenuSlots,
   canArchiveSettledSidebarThread,
+  composeSidebarV2ThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   filterArchivableSidebarThreads,
   formatArchiveSkippedDescription,
@@ -555,6 +556,39 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
     expect(slots.renameItem).toEqual({ id: "rename", label: "Rename thread" });
     expect(slots.markUnreadItem).toEqual({ id: "mark-unread", label: "Mark unread" });
     expect(slots.destructiveItems).toEqual([]);
+  });
+
+  it("composes upstream actions around the fork-owned slots", () => {
+    const slots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: false,
+      isRunning: false,
+    });
+
+    const items = composeSidebarV2ThreadContextMenuItems({
+      slots,
+      leadingItems: [{ id: "new-thread-on-branch", label: "New thread on branch" }],
+      snoozeItems: [{ id: "snooze", label: "Snooze" }],
+      titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
+      copyItems: [
+        { id: "copy-path", label: "Copy path" },
+        { id: "copy-branch", label: "Copy branch" },
+      ],
+    });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "new-thread-on-branch",
+      "settle",
+      "archive",
+      "snooze",
+      "rename",
+      "regenerate-title",
+      "mark-unread",
+      "copy-path",
+      "copy-branch",
+      "delete",
+    ]);
   });
 });
 
