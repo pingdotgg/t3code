@@ -6,11 +6,13 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { RpcClientError } from "effect/unstable/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -24,8 +26,10 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
   makeEnvironmentServerConfigState,
+  isLegacyUpdateHandoffLoss,
   projectServerWelcome,
   resolveServerConfigValue,
+  serverUpdateStateForProgressEvent,
 } from "./server.ts";
 
 const CONFIG = {
@@ -62,6 +66,46 @@ function session(client: WsRpcProtocolClient): RpcSession {
 }
 
 describe("server state projection", () => {
+  it("only treats a legacy transport interruption as an unacknowledged handoff", () => {
+    expect(isLegacyUpdateHandoffLoss(Cause.interrupt(1))).toBe(true);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: "socket closed",
+              cause: new Error("socket closed"),
+            }),
+          }),
+        ),
+      ),
+    ).toBe(true);
+    expect(isLegacyUpdateHandoffLoss(Cause.fail(new Error("Install failed.")))).toBe(false);
+  });
+
+  it("projects streamed update milestones into the shared operation state", () => {
+    expect(
+      serverUpdateStateForProgressEvent("0.0.31", {
+        type: "progress",
+        stage: "installing",
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "installing",
+      targetVersion: "0.0.31",
+    });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "respawn" },
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "resuming",
+      targetVersion: "0.0.31",
+    });
+  });
+
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,

@@ -229,6 +229,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   };
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
+  const resetRetryState = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
@@ -591,6 +592,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     let pendingRetry = Option.none<PendingRetryTrace>();
 
     for (;;) {
+      if (yield* Ref.getAndSet(resetRetryState, false)) {
+        failureCount = 0;
+        latestFailure = null;
+        pendingRetry = Option.none();
+      }
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
         failureCount = 0;
@@ -701,7 +707,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.withSpan("EnvironmentSupervisor.disconnect"),
   );
 
-  const retryNow = signal({ _tag: "RetryRequested" }).pipe(
+  const retryNow = Ref.set(resetRetryState, true).pipe(
+    Effect.andThen(signal({ _tag: "RetryRequested" })),
     Effect.withSpan("EnvironmentSupervisor.retryNow"),
   );
 

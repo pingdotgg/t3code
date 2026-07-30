@@ -3,13 +3,19 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerSelfUpdateProgressEvent,
+  type ServerSelfUpdateResult,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -19,13 +25,99 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createRuntimeCommand,
 } from "./runtime.ts";
-import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import {
+  isRpcClientError,
+  request,
+  runStream,
+  subscribe,
+  type EnvironmentRpcInput,
+} from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+
+export type ServerUpdateStage = "downloading" | "installing" | "resuming";
+
+export type ServerUpdateState =
+  | { readonly status: "idle" }
+  | {
+      readonly status: "running";
+      readonly stage: ServerUpdateStage;
+      readonly targetVersion: string;
+    }
+  | {
+      readonly status: "failed";
+      readonly stage: ServerUpdateStage;
+      readonly targetVersion: string;
+      readonly message: string;
+    };
+
+export interface ServerUpdateTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverUpdateServer>;
+}
+
+const IDLE_SERVER_UPDATE_STATE: ServerUpdateState = { status: "idle" };
+const EMPTY_SERVER_UPDATE_STATE_ATOM = Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
+  Atom.withLabel("environment-data:server:update-state:empty"),
+);
+const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
+    Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
+  ),
+);
+
+export class ServerUpdateResumeTimeoutError extends Schema.TaggedErrorClass<ServerUpdateResumeTimeoutError>()(
+  "ServerUpdateResumeTimeoutError",
+  {
+    environmentId: Schema.String,
+    targetVersion: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `The server did not resume on t3@${this.targetVersion}.`;
+  }
+}
+
+export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass<ServerUpdateProgressIncompleteError>()(
+  "ServerUpdateProgressIncompleteError",
+  {
+    targetVersion: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `The t3@${this.targetVersion} update ended before the server accepted the restart.`;
+  }
+}
+
+export function serverUpdateStateForProgressEvent(
+  targetVersion: string,
+  event: ServerSelfUpdateProgressEvent,
+): Extract<ServerUpdateState, { status: "running" }> {
+  return {
+    status: "running",
+    stage: event.type === "complete" ? "resuming" : event.stage,
+    targetVersion,
+  };
+}
+
+function serverUpdateFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Server update failed.";
+}
+
+export function isLegacyUpdateHandoffLoss(cause: Cause.Cause<unknown>): boolean {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return true;
+  }
+  return (
+    cause.reasons.length > 0 &&
+    cause.reasons.every((reason) => Cause.isFailReason(reason) && isRpcClientError(reason.error))
+  );
+}
 
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
@@ -271,6 +363,148 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
   });
+  const updateStateAtom = (environmentId: EnvironmentId | null) =>
+    environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : serverUpdateStateAtom(environmentId);
+  const updateServer = createRuntimeCommand<
+    EnvironmentRegistry | EnvironmentCacheStore | R,
+    E,
+    ServerUpdateTarget,
+    ServerSelfUpdateResult,
+    unknown
+  >(runtime, {
+    label: "environment-data:server:update-server",
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId }) => environmentId,
+    },
+    execute: (target, atomRegistry) => {
+      const stateAtom = updateStateAtom(target.environmentId);
+      const targetVersion = target.input.targetVersion;
+      let currentStage: ServerUpdateStage = "downloading";
+      atomRegistry.set(stateAtom, {
+        status: "running",
+        stage: currentStage,
+        targetVersion,
+      });
+
+      return Effect.gen(function* () {
+        const environmentRegistry = yield* EnvironmentRegistry;
+        const supportsProgress =
+          atomRegistry.get(configValueAtom(target.environmentId))?.environment.capabilities
+            .serverSelfUpdateProgress === true;
+
+        const result: ServerSelfUpdateResult = supportsProgress
+          ? yield* Effect.gen(function* () {
+              const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
+                Option.none(),
+              );
+              yield* environmentRegistry
+                .runStream(
+                  target.environmentId,
+                  runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                )
+                .pipe(
+                  Stream.runForEach((event) =>
+                    Effect.sync(() => {
+                      currentStage = event.type === "complete" ? "resuming" : event.stage;
+                      atomRegistry.set(
+                        stateAtom,
+                        serverUpdateStateForProgressEvent(targetVersion, event),
+                      );
+                    }).pipe(
+                      Effect.andThen(
+                        event.type === "complete"
+                          ? Ref.set(terminal, Option.some(event.result))
+                          : Effect.void,
+                      ),
+                    ),
+                  ),
+                );
+              return yield* Ref.get(terminal).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion })),
+                    onSome: Effect.succeed,
+                  }),
+                ),
+              );
+            })
+          : yield* Effect.gen(function* () {
+              const selfUpdateMethod = atomRegistry.get(configValueAtom(target.environmentId))
+                ?.environment.capabilities.serverSelfUpdate;
+              const exit = yield* environmentRegistry
+                .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                .pipe(Effect.exit);
+              if (Exit.isSuccess(exit)) {
+                return exit.value;
+              }
+              if (
+                (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
+                isLegacyUpdateHandoffLoss(exit.cause)
+              ) {
+                // Older servers can tear down the transport before their
+                // unary acknowledgement arrives. Treat only that transport
+                // loss as a handoff, then prove it by waiting for target ready.
+                return { targetVersion, method: selfUpdateMethod };
+              }
+              return yield* Effect.failCause(exit.cause);
+            });
+
+        currentStage = "resuming";
+        atomRegistry.set(stateAtom, {
+          status: "running",
+          stage: currentStage,
+          targetVersion,
+        });
+
+        // The update restart is intentional. As soon as the supervisor sees
+        // that first failed connection, discard any prior backoff debt and
+        // retry immediately instead of carrying an old 16-second delay.
+        yield* environmentRegistry.stateChanges(target.environmentId).pipe(
+          Stream.filter((state) => state.phase === "backoff"),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.andThen(environmentRegistry.retryNow(target.environmentId)),
+          Effect.timeoutOption(Duration.seconds(30)),
+          Effect.ignore,
+          Effect.forkChild,
+        );
+
+        const resumed = yield* environmentRegistry
+          .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
+          .pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "ready" && event.payload.environment.serverVersion === targetVersion,
+            ),
+            Stream.runHead,
+            Effect.timeoutOption(Duration.seconds(120)),
+            Effect.map(Option.flatten),
+          );
+        if (Option.isNone(resumed)) {
+          return yield* new ServerUpdateResumeTimeoutError({
+            environmentId: target.environmentId,
+            targetVersion,
+          });
+        }
+
+        atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
+        return result;
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            atomRegistry.set(stateAtom, {
+              status: "failed",
+              stage: currentStage,
+              targetVersion,
+              message: serverUpdateFailureMessage(error),
+            });
+          }),
+        ),
+      );
+    },
+  });
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
@@ -284,6 +518,7 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
+    updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -331,12 +566,7 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
-    updateServer: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:update-server",
-      tag: WS_METHODS.serverUpdateServer,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
-    }),
+    updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",
       tag: WS_METHODS.serverUpsertKeybinding,
