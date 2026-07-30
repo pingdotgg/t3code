@@ -1516,6 +1516,18 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         const preservedAlready = yield* exists(preservedDataDir);
         const preserveData = preservedAlready || (yield* exists(markerPath));
         if (preserveData) {
+          const dataExists = yield* exists(dataDir);
+          if (preservedAlready && dataExists) {
+            // Both copies may contain unique user data. Deleting pluginRoot would
+            // destroy the current copy, while replacing the preserved directory
+            // would destroy the crash-recovery copy. Leave the pending removal
+            // intact for manual recovery instead of choosing one copy to discard.
+            yield* Effect.logWarning(
+              "Pending plugin removal left in place; current and preserved data both exist",
+              { pluginId, dataDir, preservedDataDir },
+            );
+            return false;
+          }
           // Ordering is chosen so no crash window can lose data the user chose to
           // keep. (A) park the data OUTSIDE the plugin root; (B) delete the root
           // (destroying the in-root marker and version dirs); (C) recreate the empty
@@ -1527,7 +1539,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           // already back at its normal path with NO marker and NO preserved dir, so a
           // crash there made the next reconcile take the delete-data branch below and
           // destroy it.
-          if (!preservedAlready && (yield* exists(dataDir))) {
+          if (dataExists) {
             yield* fs.rename(dataDir, preservedDataDir); // A
           }
           yield* fs.remove(pluginRoot, { recursive: true, force: true }); // B

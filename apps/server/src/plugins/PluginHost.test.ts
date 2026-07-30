@@ -2864,6 +2864,38 @@ probeStoreLayerIt("PluginHost preserve-data removePlugin crash window", (it) => 
 });
 
 layer("PluginHost preserved-data reconcile", (it) => {
+  it.effect("keeps both current and preserved data when pending removal finds a collision", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("pending-remove-data-collision");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+      const { pluginDir } = yield* installPlugin({
+        pluginId,
+        lockEntry: { state: "pending-remove" },
+      });
+      const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+      yield* fs.makeDirectory(dataDir, { recursive: true });
+      yield* fs.writeFileString(path.join(dataDir, "sentinel"), "current-copy");
+      const preservedDir = path.join(
+        config.pluginsDir,
+        `${PluginHostModule.PRESERVED_DATA_DIR_PREFIX}${pluginId}`,
+      );
+      yield* fs.makeDirectory(preservedDir, { recursive: true });
+      yield* fs.writeFileString(path.join(preservedDir, "sentinel"), "preserved-copy");
+
+      yield* host.start;
+
+      assert.equal(yield* fs.readFileString(path.join(dataDir, "sentinel")), "current-copy");
+      assert.equal(yield* fs.readFileString(path.join(preservedDir, "sentinel")), "preserved-copy");
+      assert.isTrue(yield* fs.exists(pluginDir), "the plugin root must remain intact");
+      assert.equal((yield* store.readLockfile).plugins[pluginId]?.state, "pending-remove");
+    }),
+  );
+
   it.effect("re-homes an orphaned .preserved-<id> whose lockfile entry is gone", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

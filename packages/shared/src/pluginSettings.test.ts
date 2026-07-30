@@ -299,6 +299,7 @@ describe("fingerprint distinguishes constraints", () => {
   const unknown = Schema.Struct({ a: Schema.Unknown }) as unknown as SettingsSchema;
   const emptyLit = Schema.Struct({ a: Schema.Literals([]) }) as unknown as SettingsSchema;
   const litAB = Schema.Struct({ a: Schema.Literals(["a", "b"]) }) as unknown as SettingsSchema;
+  const litBA = Schema.Struct({ a: Schema.Literals(["b", "a"]) }) as unknown as SettingsSchema;
   const litAC = Schema.Struct({ a: Schema.Literals(["a", "c"]) }) as unknown as SettingsSchema;
 
   it("distinguishes a bare String from a Literals union", () => {
@@ -311,6 +312,10 @@ describe("fingerprint distinguishes constraints", () => {
 
   it("distinguishes two Literals unions with different members", () => {
     expect(fingerprintSettingsSchema(litAC)).not.toBe(fingerprintSettingsSchema(litAB));
+  });
+
+  it("ignores Literals member ordering", () => {
+    expect(fingerprintSettingsSchema(litBA)).toBe(fingerprintSettingsSchema(litAB));
   });
 
   it("includes referenced definitions in the fingerprint", () => {

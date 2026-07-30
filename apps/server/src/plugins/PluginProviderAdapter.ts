@@ -32,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ProviderAdapterShape } from "../provider/Services/ProviderAdapter.ts";
@@ -41,8 +42,18 @@ const PLUGIN_CALL_TIMEOUT = Duration.minutes(10);
 /** Lifecycle calls are not model calls; they should be quick. */
 const PLUGIN_LIFECYCLE_TIMEOUT = Duration.seconds(30);
 
-export class PluginProviderError extends Error {
-  readonly _tag = "PluginProviderError";
+export class PluginProviderError extends Schema.TaggedErrorClass<PluginProviderError>()(
+  "PluginProviderError",
+  {
+    driverKind: Schema.String,
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Plugin provider ${this.driverKind} failed in ${this.operation}: ${this.detail}`;
+  }
 }
 
 interface SessionState {
@@ -85,6 +96,17 @@ export const makePluginProviderAdapter = (input: {
     const adapterScope = yield* Effect.scope;
 
     const publish = (event: ProviderRuntimeEvent) => Queue.offer(events, event);
+    const providerError = (
+      operation: string,
+      detail: string,
+      cause?: unknown,
+    ): PluginProviderError =>
+      new PluginProviderError({
+        driverKind: input.driverKind,
+        operation,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
 
     /**
      * Stamp a plugin's payload into a real runtime event.
@@ -177,9 +199,7 @@ export const makePluginProviderAdapter = (input: {
         // active). The lifecycle is startSession -> sendTurn* -> stopSession; a caller
         // that wants to restart must stopSession first.
         if ((yield* Ref.get(sessions)).has(threadId)) {
-          return yield* Effect.fail(
-            new PluginProviderError("a session already exists for this thread"),
-          );
+          return yield* providerError("startSession", "A session already exists for this thread.");
         }
         // Effect.suspend so a driver that THROWS synchronously (or returns a
         // non-Effect) from startSession becomes a defect inside the effect.
@@ -189,11 +209,14 @@ export const makePluginProviderAdapter = (input: {
         yield* Effect.suspend(() =>
           input.driver.startSession({ threadId, config: input.config }),
         ).pipe(
+          Effect.catchCause((cause) =>
+            providerError("startSession", "The plugin provider driver call failed.", cause),
+          ),
           Effect.timeoutOrElse({
             duration: PLUGIN_LIFECYCLE_TIMEOUT,
-            orElse: () => Effect.fail(new PluginProviderError("startSession timed out")),
+            orElse: () =>
+              providerError("startSession", "The plugin provider lifecycle call timed out."),
           }),
-          Effect.catchCause((cause) => Effect.fail(new PluginProviderError(Cause.pretty(cause)))),
         );
 
         const session: ProviderSession = {
@@ -269,15 +292,13 @@ export const makePluginProviderAdapter = (input: {
         });
 
         if (reservation === "no-session") {
-          return yield* Effect.fail(new PluginProviderError("no session for thread"));
+          return yield* providerError("sendTurn", "No session exists for this thread.");
         }
         if (reservation === "stopping") {
-          return yield* Effect.fail(new PluginProviderError("session is stopping"));
+          return yield* providerError("sendTurn", "The session is stopping.");
         }
         if (reservation === "busy") {
-          return yield* Effect.fail(
-            new PluginProviderError("a turn is already active for this thread"),
-          );
+          return yield* providerError("sendTurn", "A turn is already active for this thread.");
         }
 
         // The reservation is installed. From here until the turn fiber is running, any
@@ -311,17 +332,19 @@ export const makePluginProviderAdapter = (input: {
                 emit: makeTurnEmit(threadId, turnId),
               }),
             ).pipe(
+              Effect.catchCause((cause) =>
+                providerError("sendTurn", "The plugin provider driver call failed.", cause),
+              ),
               Effect.timeoutOrElse({
                 duration: PLUGIN_CALL_TIMEOUT,
-                orElse: () => Effect.fail(new PluginProviderError("sendTurn timed out")),
+                orElse: () => providerError("sendTurn", "The plugin provider call timed out."),
               }),
               // A plugin failure becomes a provider error the thread can show. It
               // never propagates as a host defect: partial text the user already
               // watched arrive is kept, and the turn is marked failed.
-              Effect.matchCauseEffect({
+              Effect.matchEffect({
                 onSuccess: () => publish(stampTurnCompleted(threadId, turnId)),
-                onFailure: (cause) =>
-                  publish(stampTurnCompleted(threadId, turnId, Cause.pretty(cause))),
+                onFailure: (error) => publish(stampTurnCompleted(threadId, turnId, error.message)),
               }),
               Effect.asVoid,
               // On INTERRUPTION (interruptTurn / stopSession / host teardown) the
@@ -451,10 +474,9 @@ export const makePluginProviderAdapter = (input: {
       });
 
     const unsupported = (member: string) =>
-      Effect.fail(
-        new PluginProviderError(
-          `plugin providers do not support ${member} (this host's v1 plugin provider surface streams text only)`,
-        ),
+      providerError(
+        member,
+        "Plugin providers do not support this operation; the v1 provider surface streams text only.",
       );
 
     const adapter: ProviderAdapterShape<PluginProviderError> = {

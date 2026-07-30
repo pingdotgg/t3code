@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
 import type { PluginProviderDriver, PluginProviderEvent } from "@t3tools/plugin-sdk";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -9,7 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { makePluginProviderAdapter } from "./PluginProviderAdapter.ts";
+import { makePluginProviderAdapter, PluginProviderError } from "./PluginProviderAdapter.ts";
 
 const driverKind = ProviderDriverKind.make("acme");
 const threadId = ThreadId.make("thread-acme");
@@ -20,14 +19,14 @@ class DriverExploded extends Error {
 
 const adapterFor = (driver: PluginProviderDriver) =>
   Effect.gen(function* () {
-    const counter = yield* Ref.make(0);
+    let counter = 0;
     return yield* makePluginProviderAdapter({
       driverKind,
       instanceId: "acme_default",
       driver,
       config: { apiBase: "https://acme.test" },
       now: () => "2026-01-01T00:00:00.000Z",
-      nextEventId: () => `evt-${Effect.runSync(Ref.updateAndGet(counter, (n) => n + 1))}`,
+      nextEventId: () => `evt-${++counter}`,
     });
   });
 
@@ -155,6 +154,13 @@ describe("makePluginProviderAdapter", () => {
         terminal?.type === "turn.completed" ? terminal.payload.state : null,
         "failed",
       );
+      if (terminal?.type === "turn.completed" && terminal.payload.state === "failed") {
+        assert.strictEqual(
+          terminal.payload.errorMessage,
+          "Plugin provider acme failed in sendTurn: The plugin provider driver call failed.",
+        );
+        assert.notInclude(terminal.payload.errorMessage, "boom");
+      }
     }),
   );
 
@@ -592,13 +598,19 @@ describe("makePluginProviderAdapter", () => {
         stopSession: () => Effect.void,
       });
 
-      // Defects from Effect.suspend must not escape the adapter as untyped
-      // failures — only PluginProviderError (matching stopSession/interruptTurn).
-      const exit = yield* Effect.exit(start(adapter));
-      assert.strictEqual(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        assert.match(Cause.pretty(exit.cause), /driver blew up|PluginProviderError/);
-      }
+      // Defects from Effect.suspend must not escape the adapter as untyped failures
+      // or become caller-visible detail. Preserve the original failure only as cause.
+      const error = yield* start(adapter).pipe(Effect.flip);
+      assert.instanceOf(error, PluginProviderError);
+      assert.strictEqual(error.driverKind, driverKind);
+      assert.strictEqual(error.operation, "startSession");
+      assert.strictEqual(error.detail, "The plugin provider driver call failed.");
+      assert.isDefined(error.cause);
+      assert.strictEqual(
+        error.message,
+        "Plugin provider acme failed in startSession: The plugin provider driver call failed.",
+      );
+      assert.notInclude(error.message, "driver blew up");
       assert.isFalse(yield* adapter.hasSession(threadId));
     }),
   );

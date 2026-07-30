@@ -359,6 +359,13 @@ export const stripUndeclaredSettings = (
 const canonicalizeJsonSchema = (value: unknown, parentKey?: string): unknown => {
   if (Array.isArray(value)) {
     const members = value.map((member) => canonicalizeJsonSchema(member));
+    if (parentKey === "enum") {
+      return [...members].sort((left, right) => {
+        const leftJson = JSON.stringify(left);
+        const rightJson = JSON.stringify(right);
+        return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
+      });
+    }
     // Drop only annotation-only `allOf` members that reduced to `{}`. Other empty
     // containers can still be semantic JSON Schema, so they stay in the fingerprint.
     return parentKey === "allOf"
