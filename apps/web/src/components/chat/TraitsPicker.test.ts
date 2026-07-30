@@ -64,7 +64,7 @@ describe("buildTraitsTriggerDisplay", () => {
       "serviceTier",
       [
         { id: "default", label: "Standard", isDefault: true },
-        { id: "fast", label: "Fast" },
+        { id: "priority", label: "Fast" },
       ],
       "default",
     );
@@ -73,7 +73,7 @@ describe("buildTraitsTriggerDisplay", () => {
       label: "High",
       showFastModeIcon: false,
     });
-    expect(display([EFFORT, { ...serviceTier, currentValue: "fast" }])).toEqual({
+    expect(display([EFFORT, { ...serviceTier, currentValue: "priority" }])).toEqual({
       label: "High",
       showFastModeIcon: true,
     });

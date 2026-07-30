@@ -402,13 +402,13 @@ export function buildTraitsTriggerDisplay(input: {
     if (
       input.provider === "codex" &&
       descriptor.id === "serviceTier" &&
-      descriptor.type === "select" &&
-      descriptor.options.some(({ id }) => id === "fast")
+      descriptor.type === "select"
     ) {
       const currentValue = getProviderOptionCurrentValue(descriptor);
-      if (currentValue === "default" || currentValue === "fast") {
+      const fastTier = descriptor.options.find(({ label }) => label === "Fast");
+      if (fastTier && (currentValue === "default" || currentValue === fastTier.id)) {
         hasFastMode = true;
-        fastModeEnabled = currentValue === "fast";
+        fastModeEnabled = currentValue === fastTier.id;
         continue;
       }
     }
