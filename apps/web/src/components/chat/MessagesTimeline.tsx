@@ -442,7 +442,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         rowTop < scrollBottom &&
         rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
 
-      strip.dataset.inView = inView ? "true" : "false";
+      // Skip no-op attribute writes: this runs for every strip on every scroll
+      // tick, and rewriting an unchanged attribute still dirties style state.
+      const next = inView ? "true" : "false";
+      if (strip.dataset.inView !== next) {
+        strip.dataset.inView = next;
+      }
     }
   }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
 
@@ -842,17 +847,25 @@ function TimelineMinimap({
             const activeDistance =
               resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
             return (
+              // Compositor-friendly on purpose: in-view state and the hover
+              // fisheye animate constantly (every scroll tick and streaming
+              // update flips a band of strips), so the strip animates only
+              // transform and opacity. Width tiers are a scale-x on a fixed
+              // w-6 box, and the in-view highlight is an opacity-faded bright
+              // overlay — never background-color or width, which would force
+              // main-thread style/layout/paint at 60fps for each transition.
               <span
                 aria-hidden="true"
                 className={cn(
-                  "pointer-events-none absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
+                  "group/strip pointer-events-none absolute left-0 h-0.5 w-6 origin-left -translate-y-1/2 rounded-full transition-transform duration-150",
+                  activeDistance === 0 ? "bg-muted-foreground/75" : "bg-muted-foreground/35",
                   activeDistance === 0
-                    ? "w-6 bg-muted-foreground/75"
+                    ? "scale-x-100"
                     : activeDistance === 1
-                      ? "w-4"
+                      ? "scale-x-[0.667]"
                       : activeDistance === 2
-                        ? "w-2.5"
-                        : "w-2",
+                        ? "scale-x-[0.417]"
+                        : "scale-x-[0.333]",
                 )}
                 data-in-view="false"
                 data-minimap-strip
@@ -865,7 +878,9 @@ function TimelineMinimap({
                   }
                 }}
                 style={{ top }}
-              />
+              >
+                <span className="absolute inset-0 rounded-full bg-foreground/90 opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100" />
+              </span>
             );
           })}
           {activeItem ? (
