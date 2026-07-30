@@ -72,6 +72,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 - Parent timelines keep subagent commands, file changes, tool calls, web searches, image views, and diffs.
 - Subagent messages, reasoning, goals, plans, token usage, and thread/turn state stay out of the parent timeline. Codex child relationships are recognized from both `collabAgentToolCall` and `subAgentActivity` items.
+- Root-agent activity remains visible. Filtering applies only to provider thread IDs explicitly discovered through those child relationship items.
 
 ### Provider Launch Environment
 
