@@ -240,7 +240,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { RightPanelMaximizeControl, RightPanelToggleControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -2495,16 +2495,66 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const threadMarkdownExport = useMemo(
+    () =>
+      activeThread && isServerThread
+        ? buildThreadMarkdownExport({
+            thread: activeThread,
+            project: activeProject,
+            workspaceRoot: activeWorkspaceRoot,
+            extensionState: threadExtensionState,
+          })
+        : "",
+    [activeProject, activeThread, activeWorkspaceRoot, isServerThread, threadExtensionState],
+  );
   const handleExportActiveThread = useCallback(() => {
-    if (!activeThread || !isServerThread) return;
-    const markdown = buildThreadMarkdownExport({
-      thread: activeThread,
-      project: activeProject,
-      workspaceRoot: activeWorkspaceRoot,
-      extensionState: threadExtensionState,
-    });
-    downloadThreadMarkdown(threadMarkdownFilename(activeThread.title, activeThread.id), markdown);
-  }, [activeProject, activeThread, activeWorkspaceRoot, isServerThread, threadExtensionState]);
+    if (!activeThread || !threadMarkdownExport) return;
+    downloadThreadMarkdown(
+      threadMarkdownFilename(activeThread.title, activeThread.id),
+      threadMarkdownExport,
+    );
+  }, [activeThread, threadMarkdownExport]);
+  const copyHeaderValue = useCallback(
+    (value: string, successTitle: string, failureTitle: string) => {
+      if (!navigator.clipboard?.writeText) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: failureTitle,
+            description: "Clipboard API unavailable.",
+          }),
+        );
+        return;
+      }
+      void navigator.clipboard.writeText(value).then(
+        () => {
+          toastManager.add({ type: "success", title: successTitle });
+        },
+        (error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: failureTitle,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        },
+      );
+    },
+    [],
+  );
+  const handleCopyActiveThread = useCallback(() => {
+    if (!threadMarkdownExport) return;
+    copyHeaderValue(threadMarkdownExport, "Thread copied as Markdown", "Failed to copy thread");
+  }, [copyHeaderValue, threadMarkdownExport]);
+  const handleCopyWorkspacePath = useCallback(() => {
+    if (!activeWorkspaceRoot) return;
+    copyHeaderValue(activeWorkspaceRoot, "Workspace path copied", "Failed to copy workspace path");
+  }, [activeWorkspaceRoot, copyHeaderValue]);
+  const handleCopyThreadId = useCallback(() => {
+    if (!activeThread) return;
+    copyHeaderValue(activeThread.id, "Thread ID copied", "Failed to copy thread ID");
+  }, [activeThread, copyHeaderValue]);
   const runThreadHeaderAction = useCallback(
     async (
       title: string,
@@ -5798,26 +5848,27 @@ function ChatViewContent(props: ChatViewProps) {
   }
 
   const panelToggleControls = (
-    <PanelLayoutControls
-      terminalAvailable={activeProject !== null}
-      terminalOpen={terminalUiState.terminalOpen}
-      terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-      rightPanelAvailable={activeProject !== null}
-      rightPanelOpen={rightPanelOpen}
-      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-      onToggleTerminal={toggleTerminalVisibility}
-      onToggleRightPanel={toggleRightPanel}
-    />
+    <div className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <RightPanelToggleControl
+        available={activeProject !== null}
+        open={rightPanelOpen}
+        shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+        onToggle={toggleRightPanel}
+      />
+    </div>
   );
-  const panelLayoutControls = (
-    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
-        />
-      ) : null}
-      {panelToggleControls}
+  const inlinePanelLayoutControls = (
+    <div className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <RightPanelMaximizeControl
+        maximized={rightPanelMaximized}
+        onToggle={toggleRightPanelMaximized}
+      />
+      <RightPanelToggleControl
+        available={activeProject !== null}
+        open={rightPanelOpen}
+        shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+        onToggle={toggleRightPanel}
+      />
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
@@ -5901,7 +5952,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -5913,24 +5963,25 @@ function ChatViewContent(props: ChatViewProps) {
         <header
           data-chat-header
           className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "border-b border-border/70 bg-background px-[calc(env(safe-area-inset-left)+0.625rem)] pr-[calc(env(safe-area-inset-right)+0.625rem)] [--workspace-topbar-height:40px] transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
+                  "workspace-topbar drag-region relative [--workspace-topbar-height:39px]",
                   reserveTitleBarControlInset &&
                     !inlineRightPanelOwnsTitleBar &&
                     "wco:pr-[var(--workspace-native-controls-inset)]",
                 )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              : "workspace-topbar",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
+            routeKind={routeKind}
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            activeProjectId={activeProject?.id ?? null}
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             openInCwd={gitCwd}
@@ -5940,17 +5991,24 @@ function ChatViewContent(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
+            isGitRepo={isGitRepo}
+            rightPanelAvailable={activeProject !== null}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            workspaceRoot={activeWorkspaceRoot ?? null}
             gitActionsRef={gitActionsRef}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            onToggleRightPanel={toggleRightPanel}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
+            {...(activeWorkspaceRoot ? { onCopyWorkspacePath: handleCopyWorkspacePath } : {})}
             {...(isServerThread
               ? {
                   onExportThread: handleExportActiveThread,
+                  onCopyThreadAsMarkdown: handleCopyActiveThread,
+                  onCopyThreadId: handleCopyThreadId,
                   onForkThread: () => {
                     void runThreadHeaderAction("Failed to fork thread", forkThreadAction);
                   },
@@ -6313,6 +6371,7 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          layoutControls={inlinePanelLayoutControls}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}

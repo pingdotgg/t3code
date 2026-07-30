@@ -1,5 +1,23 @@
 # Forma workflows
 
+## Thread header
+
+The compact thread header keeps navigation and high-frequency controls visible without crowding
+the workspace:
+
+- Select the project cube to switch projects across environments.
+- Select the thread title to switch between active threads in the same project or start a new
+  thread.
+- Open the ellipsis menu for project actions, editor targets on the local environment,
+  source-control actions, Markdown export, copy, fork, archive, and delete.
+- Use the panel icon to open or close the tabbed right panel. Browser, terminal, files, diff,
+  plans, and component previews remain separate surfaces in that panel.
+
+Remote project actions and source-control operations run on the environment server. “Open in
+editor” is intentionally hidden for remote environments because it targets a local desktop
+application. The terminal drawer remains available through its keybinding even though its button
+is not shown in the thread header.
+
 ## Build, Ask, and Plan
 
 Use the mode pill in the composer to choose how the next turn runs:

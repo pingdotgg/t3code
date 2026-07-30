@@ -1,8 +1,9 @@
-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, PanelBottomIcon } from "lucide-react";
 import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarPanelIcon } from "../icons/custom";
 
 interface PanelLayoutControlsProps {
   terminalAvailable: boolean;
@@ -30,51 +31,93 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={terminalOpen}
-              onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
-              variant="ghost"
-              size="sm"
-              disabled={!terminalAvailable}
-            >
-              <PanelBottomIcon className="size-3.5" />
-            </Toggle>
-          }
-        />
-        <TooltipPopup side="bottom">
-          {terminalAvailable
-            ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-            : "Terminal drawer is unavailable"}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
-              aria-label="Toggle right panel"
-              variant="ghost"
-              size="sm"
-              disabled={!rightPanelAvailable}
-            >
-              <PanelRightIcon className="size-3.5" />
-            </Toggle>
-          }
-        />
-        <TooltipPopup side="bottom">
-          {rightPanelAvailable
-            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-            : "Right panel is unavailable"}
-        </TooltipPopup>
-      </Tooltip>
+      <TerminalDrawerToggleControl
+        available={terminalAvailable}
+        open={terminalOpen}
+        shortcutLabel={terminalShortcutLabel}
+        onToggle={onToggleTerminal}
+      />
+      <RightPanelToggleControl
+        available={rightPanelAvailable}
+        open={rightPanelOpen}
+        shortcutLabel={rightPanelShortcutLabel}
+        onToggle={onToggleRightPanel}
+      />
     </div>
+  );
+});
+
+export const TerminalDrawerToggleControl = memo(function TerminalDrawerToggleControl({
+  available,
+  open,
+  shortcutLabel,
+  onToggle,
+}: {
+  available: boolean;
+  open: boolean;
+  shortcutLabel: string | null;
+  onToggle: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            className="shrink-0 [-webkit-app-region:no-drag]"
+            pressed={open}
+            onPressedChange={onToggle}
+            aria-label="Toggle terminal drawer"
+            variant="ghost"
+            size="sm"
+            disabled={!available}
+          >
+            <PanelBottomIcon className="size-3.5" />
+          </Toggle>
+        }
+      />
+      <TooltipPopup side="bottom">
+        {available
+          ? `Toggle terminal drawer${shortcutLabel ? ` (${shortcutLabel})` : ""}`
+          : "Terminal drawer is unavailable"}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
+
+export const RightPanelToggleControl = memo(function RightPanelToggleControl({
+  available,
+  open,
+  shortcutLabel,
+  onToggle,
+}: {
+  available: boolean;
+  open: boolean;
+  shortcutLabel: string | null;
+  onToggle: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            className="shrink-0 [-webkit-app-region:no-drag]"
+            pressed={open}
+            onPressedChange={onToggle}
+            aria-label={open ? "Close right panel" : "Open right panel"}
+            variant="ghost"
+            size="sm"
+            disabled={!available}
+          >
+            <SidebarPanelIcon className="size-4 rotate-180" />
+          </Toggle>
+        }
+      />
+      <TooltipPopup side="bottom">
+        {available
+          ? `${open ? "Close" : "Open"} right panel${shortcutLabel ? ` (${shortcutLabel})` : ""}`
+          : "Right panel is unavailable"}
+      </TooltipPopup>
+    </Tooltip>
   );
 });
 

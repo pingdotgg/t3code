@@ -183,20 +183,18 @@ function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
-export const OpenInPicker = memo(function OpenInPicker({
+function useOpenInController({
   environmentId,
   keybindings,
   availableEditors,
   openInCwd,
-  compact = false,
-  enableShortcut = true,
+  enableShortcut,
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
-  compact?: boolean;
-  enableShortcut?: boolean;
+  enableShortcut: boolean;
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
@@ -204,8 +202,6 @@ export const OpenInPicker = memo(function OpenInPicker({
     () => resolveOptions(navigator.platform, availableEditors),
     [availableEditors],
   );
-  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
       if (!openInCwd) return;
@@ -223,7 +219,6 @@ export const OpenInPicker = memo(function OpenInPicker({
     },
     [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
   );
-
   const openFavoriteEditorShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
     [keybindings],
@@ -231,12 +226,11 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     if (!enableShortcut) return;
-    const handler = (e: globalThis.KeyboardEvent) => {
-      if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!openInCwd) return;
-      if (!preferredEditor) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (!isOpenFavoriteEditorShortcut(event, keybindings)) return;
+      if (!openInCwd || !preferredEditor) return;
 
-      e.preventDefault();
+      event.preventDefault();
       void openInEditorMutation({
         environmentId,
         input: {
@@ -255,6 +249,74 @@ export const OpenInPicker = memo(function OpenInPicker({
     openInEditorMutation,
     preferredEditor,
   ]);
+
+  return {
+    openFavoriteEditorShortcutLabel,
+    openInEditor,
+    options,
+    preferredEditor,
+  };
+}
+
+export const OpenInMenuItems = memo(function OpenInMenuItems({
+  environmentId,
+  keybindings,
+  availableEditors,
+  openInCwd,
+}: {
+  environmentId: EnvironmentId;
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  openInCwd: string | null;
+}) {
+  const { openFavoriteEditorShortcutLabel, openInEditor, options, preferredEditor } =
+    useOpenInController({
+      environmentId,
+      keybindings,
+      availableEditors,
+      openInCwd,
+      enableShortcut: true,
+    });
+
+  if (options.length === 0) {
+    return <MenuItem disabled>No installed editors found</MenuItem>;
+  }
+
+  return options.map(({ label, Icon, value, kind }) => (
+    <MenuItem key={value} onClick={() => openInEditor(value)}>
+      <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
+      {value === preferredEditor ? `Open in ${label}` : label}
+      {value === preferredEditor && openFavoriteEditorShortcutLabel ? (
+        <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+      ) : null}
+    </MenuItem>
+  ));
+});
+
+export const OpenInPicker = memo(function OpenInPicker({
+  environmentId,
+  keybindings,
+  availableEditors,
+  openInCwd,
+  compact = false,
+  enableShortcut = true,
+}: {
+  environmentId: EnvironmentId;
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  openInCwd: string | null;
+  compact?: boolean;
+  enableShortcut?: boolean;
+}) {
+  const { openFavoriteEditorShortcutLabel, openInEditor, options, preferredEditor } =
+    useOpenInController({
+      environmentId,
+      keybindings,
+      availableEditors,
+      openInCwd,
+      enableShortcut,
+    });
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
   return (
     <Group aria-label="Open in editor">

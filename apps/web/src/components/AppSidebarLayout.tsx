@@ -61,6 +61,16 @@ export function shouldRenderExternalSidebarControl(isSidebarVisible: boolean): b
   return !isSidebarVisible;
 }
 
+export function resolveExternalSidebarControlHeight(pathname: string, electron: boolean): string {
+  const isThreadRoute =
+    pathname.startsWith("/draft/") ||
+    (/^\/[^/]+\/[^/]+$/.test(pathname) &&
+      !pathname.startsWith("/settings/") &&
+      !pathname.startsWith("/connect"));
+  if (!isThreadRoute) return "var(--workspace-topbar-height)";
+  return electron ? "39px" : "40px";
+}
+
 function SidebarControl() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
@@ -94,7 +104,7 @@ function SidebarControl() {
 
   return (
     <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center"
+      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-external-sidebar-control-height,var(--workspace-topbar-height))] items-center"
       data-sidebar-control=""
     >
       <Tooltip>
@@ -135,6 +145,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
+    "--workspace-external-sidebar-control-height": resolveExternalSidebarControlHeight(
+      pathname,
+      isElectron,
+    ),
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
