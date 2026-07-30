@@ -131,11 +131,8 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
-// UIKit's own `.medium()` and `.large()` detents, so sheets sit at the heights the
-// running iOS version considers right. The negative values are sentinels our
-// react-native-screens patch understands (SHEET_SYSTEM_DETENT_* in
-// patches/react-native-screens@4.25.2.patch). Android has no system detents and throws
-// on anything outside 0..1, so it keeps the fractions these sheets used before.
+// Negative values ask for UIKit's own `.medium()`/`.large()` detents, via
+// patches/react-native-screens@4.25.2.patch; Android has none, so it keeps fractions.
 const SYSTEM_MEDIUM_LARGE_DETENTS = Platform.OS === "ios" ? [-3, -2] : [0.55, 0.92];
 const SYSTEM_LARGE_DETENTS = Platform.OS === "ios" ? [-2] : [0.92];
 
