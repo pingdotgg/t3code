@@ -456,14 +456,25 @@ export function getPublishProviderReadiness(input: {
   return { ready: true, hint: null };
 }
 
+/**
+ * Defaulting to the first host alphabetically strands the user when that host
+ * is the unauthenticated one: its card renders as "Setup Required" rather than
+ * a radio, and the host picker only exists once the card is selected. Prefer a
+ * ready host so there is always a way in.
+ */
 export function resolveSelectedEnterpriseHost(input: {
   selectedHost: string | null;
   availableHosts: ReadonlyArray<string>;
+  readyHosts: ReadonlyArray<string>;
 }): string | null {
   if (input.selectedHost !== null && input.availableHosts.includes(input.selectedHost)) {
     return input.selectedHost;
   }
-  return input.availableHosts[0] ?? null;
+  return (
+    input.availableHosts.find((host) => input.readyHosts.includes(host)) ??
+    input.availableHosts[0] ??
+    null
+  );
 }
 
 // Re-export from shared for backwards compatibility in this module's exports

@@ -388,9 +388,32 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       })
       .toSorted((left, right) => left.localeCompare(right));
   }, [sourceControlDiscovery.data]);
+  // Computed straight from discovery rather than from the readiness map below,
+  // which is keyed by provider card and so already depends on the active host.
+  const enterpriseHostReadiness = useMemo(() => {
+    const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
+    return new Map(
+      enterpriseHosts.map(
+        (host) =>
+          [
+            host,
+            getPublishProviderReadiness({
+              provider: "github-enterprise",
+              host,
+              sourceControlProviders,
+            }),
+          ] as const,
+      ),
+    );
+  }, [enterpriseHosts, sourceControlDiscovery.data]);
+  const readyEnterpriseHosts = useMemo(
+    () => enterpriseHosts.filter((host) => enterpriseHostReadiness.get(host)?.ready === true),
+    [enterpriseHosts, enterpriseHostReadiness],
+  );
   const activeEnterpriseHost = resolveSelectedEnterpriseHost({
     selectedHost: selectedEnterpriseHost,
     availableHosts: enterpriseHosts,
+    readyHosts: readyEnterpriseHosts,
   });
   const enterprisePublishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(() => {
     if (enterpriseHosts.length === 0 || activeEnterpriseHost === null) return [];
@@ -736,6 +759,49 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       className="grid grid-cols-2 gap-2"
                     >
                       {enterpriseHosts.map((host) => {
+                        const hostReadiness = enterpriseHostReadiness.get(host);
+                        // Selecting an unauthenticated host would swap the card
+                        // for its "Setup Required" state, which removes this
+                        // picker and leaves no way back to a working host.
+                        if (!hostReadiness?.ready) {
+                          return (
+                            <div
+                              key={host}
+                              className="relative flex cursor-not-allowed items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
+                            >
+                              <GitHubIcon
+                                className="size-4 shrink-0 text-muted-foreground"
+                                aria-hidden
+                              />
+                              <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
+                                {host}
+                              </span>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      variant="outline"
+                                      size="xs"
+                                      className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        openSourceControlSettings();
+                                      }}
+                                    >
+                                      Setup Required
+                                    </Button>
+                                  }
+                                />
+                                <TooltipPopup side="top" align="end" className="max-w-72">
+                                  {hostReadiness?.hint ??
+                                    `${host} is not authenticated. Open Settings -> Source Control for setup guidance.`}
+                                </TooltipPopup>
+                              </Tooltip>
+                            </div>
+                          );
+                        }
+
                         const isSelected = activeEnterpriseHost === host;
                         return (
                           <RadioPrimitive.Root

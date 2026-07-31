@@ -1333,6 +1333,7 @@ describe("resolveSelectedEnterpriseHost", () => {
     const host = resolveSelectedEnterpriseHost({
       selectedHost: "git.corp.com",
       availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["acme.ghe.com", "git.corp.com"],
     });
     assert.equal(host, "git.corp.com");
   });
@@ -1341,6 +1342,25 @@ describe("resolveSelectedEnterpriseHost", () => {
     const host = resolveSelectedEnterpriseHost({
       selectedHost: null,
       availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["acme.ghe.com", "git.corp.com"],
+    });
+    assert.equal(host, "acme.ghe.com");
+  });
+
+  it("skips an unauthenticated first host in favour of a ready one", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: null,
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["git.corp.com"],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("falls back to the first available host when none are ready", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: null,
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: [],
     });
     assert.equal(host, "acme.ghe.com");
   });
@@ -1349,6 +1369,7 @@ describe("resolveSelectedEnterpriseHost", () => {
     const host = resolveSelectedEnterpriseHost({
       selectedHost: "git.corp.com",
       availableHosts: ["acme.ghe.com"],
+      readyHosts: ["acme.ghe.com"],
     });
     assert.equal(host, "acme.ghe.com");
   });
@@ -1357,6 +1378,7 @@ describe("resolveSelectedEnterpriseHost", () => {
     const host = resolveSelectedEnterpriseHost({
       selectedHost: "git.corp.com",
       availableHosts: [],
+      readyHosts: [],
     });
     assert.equal(host, null);
   });
