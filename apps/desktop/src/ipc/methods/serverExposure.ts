@@ -13,7 +13,10 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 
 const SetTailscaleServeEnabledInput = Schema.Struct({
   enabled: Schema.Boolean,
-  port: Schema.optionalKey(Schema.Number),
+  // Reject out-of-range ports at the boundary. Settings persistence silently
+  // normalizes anything invalid to 443, so a bare Schema.Number would let the
+  // CLI bind one port while settings recorded another.
+  port: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))),
 });
 
 export const getServerExposureState = DesktopIpc.makeIpcMethod({
@@ -65,5 +68,15 @@ export const getAdvertisedEndpoints = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.serverExposure.getAdvertisedEndpoints")(function* () {
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     return yield* serverExposure.getAdvertisedEndpoints;
+  }),
+});
+
+export const resolveTailscaleHttpsEndpoint = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RESOLVE_TAILSCALE_HTTPS_ENDPOINT_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(AdvertisedEndpoint),
+  handler: Effect.fn("desktop.ipc.serverExposure.resolveTailscaleHttpsEndpoint")(function* () {
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    return yield* serverExposure.resolveTailscaleHttpsEndpoint;
   }),
 });

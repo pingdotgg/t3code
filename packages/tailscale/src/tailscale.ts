@@ -32,6 +32,8 @@ export const TailscaleStderrDiagnostic = Schema.Literals([
   "no-existing-handler",
   "not-logged-in",
   "permission-denied",
+  "serve-not-enabled",
+  "no-https-certs",
   "unknown",
 ]);
 export type TailscaleStderrDiagnostic = typeof TailscaleStderrDiagnostic.Type;
@@ -44,6 +46,8 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
   [/handler does not exist/i, "no-existing-handler"],
   [/not logged in|logged out|needs? login/i, "not-logged-in"],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
+  [/serve is not enabled on your tailnet/i, "serve-not-enabled"],
+  [/does not support getting TLS certs/i, "no-https-certs"],
 ];
 
 /** Classifies stderr into a safe label, dropping the text itself. */
@@ -91,11 +95,119 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
     // set below. Callers that need to recognize a specific failure (e.g.
     // `serve off` on a port with no mapping) match on the label.
     stderrDiagnostic: Schema.optional(TailscaleStderrDiagnostic),
+    /**
+     * Admin URL the CLI prints when the tailnet blocks Serve/HTTPS.
+     *
+     * Exempt from the label-only rule above because it is not lifted text.
+     * {@link extractTailscaleServeConfigureUrl} does not return what it matched
+     * — it rebuilds the URL from a literal origin and path, keeping only an
+     * allowlisted `node` parameter of known shape — so no part of it can carry
+     * stderr contents. Without it there is no way to point the user at the one
+     * page that fixes the failure.
+     */
+    configureUrl: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
-    return `tailscale ${this.subcommand} exited with code ${this.exitCode}.`;
+    return formatTailscaleCommandExitMessage({
+      subcommand: this.subcommand,
+      exitCode: this.exitCode,
+      stderrDiagnostic: this.stderrDiagnostic,
+      configureUrl: this.configureUrl,
+    });
   }
+}
+
+/** Admin console URL Tailscale prints when Serve/HTTPS is not enabled for the tailnet. */
+const TAILSCALE_SERVE_CONFIGURE_URL_PATTERN =
+  /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/i;
+
+/** Canonical origin and path this helper is willing to emit. */
+const TAILSCALE_SERVE_CONFIGURE_URL_BASE = "https://login.tailscale.com/f/serve";
+
+/**
+ * Stable node ID shape, used to vet the one query parameter we keep.
+ *
+ * Tailscale's stable IDs are short and alphanumeric (`nExampleNodeId`); a value
+ * that does not look like one is not a node ID, so dropping it costs nothing.
+ */
+const TAILSCALE_NODE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Extract a Tailscale Serve enablement URL from CLI text.
+ * Only accepts `https://login.tailscale.com/f/serve...` URLs.
+ *
+ * Returns a URL *rebuilt* from constants rather than the matched text. Checking
+ * the parsed origin and path is not enough on its own: the match runs to the
+ * end of the URL token, so the query would arrive verbatim from stderr — and
+ * this value reaches `TailscaleCommandExitError.message`, which is logged. That
+ * is exactly the leak `stderrDiagnostic` exists to prevent, so the query is
+ * rebuilt from an allowlist instead of being trusted. The CLI emits `?node=` to
+ * preselect the node in the admin console; anything else is dropped, at worst
+ * costing that preselection while still landing on the page that fixes the
+ * failure.
+ */
+export function extractTailscaleServeConfigureUrl(text: string): string | null {
+  const match = text.match(TAILSCALE_SERVE_CONFIGURE_URL_PATTERN);
+  if (!match?.[0] || match[0].length > 500) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(match[0]);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname !== "login.tailscale.com") return null;
+    if (!parsed.pathname.startsWith("/f/serve")) return null;
+
+    const sanitized = new URL(TAILSCALE_SERVE_CONFIGURE_URL_BASE);
+    const node = parsed.searchParams.get("node");
+    if (node !== null && TAILSCALE_NODE_ID_PATTERN.test(node)) {
+      sanitized.searchParams.set("node", node);
+    }
+    return sanitized.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prose for a classified diagnostic.
+ *
+ * The label is the safe thing to log; this turns it into something worth
+ * showing a user. `unknown` deliberately has no prose — inventing one would
+ * imply we recognized a failure we did not.
+ */
+export function describeTailscaleStderrDiagnostic(
+  diagnostic: TailscaleStderrDiagnostic,
+): string | null {
+  switch (diagnostic) {
+    case "no-existing-handler":
+      return "No matching Tailscale Serve handler exists.";
+    case "not-logged-in":
+      return "Tailscale is not logged in.";
+    case "permission-denied":
+      return "Tailscale denied permission for this command.";
+    case "serve-not-enabled":
+      return "Serve is not enabled on your tailnet.";
+    case "no-https-certs":
+      return "This Tailscale account does not support getting TLS certificates required for HTTPS Serve.";
+    case "unknown":
+      return null;
+  }
+}
+
+export function formatTailscaleCommandExitMessage(input: {
+  readonly subcommand: "status" | "serve";
+  readonly exitCode: number;
+  readonly stderrDiagnostic?: TailscaleStderrDiagnostic | undefined;
+  readonly configureUrl?: string | undefined;
+}): string {
+  // Stays generic on purpose: this message is logged, and #4556 keeps logs to
+  // the label alone. Prose for the label belongs at the UI edge, via
+  // describeTailscaleStderrDiagnostic. The admin URL is appended because it is
+  // validated rather than lifted, and it is the one actionable thing here.
+  const base = `tailscale ${input.subcommand} exited with code ${input.exitCode}.`;
+  return input.configureUrl ? `${base} To enable, visit: ${input.configureUrl}` : base;
 }
 
 export class TailscaleCommandTimeoutError extends Schema.TaggedErrorClass<TailscaleCommandTimeoutError>()(
@@ -118,6 +230,20 @@ export const TailscaleCommandError = Schema.Union([
   TailscaleCommandTimeoutError,
 ]);
 export type TailscaleCommandError = typeof TailscaleCommandError.Type;
+
+/** User-facing message for any Tailscale CLI failure while configuring Serve. */
+export function formatTailscaleServeUserMessage(error: TailscaleCommandError): string {
+  switch (error._tag) {
+    case "TailscaleCommandSpawnError":
+      return "Could not run the tailscale CLI. Is Tailscale installed and on PATH?";
+    case "TailscaleCommandOutputError":
+      return "Could not read output from the tailscale CLI.";
+    case "TailscaleCommandTimeoutError":
+      return "The tailscale CLI timed out while configuring Serve.";
+    case "TailscaleCommandExitError":
+      return error.message;
+  }
+}
 
 export class TailscaleStatusParseError extends Schema.TaggedErrorClass<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",
@@ -311,13 +437,14 @@ const runTailscaleCommand = (
         Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
       );
       if (exitCode !== 0) {
+        const stderrDiagnostic = stderrDiagnosticOf(stderr);
+        const configureUrl = extractTailscaleServeConfigureUrl(stderr);
         return yield* new TailscaleCommandExitError({
           ...commandContext,
           exitCode,
           stderrLength: stderr.length,
-          ...(stderrDiagnosticOf(stderr) !== undefined
-            ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-            : {}),
+          ...(stderrDiagnostic === undefined ? {} : { stderrDiagnostic }),
+          ...(configureUrl === null ? {} : { configureUrl }),
         });
       }
     }).pipe(

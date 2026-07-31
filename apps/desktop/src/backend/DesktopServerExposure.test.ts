@@ -3,8 +3,10 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -16,6 +18,15 @@ import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const encoder = new TextEncoder();
+
+/** What the spawner reports when the `tailscale` binary is not on PATH. */
+const tailscaleBinaryMissing = PlatformError.systemError({
+  _tag: "NotFound",
+  module: "ChildProcessSpawner",
+  method: "spawn",
+  syscall: "spawn",
+  description: "spawn tailscale ENOENT",
+});
 
 const emptyNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {};
 const lanNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
@@ -58,13 +69,6 @@ function mockSpawnerLayer(statusJson = "{}") {
         }),
       ),
     ),
-  );
-}
-
-function dieOnSpawnLayer() {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() => Effect.die("unexpected tailscale spawn")),
   );
 }
 
@@ -209,7 +213,7 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("persists tailscale serve preferences atomically and reports no-op updates", () =>
+  it.effect("persists tailscale serve preferences atomically after a successful preflight", () =>
     withHarness(
       emptyNetworkInterfaces,
       Effect.gen(function* () {
@@ -227,11 +231,14 @@ describe("DesktopServerExposure", () => {
         assert.equal(changed.state.tailscaleServeEnabled, true);
         assert.equal(changed.state.tailscaleServePort, 8443);
 
-        const unchanged = yield* serverExposure.setTailscaleServeEnabled({
+        // Re-enabling still relaunches so the child server re-binds Serve to
+        // its listen port, even when the preference document is unchanged.
+        const reenabled = yield* serverExposure.setTailscaleServeEnabled({
           enabled: true,
           port: 8443,
         });
-        assert.equal(unchanged.requiresRelaunch, false);
+        assert.equal(reenabled.requiresRelaunch, true);
+        assert.equal(reenabled.state.tailscaleServeEnabled, true);
 
         const persisted = yield* settings.get;
         assert.equal(persisted.tailscaleServeEnabled, true);
@@ -239,6 +246,427 @@ describe("DesktopServerExposure", () => {
       }),
     ),
   );
+
+  it.effect("fails enablement with CLI guidance when Tailscale Serve is not available", () => {
+    const configureUrl = "https://login.tailscale.com/f/serve?node=nExampleNodeIdForTests";
+    const failingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        const isServe = childProcess.args[0] === "serve";
+        const stderr = isServe
+          ? [
+              "Serve is not enabled on your tailnet.",
+              "To enable, visit:",
+              "",
+              `         ${configureUrl}`,
+            ].join("\n")
+          : "";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isServe ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode(isServe ? "" : "{}")),
+            stderr: Stream.make(encoder.encode(stderr)),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 443 })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeConfigureError);
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureSetTailscaleServeError(error));
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(error));
+        assert.equal(error.detail, "Serve is not enabled on your tailnet.");
+        assert.equal(error.configureUrl, configureUrl);
+        assert.equal(error.cause?._tag, "TailscaleCommandExitError");
+        assert.equal(
+          error.message,
+          `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
+        );
+        // The desktop error turns the label into prose for the toast; the CLI
+        // error underneath stays label-free because that one gets logged.
+        const exitCause = error.cause;
+        if (exitCause?._tag !== "TailscaleCommandExitError") {
+          throw new Error(`expected TailscaleCommandExitError, got ${String(exitCause?._tag)}`);
+        }
+        assert.equal(exitCause.stderrDiagnostic, "serve-not-enabled");
+        assert.equal(
+          exitCause.message,
+          `tailscale serve exited with code 1. To enable, visit: ${configureUrl}`,
+        );
+
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, false);
+      }),
+      {},
+      failingSpawner,
+    );
+  });
+
+  it.effect("reports the actionable CLI hint when the tailscale binary cannot be spawned", () => {
+    const unspawnableSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.fail(tailscaleBinaryMissing)),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 443 })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeConfigureError);
+        assert.equal(error.cause?._tag, "TailscaleCommandSpawnError");
+        // Tailscale missing from PATH is the most common failure; the toast must
+        // say so instead of the generic "on port 4173" fallback.
+        assert.equal(
+          error.message,
+          "Could not run the tailscale CLI. Is Tailscale installed and on PATH?",
+        );
+
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, false);
+      }),
+      {},
+      unspawnableSpawner,
+    );
+  });
+
+  it.effect("tears Serve down from the main process when disabling", () => {
+    const tailscaleCommands: Array<ReadonlyArray<string>> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        tailscaleCommands.push(childProcess.args);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 8443 });
+
+        tailscaleCommands.length = 0;
+        const disabled = yield* serverExposure.setTailscaleServeEnabled({ enabled: false });
+
+        assert.equal(disabled.state.tailscaleServeEnabled, false);
+        // Disabling must not depend on the child server's acquireRelease
+        // finalizer — after a failed relaunch that child has none, and Serve
+        // would stay live on the tailnet while settings said disabled.
+        assert.deepEqual(tailscaleCommands, [["serve", "--https=8443", "off"]]);
+
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, false);
+      }),
+      {},
+      recordingSpawner,
+    );
+  });
+
+  it.effect("keeps Serve enabled when the main-process teardown fails", () => {
+    const unspawnableAfterEnable = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as { readonly args: ReadonlyArray<string> };
+        if (childProcess.args.at(-1) === "off") {
+          return Effect.fail(tailscaleBinaryMissing);
+        }
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 8443 });
+
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: false })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeConfigureError);
+        assert.equal(error.enabled, false);
+        // The CLI hint must not crowd out the exposure warning: a teardown that
+        // only says "could not run the tailscale CLI" reads like a no-op, when
+        // in fact the backend may still be served over the tailnet.
+        assert.equal(
+          error.message,
+          "Could not run the tailscale CLI. Is Tailscale installed and on PATH? It may still be reachable on your tailnet.",
+        );
+
+        // Never record "disabled" for a teardown we could not perform — Serve
+        // may still be reachable on the tailnet.
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, true);
+      }),
+      {},
+      unspawnableAfterEnable,
+    );
+  });
+
+  it.effect("rolls the preflighted binding back when persistence dies", () => {
+    // `tapError` only sees typed failures, so a defect (and likewise an
+    // interrupt, e.g. the app quitting mid-toggle) used to skip the rollback and
+    // leave Serve live on the tailnet with settings still saying disabled.
+    const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+      get: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      load: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+      setServerExposureMode: () => Effect.die("unexpected exposure mode change"),
+      setTailscaleServe: () => Effect.die("settings file vanished"),
+      setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+      setWslDistro: () => Effect.die("unexpected WSL distro change"),
+      setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+      applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+      applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+
+    const tailscaleCommands: Array<ReadonlyArray<string>> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        tailscaleCommands.push((command as unknown as { args: ReadonlyArray<string> }).args);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        tailscaleCommands.length = 0;
+        const exit = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 8443 })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        // Enabled, then rolled back — the tailnet must not be left exposed.
+        assert.deepEqual(tailscaleCommands, [
+          ["serve", "--bg", "--https=8443", "http://127.0.0.1:4173"],
+          ["serve", "--https=8443", "off"],
+        ]);
+      }),
+      {},
+      recordingSpawner,
+      settingsLayer,
+    );
+  });
+
+  it.effect("still disables when Serve was already unbound", () => {
+    // `tailscale serve --https=<port> off` exits 1 with "handler does not
+    // exist" when nothing is bound. The tailnet already matches what the user
+    // asked for, so this must not strand the toggle on.
+    const alreadyOffSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const args = (command as unknown as { args: ReadonlyArray<string> }).args;
+        const isOff = args.at(-1) === "off";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isOff ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode(isOff ? "" : "{}")),
+            stderr: Stream.make(
+              encoder.encode(
+                isOff ? "error: failed to remove web serve: handler does not exist" : "",
+              ),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 8443 });
+
+        const disabled = yield* serverExposure.setTailscaleServeEnabled({ enabled: false });
+
+        assert.equal(disabled.state.tailscaleServeEnabled, false);
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, false);
+      }),
+      {},
+      alreadyOffSpawner,
+    );
+  });
+
+  it.effect("re-enables Serve when persisting the disable fails", () => {
+    const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
+      operation: "replace-settings-file",
+      path: "/tmp/desktop-settings.json",
+      cause: new Error("disk exploded"),
+    });
+    const enabledSettings = {
+      ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 8443,
+    };
+    const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+      get: Effect.succeed(enabledSettings),
+      load: Effect.succeed(enabledSettings),
+      setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+      setServerExposureMode: () => Effect.die("unexpected exposure mode change"),
+      setTailscaleServe: () => Effect.fail(settingsFailure),
+      setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+      setWslDistro: () => Effect.die("unexpected WSL distro change"),
+      setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+      applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+      applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+
+    const tailscaleCommands: Array<ReadonlyArray<string>> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        tailscaleCommands.push((command as unknown as { args: ReadonlyArray<string> }).args);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        tailscaleCommands.length = 0;
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: false })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServePersistenceError);
+        // Serve was torn down before the write, and the write failed — so the
+        // binding must come back, or settings would advertise an HTTPS endpoint
+        // that no longer answers.
+        assert.deepEqual(tailscaleCommands, [
+          ["serve", "--https=8443", "off"],
+          ["serve", "--bg", "--https=8443", "http://127.0.0.1:4173"],
+        ]);
+      }),
+      {},
+      recordingSpawner,
+      settingsLayer,
+    );
+  });
 
   it.effect("preserves persistence request context and the settings failure chain", () => {
     const diskFailure = new Error("disk exploded");
@@ -260,6 +688,39 @@ describe("DesktopServerExposure", () => {
       applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
       applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
     } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+
+    const tailscaleCommands: Array<{
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+    }> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        tailscaleCommands.push({
+          command: childProcess.command,
+          args: childProcess.args,
+        });
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
 
     return withHarness(
       lanNetworkInterfaces,
@@ -300,9 +761,22 @@ describe("DesktopServerExposure", () => {
           "Failed to persist desktop Tailscale Serve settings (enabled: true, port: 8443).",
         );
         assert.notInclude(tailscaleError.message, diskFailure.message);
+
+        // Preflight turned Serve on; persistence failure must roll it back so we
+        // do not leave HTTPS exposure active while settings still say disabled.
+        assert.deepEqual(tailscaleCommands, [
+          {
+            command: "tailscale",
+            args: ["serve", "--bg", "--https=8443", "http://127.0.0.1:4173"],
+          },
+          {
+            command: "tailscale",
+            args: ["serve", "--https=8443", "off"],
+          },
+        ]);
       }),
       {},
-      undefined,
+      recordingSpawner,
       settingsLayer,
     );
   });
@@ -333,17 +807,45 @@ describe("DesktopServerExposure", () => {
         // mode stays at default "local-only", tailscaleServeEnabled stays false.
 
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-        // Only the loopback endpoint; no tailscale spawn means the dieOnSpawnLayer
-        // would have crashed the test if the gate was missing.
+        // Only the loopback endpoint; no tailscale spawn means dieOnSpawn would
+        // crash if the passive gate were missing.
         assert.deepEqual(
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
           ["http://127.0.0.1:4173/"],
         );
       }),
       {},
-      dieOnSpawnLayer(),
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("unexpected tailscale spawn")),
+      ),
     ),
   );
+
+  it.effect("resolves Tailscale HTTPS on demand while remaining local-only", () => {
+    const statusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+    return withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const passive = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          passive.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/"],
+        );
+
+        const endpoint = yield* serverExposure.resolveTailscaleHttpsEndpoint;
+        assert.isNotNull(endpoint);
+        assert.equal(endpoint?.httpBaseUrl, "https://desktop.tail.ts.net/");
+        assert.equal(endpoint?.status, "unavailable");
+        assert.equal(endpoint?.label, "Tailscale HTTPS");
+      }),
+      {},
+      mockSpawnerLayer(statusJson),
+    );
+  });
 
   it.effect("uses ConfigProvider desktop exposure overrides", () =>
     withHarness(

@@ -46,6 +46,7 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   setMode: () => Effect.die("unexpected setMode"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
+  resolveTailscaleHttpsEndpoint: Effect.succeed(null),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
 function makeEnvironmentLayer(
