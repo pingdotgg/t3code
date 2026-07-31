@@ -467,14 +467,18 @@ export function resolveSelectedEnterpriseHost(input: {
   availableHosts: ReadonlyArray<string>;
   readyHosts: ReadonlyArray<string>;
 }): string | null {
-  if (input.selectedHost !== null && input.availableHosts.includes(input.selectedHost)) {
+  const firstReadyHost = input.availableHosts.find((host) => input.readyHosts.includes(host));
+  // A host selected while it was authenticated can lose that state on a later
+  // discovery pass. Holding onto it strands the user the same way an
+  // unauthenticated default does, so give it up while another host still works.
+  const keepsSelection =
+    input.selectedHost !== null &&
+    input.availableHosts.includes(input.selectedHost) &&
+    (input.readyHosts.includes(input.selectedHost) || firstReadyHost === undefined);
+  if (keepsSelection) {
     return input.selectedHost;
   }
-  return (
-    input.availableHosts.find((host) => input.readyHosts.includes(host)) ??
-    input.availableHosts[0] ??
-    null
-  );
+  return firstReadyHost ?? input.availableHosts[0] ?? null;
 }
 
 // Re-export from shared for backwards compatibility in this module's exports

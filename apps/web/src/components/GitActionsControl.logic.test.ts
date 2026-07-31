@@ -1347,6 +1347,24 @@ describe("resolveSelectedEnterpriseHost", () => {
     assert.equal(host, "acme.ghe.com");
   });
 
+  it("gives up a selected host that lost authentication while another is ready", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "acme.ghe.com",
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["git.corp.com"],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("keeps a selected host that lost authentication when no host is ready", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: [],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
   it("skips an unauthenticated first host in favour of a ready one", () => {
     const host = resolveSelectedEnterpriseHost({
       selectedHost: null,
