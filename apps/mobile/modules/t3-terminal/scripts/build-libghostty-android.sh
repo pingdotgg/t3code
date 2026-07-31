@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VENDOR_DIR="${MODULE_DIR}/Vendor/libghostty-vt"
+VENDOR_DIR="${MODULE_DIR}/../../../../native/libghostty-vt"
 PATCH_DIR="${SCRIPT_DIR}/libghostty-android-patches"
 
 GHOSTTY_REVISION="${GHOSTTY_REVISION:-9f62873bf195e4d8a762d768a1405a5f2f7b1697}"
