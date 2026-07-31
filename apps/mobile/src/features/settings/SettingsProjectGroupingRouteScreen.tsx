@@ -41,9 +41,10 @@ export function SettingsProjectGroupingRouteScreen() {
   const checkmarkColor = useThemeColor("--color-icon");
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const selectedMode = AsyncResult.isSuccess(preferencesResult)
     ? resolveMobileProjectGroupingSettings(preferencesResult.value).sidebarProjectGroupingMode
-    : "repository";
+    : null;
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -59,7 +60,11 @@ export function SettingsProjectGroupingRouteScreen() {
             <Pressable
               key={option.mode}
               accessibilityRole="radio"
-              accessibilityState={{ checked: selectedMode === option.mode }}
+              accessibilityState={{
+                checked: selectedMode === option.mode,
+                disabled: !preferencesReady,
+              }}
+              disabled={!preferencesReady}
               onPress={() => savePreferences(mobileProjectGroupingModePatch(option.mode))}
               className={
                 index === 0
