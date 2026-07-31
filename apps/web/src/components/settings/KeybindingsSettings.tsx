@@ -70,6 +70,7 @@ import {
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -1230,7 +1231,7 @@ export function KeybindingsSettingsPanel() {
   return (
     <SettingsPageContainer className="max-w-5xl">
       <SettingsSection
-        title="Keybindings"
+        {...searchableSetting("keybindings")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ExpandableHeaderSearch
