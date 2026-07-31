@@ -126,6 +126,32 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("infers a closed Plan dismissal when migrating storage version 7", () => {
+    expect(
+      migratePersistedRightPanelState(
+        {
+          byThreadKey: {
+            "env-1:thread-A": {
+              isOpen: false,
+              activeSurfaceId: "plan",
+              surfaces: [{ id: "plan", kind: "plan" }],
+            },
+          },
+        },
+        7,
+      ),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
+          planSidebarAutoOpenDisabled: true,
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");

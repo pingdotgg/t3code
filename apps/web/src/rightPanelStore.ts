@@ -181,7 +181,10 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
-export function migratePersistedRightPanelState(persistedState: unknown): {
+export function migratePersistedRightPanelState(
+  persistedState: unknown,
+  version?: number,
+): {
   byThreadKey: Record<string, ThreadRightPanelState>;
 } {
   if (!persistedState || typeof persistedState !== "object") {
@@ -256,7 +259,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   ? validThreadState.isOpen
                   : activeSurfaceId !== null;
               const planSidebarAutoOpenDisabled =
-                validThreadState?.planSidebarAutoOpenDisabled === true;
+                validThreadState?.planSidebarAutoOpenDisabled === true ||
+                (version === RIGHT_PANEL_STORAGE_VERSION - 1 &&
+                  validThreadState?.isOpen === false &&
+                  validThreadState?.activeSurfaceId === "plan" &&
+                  surfaces.some((surface) => surface.kind === "plan"));
               return [
                 threadKey,
                 {
