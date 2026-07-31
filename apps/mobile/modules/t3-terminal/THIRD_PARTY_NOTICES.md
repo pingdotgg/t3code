@@ -18,13 +18,14 @@ Ghostty's MIT license applies to the vendored framework. Keep this notice in syn
 ## Ghostty / libghostty-vt
 
 The Android terminal renderer vendors upstream `libghostty-vt` shared libraries and C headers.
+The web terminal vendors a WebAssembly build from the same revision and uses the same C ABI.
 
 - Upstream project: https://github.com/ghostty-org/ghostty
 - Vendored revision: `9f62873bf195e4d8a762d768a1405a5f2f7b1697`
 - License: MIT
 
-Ghostty's MIT license applies to the vendored Android libraries. Keep this notice in sync when
-updating `Vendor/libghostty-vt`.
+Ghostty's MIT license applies to the vendored Android and web libraries. Keep this notice and both
+artifacts in sync when updating the repository-root `native/libghostty-vt`.
 
 ## MesloLGS NF (Android terminal font)
 

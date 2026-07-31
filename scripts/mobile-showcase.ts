@@ -60,6 +60,9 @@ const MOBILE_BUILD_ENV = {
   ANDROID_HOME: ANDROID_SDK_ROOT,
   APP_VARIANT: "production",
   EXPO_NO_GIT_STATUS: "1",
+  // Lets the capture build require full screen on iPad so the app can rotate
+  // itself to landscape (see app.config.ts).
+  T3_SHOWCASE_CAPTURE_BUILD: "1",
   JAVA_HOME:
     NodeProcess.env.JAVA_HOME ??
     (NodeProcess.platform === "darwin"
@@ -87,11 +90,9 @@ export interface ShowcaseCapture {
 }
 
 interface IosCaptureCleanup {
-  readonly name: string;
   readonly udid: string;
   readonly startedByRunner: boolean;
   readonly createdByRunner: boolean;
-  readonly restorePortrait: boolean;
 }
 
 interface AndroidCaptureCleanup {
@@ -794,47 +795,58 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
   ]);
 }
 
-async function setIosSimulatorOrientation(
-  orientation: NonNullable<ShowcaseIosDevice["orientation"]>,
-  simulator: Pick<SimctlDevice, "name" | "udid">,
-): Promise<void> {
-  await runCommand("open", ["-a", "Simulator", "--args", "-CurrentDeviceUDID", simulator.udid]);
-  const menuItem = orientation === "landscape" ? "Landscape Right" : "Portrait";
-  await runCommand("osascript", [
-    "-e",
-    "on run argv",
-    "-e",
-    "set simulatorName to item 1 of argv",
-    "-e",
-    'tell application "Simulator" to activate',
-    "-e",
-    'tell application "System Events" to tell process "Simulator"',
-    "-e",
-    "set simulatorWindows to {}",
-    "-e",
-    "repeat 40 times",
-    "-e",
-    'set simulatorWindows to menu items of menu "Window" of menu bar item "Window" of menu bar 1 whose name starts with simulatorName',
-    "-e",
-    "if (count of simulatorWindows) is greater than 0 then exit repeat",
-    "-e",
-    "delay 0.25",
-    "-e",
-    "end repeat",
-    "-e",
-    'if (count of simulatorWindows) is not 1 then error "Expected exactly one Simulator window for " & simulatorName',
-    "-e",
-    "click item 1 of simulatorWindows",
-    "-e",
-    `click menu item "${menuItem}" of menu "Orientation" of menu item "Orientation" of menu "Device" of menu bar item "Device" of menu bar 1`,
-    "-e",
-    "end tell",
-    "-e",
-    "delay 1",
-    "-e",
-    "end run",
-    simulator.name,
-  ]);
+// iPadOS 26 windowing ("Chamois") runs UIRequiresFullScreen apps in a fixed
+// portrait compatibility window, which defeats the in-app landscape rotation
+// the capture build relies on. Switch the device to Full Screen Apps mode
+// (Settings > Multitasking & Gestures) and restart SpringBoard to apply it.
+async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
+  const current = await commandOutput("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "read",
+    "com.apple.springboard",
+    "SBChamoisWindowingEnabled",
+  ]).catch(() => "");
+  if (current.trim() === "0") return;
+  // The Settings toggle writes all three keys; SBChamoisWindowingEnabled
+  // alone is not honored on a freshly created device.
+  for (const key of [
+    "SBChamoisWindowingEnabled",
+    "SBMedusaMultitaskingEnabled",
+    "SBFlexibleWindowingPreviouslyEnabledAutomaticStageCreation",
+  ]) {
+    await runCommand("xcrun", [
+      "simctl",
+      "spawn",
+      udid,
+      "defaults",
+      "write",
+      "com.apple.springboard",
+      key,
+      "-bool",
+      "false",
+    ]);
+  }
+  // A SpringBoard restart is not enough on a freshly created simulator (the
+  // first CI run captured with windowing still active), so reboot the device
+  // and verify the mode actually stuck.
+  await runCommand("xcrun", ["simctl", "shutdown", udid]);
+  await runCommand("xcrun", ["simctl", "boot", udid]);
+  await runCommand("xcrun", ["simctl", "bootstatus", udid, "-b"]);
+  const applied = await commandOutput("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "read",
+    "com.apple.springboard",
+    "SBChamoisWindowingEnabled",
+  ]).catch(() => "");
+  if (applied.trim() !== "0") {
+    throw new Error(`Simulator ${udid} did not switch to Full Screen Apps mode.`);
+  }
 }
 
 async function iosAppContainer(udid: string): Promise<string> {
@@ -873,13 +885,7 @@ async function captureIos(
 ): Promise<void> {
   const { simulator, createdByRunner } = await ensureIosSimulator(capture.device);
   const startedByRunner = simulator.state !== "Booted";
-  registerCleanup({
-    name: simulator.name,
-    udid: simulator.udid,
-    startedByRunner,
-    createdByRunner,
-    restorePortrait: capture.device.orientation === "landscape",
-  });
+  registerCleanup({ udid: simulator.udid, startedByRunner, createdByRunner });
   if (!startedByRunner) {
     // Clear transient SpringBoard state (permission prompts, stale URL-open
     // confirmations, keyboards) without erasing the developer's simulator.
@@ -887,6 +893,9 @@ async function captureIos(
   }
   await runCommand("xcrun", ["simctl", "boot", simulator.udid]);
   await runCommand("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"]);
+  if (capture.device.orientation === "landscape") {
+    await ensureIosFullScreenAppsMode(simulator.udid);
+  }
   await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
     await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
@@ -937,10 +946,11 @@ async function captureIos(
       JSON.stringify(pairingUrls),
       "--showcaseScene",
       firstScene,
+      // The app rotates itself; Simulator menu UI scripting needs macOS
+      // Accessibility permission that CI runners do not grant to osascript.
+      "--showcaseOrientation",
+      capture.device.orientation ?? "portrait",
     ]);
-    if (capture.device.orientation === "landscape") {
-      await setIosSimulatorOrientation("landscape", simulator);
-    }
   };
   await NodeFSP.rm(readyPath, { force: true });
   await NodeFSP.writeFile(scenePath, firstScene);
@@ -972,7 +982,13 @@ async function captureIos(
     );
     await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
     if (capture.device.orientation === "landscape") {
-      await runCommand("sips", ["--rotate", "90", destination]);
+      // A headless simulator keeps its display portrait while the rotated app
+      // renders sideways inside it; with Simulator.app attached the display
+      // itself rotates. Only post-rotate the former.
+      const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
+      if (height > width) {
+        await runCommand("sips", ["--rotate", "270", destination]);
+      }
     }
     await finalizeCapture(destination, capture.device);
   }
@@ -1389,9 +1405,6 @@ async function main(): Promise<void> {
         }
       }
       for (const cleanup of iosCleanups) {
-        if (cleanup.restorePortrait) {
-          await setIosSimulatorOrientation("portrait", cleanup).catch(() => undefined);
-        }
         if (cleanup.startedByRunner || cleanup.createdByRunner) {
           await runCommand("xcrun", ["simctl", "shutdown", cleanup.udid]).catch(() => undefined);
         }
