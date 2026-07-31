@@ -98,7 +98,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable ||
+          // Keep focus inside open dialogs and popups instead of escaping
+          // their focus trap into the sidebar search.
+          target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]') !== null)
       ) {
         return;
       }
