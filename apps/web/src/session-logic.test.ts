@@ -969,13 +969,8 @@ describe("deriveWorkLogEntries", () => {
         summary: "Image view",
         payload: {
           itemType: "image_view",
-          data: {
-            item: {
-              type: "imageGeneration",
-              savedPath: "/repo/project/generated/cat.png",
-              status: "completed",
-            },
-          },
+          detail: "/repo/project/generated/cat.png",
+          data: {},
         },
       }),
       makeActivity({

@@ -744,7 +744,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (itemType === "image_view") {
     const data = asRecord(payload?.data);
     const item = asRecord(data?.item);
-    const imagePath = asTrimmedString(item?.savedPath) ?? asTrimmedString(item?.path);
+    const imagePath =
+      asTrimmedString(item?.savedPath) ??
+      asTrimmedString(item?.path) ??
+      asTrimmedString(payload?.detail);
     if (imagePath) {
       entry.imagePath = imagePath;
     }

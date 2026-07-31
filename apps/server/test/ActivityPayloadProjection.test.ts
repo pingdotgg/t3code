@@ -23,6 +23,7 @@ function makeActivity(
   id: string,
   itemType: string,
   data: Record<string, unknown>,
+  detail = `${itemType} detail`,
 ): OrchestrationThreadActivity {
   return {
     id: EventId.make(id),
@@ -32,7 +33,7 @@ function makeActivity(
     payload: {
       itemType,
       title: itemType,
-      detail: `${itemType} detail`,
+      detail,
       status: "completed",
       requestKind: "command",
       data,
@@ -129,9 +130,18 @@ const fixtures = [
     },
     ignored: "top-level bulk",
   }),
-  makeActivity("image", "image_view", {
-    ignored: "top-level bulk",
-  }),
+  makeActivity(
+    "image",
+    "image_view",
+    {
+      item: {
+        type: "imageGeneration",
+        savedPath: "/repo/project/generated/cat.png",
+      },
+      ignored: "top-level bulk",
+    },
+    "/repo/project/generated/cat.png",
+  ),
 ] satisfies ReadonlyArray<OrchestrationThreadActivity>;
 
 describe("projectActivityPayload", () => {
@@ -194,6 +204,20 @@ describe("projectActivityPayload", () => {
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
       expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
     }
+  });
+
+  it("keeps image paths available after projecting nested provider data", () => {
+    const projected = projectActivityPayload(fixtures[6]!);
+
+    expect(projected.payload).toEqual({
+      itemType: "image_view",
+      title: "image_view",
+      detail: "/repo/project/generated/cat.png",
+      status: "completed",
+      requestKind: "command",
+      data: {},
+    });
+    expect(deriveWorkLogEntries([projected])[0]?.imagePath).toBe("/repo/project/generated/cat.png");
   });
 
   it("projects snapshot and event transports without mutating their sources", () => {
