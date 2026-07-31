@@ -1,5 +1,7 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
+import { CheckIcon, CopyIcon, MessageSquareIcon } from "lucide-react";
 import React, {
   Children,
   Suspense,
@@ -35,7 +37,6 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
-import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { readEnvironmentApi } from "~/environmentApi";
 import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
@@ -135,11 +136,103 @@ function extractCodeBlock(
 type MarkdownAstNode = {
   type: string;
   value?: string;
+  url?: string;
   children?: Array<MarkdownAstNode>;
   data?: {
     hProperties?: Record<string, unknown>;
   };
 };
+
+const THREAD_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const THREAD_ID_PATTERN = new RegExp(`^${THREAD_ID_SOURCE}$`, "i");
+const THREAD_REFERENCE_PATTERN = new RegExp(
+  `\\b(Thread\\s*:?[ \\t]+)(${THREAD_ID_SOURCE})\\b`,
+  "gi",
+);
+
+function normalizeThreadId(threadId: string): string {
+  return threadId.toLowerCase();
+}
+
+function threadLinkProperties(environmentId: EnvironmentId, threadId: string) {
+  return {
+    dataThreadEnvironmentId: environmentId,
+    dataThreadId: normalizeThreadId(threadId),
+  };
+}
+
+function buildThreadHref(environmentId: EnvironmentId, threadId: string): string {
+  return `/${encodeURIComponent(environmentId)}/${encodeURIComponent(normalizeThreadId(threadId))}`;
+}
+
+function linkThreadReferencesInText(
+  node: MarkdownAstNode,
+  environmentId: EnvironmentId,
+): MarkdownAstNode[] {
+  const text = node.value ?? "";
+  const nextNodes: MarkdownAstNode[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(THREAD_REFERENCE_PATTERN)) {
+    const matchIndex = match.index;
+    const prefix = match[1];
+    const threadId = match[2];
+    if (matchIndex === undefined || !prefix || !threadId) continue;
+    const normalizedThreadId = normalizeThreadId(threadId);
+
+    const threadIdStart = matchIndex + prefix.length;
+    if (threadIdStart > cursor) {
+      nextNodes.push({ type: "text", value: text.slice(cursor, threadIdStart) });
+    }
+    nextNodes.push({
+      type: "link",
+      url: buildThreadHref(environmentId, normalizedThreadId),
+      data: {
+        hProperties: threadLinkProperties(environmentId, normalizedThreadId),
+      },
+      children: [{ type: "text", value: normalizedThreadId }],
+    });
+    cursor = threadIdStart + threadId.length;
+  }
+
+  if (nextNodes.length === 0) return [node];
+  if (cursor < text.length) {
+    nextNodes.push({ type: "text", value: text.slice(cursor) });
+  }
+  return nextNodes;
+}
+
+function remarkLinkThreadReferences(environmentId?: EnvironmentId) {
+  return () => (tree: MarkdownAstNode) => {
+    if (!environmentId) return;
+
+    const visit = (node: MarkdownAstNode, insideLink: boolean) => {
+      if (node.type === "inlineCode" && THREAD_ID_PATTERN.test(node.value ?? "")) {
+        node.data = {
+          ...node.data,
+          hProperties: {
+            ...node.data?.hProperties,
+            ...threadLinkProperties(environmentId, node.value ?? ""),
+          },
+        };
+        return;
+      }
+
+      const childInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
+      if (!node.children || childInsideLink) return;
+
+      node.children = node.children.flatMap((child) => {
+        if (child.type === "text") {
+          return linkThreadReferencesInText(child, environmentId);
+        }
+        visit(child, false);
+        return [child];
+      });
+    };
+
+    visit(tree, false);
+  };
+}
 
 function remarkTagInlineCode(cwd?: string) {
   return () => (tree: MarkdownAstNode) => {
@@ -358,11 +451,73 @@ interface MarkdownFileLinkProps {
   className?: string | undefined;
 }
 
+interface MarkdownThreadLinkProps {
+  threadRef: ScopedThreadRef;
+  children: ReactNode;
+  className?: string | undefined;
+}
+
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
 const MARKDOWN_FILE_LINK_LABEL_CLASS_NAME = "chat-markdown-file-link-label truncate";
+const MARKDOWN_THREAD_LINK_CLASS_NAME =
+  "chat-markdown-thread-link relative top-[2px] max-w-full no-underline";
+
+function resolveMarkdownThreadRef(
+  properties: Record<string, unknown> | undefined,
+): ScopedThreadRef | null {
+  const environmentId = properties?.dataThreadEnvironmentId;
+  const threadId = properties?.dataThreadId;
+  if (typeof environmentId !== "string" || typeof threadId !== "string") return null;
+  if (!THREAD_ID_PATTERN.test(threadId)) return null;
+  return {
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(threadId),
+  };
+}
+
+const MarkdownThreadLink = memo(function MarkdownThreadLink({
+  threadRef,
+  children,
+  className,
+}: MarkdownThreadLinkProps) {
+  const navigate = useNavigate();
+  const href = buildThreadHref(threadRef.environmentId, threadRef.threadId);
+
+  return (
+    <a
+      href={href}
+      className={cn(MARKDOWN_THREAD_LINK_CLASS_NAME, className)}
+      title={`Open thread ${threadRef.threadId}`}
+      aria-label={`Open thread ${threadRef.threadId}`}
+      onClick={(event) => {
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+          },
+        });
+      }}
+    >
+      <MessageSquareIcon className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+      <span className="truncate font-mono">{children}</span>
+    </a>
+  );
+});
 
 function pathParentSegments(path: string): string[] {
   const normalized = path.replaceAll("\\", "/");
@@ -691,7 +846,16 @@ function ChatMarkdown({ text, cwd, isStreaming = false, threadRef }: ChatMarkdow
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   const markdownAnchor = useCallback(
-    ({ node: _node, href, ...props }: MarkdownFunctionComponentProps<"a">) => {
+    ({ node, href, ...props }: MarkdownFunctionComponentProps<"a">) => {
+      const linkedThreadRef = resolveMarkdownThreadRef(node?.properties);
+      if (linkedThreadRef) {
+        return (
+          <MarkdownThreadLink threadRef={linkedThreadRef} className={props.className}>
+            {props.children}
+          </MarkdownThreadLink>
+        );
+      }
+
       const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
       const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
       if (!fileLinkMeta) {
@@ -742,6 +906,15 @@ function ChatMarkdown({ text, cwd, isStreaming = false, threadRef }: ChatMarkdow
   );
   const markdownCode = useCallback(
     ({ node, children, className, ...props }: MarkdownFunctionComponentProps<"code">) => {
+      const linkedThreadRef = resolveMarkdownThreadRef(node?.properties);
+      if (linkedThreadRef) {
+        return (
+          <MarkdownThreadLink threadRef={linkedThreadRef} className={className}>
+            {linkedThreadRef.threadId}
+          </MarkdownThreadLink>
+        );
+      }
+
       if (node?.properties?.dataInlineCode != null) {
         const codeText = nodeToPlainText(children);
         const fileLinkMeta = resolveInlineCodeFileLinkMeta(codeText, cwd);
@@ -780,7 +953,11 @@ function ChatMarkdown({ text, cwd, isStreaming = false, threadRef }: ChatMarkdow
   return (
     <div className="chat-markdown w-full min-w-0 leading-relaxed text-foreground/80">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkTagInlineCode(cwd)]}
+        remarkPlugins={[
+          remarkGfm,
+          remarkLinkThreadReferences(threadRef?.environmentId),
+          remarkTagInlineCode(cwd),
+        ]}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

@@ -11,16 +11,23 @@ const {
   openFileInPreviewMock,
   openInPreferredEditorMock,
   openPreviewMock,
+  navigateMock,
   readLocalApiMock,
 } = vi.hoisted(() => ({
   createAssetUrlMock: vi.fn(async () => ({ relativeUrl: "/assets/signed" })),
   openFileInPreviewMock: vi.fn(async () => ({ _tag: "Success", value: undefined })),
   openInPreferredEditorMock: vi.fn(async () => "vscode"),
   openPreviewMock: vi.fn(),
+  navigateMock: vi.fn(async () => undefined),
   readLocalApiMock: vi.fn(() => ({
     server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
     shell: { openInEditor: vi.fn(async () => undefined) },
   })),
+}));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => navigateMock,
 }));
 
 vi.mock("../editorPreferences", () => ({
@@ -73,10 +80,38 @@ describe("ChatMarkdown", () => {
     openInPreferredEditorMock.mockClear();
     openFileInPreviewMock.mockClear();
     openPreviewMock.mockClear();
+    navigateMock.mockClear();
     createAssetUrlMock.mockClear();
     readLocalApiMock.mockClear();
     localStorage.clear();
     document.body.innerHTML = "";
+  });
+
+  it("navigates thread references within the current environment", async () => {
+    const linkedThreadId = "bc880b45-fd48-42db-98fa-f211bae7cc0a";
+    const uppercaseThreadId = linkedThreadId.toUpperCase();
+    const screen = await render(
+      <ChatMarkdown
+        text={`Created replacement thread: \`${uppercaseThreadId}\``}
+        cwd="/repo/project"
+        threadRef={threadRef}
+      />,
+    );
+
+    try {
+      await page.getByRole("link", { name: `Open thread ${linkedThreadId}` }).click();
+      await vi.waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: threadRef.environmentId,
+            threadId: linkedThreadId,
+          },
+        });
+      });
+    } finally {
+      await screen.unmount();
+    }
   });
 
   it("rewrites file uri hrefs into direct paths before rendering", async () => {

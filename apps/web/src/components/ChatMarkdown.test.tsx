@@ -1,9 +1,49 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => () => Promise.resolve(),
+}));
 
 import ChatMarkdown from "./ChatMarkdown";
 
 describe("ChatMarkdown", () => {
+  it.each([
+    `Thread bc880b45-fd48-42db-98fa-f211bae7cc0a`,
+    "Created replacement thread: `bc880b45-fd48-42db-98fa-f211bae7cc0a`",
+    "Thread BC880B45-FD48-42DB-98FA-F211BAE7CC0A",
+  ])("renders thread references as internal links", (text) => {
+    const markup = renderToStaticMarkup(
+      <ChatMarkdown
+        text={text}
+        cwd="/Users/julius/project"
+        threadRef={scopeThreadRef(
+          EnvironmentId.make("environment-local"),
+          ThreadId.make("current-thread"),
+        )}
+      />,
+    );
+
+    expect(markup).toContain("chat-markdown-thread-link");
+    expect(markup).toContain('href="/environment-local/bc880b45-fd48-42db-98fa-f211bae7cc0a"');
+    expect(markup).toContain("Open thread bc880b45-fd48-42db-98fa-f211bae7cc0a");
+    expect(markup).not.toContain("BC880B45-FD48-42DB-98FA-F211BAE7CC0A");
+  });
+
+  it("does not link thread references without an environment context", () => {
+    const markup = renderToStaticMarkup(
+      <ChatMarkdown
+        text="Thread bc880b45-fd48-42db-98fa-f211bae7cc0a"
+        cwd="/Users/julius/project"
+      />,
+    );
+
+    expect(markup).not.toContain("chat-markdown-thread-link");
+  });
+
   it("renders inline code file paths as file links", () => {
     const markup = renderToStaticMarkup(
       <ChatMarkdown
