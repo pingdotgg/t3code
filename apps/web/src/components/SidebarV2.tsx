@@ -1121,6 +1121,9 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
               id={props.resultId}
               type="button"
               role="option"
+              // aria-activedescendant options: focus stays on the search input,
+              // which owns all keyboard interaction for the listbox.
+              tabIndex={-1}
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
               aria-label={
@@ -1830,6 +1833,9 @@ export default function SidebarV2() {
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      // IME composition (Japanese/Chinese input) uses the same keys; committing
+      // a candidate must not move the highlight or navigate away mid-compose.
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape" && isSearchingThreads) {
         event.preventDefault();
         event.stopPropagation();
