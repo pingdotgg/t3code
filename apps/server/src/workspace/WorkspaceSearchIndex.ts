@@ -9,6 +9,7 @@ import {
   type Result,
   type SearchResult,
 } from "@ff-labs/fff-node";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,8 +25,24 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 
-const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
-const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
+const DEFAULT_WORKSPACE_LIST_MAX_ENTRIES = 25_000;
+const WORKSPACE_LIST_MAX_ENTRIES_CONFIG = Config.schema(
+  Schema.Int.check(
+    Schema.isGreaterThan(0),
+    Schema.isLessThanOrEqualTo(DEFAULT_WORKSPACE_LIST_MAX_ENTRIES),
+  ),
+  "T3CODE_WORKSPACE_LIST_MAX_ENTRIES",
+).pipe(Config.withDefault(DEFAULT_WORKSPACE_LIST_MAX_ENTRIES));
+const loadWorkspaceListMaxEntries = WORKSPACE_LIST_MAX_ENTRIES_CONFIG.pipe(
+  Effect.catch((cause) =>
+    Effect.logWarning(
+      `Invalid workspace list entry limit; expected an integer from 1 to ${DEFAULT_WORKSPACE_LIST_MAX_ENTRIES} and will use the default.`,
+    ).pipe(
+      Effect.annotateLogs({ cause, defaultMaxEntries: DEFAULT_WORKSPACE_LIST_MAX_ENTRIES }),
+      Effect.as(DEFAULT_WORKSPACE_LIST_MAX_ENTRIES),
+    ),
+  ),
+);
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
@@ -350,7 +367,10 @@ const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(fu
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
+  options: { readonly maxListEntries?: number } = {},
 ) {
+  const maxListEntries = options.maxListEntries ?? DEFAULT_WORKSPACE_LIST_MAX_ENTRIES;
+  const listPageSize = maxListEntries + 2;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -428,14 +448,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
-        finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+      const result = yield* runSearch("", listPageSize, "mixedSearch", () =>
+        finder.mixedSearch("", { pageSize: listPageSize }),
       );
-      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const mapped = mapMixedSearchResult(result, maxListEntries);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
-      const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
+      const entries = sortedEntries.slice(0, maxListEntries);
       return {
         entries,
         truncated: mapped.truncated || entries.length < sortedEntries.length,
@@ -549,7 +569,13 @@ function parseWorkspaceSearchIndexKey(key: string): {
  */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
-  return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));
+  return Layer.effect(
+    WorkspaceSearchIndex,
+    Effect.gen(function* () {
+      const maxListEntries = yield* loadWorkspaceListMaxEntries;
+      return yield* make(cwd, variant, { maxListEntries });
+    }),
+  );
 };
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(

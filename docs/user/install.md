@@ -41,6 +41,24 @@ Arch Linux:
 yay -S t3code-bin
 ```
 
+## Large Workspace Memory
+
+The Files panel lists at most 25,000 indexed paths by default. On very large workspace roots,
+loading that many entries can retain significant server memory. Set
+`T3CODE_WORKSPACE_LIST_MAX_ENTRIES` to an integer from 1 through 25,000 before starting the server
+to trade a shorter Files-panel listing for lower memory use. Invalid values use the 25,000-entry
+default and emit a server-log warning. Path and content search still use the complete workspace
+index.
+
+```bash
+T3CODE_WORKSPACE_LIST_MAX_ENTRIES=5000 npx t3@latest
+```
+
+For a desktop-hosted server, launch the desktop app from a shell where the variable is already
+set. A variable exported only in a shell profile is not imported when the app starts from the
+macOS Dock or Windows desktop. For WSL backend mode, set it inside WSL rather than only in the
+Windows environment. Restart T3 Code after changing it.
+
 ## Providers
 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
