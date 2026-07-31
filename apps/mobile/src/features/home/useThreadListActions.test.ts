@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => {
     archive: {},
     delete: {},
     settle: {},
+    snooze: {},
     unarchive: {},
+    unsnooze: {},
     unsettle: {},
   };
 
@@ -15,13 +17,16 @@ const mocks = vi.hoisted(() => {
     alert: vi.fn(),
     archiveMutation: vi.fn(),
     canSettle: vi.fn(),
+    canSnooze: vi.fn(),
     commands,
     deleteMutation: vi.fn(),
     impactAsync: vi.fn(),
     refreshArchivedThreadsForEnvironment: vi.fn(),
     serverConfigs: new Map<string, unknown>(),
     settleMutation: vi.fn(),
+    snoozeMutation: vi.fn(),
     unarchiveMutation: vi.fn(),
+    unsnoozeMutation: vi.fn(),
     unsettleMutation: vi.fn(),
   };
 });
@@ -42,6 +47,7 @@ vi.mock("expo-haptics", () => ({
 
 vi.mock("@t3tools/client-runtime/state/thread-settled", () => ({
   canSettle: mocks.canSettle,
+  canSnooze: mocks.canSnooze,
 }));
 
 vi.mock("../../components/ConfirmDialogHost", () => ({
@@ -72,7 +78,9 @@ vi.mock("../../state/use-atom-command", () => ({
     if (command === mocks.commands.unarchive) return mocks.unarchiveMutation;
     if (command === mocks.commands.delete) return mocks.deleteMutation;
     if (command === mocks.commands.settle) return mocks.settleMutation;
+    if (command === mocks.commands.snooze) return mocks.snoozeMutation;
     if (command === mocks.commands.unsettle) return mocks.unsettleMutation;
+    if (command === mocks.commands.unsnooze) return mocks.unsnoozeMutation;
     throw new Error("Unexpected thread command");
   },
 }));
@@ -103,12 +111,15 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     mocks.unarchiveMutation.mockResolvedValue(success);
     mocks.deleteMutation.mockResolvedValue(success);
     mocks.settleMutation.mockResolvedValue(success);
+    mocks.snoozeMutation.mockResolvedValue(success);
     mocks.unsettleMutation.mockResolvedValue(success);
+    mocks.unsnoozeMutation.mockResolvedValue(success);
     mocks.canSettle.mockReturnValue(true);
+    mocks.canSnooze.mockReturnValue(true);
     mocks.impactAsync.mockResolvedValue(undefined);
     mocks.serverConfigs.clear();
     mocks.serverConfigs.set("environment-1", {
-      environment: { capabilities: { threadSettlement: true } },
+      environment: { capabilities: { threadSettlement: true, threadSnooze: true } },
     });
   });
 
@@ -212,5 +223,32 @@ describe("useThreadListActions merged archive and settlement contract", () => {
       input: { threadId: "thread-1", reason: "user" },
     });
     expect(mocks.alert).toHaveBeenCalledWith("Could not un-settle thread", "unsettle denied");
+  });
+
+  it("keeps snooze reservations collision-safe for scoped thread ids", async () => {
+    const firstThread = makeThread("thread", "environment:one");
+    const secondThread = makeThread("one:thread", "environment");
+    const snoozedUntil = "2099-01-01T00:00:00.000Z";
+    let completeFirst!: (result: typeof success) => void;
+    mocks.serverConfigs.set("environment:one", {
+      environment: { capabilities: { threadSettlement: true, threadSnooze: true } },
+    });
+    mocks.serverConfigs.set("environment", {
+      environment: { capabilities: { threadSettlement: true, threadSnooze: true } },
+    });
+    mocks.snoozeMutation.mockReturnValueOnce(
+      new Promise<typeof success>((resolve) => {
+        completeFirst = resolve;
+      }),
+    );
+    const actions = useThreadListActions();
+
+    const first = actions.snoozeThread(firstThread, snoozedUntil);
+    await expect(actions.snoozeThread(firstThread, snoozedUntil)).resolves.toBe(false);
+    await expect(actions.snoozeThread(secondThread, snoozedUntil)).resolves.toBe(true);
+    expect(mocks.snoozeMutation).toHaveBeenCalledTimes(2);
+
+    completeFirst(success);
+    await expect(first).resolves.toBe(true);
   });
 });

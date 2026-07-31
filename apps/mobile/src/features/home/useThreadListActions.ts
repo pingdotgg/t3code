@@ -239,7 +239,7 @@ export function useThreadListActions(): {
   );
   const snoozeThread = useCallback(
     async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (snoozeInFlightThreadKeys.current.has(key)) {
         return false;
       }
@@ -289,7 +289,7 @@ export function useThreadListActions(): {
   );
   const unsnoozeThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (snoozeInFlightThreadKeys.current.has(key)) {
         return false;
       }
