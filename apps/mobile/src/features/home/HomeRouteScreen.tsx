@@ -3,6 +3,7 @@ import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
 
+import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
@@ -11,6 +12,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
@@ -29,6 +31,11 @@ export function HomeRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    void checkForAppUpdateOnLaunch();
+  }, []);
+
   const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
     useThreadListActions();
   const pendingTasks = usePendingNewTasks();
@@ -87,7 +94,9 @@ export function HomeRouteScreen() {
   if (layout.usesSplitView) {
     return (
       <>
-        <NativeStackScreenOptions options={{ title: "", headerTitle: "" }} />
+        <NativeStackScreenOptions
+          options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
+        />
         <WorkspaceSidebarToolbar
           afterSidebarButton={
             <NativeHeaderToolbar.Button
@@ -109,8 +118,8 @@ export function HomeRouteScreen() {
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
-        {/* Restore the compact title in case the split branch blanked it. */}
-        <NativeStackScreenOptions options={{ title: "Threads", headerTitle: "Threads" }} />
+        {/* Restore the compact title after the split branch blanks the detail header. */}
+        <NativeStackScreenOptions options={getCompactBrandHeaderOptions()} />
         <HomeHeader
           environments={environments}
           projects={projectFilterOptions}
