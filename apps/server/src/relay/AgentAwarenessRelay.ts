@@ -4,6 +4,7 @@ import type {
   OrchestrationProjectShell,
   OrchestrationThreadShell,
   ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -270,6 +271,25 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   };
 }
 
+export function resolveAgentAwarenessProviderDriver(input: {
+  readonly providerInstances: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+  readonly instanceId: ProviderInstanceId;
+}): Effect.Effect<ProviderDriverKind | undefined> {
+  return input.providerInstances.getInstance(input.instanceId).pipe(
+    Effect.flatMap((instance) => {
+      if (instance !== undefined) {
+        return Effect.succeed(instance.driverKind);
+      }
+      return input.providerInstances.listUnavailable.pipe(
+        Effect.map(
+          (providers) =>
+            providers.find((provider) => provider.instanceId === input.instanceId)?.driver,
+        ),
+      );
+    }),
+  );
+}
+
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
   readonly projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
@@ -413,21 +433,10 @@ export const make = Effect.gen(function* () {
       ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
       : Option.none<OrchestrationProjectShell>();
     const providerDriver = Option.isSome(thread)
-      ? yield* providerInstances.getInstance(thread.value.modelSelection.instanceId).pipe(
-          Effect.flatMap((instance) => {
-            if (instance !== undefined) {
-              return Effect.succeed(instance.driverKind);
-            }
-            return providerInstances.listUnavailable.pipe(
-              Effect.map(
-                (providers) =>
-                  providers.find(
-                    (provider) => provider.instanceId === thread.value.modelSelection.instanceId,
-                  )?.driver,
-              ),
-            );
-          }),
-        )
+      ? yield* resolveAgentAwarenessProviderDriver({
+          providerInstances,
+          instanceId: thread.value.modelSelection.instanceId,
+        })
       : undefined;
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
@@ -622,6 +631,33 @@ export const make = Effect.gen(function* () {
           });
           break;
       }
+      // Acquire the subscription before forking its consumer so a provider
+      // hot reload cannot land between "fork scheduled" and "stream started".
+      const providerChanges = yield* providerInstances.subscribeChanges;
+      yield* Effect.forkScoped(
+        Stream.runForEach(Stream.fromSubscription(providerChanges), () =>
+          publishActiveThreadsUnsafe.pipe(
+            Effect.tap((published) =>
+              Effect.logDebug(
+                published
+                  ? "republished agent activity after provider registry change"
+                  : "agent activity republish skipped after provider registry change",
+              ),
+            ),
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return Effect.interrupt;
+              }
+              return Effect.logWarning(
+                "agent activity republish after provider registry change failed",
+                {
+                  cause: Cause.pretty(cause),
+                },
+              );
+            }),
+          ),
+        ),
+      );
       yield* Effect.forkScoped(
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),

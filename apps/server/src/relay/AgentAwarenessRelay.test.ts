@@ -24,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
@@ -98,16 +99,53 @@ function makeMemorySecretStore() {
   };
 }
 
-const providerInstanceRegistryLayer = Layer.succeed(
-  ProviderInstanceRegistry.ProviderInstanceRegistry,
-  {
-    getInstance: () => Effect.void,
-    listInstances: Effect.succeed([]),
-    listUnavailable: Effect.succeed([]),
-    streamChanges: Stream.empty,
-    subscribeChanges: Effect.never,
-  },
-);
+function makeMutableProviderInstanceRegistry(input?: {
+  readonly liveDriver?: ProviderDriverKind;
+  readonly unavailableDriver?: ProviderDriverKind;
+}) {
+  return Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<void>();
+    let liveDriver = input?.liveDriver;
+    let unavailableDriver = input?.unavailableDriver;
+
+    const registry = {
+      getInstance: (instanceId: ProviderInstanceId) =>
+        Effect.sync(() =>
+          liveDriver === undefined
+            ? undefined
+            : ({
+                instanceId,
+                driverKind: liveDriver,
+              } as never),
+        ),
+      listInstances: Effect.succeed([]),
+      listUnavailable: Effect.sync(() =>
+        unavailableDriver === undefined
+          ? []
+          : [
+              {
+                instanceId: ProviderInstanceId.make("work"),
+                driver: unavailableDriver,
+              } as never,
+            ],
+      ),
+      streamChanges: Stream.fromPubSub(changes),
+      subscribeChanges: PubSub.subscribe(changes),
+    } satisfies ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+
+    return {
+      registry,
+      update: (next: {
+        readonly liveDriver?: ProviderDriverKind;
+        readonly unavailableDriver?: ProviderDriverKind;
+      }) =>
+        Effect.sync(() => {
+          liveDriver = next.liveDriver;
+          unavailableDriver = next.unavailableDriver;
+        }).pipe(Effect.andThen(PubSub.publish(changes, undefined)), Effect.asVoid),
+    };
+  });
+}
 
 describe.sequential("signRelayAgentActivityPublishProof", () => {
   it("distinguishes pending link credentials from disabled publication", () => {
@@ -331,6 +369,34 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     });
   });
 
+  it.effect("resolves both unavailable and live provider registry entries", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const providerRegistry = yield* makeMutableProviderInstanceRegistry({
+          unavailableDriver: ProviderDriverKind.make("cursor"),
+        });
+        const instanceId = ProviderInstanceId.make("work");
+
+        expect(
+          yield* AgentAwarenessRelay.resolveAgentAwarenessProviderDriver({
+            providerInstances: providerRegistry.registry,
+            instanceId,
+          }),
+        ).toBe("cursor");
+
+        yield* providerRegistry.update({
+          liveDriver: ProviderDriverKind.make("codex"),
+        });
+        expect(
+          yield* AgentAwarenessRelay.resolveAgentAwarenessProviderDriver({
+            providerInstances: providerRegistry.registry,
+            instanceId,
+          }),
+        ).toBe("codex");
+      }),
+    ),
+  );
+
   it("selects only active shell snapshot threads for startup catch-up", () => {
     const now = "2026-05-25T00:00:00.000Z";
     const environmentId = "env-1" as EnvironmentId;
@@ -462,6 +528,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const events = yield* Queue.unbounded<OrchestrationEvent>();
         const threadShellRequested = yield* Deferred.make<void>();
         const secrets = makeMemorySecretStore();
+        const providerRegistry = yield* makeMutableProviderInstanceRegistry();
         const now = "2026-05-25T00:00:00.000Z";
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
@@ -552,7 +619,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies ExecutionEnvironmentDescriptor;
 
         const layer = Layer.mergeAll(
-          providerInstanceRegistryLayer,
+          Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            providerRegistry.registry,
+          ),
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
@@ -606,6 +676,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const runFork = Effect.runForkWith(context);
         const events = yield* Queue.unbounded<OrchestrationEvent>();
         const fetchSeen = yield* Deferred.make<URL>();
+        const providerRepublishSeen = yield* Deferred.make<void>();
+        const publishedProviderNames: Array<string | undefined> = [];
+        let fetchCount = 0;
         const userSpans: Array<string> = [];
         const productSpans: Array<string> = [];
         const collectingTracer = (spans: Array<string>) =>
@@ -621,6 +694,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             },
           });
         const secrets = makeMemorySecretStore();
+        const providerRegistry = yield* makeMutableProviderInstanceRegistry({
+          unavailableDriver: ProviderDriverKind.make("cursor"),
+        });
         const now = "2026-05-25T00:00:00.000Z";
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
@@ -641,7 +717,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           id: threadId,
           projectId,
           title: "Run remote agent",
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          modelSelection: { instanceId: ProviderInstanceId.make("work"), model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: null,
@@ -662,7 +738,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           session: {
             threadId,
             status: "running",
-            providerName: "Codex",
+            providerName: null,
             runtimeMode: "full-access",
             activeTurnId: "turn-1" as TurnId,
             lastError: null,
@@ -687,14 +763,38 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
-        globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+        globalThis.fetch = (async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ) => {
+          const request =
+            typeof input === "string" || input instanceof URL
+              ? null
+              : (input as unknown as Request);
+          const encodedBody = init?.body;
+          const payload = (
+            request
+              ? await request.clone().json()
+              : JSON.parse(
+                  encodedBody instanceof Uint8Array
+                    ? new TextDecoder().decode(encodedBody)
+                    : String(encodedBody),
+                )
+          ) as {
+            readonly state?: { readonly providerName?: string };
+          };
+          publishedProviderNames.push(payload.state?.providerName);
+          fetchCount += 1;
           const url = new URL(
             typeof input === "string" || input instanceof URL
               ? input
               : (input as unknown as { readonly url: string }).url,
           );
           runFork(Deferred.succeed(fetchSeen, url));
-          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
+          if (fetchCount >= 2) {
+            runFork(Deferred.succeed(providerRepublishSeen, undefined));
+          }
+          return Response.json({ ok: true, deliveries: [] });
         }) as unknown as typeof fetch;
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -703,7 +803,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         );
 
         const layer = Layer.mergeAll(
-          providerInstanceRegistryLayer,
+          Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            providerRegistry.registry,
+          ),
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
@@ -754,6 +857,14 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
           const url = yield* Deferred.await(fetchSeen).pipe(Effect.timeout("2 seconds"));
           expect(url.origin).toBe("https://transport.example.test");
+          expect(publishedProviderNames).toEqual(["cursor"]);
+
+          yield* providerRegistry.update({
+            liveDriver: ProviderDriverKind.make("codex"),
+          });
+          yield* Deferred.await(providerRepublishSeen).pipe(Effect.timeout("2 seconds"));
+          expect(publishedProviderNames).toEqual(["cursor", "codex"]);
+
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");
         }).pipe(
