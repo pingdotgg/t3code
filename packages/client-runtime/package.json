@@ -51,6 +51,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./state/codex-sessions": {
+      "types": "./src/state/codexSessions.ts",
+      "default": "./src/state/codexSessions.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"

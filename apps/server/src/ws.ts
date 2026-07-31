@@ -79,6 +79,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as CodexSessionImport from "./provider/Services/CodexSessionImport.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -359,6 +360,7 @@ const makeWsRpcLayer = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const codexSessionImport = yield* CodexSessionImport.CodexSessionImport;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1356,6 +1358,14 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.codexListSessions]: (input) =>
+          observeRpcEffect(WS_METHODS.codexListSessions, codexSessionImport.list(input), {
+            "rpc.aggregate": "codex-session-import",
+          }),
+        [WS_METHODS.codexImportSessions]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportSessions, codexSessionImport.import(input), {
+            "rpc.aggregate": "codex-session-import",
           }),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {

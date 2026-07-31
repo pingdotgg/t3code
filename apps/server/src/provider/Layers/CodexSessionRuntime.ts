@@ -66,11 +66,17 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
 
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
+  /**
+   * Imported conversations must never degrade into a fresh thread when the
+   * source session has disappeared. Existing T3-created sessions retain the
+   * historical recovery fallback for backwards compatibility.
+   */
+  requireExistingThread: Schema.optional(Schema.Boolean),
 });
 const CodexUserInputAnswerObject = Schema.Struct({
   answers: Schema.Array(Schema.String),
 });
-const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
+export const isCodexResumeCursor = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
@@ -258,7 +264,7 @@ function normalizeCodexModelSlug(
 function readResumeCursorThreadId(
   resumeCursor: ProviderSession["resumeCursor"],
 ): string | undefined {
-  return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
+  return isCodexResumeCursor(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
 function runtimeModeToThreadConfig(input: RuntimeMode): {
@@ -462,6 +468,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly allowResumeFallback?: boolean;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -475,22 +482,24 @@ export const openCodexThread = (input: {
     return input.client.request("thread/start", startParams);
   }
 
-  return input.client
-    .request("thread/resume", {
-      threadId: resumeThreadId,
-      ...startParams,
-    })
-    .pipe(
-      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
-        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
-          threadId: input.threadId,
-          requestedRuntimeMode: input.runtimeMode,
-          resumeThreadId,
-          recoverable: true,
-          cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
-      ),
-    );
+  const resume = input.client.request("thread/resume", {
+    threadId: resumeThreadId,
+    ...startParams,
+  });
+  if (input.allowResumeFallback === false) {
+    return resume;
+  }
+  return resume.pipe(
+    Effect.catchIf(isRecoverableThreadResumeError, (error) =>
+      Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+        threadId: input.threadId,
+        requestedRuntimeMode: input.runtimeMode,
+        resumeThreadId,
+        recoverable: true,
+        cause: error,
+      }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+    ),
+  );
 };
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
@@ -1227,6 +1236,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        allowResumeFallback: options.resumeCursor?.requireExistingThread !== true,
       });
 
       const providerThreadId = opened.thread.id;

@@ -28,6 +28,37 @@ Log in with Codex normally:
 codex login
 ```
 
+## Import Existing Codex Sessions
+
+If you already have conversations in Codex CLI, the Codex app, or the VS Code extension, you can
+bring selected sessions into an existing T3 Code project:
+
+1. Open the project's settings from the sidebar.
+2. Choose **Import Codex sessions**.
+3. Select the sessions you want and import them.
+
+T3 Code only lists sessions whose workspace path matches that project. It reads the session history
+from Codex, saves a text-only snapshot for T3's thread view, and stores a link back to the original
+Codex thread. The original session is not moved, archived, deleted, or rewritten. You can import up
+to 50 sessions at a time.
+
+Starting a new turn in the imported T3 thread resumes the original Codex conversation. This requires
+the T3 server to use a Codex provider with access to the same `CODEX_HOME` path as the source
+session.
+
+### What Is And Is Not Synced
+
+The import is intentionally not a live two-way mirror:
+
+- New matching sessions created in Codex appear after you refresh the import list.
+- Imported threads remain visible in T3 Code on your other connected clients, including mobile.
+- Messages added later only in Codex are not automatically copied into an already imported T3
+  thread.
+- Creating a T3 project does not create or rename a Codex project automatically.
+
+Archived sessions can be imported. Ephemeral sessions, sub-agent sessions, and command-only
+sessions are left out because they cannot be safely resumed as normal conversations.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.

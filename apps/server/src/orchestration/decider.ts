@@ -378,6 +378,65 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.history.import": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const created = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created" as const,
+        payload: {
+          threadId: command.threadId,
+          projectId: command.projectId,
+          title: command.title,
+          modelSelection: command.modelSelection,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+          branch: null,
+          worktreePath: null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const importedMessages = yield* Effect.forEach(command.messages, (message) =>
+        withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: message.createdAt,
+          commandId: command.commandId,
+        }).pipe(
+          Effect.map((eventBase) => ({
+            ...eventBase,
+            type: "thread.message-sent" as const,
+            payload: {
+              threadId: command.threadId,
+              messageId: message.messageId,
+              role: message.role,
+              text: message.text,
+              turnId: message.turnId,
+              streaming: false,
+              createdAt: message.createdAt,
+              updatedAt: message.createdAt,
+            },
+          })),
+        ),
+      );
+      return [created, ...importedMessages];
+    }
+
     case "thread.delete": {
       yield* requireThread({
         readModel,
