@@ -25,6 +25,8 @@ export interface ShowcaseIosDevice {
   readonly simulatorDeviceType?: string;
   /** Appearance used when the CLI does not pass --appearance. */
   readonly appearance: ShowcaseAppearance;
+  /** Orientation applied by the capture harness. Defaults to portrait. */
+  readonly orientation?: "portrait" | "landscape";
   readonly scenes: ReadonlyArray<ShowcaseScene>;
   readonly storeAsset: ShowcaseStoreAssetSpec;
 }
@@ -122,12 +124,13 @@ const config: ShowcaseConfig = {
       simulator: "iPad Pro 13-inch (M5)",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-16GB",
       appearance: "dark",
+      orientation: "landscape",
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
         directory: "apple/ipad-13",
-        width: 2064,
-        height: 2752,
+        width: 2752,
+        height: 2064,
         minimumUploadCount: 1,
         maximumUploadCount: 10,
       },
