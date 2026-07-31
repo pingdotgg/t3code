@@ -43,7 +43,7 @@ Captures wait for the real environment snapshot to hydrate and for the requested
 active. Both platforms record readiness in the simulator/emulator app container. A final settle
 delay allows native terminal and Git review data to finish rendering.
 
-A full capture regenerates the selected native project with Expo's clean development prebuild before
+A full capture regenerates the selected native project with Expo's clean production prebuild before
 building it. Use --skip-build for repeated captures after the first build.
 
 The harness uses fixed Metro port `8199`, which separates it from Expo's normal default port but is
