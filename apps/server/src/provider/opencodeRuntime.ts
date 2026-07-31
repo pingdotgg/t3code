@@ -818,11 +818,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           directory: input.directory,
           ...(input.serverPassword ? { serverPassword: input.serverPassword } : {}),
         });
-        const inventory = yield* loadOpenCodeInventory(client);
-        return mapOpenCodeSdkCatalogToProviderCatalog({
-          commands: inventory.commands,
-          skills: inventory.skills,
+        // Only the catalog endpoints — do not couple to provider.list / app.agents.
+        const [commands, skills] = yield* Effect.all([loadCommands(client), loadSkills(client)], {
+          concurrency: "unbounded",
         });
+        return mapOpenCodeSdkCatalogToProviderCatalog({ commands, skills });
       }),
     ).pipe(Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG));
 

@@ -143,10 +143,9 @@ export interface AcpSessionRuntimeStartResult {
     | EffectAcpSchema.ResumeSessionResponse;
   readonly modelConfigId: string | undefined;
   /**
-   * Latest `session/update` `available_commands_update` payload captured during
-   * (or after) start. Grok advertises slash commands and skills this way; the
-   * update often arrives before `session/new` resolves, so the runtime must
-   * record it even while start is still in flight.
+   * Latest root-session `available_commands_update` catalog. Captured during
+   * start (Grok often emits it before `session/new` resolves) and refreshed on
+   * subsequent `start()` reads from the live ref so late updates are not lost.
    */
   readonly availableCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
 }
@@ -427,11 +426,17 @@ export const make = (
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
-        // Capture skill/slash catalogs even while start is in flight. Grok emits
-        // `available_commands_update` before `session/new` resolves; dropping it
-        // here is what left provider status with empty skills (issue #4109).
+        const startState = yield* Ref.get(startStateRef);
+
+        // Capture skill/slash catalogs during start (Grok emits
+        // `available_commands_update` before `session/new` resolves). After the
+        // root session is known, ignore child/foreign session catalogs.
         if (notification.update.sessionUpdate === "available_commands_update") {
-          yield* Ref.set(availableCommandsRef, notification.update.availableCommands);
+          const acceptCatalog =
+            startState._tag !== "Started" || notification.sessionId === startState.result.sessionId;
+          if (acceptCatalog) {
+            yield* Ref.set(availableCommandsRef, notification.update.availableCommands);
+          }
         }
 
         const gate = yield* Ref.get(sessionLoadGateRef);
@@ -449,7 +454,6 @@ export const make = (
         if (sessionUpdateIsReplay(notification)) {
           return;
         }
-        const startState = yield* Ref.get(startStateRef);
         // One runtime projects one root ACP session. Child-session updates need
         // explicit lineage routing and must never be flattened into this stream.
         if (
@@ -594,6 +598,10 @@ export const make = (
       );
 
     const startOnce = Effect.gen(function* () {
+      // Each attempt starts with a clean catalog so a failed startup cannot
+      // leak stale available_commands into a later retry.
+      yield* Ref.set(availableCommandsRef, []);
+
       const initializePayload = {
         protocolVersion: 1,
         clientCapabilities: initializeClientCapabilities,
@@ -743,7 +751,17 @@ export const make = (
       const effect = yield* Ref.modify(startStateRef, (state) => {
         switch (state._tag) {
           case "Started":
-            return [Effect.succeed(state.result), state] as const;
+            // Re-read the live ref so post-start available_commands_update is
+            // visible on subsequent start() calls (not only the one-shot snapshot).
+            return [
+              Ref.get(availableCommandsRef).pipe(
+                Effect.map((availableCommands) => ({
+                  ...state.result,
+                  availableCommands,
+                })),
+              ),
+              state,
+            ] as const;
           case "Starting":
             return [Deferred.await(state.deferred), state] as const;
           case "NotStarted":
@@ -757,6 +775,7 @@ export const make = (
                 Effect.onError((cause) =>
                   Deferred.failCause(deferred, cause).pipe(
                     Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                    Effect.andThen(Ref.set(availableCommandsRef, [])),
                   ),
                 ),
               ),

@@ -31,11 +31,8 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import {
-  makeGrokAcpRuntime,
-  mapAcpAvailableCommandsToProviderCatalog,
-  resolveGrokAcpBaseModelId,
-} from "../acp/GrokAcpSupport.ts";
+import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import { mapAcpAvailableCommandsToProviderCatalog } from "../providerCommandCatalog.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",

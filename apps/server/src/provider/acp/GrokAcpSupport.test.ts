@@ -5,7 +5,6 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
-  mapAcpAvailableCommandsToProviderCatalog,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
 
@@ -14,82 +13,6 @@ describe("resolveGrokAcpBaseModelId", () => {
     expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("  grok-test-custom-model  ")).toBe("grok-test-custom-model");
-  });
-});
-
-describe("mapAcpAvailableCommandsToProviderCatalog", () => {
-  it("maps path-backed commands to skills and every command to slash entries", () => {
-    const catalog = mapAcpAvailableCommandsToProviderCatalog([
-      {
-        name: "compact",
-        description: "Compress history",
-        input: { hint: "optional context" },
-      },
-      {
-        name: "diagnosing-bugs",
-        description: "Hard bug loop",
-        _meta: {
-          scope: "user",
-          path: "/Users/me/.grok/skills/diagnosing-bugs/SKILL.md",
-        },
-      },
-      {
-        name: "  ",
-        description: "ignored empty name",
-      },
-    ]);
-
-    expect(catalog.slashCommands).toEqual([
-      {
-        name: "compact",
-        description: "Compress history",
-        input: { hint: "optional context" },
-      },
-      {
-        name: "diagnosing-bugs",
-        description: "Hard bug loop",
-      },
-    ]);
-    expect(catalog.skills).toEqual([
-      {
-        name: "diagnosing-bugs",
-        description: "Hard bug loop",
-        path: "/Users/me/.grok/skills/diagnosing-bugs/SKILL.md",
-        scope: "user",
-        enabled: true,
-      },
-    ]);
-  });
-
-  it("dedupes by name case-insensitively and ignores blank paths", () => {
-    const catalog = mapAcpAvailableCommandsToProviderCatalog([
-      {
-        name: "Review",
-        description: "First",
-        _meta: { path: "/tmp/a/SKILL.md", scope: "project" },
-      },
-      {
-        name: "review",
-        description: "Second",
-        _meta: { path: "/tmp/b/SKILL.md", scope: "user" },
-      },
-      {
-        name: "no-path",
-        description: "Slash only",
-        _meta: { path: "   " },
-      },
-    ]);
-
-    expect(catalog.slashCommands.map((command) => command.name)).toEqual(["no-path", "Review"]);
-    expect(catalog.skills).toEqual([
-      {
-        name: "Review",
-        description: "First",
-        path: "/tmp/a/SKILL.md",
-        scope: "project",
-        enabled: true,
-      },
-    ]);
   });
 });
 
