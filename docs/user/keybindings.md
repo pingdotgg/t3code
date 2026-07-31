@@ -40,6 +40,8 @@ Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refre
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
+`rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
+so add one in **Settings** → **Keybindings** if you want to use it.
 
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
