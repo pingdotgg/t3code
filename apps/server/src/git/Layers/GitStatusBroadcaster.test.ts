@@ -76,7 +76,69 @@ function makeTestLayer(state: {
   return GitStatusBroadcasterLive.pipe(Layer.provide(Layer.succeed(GitManager, gitManager)));
 }
 
+function makeBlockingStatusLayer(input: {
+  readonly localStarted: Deferred.Deferred<void>;
+  readonly remoteStarted: Deferred.Deferred<void>;
+}) {
+  const gitManager: GitManagerShape = {
+    localStatus: () =>
+      Deferred.succeed(input.localStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(input.remoteStarted)),
+        Effect.as(baseLocalStatus),
+      ),
+    remoteStatus: () =>
+      Deferred.succeed(input.remoteStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(input.localStarted)),
+        Effect.as(baseRemoteStatus),
+      ),
+    status: () => Effect.die("status should not be called in this test"),
+    invalidateLocalStatus: () => Effect.void,
+    invalidateRemoteStatus: () => Effect.void,
+    invalidateStatus: () => Effect.die("invalidateStatus should not be called in this test"),
+    resolvePullRequest: () => Effect.die("resolvePullRequest should not be called in this test"),
+    preparePullRequestThread: () =>
+      Effect.die("preparePullRequestThread should not be called in this test"),
+    runStackedAction: () => Effect.die("runStackedAction should not be called in this test"),
+  };
+
+  return GitStatusBroadcasterLive.pipe(Layer.provide(Layer.succeed(GitManager, gitManager)));
+}
+
 describe("GitStatusBroadcasterLive", () => {
+  it.effect("loads local and remote git status concurrently", () =>
+    Effect.gen(function* () {
+      const localStarted = yield* Deferred.make<void>();
+      const remoteStarted = yield* Deferred.make<void>();
+
+      const result = yield* Effect.gen(function* () {
+        const broadcaster = yield* GitStatusBroadcaster;
+        return yield* broadcaster.getStatus({ cwd: "/repo" });
+      }).pipe(
+        Effect.provide(makeBlockingStatusLayer({ localStarted, remoteStarted })),
+        Effect.timeout("1 second"),
+      );
+
+      assert.deepStrictEqual(result, baseStatus);
+    }),
+  );
+
+  it.effect("refreshes local and remote git status concurrently", () =>
+    Effect.gen(function* () {
+      const localStarted = yield* Deferred.make<void>();
+      const remoteStarted = yield* Deferred.make<void>();
+
+      const result = yield* Effect.gen(function* () {
+        const broadcaster = yield* GitStatusBroadcaster;
+        return yield* broadcaster.refreshStatus("/repo");
+      }).pipe(
+        Effect.provide(makeBlockingStatusLayer({ localStarted, remoteStarted })),
+        Effect.timeout("1 second"),
+      );
+
+      assert.deepStrictEqual(result, baseStatus);
+    }),
+  );
+
   it.effect("reuses the cached git status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

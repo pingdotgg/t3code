@@ -180,10 +180,10 @@ export const GitStatusBroadcasterLive = Layer.effect(
       input: GitStatusInput,
     ) {
       const normalizedCwd = normalizeCwd(input.cwd);
-      const [local, remote] = yield* Effect.all([
-        getOrLoadLocalStatus(normalizedCwd),
-        getOrLoadRemoteStatus(normalizedCwd),
-      ]);
+      const [local, remote] = yield* Effect.all(
+        [getOrLoadLocalStatus(normalizedCwd), getOrLoadRemoteStatus(normalizedCwd)],
+        { concurrency: "unbounded" },
+      );
       return mergeGitStatusParts(local, remote);
     });
 
@@ -205,10 +205,10 @@ export const GitStatusBroadcasterLive = Layer.effect(
     const refreshStatus: GitStatusBroadcasterShape["refreshStatus"] = Effect.fn("refreshStatus")(
       function* (cwd) {
         const normalizedCwd = normalizeCwd(cwd);
-        const [local, remote] = yield* Effect.all([
-          refreshLocalStatus(normalizedCwd),
-          refreshRemoteStatus(normalizedCwd),
-        ]);
+        const [local, remote] = yield* Effect.all(
+          [refreshLocalStatus(normalizedCwd), refreshRemoteStatus(normalizedCwd)],
+          { concurrency: "unbounded" },
+        );
         return mergeGitStatusParts(local, remote);
       },
     );

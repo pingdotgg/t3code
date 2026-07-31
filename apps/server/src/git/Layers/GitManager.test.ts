@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { Deferred, Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { expect } from "vitest";
 import type {
   GitActionProgressEvent,
@@ -22,7 +22,7 @@ import {
 } from "../Services/GitHubCli.ts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import { GitCoreLive } from "./GitCore.ts";
-import { GitCore } from "../Services/GitCore.ts";
+import { type GitCoreShape, GitCore } from "../Services/GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -662,6 +662,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  gitCore?: Partial<GitCoreShape>;
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunnerShape;
 }) {
@@ -673,10 +674,12 @@ function makeManager(input?: {
 
   const serverSettingsLayer = ServerSettingsService.layerTest();
 
-  const gitCoreLayer = GitCoreLive.pipe(
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(ServerConfigLayer),
-  );
+  const gitCoreLayer = input?.gitCore
+    ? Layer.mock(GitCore)(input.gitCore)
+    : GitCoreLive.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(ServerConfigLayer),
+      );
 
   const managerLayer = Layer.mergeAll(
     Layer.succeed(GitHubCli, gitHubCli),
@@ -705,6 +708,43 @@ const GitManagerTestLayer = GitCoreLive.pipe(
 );
 
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
+  it.effect("loads local and remote status concurrently", () =>
+    Effect.gen(function* () {
+      const localStarted = yield* Deferred.make<void>();
+      const remoteStarted = yield* Deferred.make<void>();
+      const nonRepositoryDetails = {
+        isRepo: false,
+        hasOriginRemote: false,
+        isDefaultBranch: false,
+        branch: null,
+        upstreamRef: null,
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+      } as const;
+      const { manager } = yield* makeManager({
+        gitCore: {
+          statusDetailsLocal: () =>
+            Deferred.succeed(localStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(remoteStarted)),
+              Effect.as(nonRepositoryDetails),
+            ),
+          statusDetails: () =>
+            Deferred.succeed(remoteStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(localStarted)),
+              Effect.as(nonRepositoryDetails),
+            ),
+        },
+      });
+
+      const status = yield* manager.status({ cwd: "/repo" }).pipe(Effect.timeout("1 second"));
+
+      expect(status.isRepo).toBe(false);
+    }),
+  );
+
   it.effect("status includes PR metadata when branch already has an open PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
