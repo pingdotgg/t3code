@@ -40,6 +40,54 @@ function formatConfigOptionValue(value: string | boolean): string {
   return JSON.stringify(value);
 }
 
+function availableCommandsFromUnknownMeta(
+  meta: { readonly [x: string]: unknown } | null | undefined,
+): ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined {
+  if (!meta || typeof meta !== "object") {
+    return undefined;
+  }
+  const raw = meta.availableCommands;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return undefined;
+  }
+  const commands: Array<EffectAcpSchema.AvailableCommand> = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!name) {
+      continue;
+    }
+    const description = typeof record.description === "string" ? record.description : "";
+    const command: EffectAcpSchema.AvailableCommand = {
+      name,
+      description,
+      ...(record._meta !== undefined
+        ? {
+            _meta:
+              record._meta === null ||
+              (typeof record._meta === "object" && !Array.isArray(record._meta))
+                ? (record._meta as EffectAcpSchema.AvailableCommand["_meta"])
+                : undefined,
+          }
+        : {}),
+      ...(record.input !== undefined
+        ? {
+            input:
+              record.input === null ||
+              (typeof record.input === "object" && !Array.isArray(record.input))
+                ? (record.input as EffectAcpSchema.AvailableCommand["input"])
+                : undefined,
+          }
+        : {}),
+    };
+    commands.push(command);
+  }
+  return commands.length > 0 ? commands : undefined;
+}
+
 export interface AcpSessionEventStreamBarrier {
   readonly _tag: "EventStreamBarrier";
   readonly acknowledge: Deferred.Deferred<void>;
@@ -94,6 +142,13 @@ export interface AcpSessionRuntimeStartResult {
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse;
   readonly modelConfigId: string | undefined;
+  /**
+   * Latest `session/update` `available_commands_update` payload captured during
+   * (or after) start. Grok advertises slash commands and skills this way; the
+   * update often arrives before `session/new` resolves, so the runtime must
+   * record it even while start is still in flight.
+   */
+  readonly availableCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
 }
 
 export class AcpSessionRuntime extends Context.Service<
@@ -292,6 +347,9 @@ export const make = (
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const availableCommandsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>(
+      [],
+    );
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
@@ -369,6 +427,13 @@ export const make = (
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
+        // Capture skill/slash catalogs even while start is in flight. Grok emits
+        // `available_commands_update` before `session/new` resolves; dropping it
+        // here is what left provider status with empty skills (issue #4109).
+        if (notification.update.sessionUpdate === "available_commands_update") {
+          yield* Ref.set(availableCommandsRef, notification.update.availableCommands);
+        }
+
         const gate = yield* Ref.get(sessionLoadGateRef);
         if (Option.isSome(gate) && gate.value.active) {
           const lastActivityAtMillis = yield* Clock.currentTimeMillis;
@@ -647,11 +712,25 @@ export const make = (
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
 
+      // Prefer live session/update catalogs; fall back to initialize `_meta`
+      // when the agent only advertises commands there (older Grok builds).
+      // Notifications are handled in wire order before the session/new
+      // response, so a brief post-response wait is unnecessary and would
+      // slow every ACP provider start by a fixed timeout.
+      const capturedCommands = yield* Ref.get(availableCommandsRef);
+      const initializeMetaCommands = availableCommandsFromUnknownMeta(initializeResult._meta);
+      const availableCommands =
+        capturedCommands.length > 0 ? capturedCommands : (initializeMetaCommands ?? []);
+      if (capturedCommands.length === 0 && initializeMetaCommands) {
+        yield* Ref.set(availableCommandsRef, initializeMetaCommands);
+      }
+
       const nextState = {
         sessionId,
         initializeResult,
         sessionSetupResult,
         modelConfigId: extractModelConfigId(sessionSetupResult),
+        availableCommands,
       } satisfies AcpStartedState;
       return nextState;
     });
