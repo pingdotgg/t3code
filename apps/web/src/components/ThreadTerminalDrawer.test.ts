@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveTerminalFontFamily,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
   writePreservingScrollback,
 } from "./ThreadTerminalDrawer";
+
+describe("resolveTerminalFontFamily", () => {
+  it("includes the bundled symbols font after the text faces", () => {
+    expect(resolveTerminalFontFamily(undefined)).toMatch(/^"SF Mono".*"Symbols Nerd Font Mono"/);
+  });
+
+  it("keeps Ghostty-configured fonts ahead of the bundled fallback", () => {
+    expect(resolveTerminalFontFamily({ fontFamily: ["Berkeley Mono"] })).toMatch(
+      /^"Berkeley Mono", "SF Mono".*"Symbols Nerd Font Mono"/,
+    );
+  });
+});
 
 describe("writePreservingScrollback", () => {
   it("restores a scrolled-back viewport with a relative scroll delta", () => {

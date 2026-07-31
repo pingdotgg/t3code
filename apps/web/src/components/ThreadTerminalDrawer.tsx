@@ -71,6 +71,8 @@ import { useAtomCommand } from "../state/use-atom-command";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+const BUNDLED_TERMINAL_SYMBOL_FONT_FAMILY = '"Symbols Nerd Font Mono"';
+const DEFAULT_TERMINAL_FONT_SIZE = 12;
 
 // ghostty-web needs its WASM module loaded once before any Terminal is constructed.
 let ghosttyReadyPromise: Promise<void> | null = null;
@@ -82,6 +84,18 @@ function ensureGhosttyReady(): Promise<void> {
     throw error;
   });
   return ghosttyReadyPromise;
+}
+
+let terminalFontReadyPromise: Promise<void> | null = null;
+function ensureTerminalFontReady(): Promise<void> {
+  terminalFontReadyPromise ??= document.fonts
+    .load(`400 ${DEFAULT_TERMINAL_FONT_SIZE}px ${BUNDLED_TERMINAL_SYMBOL_FONT_FAMILY}`)
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      terminalFontReadyPromise = null;
+      console.warn("Bundled terminal font failed to load; using a system fallback", error);
+    });
+  return terminalFontReadyPromise;
 }
 
 // ghostty-web registers built-in OSC8/URL link providers on open() whose activate()
@@ -277,13 +291,12 @@ const TERMINAL_PALETTE_KEYS = [
   "brightWhite",
 ] as const;
 
-// Nerd Font fallbacks resolve private-use-area glyphs (powerline segments,
-// devicons) from whichever patched font is installed locally. Ghostty embeds
-// its own symbols fallback, but the browser canvas only walks this list.
-const NERD_FONT_FALLBACK_STACK =
-  '"Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "FiraCode Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "Hack Nerd Font Mono"';
+// ghostty-web renders libghostty-vt cells through browser Canvas, so it does
+// not inherit Ghostty's native embedded Symbols Nerd Font fallback. Keep the
+// configured/system text faces and supply that fallback explicitly for PUA
+// glyphs such as Powerline separators and devicons.
+const NERD_FONT_FALLBACK_STACK = `${BUNDLED_TERMINAL_SYMBOL_FONT_FAMILY}, "Symbols Nerd Font", "MesloLGS NF", "FiraCode Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "Hack Nerd Font Mono"`;
 const DEFAULT_TERMINAL_FONT_STACK = `"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, ${NERD_FONT_FALLBACK_STACK}, monospace`;
-const DEFAULT_TERMINAL_FONT_SIZE = 12;
 
 const CSS_GENERIC_FONT_FAMILIES = new Set([
   "serif",
@@ -305,7 +318,7 @@ function quoteFontFamily(family: string): string {
   return family.includes('"') ? family : `"${family}"`;
 }
 
-function resolveTerminalFontFamily(style: ServerTerminalStyle | undefined): string {
+export function resolveTerminalFontFamily(style: ServerTerminalStyle | undefined): string {
   const configured = (style?.fontFamily ?? []).map(quoteFontFamily);
   return configured.length > 0
     ? `${configured.join(", ")}, ${DEFAULT_TERMINAL_FONT_STACK}`
@@ -961,7 +974,7 @@ export function TerminalViewport({
       };
     };
 
-    void ensureGhosttyReady().then(
+    void Promise.all([ensureGhosttyReady(), ensureTerminalFontReady()]).then(
       () => {
         if (effectDisposed || containerRef.current !== mountElement) return;
         teardown = setUpTerminal(mountElement);
