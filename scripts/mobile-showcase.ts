@@ -500,6 +500,23 @@ async function waitForPort(port: number, label = "Process", timeoutMs = 60_000):
   throw new Error(`${label} did not begin listening on port ${port} within ${timeoutMs}ms.`);
 }
 
+async function waitForFileContent(
+  filePath: string,
+  label: string,
+  timeoutMs = 60_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const content = await NodeFSP.readFile(filePath, "utf8").then(
+      (value) => value.trim(),
+      () => "",
+    );
+    if (content) return content;
+    await delay(250);
+  }
+  throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
+}
+
 async function reserveAvailablePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = NodeNet.createServer();
@@ -1225,12 +1242,12 @@ async function main(): Promise<void> {
       showcaseServers.push(server);
       await waitForPort(port, `${environment.label} server`);
       await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      const environmentId = (
-        await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "environment-id"), "utf8")
-      ).trim();
-      if (!environmentId) {
-        throw new Error(`${environment.label} did not persist an environment id.`);
-      }
+      // The server begins listening before the ServerEnvironment layer
+      // persists the environment id, so poll rather than read once.
+      const environmentId = await waitForFileContent(
+        NodePath.join(baseDir, "userdata", "environment-id"),
+        `${environment.label} environment id`,
+      );
       showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });
     }
 
