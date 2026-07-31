@@ -87,9 +87,11 @@ export interface ShowcaseCapture {
 }
 
 interface IosCaptureCleanup {
+  readonly name: string;
   readonly udid: string;
   readonly startedByRunner: boolean;
   readonly createdByRunner: boolean;
+  readonly restorePortrait: boolean;
 }
 
 interface AndroidCaptureCleanup {
@@ -500,6 +502,23 @@ async function waitForPort(port: number, label = "Process", timeoutMs = 60_000):
   throw new Error(`${label} did not begin listening on port ${port} within ${timeoutMs}ms.`);
 }
 
+async function waitForFileContent(
+  filePath: string,
+  label: string,
+  timeoutMs = 60_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const content = await NodeFSP.readFile(filePath, "utf8").then(
+      (value) => value.trim(),
+      () => "",
+    );
+    if (content) return content;
+    await delay(250);
+  }
+  throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
+}
+
 async function reserveAvailablePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = NodeNet.createServer();
@@ -775,6 +794,49 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
   ]);
 }
 
+async function setIosSimulatorOrientation(
+  orientation: NonNullable<ShowcaseIosDevice["orientation"]>,
+  simulator: Pick<SimctlDevice, "name" | "udid">,
+): Promise<void> {
+  await runCommand("open", ["-a", "Simulator", "--args", "-CurrentDeviceUDID", simulator.udid]);
+  const menuItem = orientation === "landscape" ? "Landscape Right" : "Portrait";
+  await runCommand("osascript", [
+    "-e",
+    "on run argv",
+    "-e",
+    "set simulatorName to item 1 of argv",
+    "-e",
+    'tell application "Simulator" to activate',
+    "-e",
+    'tell application "System Events" to tell process "Simulator"',
+    "-e",
+    "set simulatorWindows to {}",
+    "-e",
+    "repeat 40 times",
+    "-e",
+    'set simulatorWindows to menu items of menu "Window" of menu bar item "Window" of menu bar 1 whose name starts with simulatorName',
+    "-e",
+    "if (count of simulatorWindows) is greater than 0 then exit repeat",
+    "-e",
+    "delay 0.25",
+    "-e",
+    "end repeat",
+    "-e",
+    'if (count of simulatorWindows) is not 1 then error "Expected exactly one Simulator window for " & simulatorName',
+    "-e",
+    "click item 1 of simulatorWindows",
+    "-e",
+    `click menu item "${menuItem}" of menu "Orientation" of menu item "Orientation" of menu "Device" of menu bar item "Device" of menu bar 1`,
+    "-e",
+    "end tell",
+    "-e",
+    "delay 1",
+    "-e",
+    "end run",
+    simulator.name,
+  ]);
+}
+
 async function iosAppContainer(udid: string): Promise<string> {
   return (
     await commandOutput("xcrun", ["simctl", "get_app_container", udid, ANDROID_PACKAGE, "data"])
@@ -811,7 +873,13 @@ async function captureIos(
 ): Promise<void> {
   const { simulator, createdByRunner } = await ensureIosSimulator(capture.device);
   const startedByRunner = simulator.state !== "Booted";
-  registerCleanup({ udid: simulator.udid, startedByRunner, createdByRunner });
+  registerCleanup({
+    name: simulator.name,
+    udid: simulator.udid,
+    startedByRunner,
+    createdByRunner,
+    restorePortrait: capture.device.orientation === "landscape",
+  });
   if (!startedByRunner) {
     // Clear transient SpringBoard state (permission prompts, stale URL-open
     // confirmations, keyboards) without erasing the developer's simulator.
@@ -870,6 +938,9 @@ async function captureIos(
       "--showcaseScene",
       firstScene,
     ]);
+    if (capture.device.orientation === "landscape") {
+      await setIosSimulatorOrientation("landscape", simulator);
+    }
   };
   await NodeFSP.rm(readyPath, { force: true });
   await NodeFSP.writeFile(scenePath, firstScene);
@@ -900,6 +971,9 @@ async function captureIos(
       `${scene}.png`,
     );
     await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
+    if (capture.device.orientation === "landscape") {
+      await runCommand("sips", ["--rotate", "90", destination]);
+    }
     await finalizeCapture(destination, capture.device);
   }
 }
@@ -1225,12 +1299,12 @@ async function main(): Promise<void> {
       showcaseServers.push(server);
       await waitForPort(port, `${environment.label} server`);
       await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      const environmentId = (
-        await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "environment-id"), "utf8")
-      ).trim();
-      if (!environmentId) {
-        throw new Error(`${environment.label} did not persist an environment id.`);
-      }
+      // The server begins listening before the ServerEnvironment layer
+      // persists the environment id, so poll rather than read once.
+      const environmentId = await waitForFileContent(
+        NodePath.join(baseDir, "userdata", "environment-id"),
+        `${environment.label} environment id`,
+      );
       showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });
     }
 
@@ -1315,6 +1389,9 @@ async function main(): Promise<void> {
         }
       }
       for (const cleanup of iosCleanups) {
+        if (cleanup.restorePortrait) {
+          await setIosSimulatorOrientation("portrait", cleanup).catch(() => undefined);
+        }
         if (cleanup.startedByRunner || cleanup.createdByRunner) {
           await runCommand("xcrun", ["simctl", "shutdown", cleanup.udid]).catch(() => undefined);
         }
