@@ -41,6 +41,7 @@ import {
   extractTerminalLinks,
   isTerminalLinkActivation,
   resolvePathLinkTarget,
+  resolveTerminalUrlTarget,
   resolveWrappedTerminalLinkRange,
   wrappedTerminalLinkRangeIntersectsBufferLine,
 } from "../terminal-links";
@@ -834,6 +835,7 @@ export function TerminalViewport({
                 if (!latestTerminal) return;
 
                 if (match.kind === "url") {
+                  const urlTarget = resolveTerminalUrlTarget(match.text);
                   if (!localApi) {
                     writeSystemMessage(
                       latestTerminal,
@@ -842,7 +844,7 @@ export function TerminalViewport({
                     return;
                   }
                   const openExternally = () => {
-                    void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                    void localApi.shell.openExternal(urlTarget).catch((error: unknown) => {
                       writeSystemMessage(
                         latestTerminal,
                         error instanceof Error ? error.message : "Unable to open link",
@@ -851,12 +853,12 @@ export function TerminalViewport({
                   };
                   // Only http(s) renders in the preview panel; hand other
                   // schemes (mailto, ssh, tel, ...) straight to the OS.
-                  if (!/^https?:\/\//i.test(match.text)) {
+                  if (!/^https?:\/\//i.test(urlTarget)) {
                     openExternally();
                     return;
                   }
                   void openTerminalLinkInPreview({
-                    url: match.text,
+                    url: urlTarget,
                     position: { x: event.clientX, y: event.clientY },
                     threadRef: readThreadRef(),
                     openPreview,

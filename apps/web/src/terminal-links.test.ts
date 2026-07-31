@@ -5,6 +5,7 @@ import {
   extractTerminalLinks,
   isTerminalLinkActivation,
   resolvePathLinkTarget,
+  resolveTerminalUrlTarget,
   resolveWrappedTerminalLinkRange,
   wrappedTerminalLinkRangeIntersectsBufferLine,
   type TerminalBufferLineLike,
@@ -74,6 +75,19 @@ describe("extractTerminalLinks", () => {
     expect(extractTerminalLinks(line)).toEqual([]);
   });
 
+  it("finds compound git transport urls", () => {
+    const line =
+      "clone git+https://github.com/t3/t3code.git or git+Ssh://git@github.com/t3/t3code.git";
+    const urls = ["git+https://github.com/t3/t3code.git", "git+Ssh://git@github.com/t3/t3code.git"];
+
+    expect(extractTerminalLinks(line)).toEqual(
+      urls.map((text) => {
+        const start = line.indexOf(text);
+        return { kind: "url", text, start, end: start + text.length };
+      }),
+    );
+  });
+
   it("trims trailing punctuation from links", () => {
     const line = "(https://example.com/docs), ./src/main.ts:12.";
     expect(extractTerminalLinks(line)).toEqual([
@@ -116,6 +130,20 @@ describe("extractTerminalLinks", () => {
         end: 12,
       },
     ]);
+  });
+});
+
+describe("resolveTerminalUrlTarget", () => {
+  it("unwraps git transport urls for activation", () => {
+    expect(resolveTerminalUrlTarget("git+https://github.com/t3/t3code.git")).toBe(
+      "https://github.com/t3/t3code.git",
+    );
+    expect(resolveTerminalUrlTarget("git+Ssh://git@github.com/t3/t3code.git")).toBe(
+      "Ssh://git@github.com/t3/t3code.git",
+    );
+    expect(resolveTerminalUrlTarget("https://github.com/t3/t3code")).toBe(
+      "https://github.com/t3/t3code",
+    );
   });
 });
 

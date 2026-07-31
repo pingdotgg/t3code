@@ -40,7 +40,7 @@ export interface WrappedTerminalLinkLine {
 // authority-style schemes require // while opaque ones take a bare payload.
 // The lookbehind prevents matching a supported scheme inside a longer RFC 3986 scheme name.
 const URL_PATTERN =
-  /(?<![A-Za-z0-9+.-])(?:(?:https?|ftp|ssh|git|gemini|gopher):\/\/[^\s"'`<>]+|(?:mailto|tel|news|magnet):[^\s"'`<>:][^\s"'`<>]*)/gi;
+  /(?<![A-Za-z0-9+.-])(?:(?:git\+(?:https?|ssh)|https?|ftp|ssh|git|gemini|gopher):\/\/[^\s"'`<>]+|(?:mailto|tel|news|magnet):[^\s"'`<>:][^\s"'`<>]*)/gi;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -174,6 +174,10 @@ export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
   const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
   const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, urlMatches);
   return [...urlMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+}
+
+export function resolveTerminalUrlTarget(value: string): string {
+  return value.replace(/^git\+(?=(?:https?|ssh):\/\/)/i, "");
 }
 
 export function collectWrappedTerminalLinkLine(
