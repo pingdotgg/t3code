@@ -41,7 +41,7 @@ import {
   updateComposerDraftSettings,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { useBranches } from "../../state/queries";
+import { useBranches, useProviderSkills } from "../../state/queries";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
@@ -406,13 +406,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderSkills = useMemo(
+  const selectedProviderStatus = useMemo(
     () =>
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === selectedModel?.instanceId,
-      )?.skills ?? [],
+      ) ?? null,
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
+  const selectedProviderSkills = useProviderSkills({
+    activeEnvironmentId: selectedEnvironmentId,
+    provider: selectedProviderStatus,
+    isServerThread: false,
+    threadId: null,
+    projectId: selectedProject?.id ?? null,
+  });
   const setSelectedModelKey = useCallback(
     (key: string | null) => {
       if (!key || !selectedProjectDraftKey) {

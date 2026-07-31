@@ -37,7 +37,9 @@ import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
+  type ProviderSkillInventory,
 } from "../ProviderDriver.ts";
+import { discoverCursorSkills } from "./CursorSkills.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -173,6 +175,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
+      // Closes over the same merged environment the ACP child is spawned
+      // with, so discovery reads the home roots `cursor-agent` would read.
+      const skillInventory: ProviderSkillInventory = {
+        list: ({ cwd }) =>
+          discoverCursorSkills(cwd, processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+      };
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -183,6 +195,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        skillInventory,
       } satisfies ProviderInstance;
     }),
 };

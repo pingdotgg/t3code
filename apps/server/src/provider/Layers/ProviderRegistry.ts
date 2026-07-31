@@ -198,13 +198,20 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
 // after `ProviderInstanceRegistry` rebuilds an instance (e.g. because
 // its settings changed), a fresh source rides the new PubSub instead
 // of a closed one.
-const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
-  instanceId: instance.instanceId,
-  driverKind: instance.driverKind,
-  getSnapshot: instance.snapshot.getSnapshot,
-  refresh: instance.snapshot.refresh,
-  streamChanges: instance.snapshot.streamChanges,
-});
+export const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => {
+  const decorateSnapshot = (snapshot: ServerProvider): ServerProvider =>
+    instance.skillInventory === undefined
+      ? snapshot
+      : { ...snapshot, skillInventoryMode: "project" };
+
+  return {
+    instanceId: instance.instanceId,
+    driverKind: instance.driverKind,
+    getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(decorateSnapshot)),
+    refresh: instance.snapshot.refresh.pipe(Effect.map(decorateSnapshot)),
+    streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(decorateSnapshot)),
+  };
+};
 
 export const ProviderRegistryLive = Layer.effect(
   ProviderRegistry,

@@ -8,12 +8,19 @@ import {
   makeThreadSearchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import {
+  type ProviderSkillInventoryContext,
+  resolveProviderSkillInventoryRequest,
+  resolveProviderSkillInventoryTarget,
+  selectProviderSkills,
+} from "@t3tools/client-runtime/state/provider-skill-inventory";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   OrchestrationThread,
   ProjectContentMatch,
   ProjectEntryKind,
+  ServerProviderSkill,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -28,6 +35,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
@@ -295,6 +303,27 @@ export function useProjectPathSearch(
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+}
+
+/**
+ * Skills for a composer or message timeline.
+ *
+ * Snapshot-mode providers resolve entirely from the provider snapshot and
+ * never reach the network. A project-mode provider issues one request per
+ * (environment, scope, instance) key; composer query text is not part of the
+ * key, so filtering more characters does not refetch.
+ */
+export function useProviderSkills(
+  context: ProviderSkillInventoryContext,
+): ReadonlyArray<ServerProviderSkill> {
+  const target = resolveProviderSkillInventoryTarget(context);
+  const request = resolveProviderSkillInventoryRequest(target);
+  const result = useEnvironmentQuery(
+    request === null ? null : serverEnvironment.skillInventory(request),
+  );
+  const provider = target.provider;
+  const inventory = result.data;
+  return useMemo(() => selectProviderSkills({ provider, inventory }), [provider, inventory]);
 }
 
 interface ProjectContentSearchTarget {

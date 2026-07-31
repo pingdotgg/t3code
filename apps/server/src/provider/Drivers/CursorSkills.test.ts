@@ -1,0 +1,529 @@
+import * as NodeOS from "node:os";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+
+import {
+  discoverCursorSkills,
+  MAX_DIRECTORIES_PER_ROOT,
+  MAX_ENTRIES_PER_ROOT,
+  resolveCursorHomeDirectory,
+} from "./CursorSkills.ts";
+
+const writeSkill = Effect.fn(function* (skillDirectory: string, contents: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(skillDirectory, { recursive: true });
+  yield* fs.writeFileString(path.join(skillDirectory, "SKILL.md"), contents);
+});
+
+const frontmatter = (name: string, description: string) =>
+  ["---", `name: ${name}`, `description: ${description}`, "---", "", "# Body"].join("\n");
+
+/**
+ * Fixture home/workspace pair plus an environment whose `HOME` points at the
+ * fixture rather than the real one, so tests never read the developer's own
+ * skills.
+ */
+const makeFixture = Effect.fn(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-skills-" });
+  const home = path.join(tempDir, "home");
+  const workspace = path.join(tempDir, "workspace");
+  yield* fs.makeDirectory(home, { recursive: true });
+  yield* fs.makeDirectory(workspace, { recursive: true });
+  return {
+    tempDir,
+    home,
+    workspace,
+    environment: { HOME: home, USERPROFILE: home } satisfies NodeJS.ProcessEnv,
+    userCursor: path.join(home, ".cursor", "skills"),
+    userAgents: path.join(home, ".agents", "skills"),
+    projectCursor: path.join(workspace, ".cursor", "skills"),
+    projectAgents: path.join(workspace, ".agents", "skills"),
+  };
+});
+
+it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
+  it.effect("merges all four roots with project and .cursor winning collisions", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(
+        path.join(fixture.userAgents, "user-agents-only"),
+        frontmatter("user-agents-only", "From the user .agents root."),
+      );
+      yield* writeSkill(
+        path.join(fixture.userCursor, "user-cursor-only"),
+        frontmatter("user-cursor-only", "From the user .cursor root."),
+      );
+      // Same name in every root: the highest-precedence one must win, and the
+      // row must appear exactly once.
+      yield* writeSkill(
+        path.join(fixture.userAgents, "everywhere"),
+        frontmatter("everywhere", "user agents"),
+      );
+      yield* writeSkill(
+        path.join(fixture.userCursor, "everywhere"),
+        frontmatter("everywhere", "user cursor"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectAgents, "everywhere"),
+        frontmatter("everywhere", "project agents"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "everywhere"),
+        frontmatter("everywhere", "project cursor"),
+      );
+      // Same scope, different roots: `.cursor` beats `.agents`.
+      yield* writeSkill(
+        path.join(fixture.projectAgents, "same-scope"),
+        frontmatter("same-scope", "project agents"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "same-scope"),
+        frontmatter("same-scope", "project cursor"),
+      );
+      // Organizational category directory nested inside a root.
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "shipping", "land-it"),
+        frontmatter("land-it", "Nested under a category directory."),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope, skill.description]),
+        [
+          ["everywhere", "project", "project cursor"],
+          ["land-it", "project", "Nested under a category directory."],
+          ["same-scope", "project", "project cursor"],
+          ["user-agents-only", "user", "From the user .agents root."],
+          ["user-cursor-only", "user", "From the user .cursor root."],
+        ],
+      );
+      assert.equal(
+        skills.find((skill) => skill.name === "land-it")?.path,
+        path.join(fixture.projectCursor, "shipping", "land-it", "SKILL.md"),
+      );
+      assert.isTrue(skills.every((skill) => skill.enabled));
+    }),
+  );
+
+  it.effect("resolves inventory per working directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const otherWorkspace = path.join(fixture.tempDir, "other-workspace");
+      yield* fs.makeDirectory(otherWorkspace, { recursive: true });
+
+      yield* writeSkill(path.join(fixture.userCursor, "shared"), frontmatter("shared", "user"));
+      yield* writeSkill(path.join(fixture.projectCursor, "only-a"), frontmatter("only-a", "A"));
+      yield* writeSkill(
+        path.join(otherWorkspace, ".cursor", "skills", "shared"),
+        frontmatter("shared", "overridden by B"),
+      );
+
+      const first = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+      const second = yield* discoverCursorSkills(otherWorkspace, fixture.environment);
+
+      assert.deepEqual(
+        first.map((skill) => [skill.name, skill.description]),
+        [
+          ["only-a", "A"],
+          ["shared", "user"],
+        ],
+      );
+      assert.deepEqual(
+        second.map((skill) => [skill.name, skill.description]),
+        [["shared", "overridden by B"]],
+      );
+    }),
+  );
+
+  /**
+   * `cursor-agent` 2026.07.20-8cc9c0b loads every one of these. It names a
+   * skill after its directory and derives a missing description from the
+   * body's first heading, so none of them may be dropped.
+   */
+  it.effect("keeps skills Cursor itself loads despite loose frontmatter", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "mismatched-dir"),
+        frontmatter("renamed-skill", "Frontmatter name disagrees with the directory."),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "no-desc"),
+        ["---", "name: no-desc", "---", "", "# No description probe", "", "Body."].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "no-frontmatter"),
+        ["# No frontmatter probe", "", "Body."].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "Weird_Name"),
+        frontmatter("Weird_Name", "Non-conforming characters still load."),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "unterminated"),
+        ["---", "name: unterminated", "description: Never closed.", "", "# Fallback"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "not-a-mapping"),
+        ["---", "- just", "- a list", "---", "", "# List frontmatter"].join("\n"),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [
+          ["mismatched-dir", "Frontmatter name disagrees with the directory."],
+          ["no-desc", "No description probe"],
+          ["no-frontmatter", "No frontmatter probe"],
+          // An unterminated `---` never opens frontmatter, so the first
+          // heading is whatever the body starts with.
+          ["not-a-mapping", "List frontmatter"],
+          ["unterminated", "Fallback"],
+          ["Weird_Name", "Non-conforming characters still load."],
+        ],
+      );
+    }),
+  );
+
+  it.effect("parses a BOM and CRLF file, and ignores a non-delimiter --- line", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "bom-crlf"),
+        `\ufeff${["---", "name: bom-crlf", "description: Handles BOM and CRLF.", "---", "", "# Body"].join("\r\n")}`,
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "not-a-delimiter"),
+        ["--- not a delimiter", "name: ignored", "---", "", "# Real heading"].join("\n"),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [
+          ["bom-crlf", "Handles BOM and CRLF."],
+          // Frontmatter never opened, so `name: ignored` is body text and the
+          // description comes from the heading.
+          ["not-a-delimiter", "Real heading"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("skips only what it cannot read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(path.join(fixture.projectCursor, "healthy"), frontmatter("healthy", "OK."));
+      // A directory with no SKILL.md is a category directory, not a skill.
+      yield* fs.makeDirectory(path.join(fixture.projectCursor, "empty-category"), {
+        recursive: true,
+      });
+      const blocked = path.join(fixture.projectCursor, "blocked");
+      yield* writeSkill(path.join(blocked, "hidden"), frontmatter("hidden", "Unreachable."));
+      yield* fs.chmod(blocked, 0o000);
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment).pipe(
+        Effect.ensuring(fs.chmod(blocked, 0o700).pipe(Effect.ignore)),
+      );
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        typeof process.getuid === "function" && process.getuid() === 0
+          ? ["healthy", "hidden"]
+          : ["healthy"],
+      );
+    }),
+  );
+
+  it.effect("reads the merged environment's home, not the process home", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const otherHome = path.join(fixture.tempDir, "other-home");
+
+      yield* writeSkill(
+        path.join(fixture.userCursor, "fixture-home"),
+        frontmatter("fixture-home", "Under the fixture HOME."),
+      );
+      yield* writeSkill(
+        path.join(otherHome, ".cursor", "skills", "other-home"),
+        frontmatter("other-home", "Under the overridden HOME."),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, { HOME: otherHome });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["other-home"],
+      );
+    }),
+  );
+
+  it.effect("terminates on a symlinked directory cycle and sorts deterministically", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(path.join(fixture.projectCursor, "beta"), frontmatter("beta", "Beta."));
+      yield* writeSkill(path.join(fixture.projectCursor, "alpha"), frontmatter("alpha", "Alpha."));
+      const loopCreated = yield* fs
+        .symlink(fixture.projectCursor, path.join(fixture.projectCursor, "loop"))
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.isTrue(loopCreated, "platform does not support symlinks");
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["alpha", "beta"],
+      );
+    }),
+  );
+
+  it.effect("follows a skill symlink whose canonical target stays inside the root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const target = path.join(fixture.projectCursor, "z-target");
+
+      yield* writeSkill(target, frontmatter("z-target", "Reached through an in-root symlink."));
+      yield* fs.symlink(target, path.join(fixture.projectCursor, "a-linked"));
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [["a-linked", "Reached through an in-root symlink."]],
+      );
+    }),
+  );
+
+  it.effect("does not follow skill roots or nested symlinks outside their scope boundary", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const outside = path.join(fixture.tempDir, "outside");
+      const escapedRoot = path.join(outside, "root-skills");
+      const escapedNestedSkill = path.join(outside, "nested-skill");
+
+      yield* writeSkill(
+        path.join(escapedRoot, "through-root"),
+        frontmatter("through-root", "Outside through the root symlink."),
+      );
+      yield* writeSkill(
+        escapedNestedSkill,
+        frontmatter("through-child", "Outside through a nested symlink."),
+      );
+      yield* fs.makeDirectory(path.dirname(fixture.projectAgents), { recursive: true });
+      yield* fs.makeDirectory(fixture.projectCursor, { recursive: true });
+      yield* fs.symlink(escapedRoot, fixture.projectAgents);
+      yield* fs.symlink(escapedNestedSkill, path.join(fixture.projectCursor, "escaped-child"));
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.isEmpty(skills);
+    }),
+  );
+
+  it.effect("bounds directories visited even when none contain skills", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const directoryNames = Array.from(
+        { length: MAX_DIRECTORIES_PER_ROOT + 50 },
+        (_, index) => `category-${String(index).padStart(4, "0")}`,
+      );
+      let emptyDirectoriesRead = 0;
+
+      yield* fs.makeDirectory(fixture.projectCursor, { recursive: true });
+      const resolvedProjectCursor = yield* fs.realPath(fixture.projectCursor);
+      const directoryInfo = yield* fs.stat(fixture.projectCursor);
+      const instrumented = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          readDirectory: (directory, options) => {
+            const current = String(directory);
+            if (current === resolvedProjectCursor) {
+              return Effect.succeed(directoryNames);
+            }
+            if (current.startsWith(`${resolvedProjectCursor}${path.sep}`)) {
+              emptyDirectoriesRead += 1;
+              return Effect.succeed([]);
+            }
+            return fs.readDirectory(directory, options);
+          },
+          realPath: (filePath) => {
+            const current = String(filePath);
+            if (current.startsWith(`${fixture.projectCursor}${path.sep}`)) {
+              return Effect.succeed(current.replace(fixture.projectCursor, resolvedProjectCursor));
+            }
+            return current.startsWith(`${resolvedProjectCursor}${path.sep}`)
+              ? Effect.succeed(current)
+              : fs.realPath(filePath);
+          },
+          stat: (filePath) => {
+            const current = String(filePath);
+            return current.startsWith(`${fixture.projectCursor}${path.sep}`) ||
+              current.startsWith(`${resolvedProjectCursor}${path.sep}`)
+              ? Effect.succeed(directoryInfo)
+              : fs.stat(filePath);
+          },
+        }),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment).pipe(
+        Effect.provide(instrumented),
+      );
+
+      assert.isEmpty(skills);
+      // The root itself occupies one slot in the resolved-directory set.
+      assert.equal(emptyDirectoriesRead, MAX_DIRECTORIES_PER_ROOT - 1);
+    }),
+  );
+
+  it.effect("bounds entry inspection in a wide root containing no directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const entryNames = Array.from(
+        { length: MAX_ENTRIES_PER_ROOT + 50 },
+        (_, index) => `file-${String(index).padStart(5, "0")}.txt`,
+      );
+      let entriesStatted = 0;
+
+      yield* fs.makeDirectory(fixture.projectCursor, { recursive: true });
+      const resolvedProjectCursor = yield* fs.realPath(fixture.projectCursor);
+      const instrumented = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          readDirectory: (directory, options) =>
+            String(directory) === resolvedProjectCursor
+              ? Effect.succeed(entryNames)
+              : fs.readDirectory(directory, options),
+          stat: (filePath) => {
+            if (String(filePath).startsWith(`${resolvedProjectCursor}${path.sep}`)) {
+              entriesStatted += 1;
+            }
+            return fs.stat(filePath);
+          },
+        }),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment).pipe(
+        Effect.provide(instrumented),
+      );
+
+      assert.isEmpty(skills);
+      assert.equal(entriesStatted, 0);
+    }),
+  );
+
+  /**
+   * A parsed-result assertion cannot tell a bounded read from a full one, so
+   * this watches the requested allocation size directly.
+   */
+  it.effect("reads at most 64 KiB of metadata per SKILL.md", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const requestedSizes: Array<number> = [];
+
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "huge"),
+        `${frontmatter("huge", "Has an enormous body.")}\n${"x".repeat(512 * 1024)}`,
+      );
+
+      const instrumented = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          open: (filePath, options) =>
+            fs.open(filePath, options).pipe(
+              Effect.map((file) => ({
+                ...file,
+                readAlloc: (size: FileSystem.SizeInput) => {
+                  requestedSizes.push(Number(FileSystem.Size(size)));
+                  return file.readAlloc(size);
+                },
+              })),
+            ),
+        }),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment).pipe(
+        Effect.provide(instrumented),
+      );
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [["huge", "Has an enormous body."]],
+      );
+      assert.deepEqual(requestedSizes, [64 * 1024]);
+    }),
+  );
+});
+
+describe("resolveCursorHomeDirectory", () => {
+  it("prefers a non-empty merged HOME on POSIX", () => {
+    expect(resolveCursorHomeDirectory({ HOME: "/merged/home" }, "darwin")).toBe("/merged/home");
+  });
+
+  it("prefers USERPROFILE over HOMEDRIVE and HOMEPATH on Windows", () => {
+    expect(
+      resolveCursorHomeDirectory(
+        { USERPROFILE: "C:\\Users\\merged", HOMEDRIVE: "D:", HOMEPATH: "\\Users\\other" },
+        "win32",
+      ),
+    ).toBe("C:\\Users\\merged");
+  });
+
+  it("falls back to a complete HOMEDRIVE and HOMEPATH pair on Windows", () => {
+    expect(
+      resolveCursorHomeDirectory({ HOMEDRIVE: "D:", HOMEPATH: "\\Users\\merged" }, "win32"),
+    ).toBe("D:\\Users\\merged");
+  });
+
+  it("ignores blank values and an incomplete Windows pair", () => {
+    expect(resolveCursorHomeDirectory({ HOME: "   " }, "linux")).toBe(NodeOS.homedir());
+    expect(resolveCursorHomeDirectory({ HOMEDRIVE: "D:" }, "win32")).toBe(NodeOS.homedir());
+  });
+
+  it("does not read the POSIX home from Windows variables", () => {
+    expect(resolveCursorHomeDirectory({ USERPROFILE: "C:\\Users\\merged" }, "linux")).toBe(
+      NodeOS.homedir(),
+    );
+  });
+});
