@@ -1345,6 +1345,8 @@ it.layer(
           OWD: "/home/user/project",
           PATH: `${appDir}/usr/bin:${appDir}:/usr/local/bin:/usr/bin:/bin`,
           LD_LIBRARY_PATH: `${appDir}/usr/lib:/home/user/.local/lib`,
+          XDG_DATA_DIRS: `${appDir}/usr/share:/home/user/.local/share/flatpak/exports/share`,
+          GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
           TEST_TERMINAL_KEEP: "keep-me",
         },
       });
@@ -1364,8 +1366,29 @@ it.layer(
       // mount segments that the runtime prepended.
       expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
       expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
-      // Unrelated host vars still pass through untouched.
+      expect(spawnInput.env.XDG_DATA_DIRS).toBe("/home/user/.local/share/flatpak/exports/share");
+      expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+    }),
+  );
+
+  it.effect("preserves host-set GSETTINGS_SCHEMA_DIR outside the AppImage mount", () =>
+    Effect.gen(function* () {
+      const appDir = "/tmp/.mount_T3Codeabc123";
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          APPIMAGE: "/home/user/T3-Code.AppImage",
+          APPDIR: appDir,
+          GSETTINGS_SCHEMA_DIR: "/usr/share/glib-2.0/schemas",
+          TEST_TERMINAL_KEEP: "keep-me",
+        },
+      });
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBe("/usr/share/glib-2.0/schemas");
     }),
   );
 

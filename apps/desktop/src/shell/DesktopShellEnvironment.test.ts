@@ -173,6 +173,32 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("restores XDG_DATA_DIRS from the login shell, overwriting the AppImage value", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/bash",
+        PATH: "/usr/bin",
+        XDG_DATA_DIRS: "/tmp/.mount_T3-XXXX/usr/share",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/local/bin:/usr/bin:/bin",
+            XDG_DATA_DIRS:
+              "/home/test/.local/share/flatpak/exports/share:/usr/local/share:/usr/share",
+          }),
+      });
+
+      assert.equal(
+        env.XDG_DATA_DIRS,
+        "/home/test/.local/share/flatpak/exports/share:/usr/local/share:/usr/share",
+      );
+    }),
+  );
+
   it.effect("falls back to launchctl PATH on macOS when shell probing does not return one", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {

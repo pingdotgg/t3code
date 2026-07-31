@@ -74,6 +74,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "HOMEBREW_REPOSITORY",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
+  "XDG_DATA_DIRS",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
@@ -381,6 +382,10 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
     if (!config.env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
       config.env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
+    }
+
+    if (shellEnvironment.XDG_DATA_DIRS) {
+      config.env.XDG_DATA_DIRS = shellEnvironment.XDG_DATA_DIRS;
     }
 
     for (const name of [
