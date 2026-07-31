@@ -1914,6 +1914,12 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "git",
             },
           ),
+        [WS_METHODS.gitListOpenPullRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitListOpenPullRequests,
+            gitWorkflow.listOpenPullRequests(input),
+            { "rpc.aggregate": "git" },
+          ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,

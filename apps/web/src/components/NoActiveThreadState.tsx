@@ -4,12 +4,25 @@ import {
   IconChevronRight as ChevronRightIcon,
   IconMagnifyingglass as SearchIcon,
 } from "symbols-react";
-import { useCallback, useMemo, type KeyboardEvent, type ReactNode } from "react";
+import type { GitListOpenPullRequestsResult } from "@t3tools/contracts";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
+import { openPullRequestLink, useOpenPrLink } from "../lib/openPullRequestLink";
+import { readLocalApi } from "../localApi";
 import { useProjects, useThreadShells } from "../state/entities";
+import { gitEnvironment } from "../state/git";
+import { useEnvironmentQuery } from "../state/query";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { Project, SidebarThreadSummary } from "../types";
@@ -29,10 +42,15 @@ import {
   ThreadBreadcrumbProjectChipContent,
   THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
 } from "./ThreadBreadcrumb";
-import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
+import {
+  ChangeRequestStatusIcon,
+  prStatusIndicator,
+  ThreadRowLeadingStatus,
+} from "./ThreadStatusIndicators";
 import { AddProjectIcon, NewThreadIcon, SettingsHexIcon } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
 
 const ACTION_CARD_CLASS_NAME =
@@ -46,7 +64,10 @@ const LIST_TABLE_HEADER_ROW_CLASS_NAME = "hidden items-center gap-4 px-4 py-2 md
 const LIST_TABLE_HEADER_CELL_CLASS_NAME =
   "text-ui-2xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/68";
 const RECENT_THREAD_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_3rem]";
+const PULL_REQUEST_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_5rem]";
 const PROJECT_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_auto]";
+
+type OpenPullRequest = GitListOpenPullRequestsResult["pullRequests"][number];
 
 interface ActionCardProps {
   title: string;
@@ -208,6 +229,177 @@ function ThreadListRow({
   );
 }
 
+function openPullRequestUrl(url: string) {
+  const api = readLocalApi();
+  if (!api) {
+    toastManager.add({
+      type: "error",
+      title: "Link opening is unavailable.",
+    });
+    return;
+  }
+
+  void openPullRequestLink(api.shell, url).catch((error) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Unable to open pull request link",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  });
+}
+
+function PullRequestListRow({
+  pullRequest,
+  project,
+  thread,
+  onOpenThread,
+}: {
+  pullRequest: OpenPullRequest;
+  project: Project;
+  thread: SidebarThreadSummary | null;
+  onOpenThread: (() => void) | null;
+}) {
+  const prStatus = prStatusIndicator(pullRequest, undefined);
+  const openPrLink = useOpenPrLink();
+
+  const handleOpenPr = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      openPrLink(event, pullRequest.url);
+    },
+    [openPrLink, pullRequest.url],
+  );
+
+  if (!prStatus) {
+    return null;
+  }
+
+  const handleOpenRow = onOpenThread ?? (() => openPullRequestUrl(pullRequest.url));
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-testid={`no-active-thread-pr-row-${pullRequest.number}`}
+      className={cn(
+        "group/pr-row flex w-full flex-col gap-3 border-t border-border/45 px-4 py-3 text-left first:border-t-0 transition-colors hover:bg-accent/12 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/12",
+        PULL_REQUEST_TABLE_GRID_CLASS_NAME,
+        "md:grid md:items-center md:gap-4",
+      )}
+      onClick={handleOpenRow}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+        event.preventDefault();
+        handleOpenRow();
+      }}
+    >
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <ChangeRequestStatusIcon className={cn("size-3.5 shrink-0", prStatus.colorClass)} />
+          <span className="truncate text-sm font-medium leading-5 text-foreground">
+            #{pullRequest.number} {pullRequest.title}
+          </span>
+        </div>
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground/72">
+          <span
+            className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-ui-xs leading-none`}
+            title={project.workspaceRoot}
+          >
+            <ThreadBreadcrumbProjectChipContent
+              icon={
+                <ProjectFavicon
+                  environmentId={project.environmentId}
+                  cwd={project.workspaceRoot}
+                  className="size-3 shrink-0"
+                />
+              }
+              label={project.title}
+            />
+          </span>
+          <span
+            className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-ui-xs leading-none`}
+            title={pullRequest.headRef}
+          >
+            <ThreadBreadcrumbChipContent icon={<ThreadBranchIcon />} label={pullRequest.headRef} />
+          </span>
+          {thread ? (
+            <span className="text-ui-xs shrink-0 text-muted-foreground/68">
+              {formatRelativeTimeLabel(getThreadTimestamp(thread))}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="xs" variant="outline" onClick={handleOpenPr}>
+          View
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface ProjectPullRequestQueryState {
+  readonly isPending: boolean;
+  readonly count: number;
+}
+
+function ProjectOpenPullRequests({
+  project,
+  recentThreadByBranch,
+  onOpenThread,
+  onQueryStateChange,
+}: {
+  project: Project;
+  recentThreadByBranch: ReadonlyMap<string, SidebarThreadSummary>;
+  onOpenThread: (thread: SidebarThreadSummary) => void;
+  onQueryStateChange: (projectKey: string, state: ProjectPullRequestQueryState | null) => void;
+}) {
+  const projectKey = `${project.environmentId}:${project.id}`;
+  const query = useEnvironmentQuery(
+    gitEnvironment.openPullRequests({
+      environmentId: project.environmentId,
+      input: { cwd: project.workspaceRoot },
+    }),
+  );
+  const pullRequests = query.data?.pullRequests ?? [];
+  const pullRequestCount = pullRequests.length;
+
+  useEffect(() => {
+    onQueryStateChange(projectKey, { isPending: query.isPending, count: pullRequestCount });
+  }, [onQueryStateChange, projectKey, pullRequestCount, query.isPending]);
+  useEffect(
+    () => () => {
+      onQueryStateChange(projectKey, null);
+    },
+    [onQueryStateChange, projectKey],
+  );
+
+  return (
+    <>
+      {pullRequests.map((pullRequest) => {
+        const matchingThread =
+          recentThreadByBranch.get(`${projectKey}:${pullRequest.headRef}`) ?? null;
+        return (
+          <PullRequestListRow
+            key={`${projectKey}:${pullRequest.number}`}
+            pullRequest={pullRequest}
+            project={project}
+            thread={matchingThread}
+            onOpenThread={matchingThread ? () => onOpenThread(matchingThread) : null}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 function ProjectListRow({
   item,
   onClick,
@@ -294,6 +486,60 @@ export function NoActiveThreadState() {
     [projectOrder, projects, sidebarProjectSortOrder, sidebarThreadSortOrder, threads],
   );
   const singleProject = projects.length === 1 ? (projects[0] ?? null) : null;
+  const pullRequestProjects = useMemo(
+    () => (singleProject ? [singleProject] : projectItems.map((item) => item.project)),
+    [projectItems, singleProject],
+  );
+  const [pullRequestQueryStates, setPullRequestQueryStates] = useState<
+    Record<string, ProjectPullRequestQueryState>
+  >({});
+  const handlePullRequestQueryStateChange = useCallback(
+    (projectKey: string, state: ProjectPullRequestQueryState | null) => {
+      setPullRequestQueryStates((previous) => {
+        const existing = previous[projectKey];
+        if (state === null) {
+          if (existing === undefined) {
+            return previous;
+          }
+          const next = { ...previous };
+          delete next[projectKey];
+          return next;
+        }
+        if (
+          existing !== undefined &&
+          existing.isPending === state.isPending &&
+          existing.count === state.count
+        ) {
+          return previous;
+        }
+        return { ...previous, [projectKey]: state };
+      });
+    },
+    [],
+  );
+  const openPullRequestCount = pullRequestProjects.reduce(
+    (total, project) =>
+      total + (pullRequestQueryStates[`${project.environmentId}:${project.id}`]?.count ?? 0),
+    0,
+  );
+  const isLoadingPullRequests = pullRequestProjects.some((project) => {
+    const state = pullRequestQueryStates[`${project.environmentId}:${project.id}`];
+    return state === undefined || state.isPending;
+  });
+  const recentThreadByBranch = useMemo(() => {
+    const threadByBranch = new Map<string, SidebarThreadSummary>();
+    for (const item of recentThreadItems) {
+      if (!item.thread.branch) {
+        continue;
+      }
+      const key = `${item.thread.environmentId}:${item.thread.projectId}:${item.thread.branch}`;
+      if (threadByBranch.has(key)) {
+        continue;
+      }
+      threadByBranch.set(key, item.thread);
+    }
+    return threadByBranch;
+  }, [recentThreadItems]);
 
   const openThread = useCallback(
     async (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => {
@@ -411,6 +657,41 @@ export function NoActiveThreadState() {
                 <ActionCard key={action.testId} {...action} />
               ))}
             </section>
+
+            {projects.length > 0 ? (
+              <section className="space-y-3">
+                <div className={SECTION_HEADING_CLASS_NAME}>Pull requests</div>
+                <div className={LIST_TABLE_SHELL_CLASS_NAME}>
+                  <div
+                    className={cn(
+                      LIST_TABLE_HEADER_ROW_CLASS_NAME,
+                      PULL_REQUEST_TABLE_GRID_CLASS_NAME,
+                    )}
+                  >
+                    <div className={LIST_TABLE_HEADER_CELL_CLASS_NAME}>Pull request</div>
+                    <div className={`${LIST_TABLE_HEADER_CELL_CLASS_NAME} text-right`}>Link</div>
+                  </div>
+                  <Card className={LIST_TABLE_INNER_CLASS_NAME}>
+                    {openPullRequestCount === 0 ? (
+                      <div className="px-4 py-3 text-sm text-muted-foreground">
+                        {isLoadingPullRequests
+                          ? "Loading pull requests..."
+                          : "No open pull requests found."}
+                      </div>
+                    ) : null}
+                    {pullRequestProjects.map((project) => (
+                      <ProjectOpenPullRequests
+                        key={`${project.environmentId}:${project.id}`}
+                        project={project}
+                        recentThreadByBranch={recentThreadByBranch}
+                        onOpenThread={(thread) => void openThread(thread)}
+                        onQueryStateChange={handlePullRequestQueryStateChange}
+                      />
+                    ))}
+                  </Card>
+                </div>
+              </section>
+            ) : null}
 
             {variant === "recent-threads" ? (
               <section className="space-y-3">

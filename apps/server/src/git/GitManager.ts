@@ -16,6 +16,8 @@ import {
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
+  type GitListOpenPullRequestsInput,
+  type GitListOpenPullRequestsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -57,6 +59,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -93,6 +96,9 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    readonly listOpenPullRequests: (
+      input: GitListOpenPullRequestsInput,
+    ) => Effect.Effect<GitListOpenPullRequestsResult, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -577,6 +583,7 @@ function toPullRequestHeadRemoteInfo(pr: {
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const gitHubCli = yield* GitHubCli.GitHubCli;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -1718,6 +1725,37 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const listOpenPullRequests: GitManager["Service"]["listOpenPullRequests"] = Effect.fn(
+    "listOpenPullRequests",
+  )(function* (input) {
+    const pullRequests = yield* gitHubCli
+      .listOpenPullRequests({
+        cwd: input.cwd,
+        limit: 20,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "listOpenPullRequests",
+              cwd: input.cwd,
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      );
+    return {
+      pullRequests: pullRequests.map((pullRequest) => ({
+        number: pullRequest.number,
+        title: pullRequest.title,
+        url: pullRequest.url,
+        baseRef: pullRequest.baseRefName,
+        headRef: pullRequest.headRefName,
+        state: pullRequest.state ?? "open",
+      })),
+    };
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2140,6 +2178,7 @@ export const make = Effect.gen(function* () {
     invalidateLocalStatus,
     invalidateRemoteStatus,
     invalidateStatus,
+    listOpenPullRequests,
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,
