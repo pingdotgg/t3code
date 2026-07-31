@@ -190,8 +190,14 @@ const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
     (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
   );
 
-  // Strip trailing commas before `}` or `]`.
-  stripped = stripped.replace(/,(\s*[}\]])/g, "$1");
+  // Strip trailing commas before `}` or `]`. The alternation preserves quoted
+  // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
+  // mistaken for a trailing comma and removed.
+  stripped = stripped.replace(
+    /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
+    (match, stringLiteral: string | undefined, bracket: string | undefined) =>
+      stringLiteral ? match : (bracket ?? ""),
+  );
 
   return decodeJsonString(stripped).pipe(
     Effect.map(Option.some),
