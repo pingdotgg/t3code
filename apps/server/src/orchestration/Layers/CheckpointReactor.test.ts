@@ -573,15 +573,10 @@ describe("CheckpointReactor", () => {
   });
 
   it("does not regress a generated thread branch to a stale temporary worktree branch", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-generated-branch-set"),
-        threadId: ThreadId.make("thread-1"),
-        branch: "t3code/generated-branch",
-      }),
-    );
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/generated-branch",
+    });
     runGit(harness.cwd, ["switch", "-c", "t3code/deadbeef"]);
 
     harness.provider.emit({
