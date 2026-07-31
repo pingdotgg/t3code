@@ -216,6 +216,22 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
   });
 });
 
+describe("ServerSettings terminal shell", () => {
+  it("defaults to automatic shell selection and trims configured commands", () => {
+    expect(decodeServerSettings({}).defaultTerminalShell).toBe("");
+    expect(
+      decodeServerSettings({ defaultTerminalShell: "  C:\\Program Files\\Git\\bin\\bash.exe  " })
+        .defaultTerminalShell,
+    ).toBe("C:\\Program Files\\Git\\bin\\bash.exe");
+  });
+
+  it("accepts a terminal shell settings patch", () => {
+    expect(decodeServerSettingsPatch({ defaultTerminalShell: "pwsh.exe" })).toEqual({
+      defaultTerminalShell: "pwsh.exe",
+    });
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});

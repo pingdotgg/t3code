@@ -1456,6 +1456,35 @@ it.layer(
     }),
   );
 
+  it.effect("resolves a configured Windows shell through PATH before spawning", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-terminal-shell-",
+      });
+      const shellPath = path.join(binDir, "jz.EXE");
+      yield* fileSystem.writeFileString(shellPath, "MZ");
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "jz",
+        env: {
+          PATH: binDir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: shellPath,
+        }),
+      );
+    }),
+  );
+
   it.effect("falls back to built-in PowerShell by absolute path on Windows", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
