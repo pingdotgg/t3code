@@ -126,27 +126,37 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("infers a closed Plan dismissal when migrating storage version 7", () => {
-    expect(
-      migratePersistedRightPanelState(
-        {
-          byThreadKey: {
-            "env-1:thread-A": {
-              isOpen: false,
-              activeSurfaceId: "plan",
-              surfaces: [{ id: "plan", kind: "plan" }],
-            },
-          },
+  it("infers a closed Plan dismissal when migrating pre-v8 storage", () => {
+    const persistedState = {
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
         },
-        7,
-      ),
-    ).toEqual({
+      },
+    };
+    const expectedState = {
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
           activeSurfaceId: "plan",
           surfaces: [{ id: "plan", kind: "plan" }],
           planSidebarAutoOpenDisabled: true,
+        },
+      },
+    };
+
+    for (const version of [6, 7]) {
+      expect(migratePersistedRightPanelState(persistedState, version)).toEqual(expectedState);
+    }
+
+    expect(migratePersistedRightPanelState(persistedState, 8)).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
         },
       },
     });

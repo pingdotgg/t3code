@@ -260,7 +260,8 @@ export function migratePersistedRightPanelState(
                   : activeSurfaceId !== null;
               const planSidebarAutoOpenDisabled =
                 validThreadState?.planSidebarAutoOpenDisabled === true ||
-                (version === RIGHT_PANEL_STORAGE_VERSION - 1 &&
+                (typeof version === "number" &&
+                  version < RIGHT_PANEL_STORAGE_VERSION &&
                   validThreadState?.isOpen === false &&
                   validThreadState?.activeSurfaceId === "plan" &&
                   surfaces.some((surface) => surface.kind === "plan"));
