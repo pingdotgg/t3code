@@ -433,10 +433,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const next = { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
               return closingPlan ? withPlanAutoOpenDisabled(next) : next;
             }
-            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            const fallbackCandidate = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            const fallback =
+              current.planSidebarAutoOpenDisabled && fallbackCandidate?.kind === "plan"
+                ? (surfaces.find((surface) => surface.kind !== "plan") ?? fallbackCandidate)
+                : fallbackCandidate;
+            const fallbackIsDismissedPlan =
+              fallback?.kind === "plan" && current.planSidebarAutoOpenDisabled;
             const next = {
               ...current,
-              isOpen: surfaces.length > 0 && current.isOpen,
+              isOpen: surfaces.length > 0 && current.isOpen && !fallbackIsDismissedPlan,
               surfaces,
               activeSurfaceId: fallback?.id ?? null,
             };

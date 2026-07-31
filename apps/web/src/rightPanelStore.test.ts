@@ -530,6 +530,21 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("does not reopen dismissed Plan as a close-surface fallback", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().closeSurface(refA, "browser:tab-a");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
   it("closing all surfaces closes the panel", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
