@@ -12,28 +12,25 @@
  * @module provider/Drivers/CopilotDriver
  */
 import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import type * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as FileSystem from "effect/FileSystem";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
-import { makeCopilotAdapterV2 } from "../../orchestration-v2/Adapters/CopilotAdapterV2.ts";
+import {
+  CopilotAdapterV2Driver,
+  type CopilotAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/CopilotAdapterV2.ts";
 import { makeCopilotTextGeneration } from "../../textGeneration/CopilotTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCopilotAdapter } from "../Layers/CopilotAdapter.ts";
 import {
   checkCopilotProviderStatus,
   makePendingCopilotProvider,
 } from "../Layers/CopilotProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -49,12 +46,7 @@ const SNAPSHOT_REFRESH_INTERVAL = Duration.hours(1);
 const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 
 export type CopilotDriverEnv =
-  | FileSystem.FileSystem
-  | Path.Path
-  | Context.Service.Identifier<typeof HostProcessPlatform>
-  | ProviderEventLoggers
-  | IdAllocatorV2
-  | ServerConfig
+  | CopilotAdapterV2DriverEnv
   | BackgroundPolicy.BackgroundPolicy
   | ServerSettingsService;
 
@@ -85,10 +77,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
-      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const idAllocator = yield* IdAllocatorV2;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const effectiveConfig = { ...config, enabled } satisfies CopilotSettings;
       const baseDirectory = path.join(serverConfig.stateDir, "providers", "copilot", instanceId);
@@ -106,29 +95,24 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         provider: DRIVER_KIND,
         packageName: "@github/copilot",
       });
-      yield* fileSystem.makeDirectory(baseDirectory, { recursive: true }).pipe(
+      const orchestrationAdapter = yield* CopilotAdapterV2Driver.create({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to prepare Copilot home: ${cause.message ?? String(cause)}`,
+              detail: cause.detail,
               cause,
             }),
         ),
       );
-
-      const adapter = yield* makeCopilotAdapter(effectiveConfig, {
-        instanceId,
-        baseDirectory,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
-      const orchestrationAdapter = makeCopilotAdapterV2({
-        instanceId,
-        legacyAdapter: adapter,
-        idAllocator,
-      });
       const textGeneration = yield* makeCopilotTextGeneration(effectiveConfig, processEnv, {
         baseDirectory,
       });

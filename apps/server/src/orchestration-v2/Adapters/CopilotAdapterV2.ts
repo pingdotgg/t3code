@@ -76,6 +76,19 @@ const isProviderAdapterRuntimeRequestResponseError = Schema.is(
 );
 const isProviderAdapterRollbackThreadError = Schema.is(ProviderAdapterRollbackThreadError);
 
+export type CopilotAdapterV2LegacyPort = Pick<
+  CopilotAdapterShape,
+  | "startSession"
+  | "sendTurn"
+  | "interruptTurn"
+  | "respondToRequest"
+  | "respondToUserInput"
+  | "stopSession"
+  | "hasSession"
+  | "rollbackThread"
+  | "streamEvents"
+>;
+
 export const CopilotProviderCapabilitiesV2 = {
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
@@ -385,7 +398,7 @@ const providerThreadFromSession = (input: {
 
 export const makeCopilotAdapterV2 = (options: {
   readonly instanceId: ProviderInstanceId;
-  readonly legacyAdapter: CopilotAdapterShape;
+  readonly legacyAdapter: CopilotAdapterV2LegacyPort;
   readonly idAllocator: IdAllocatorV2Shape;
 }): ProviderAdapterV2Shape => ({
   instanceId: options.instanceId,
@@ -856,12 +869,14 @@ export const makeCopilotAdapterV2 = (options: {
         const title =
           stringField(data, "agentDisplayName", "agentName") ?? event.payload.description ?? null;
         const model = stringField(data, "model") ?? null;
+        // Copilot agent IDs identify background tasks, not resumable sessions.
+        // Keep their provider projection detached so the child thread remains read-only.
         const providerThread: OrchestrationV2ProviderThread = {
           id: childProviderThreadId,
           driver: COPILOT_DRIVER_KIND,
           providerInstanceId: options.instanceId,
           providerSessionId: sessionInput.providerSessionId,
-          appThreadId: childThreadId,
+          appThreadId: null,
           ownerNodeId: identity.nodeId,
           nativeThreadRef: {
             driver: COPILOT_DRIVER_KIND,
@@ -884,7 +899,7 @@ export const makeCopilotAdapterV2 = (options: {
           parentThread: parentAppThread,
           childThreadId,
           parentNodeId: identity.nodeId,
-          activeProviderThreadId: childProviderThreadId,
+          activeProviderThreadId: null,
           providerInstanceId: options.instanceId,
           modelSelection: {
             ...parentTurn.input.modelSelection,
@@ -946,7 +961,6 @@ export const makeCopilotAdapterV2 = (options: {
         };
         subagentsByAgentId.set(agentId, subagent);
         subagentsByToolCallId.set(toolCallId, subagent);
-        providerThreads.set(childThreadId, providerThread);
         return [
           { type: "app_thread.created", driver: COPILOT_DRIVER_KIND, appThread: childThread },
           { type: "provider_thread.updated", driver: COPILOT_DRIVER_KIND, providerThread },
@@ -1025,7 +1039,6 @@ export const makeCopilotAdapterV2 = (options: {
           status: "active",
           updatedAt: eventNow,
         };
-        providerThreads.set(subagent.childThreadId, subagent.providerThread);
         return {
           context,
           events: [
@@ -1109,7 +1122,6 @@ export const makeCopilotAdapterV2 = (options: {
           status: "idle",
           updatedAt: eventNow,
         };
-        providerThreads.set(subagent.childThreadId, subagent.providerThread);
         return [
           {
             type: "provider_turn.updated",
@@ -1246,7 +1258,6 @@ export const makeCopilotAdapterV2 = (options: {
                 status: "idle",
                 updatedAt: eventNow,
               };
-              providerThreads.set(subagent.childThreadId, subagent.providerThread);
               output.push(
                 {
                   type: "node.updated",

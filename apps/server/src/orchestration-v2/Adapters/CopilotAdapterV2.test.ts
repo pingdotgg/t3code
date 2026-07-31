@@ -24,17 +24,18 @@ import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
-import {
-  CopilotAdapterValidationError,
-  type CopilotAdapterShape,
-} from "../../provider/Services/CopilotAdapter.ts";
+import { CopilotAdapterValidationError } from "../../provider/Services/CopilotAdapter.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
-import { COPILOT_DRIVER_KIND, makeCopilotAdapterV2 } from "./CopilotAdapterV2.ts";
+import {
+  COPILOT_DRIVER_KIND,
+  makeCopilotAdapterV2,
+  type CopilotAdapterV2LegacyPort,
+} from "./CopilotAdapterV2.ts";
 
 const INSTANCE_ID = ProviderInstanceId.make("copilot-test");
 const THREAD_ID = ThreadId.make("copilot-v2-thread");
@@ -132,11 +133,9 @@ function makeLegacyAdapter(input: {
     readonly requestId: string;
     readonly decision: string;
   }>;
-  readonly sendTurn?: CopilotAdapterShape["sendTurn"];
-}): CopilotAdapterShape {
+  readonly sendTurn?: CopilotAdapterV2LegacyPort["sendTurn"];
+}): CopilotAdapterV2LegacyPort {
   return {
-    provider: COPILOT_DRIVER_KIND,
-    capabilities: { sessionModelSwitch: "in-session" },
     startSession: (startInput) =>
       Effect.succeed({
         provider: COPILOT_DRIVER_KIND,
@@ -173,11 +172,8 @@ function makeLegacyAdapter(input: {
       }),
     respondToUserInput: () => Effect.void,
     stopSession: () => Effect.void,
-    listSessions: () => Effect.succeed([]),
     hasSession: () => Effect.succeed(true),
-    readThread: () => Effect.succeed({ threadId: THREAD_ID, turns: [] }),
     rollbackThread: () => Effect.succeed({ threadId: THREAD_ID, turns: [] }),
-    stopAll: () => Effect.void,
     streamEvents: Stream.fromPubSub(input.events),
   };
 }
@@ -185,7 +181,7 @@ function makeLegacyAdapter(input: {
 const makeRuntime = (options?: {
   readonly sendTurn?: (
     events: PubSub.PubSub<ProviderRuntimeEvent>,
-  ) => CopilotAdapterShape["sendTurn"];
+  ) => CopilotAdapterV2LegacyPort["sendTurn"];
 }) =>
   Effect.gen(function* () {
     const idAllocator = yield* IdAllocatorV2;
@@ -415,17 +411,25 @@ describe("CopilotAdapterV2", () => {
         assert.isDefined(childThread);
         assert.equal(childThread?.lineage.parentThreadId, THREAD_ID);
         assert.equal(childThread?.lineage.relationshipToParent, "subagent");
+        assert.isNull(childThread?.activeProviderThreadId);
         const nestedChildThread = createdThreads.find(
           (thread) => thread.lineage.parentThreadId === childThread?.id,
         );
         assert.isDefined(nestedChildThread);
         assert.equal(nestedChildThread?.lineage.relationshipToParent, "subagent");
+        assert.isNull(nestedChildThread?.activeProviderThreadId);
         const completedSubagent = collected.findLast(
           (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
             event.type === "subagent.updated",
         )?.subagent;
         assert.equal(completedSubagent?.status, "completed");
         assert.equal(completedSubagent?.childThreadId, childThread?.id);
+        const childProviderThread = collected.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "provider_thread.updated" }> =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.id === completedSubagent?.providerThreadId,
+        )?.providerThread;
+        assert.isNull(childProviderThread?.appThreadId);
         const childMessage = collected.find(
           (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
             event.type === "message.updated" && event.message.text === "Child result",
@@ -442,17 +446,60 @@ describe("CopilotAdapterV2", () => {
         );
 
         const terminalFiber = yield* fixture.runtime.events.pipe(
-          Stream.take(3),
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
           Effect.forkScoped,
         );
         yield* Effect.yieldNow;
+        const finalItemId = RuntimeItemId.make("copilot-root-final-summary");
+        yield* PubSub.publish(fixture.events, {
+          ...baseEvent({
+            type: "content.delta",
+            turnId: LEGACY_TURN_ID,
+            itemId: finalItemId,
+          }),
+          type: "content.delta",
+          raw: raw(
+            "assistant.message_delta",
+            {
+              messageId: "root-final-summary",
+              deltaContent: "Final summary after subagents.",
+            },
+            "",
+          ),
+          payload: { streamKind: "assistant_text", delta: "Final summary after subagents." },
+        });
+        yield* PubSub.publish(fixture.events, {
+          ...baseEvent({
+            type: "item.completed",
+            turnId: LEGACY_TURN_ID,
+            itemId: finalItemId,
+          }),
+          type: "item.completed",
+          raw: raw(
+            "assistant.message",
+            {
+              turnId: "root-final-turn",
+              messageId: "root-final-summary",
+              content: "Final summary after subagents.",
+            },
+            "",
+          ),
+          payload: { itemType: "assistant_message", status: "completed" },
+        });
         yield* PubSub.publish(fixture.events, {
           ...baseEvent({ type: "turn.completed", turnId: LEGACY_TURN_ID }),
           type: "turn.completed",
           payload: { state: "completed" },
         });
         const terminalEvents = Array.from(yield* Fiber.join(terminalFiber));
+        const finalSummary = terminalEvents.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
+            event.type === "message.updated" &&
+            event.message.text === "Final summary after subagents.",
+        );
+        assert.isDefined(finalSummary);
+        assert.equal(finalSummary?.message.threadId, THREAD_ID);
         assert.equal(terminalEvents.filter((event) => event.type === "turn.terminal").length, 1);
       }),
     ).pipe(Effect.provide(idAllocatorLayer)),
