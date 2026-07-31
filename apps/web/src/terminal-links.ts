@@ -39,7 +39,7 @@ export interface WrappedTerminalLinkLine {
 // Also matches the non-http schemes ghostty and other terminals linkify;
 // authority-style schemes require // while opaque ones take a bare payload.
 const URL_PATTERN =
-  /(?:https?|ftp|ssh|git|gemini|gopher):\/\/[^\s"'`<>]+|(?:mailto|tel|news|magnet):[^\s"'`<>:][^\s"'`<>]*/g;
+  /(?:https?|ftp|ssh|git|gemini|gopher):\/\/[^\s"'`<>]+|(?:mailto|tel|news|magnet):[^\s"'`<>:][^\s"'`<>]*/gi;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;

@@ -55,6 +55,18 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it("matches URI schemes case-insensitively", () => {
+    const line = "fetch FTP://host/file, email MAILTO:user@example.com, or use Ssh://host";
+    const urls = ["FTP://host/file", "MAILTO:user@example.com", "Ssh://host"];
+
+    expect(extractTerminalLinks(line)).toEqual(
+      urls.map((text) => {
+        const start = line.indexOf(text);
+        return { kind: "url", text, start, end: start + text.length };
+      }),
+    );
+  });
+
   it("trims trailing punctuation from links", () => {
     const line = "(https://example.com/docs), ./src/main.ts:12.";
     expect(extractTerminalLinks(line)).toEqual([
