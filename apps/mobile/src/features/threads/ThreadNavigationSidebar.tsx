@@ -9,7 +9,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
@@ -28,6 +29,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -186,6 +188,8 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const projects = useProjects();
@@ -439,10 +443,26 @@ function ThreadNavigationSidebarPane(
     () => setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT),
     [],
   );
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
-  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
+  const snoozedShelfExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.threadListV2SnoozedShelfExpanded === true;
+  const toggleSnoozedShelf = useCallback(
+    () =>
+      savePreferences({
+        threadListV2SnoozedShelfExpanded: !snoozedShelfExpanded,
+      }),
+    [savePreferences, snoozedShelfExpanded],
+  );
+  const settledShelfExpanded =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    preferencesResult.value.threadListV2SettledShelfExpanded !== false;
+  const toggleSettledShelf = useCallback(
+    () =>
+      savePreferences({
+        threadListV2SettledShelfExpanded: !settledShelfExpanded,
+      }),
+    [savePreferences, settledShelfExpanded],
+  );
   // now ticks per minute so the inactivity auto-settle boundary is actually
   // crossed while the pane stays open; without a clock dependency the
   // partition memoizes a frozen "now".
