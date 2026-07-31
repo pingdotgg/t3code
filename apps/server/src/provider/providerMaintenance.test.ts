@@ -14,6 +14,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilitiesSource,
   makeStaticProviderMaintenanceResolver,
   normalizeCommandPath,
   ProviderVersionCache,
@@ -197,6 +198,27 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       },
     });
   });
+
+  it.effect("defers command-path discovery until maintenance capabilities are resolved", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-lazy-provider-capabilities");
+      const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+      NodeFS.mkdirSync(bunBinDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(bunBinDir, "native-package-tool.exe"), "MZ");
+
+      const source = yield* makeProviderMaintenanceCapabilitiesSource(nativePackageToolUpdate, {
+        binaryPath: "native-package-tool",
+        env: {
+          PATH: bunBinDir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        },
+      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+      expect(source.get().update?.lockKey).toBe("npm-global");
+      expect((yield* source.resolve).update?.lockKey).toBe("bun-global");
+      expect(source.get().update?.lockKey).toBe("bun-global");
+    }),
+  );
 
   it.effect(
     "switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin",

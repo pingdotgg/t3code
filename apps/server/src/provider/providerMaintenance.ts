@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
@@ -58,6 +59,7 @@ export interface ProviderMaintenanceCapabilityResolutionOptions {
 }
 
 export interface ProviderMaintenanceCapabilitiesResolver {
+  readonly requiresCommandPath?: boolean;
   readonly resolve: (
     options?: ProviderMaintenanceCapabilityResolutionOptions,
   ) => ProviderMaintenanceCapabilities;
@@ -322,6 +324,7 @@ export function makePackageManagedProviderMaintenanceResolver(
   definition: PackageManagedProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilitiesResolver {
   return {
+    requiresCommandPath: true,
     resolve: (options) => resolvePackageManagedProviderMaintenance(definition, options),
   };
 }
@@ -330,6 +333,7 @@ export function makeStaticProviderMaintenanceResolver(
   capabilities: ProviderMaintenanceCapabilities,
 ): ProviderMaintenanceCapabilitiesResolver {
   return {
+    requiresCommandPath: false,
     resolve: () => capabilities,
   };
 }
@@ -349,6 +353,9 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
 ) {
+  if (resolver.requiresCommandPath !== true) {
+    return resolver.resolve(options);
+  }
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
     return resolver.resolve(options);
@@ -373,6 +380,40 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     resolvedCommandPath,
     realCommandPath,
   });
+});
+
+export interface ProviderMaintenanceCapabilitiesSource {
+  readonly get: () => ProviderMaintenanceCapabilities;
+  readonly resolve: Effect.Effect<ProviderMaintenanceCapabilities>;
+  readonly refresh: Effect.Effect<void>;
+}
+
+export const makeProviderMaintenanceCapabilitiesSource = Effect.fn(
+  "makeProviderMaintenanceCapabilitiesSource",
+)(function* (
+  resolver: ProviderMaintenanceCapabilitiesResolver,
+  options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let current = resolver.resolve(options);
+  const resolve = yield* Effect.cached(
+    resolveProviderMaintenanceCapabilitiesEffect(resolver, options).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.tap((capabilities) =>
+        Effect.sync(() => {
+          current = capabilities;
+        }),
+      ),
+    ),
+  );
+
+  return {
+    get: () => current,
+    resolve,
+    refresh: Effect.forkDetach(resolve, { startImmediately: true }).pipe(Effect.asVoid),
+  } satisfies ProviderMaintenanceCapabilitiesSource;
 });
 
 function deriveVersionAdvisory(input: {
