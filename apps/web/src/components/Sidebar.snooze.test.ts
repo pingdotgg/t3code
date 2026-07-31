@@ -1,10 +1,38 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSnoozePresets, snoozeWakeDescription, snoozeWakeLabel } from "./Sidebar.snooze";
+import {
+  defaultCustomSnoozeDateTime,
+  formatSnoozeDateTimeLocal,
+  parseCustomSnoozeDateTime,
+  resolveSnoozePresets,
+  snoozeWakeDescription,
+  snoozeWakeLabel,
+} from "./Sidebar.snooze";
 
 // Local-time constructor so preset math is timezone-stable in tests.
-function localDate(year: number, month: number, day: number, hour: number, minute = 0): Date {
-  return new Date(year, month - 1, day, hour, minute, 0, 0);
+function localDate(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute = 0,
+  second = 0,
+): Date {
+  return new Date(year, month - 1, day, hour, minute, second, 0);
+}
+
+function withTimeZone<T>(timeZone: string, run: () => T): T {
+  const previousTimeZone = process.env.TZ;
+  process.env.TZ = timeZone;
+  try {
+    return run();
+  } finally {
+    if (previousTimeZone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = previousTimeZone;
+    }
+  }
 }
 
 describe("resolveSnoozePresets", () => {
@@ -61,6 +89,49 @@ describe("resolveSnoozePresets", () => {
     const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
+  });
+});
+
+describe("custom snooze time", () => {
+  it("formats a local wall-clock value without adding a timezone suffix", () => {
+    expect(formatSnoozeDateTimeLocal(localDate(2026, 4, 8, 9, 5))).toBe("2026-04-08T09:05");
+  });
+
+  it("defaults to at least an hour ahead on a quarter-hour boundary", () => {
+    const now = new Date(2026, 3, 8, 10, 7, 59, 999);
+    const value = defaultCustomSnoozeDateTime(now);
+    const wakeAt = new Date(value);
+    expect(wakeAt.getTime()).toBeGreaterThanOrEqual(now.getTime() + 60 * 60_000);
+    expect(wakeAt.getMinutes() % 15).toBe(0);
+  });
+
+  it("keeps the default valid through the repeated hour at the end of DST", () => {
+    withTimeZone("America/Los_Angeles", () => {
+      const now = new Date("2024-11-03T01:15:30-07:00");
+      const value = defaultCustomSnoozeDateTime(now);
+      const parsed = parseCustomSnoozeDateTime(value, now);
+      expect(parsed).not.toBeNull();
+      expect(new Date(parsed!).getTime()).toBeGreaterThanOrEqual(now.getTime() + 60 * 60_000);
+    });
+  });
+
+  it("converts a future local value to ISO and rejects invalid or past values", () => {
+    const now = localDate(2026, 4, 8, 10);
+    const future = "2026-04-08T12:30";
+    expect(parseCustomSnoozeDateTime(future, now)).toBe(new Date(future).toISOString());
+    expect(parseCustomSnoozeDateTime("", now)).toBeNull();
+    expect(parseCustomSnoozeDateTime("not-a-date", now)).toBeNull();
+    expect(parseCustomSnoozeDateTime("2026-04-08T09:59", now)).toBeNull();
+  });
+
+  it("rejects local wall-clock values normalized across a DST gap", () => {
+    withTimeZone("America/Los_Angeles", () => {
+      const now = new Date("2024-03-10T00:00:00-08:00");
+      expect(parseCustomSnoozeDateTime("2024-03-10T02:30", now)).toBeNull();
+      expect(parseCustomSnoozeDateTime("2024-03-10T03:30", now)).toBe(
+        new Date("2024-03-10T03:30:00-07:00").toISOString(),
+      );
+    });
   });
 });
 

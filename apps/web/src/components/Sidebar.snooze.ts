@@ -28,6 +28,8 @@ const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
+const CUSTOM_TIME_STEP_MINUTES = 15;
+const CUSTOM_TIME_STEP_MS = CUSTOM_TIME_STEP_MINUTES * 60_000;
 
 function atHour(base: Date, hour: number): Date {
   const next = new Date(base);
@@ -42,6 +44,88 @@ function addDays(base: Date, days: number): Date {
   const next = new Date(base);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+/**
+ * Value for a native datetime-local input. Native date inputs intentionally
+ * have no timezone component; the value represents the user's wall clock.
+ */
+export function formatSnoozeDateTimeLocal(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+  ].join("");
+}
+
+/**
+ * Start custom snoozes one hour out, rounded up to a friendly quarter-hour.
+ */
+export function defaultCustomSnoozeDateTime(now: Date): string {
+  const minimumWakeTime = now.getTime() + HOUR_MS;
+  const next = new Date(minimumWakeTime);
+  next.setSeconds(0, 0);
+  if (next.getTime() < minimumWakeTime) {
+    next.setTime(next.getTime() + 60_000);
+  }
+  next.setMinutes(
+    Math.ceil(next.getMinutes() / CUSTOM_TIME_STEP_MINUTES) * CUSTOM_TIME_STEP_MINUTES,
+  );
+
+  // datetime-local drops the timezone offset. During the repeated hour at the
+  // end of DST, formatting the later occurrence and parsing it again can pick
+  // the earlier occurrence. Advance by friendly quarter-hours until the value
+  // the form will actually submit remains at least one elapsed hour away.
+  for (let attempts = 0; attempts < 24 * (60 / CUSTOM_TIME_STEP_MINUTES); attempts += 1) {
+    const value = formatSnoozeDateTimeLocal(next);
+    const parsed = parseCustomSnoozeDateTime(value, now);
+    if (parsed !== null && new Date(parsed).getTime() >= minimumWakeTime) return value;
+    next.setTime(next.getTime() + CUSTOM_TIME_STEP_MS);
+  }
+
+  // Valid current dates should always find a representable wall-clock value
+  // within a day. Fail closed instead of looping forever for an invalid Date
+  // or an unexpected timezone implementation.
+  return "";
+}
+
+/**
+ * Interpret a datetime-local value in the browser's local timezone and
+ * return the ISO command payload. Invalid, normalized, and non-future values
+ * are rejected.
+ */
+export function parseCustomSnoozeDateTime(value: string, now: Date): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value.trim());
+  if (match === null) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const wakeAt = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (Number.isNaN(wakeAt.getTime()) || wakeAt.getTime() <= now.getTime()) return null;
+
+  // Date normalizes impossible wall-clock values, including the missing hour
+  // during a spring-forward transition. Reject that normalization instead of
+  // silently snoozing until a different time than the user selected.
+  if (
+    wakeAt.getFullYear() !== year ||
+    wakeAt.getMonth() !== month - 1 ||
+    wakeAt.getDate() !== day ||
+    wakeAt.getHours() !== hour ||
+    wakeAt.getMinutes() !== minute
+  ) {
+    return null;
+  }
+  return wakeAt.toISOString();
 }
 
 /**
