@@ -57,6 +57,10 @@ export function mergeEnvironmentThread(
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
     archivedAt: shell.archivedAt,
+    settledOverride: shell.settledOverride ?? null,
+    settledAt: shell.settledAt ?? null,
+    snoozedUntil: shell.snoozedUntil ?? null,
+    snoozedAt: shell.snoozedAt ?? null,
     session: shell.session,
   };
 }

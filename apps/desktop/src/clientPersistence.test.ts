@@ -69,6 +69,7 @@ const clientSettings: ClientSettings = {
   },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
+  sidebarV2Enabled: false,
   threadCompletionNotifications: "background-only",
   timestampFormat: "24-hour",
   uiDensity: "default",

@@ -72,6 +72,10 @@ export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return usePrimaryEnvironmentBootstrapStore((state) => state.descriptor?.environmentId ?? null);
 }
 
+export function usePrimaryEnvironmentDescriptor(): ExecutionEnvironmentDescriptor | null {
+  return usePrimaryEnvironmentBootstrapStore((state) => state.descriptor);
+}
+
 export function writePrimaryEnvironmentDescriptor(
   descriptor: ExecutionEnvironmentDescriptor | null,
 ): void {

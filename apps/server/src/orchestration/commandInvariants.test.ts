@@ -19,6 +19,7 @@ import {
   requireThread,
   requireThreadAbsent,
   threadHasInFlightTurn,
+  threadHasQueuedTurnStart,
 } from "./commandInvariants.ts";
 
 const now = new Date().toISOString();
@@ -199,6 +200,35 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  it("expires an unadopted user message after the lifecycle grace period", () => {
+    const thread = {
+      ...readModel.threads[0]!,
+      messages: [
+        {
+          id: MessageId.make("message-stale"),
+          role: "user" as const,
+          text: "stale",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-07-30T00:00:00.000Z",
+          updatedAt: "2026-07-30T00:00:00.000Z",
+        },
+      ],
+    };
+
+    expect(
+      threadHasQueuedTurnStart(thread, {
+        now: "2026-07-30T00:01:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      threadHasQueuedTurnStart(thread, {
+        now: "2026-07-30T00:03:00.000Z",
+      }),
+    ).toBe(false);
   });
 
   it("does not keep legacy pre-acknowledgement failures in flight", () => {

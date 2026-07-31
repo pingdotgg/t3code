@@ -127,6 +127,60 @@ export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
   return latestMessage.createdAt >= thread.latestTurn.completedAt;
 }
 
+export function threadHasQueuedTurnStart(
+  thread: OrchestrationThread,
+  options: { readonly now: string },
+): boolean {
+  const latestMessage = thread.messages.at(-1);
+  if (latestMessage?.role !== "user") {
+    return false;
+  }
+  const latestMessageAt = Date.parse(latestMessage.createdAt);
+  const nowAt = Date.parse(options.now);
+  if (
+    !Number.isFinite(latestMessageAt) ||
+    !Number.isFinite(nowAt) ||
+    Math.abs(nowAt - latestMessageAt) > 2 * 60 * 1_000
+  ) {
+    return false;
+  }
+  const failedTurnStart = thread.activities.some((activity) => {
+    if (
+      activity.kind !== "provider.turn.start.failed" ||
+      activity.createdAt < latestMessage.createdAt
+    ) {
+      return false;
+    }
+    const messageId =
+      typeof activity.payload === "object" &&
+      activity.payload !== null &&
+      "messageId" in activity.payload &&
+      typeof activity.payload.messageId === "string"
+        ? activity.payload.messageId
+        : null;
+    return messageId === null || messageId === latestMessage.id;
+  });
+  if (failedTurnStart) {
+    return false;
+  }
+  return thread.latestTurn === null || thread.latestTurn.completedAt === null
+    ? thread.latestTurn?.state !== "running"
+    : latestMessage.createdAt >= thread.latestTurn.completedAt;
+}
+
+/**
+ * `settledAt` is written exactly when `settledOverride` becomes "settled", so
+ * the override alone decides whether real activity must reset the lifecycle:
+ * a settled thread wakes, and a user-pinned "active" thread unpins.
+ */
+export function threadHasSettlementOverride(thread: OrchestrationThread): boolean {
+  return (thread.settledOverride ?? null) !== null;
+}
+
+export function threadIsSnoozed(thread: OrchestrationThread): boolean {
+  return (thread.snoozedUntil ?? null) !== null || (thread.snoozedAt ?? null) !== null;
+}
+
 function activityRequestId(payload: unknown): string | null {
   if (typeof payload !== "object" || payload === null) {
     return null;

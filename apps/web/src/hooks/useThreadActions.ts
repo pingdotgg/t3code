@@ -97,6 +97,67 @@ export function useThreadActions() {
     });
   }, []);
 
+  const settleThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      const api = readEnvironmentApi(target.environmentId);
+      const resolved = resolveThreadTarget(target);
+      if (!api || !resolved) return;
+      if (
+        (resolved.thread.session?.status === "running" &&
+          resolved.thread.session.activeTurnId != null) ||
+        resolved.thread.latestTurn?.state === "running"
+      ) {
+        throw new Error("Cannot settle a thread with active work.");
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.settle",
+        commandId: newCommandId(),
+        threadId: target.threadId,
+      });
+    },
+    [resolveThreadTarget],
+  );
+
+  const unsettleThread = useCallback(async (target: ScopedThreadRef) => {
+    const api = readEnvironmentApi(target.environmentId);
+    if (!api) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.unsettle",
+      commandId: newCommandId(),
+      threadId: target.threadId,
+      reason: "user",
+    });
+  }, []);
+
+  const snoozeThread = useCallback(
+    async (target: ScopedThreadRef, snoozedUntil: string) => {
+      const api = readEnvironmentApi(target.environmentId);
+      const resolved = resolveThreadTarget(target);
+      if (!api || !resolved) return;
+      if (resolved.thread.session?.status === "error") {
+        throw new Error("Cannot snooze a thread that needs attention.");
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.snooze",
+        commandId: newCommandId(),
+        threadId: target.threadId,
+        snoozedUntil,
+      });
+    },
+    [resolveThreadTarget],
+  );
+
+  const unsnoozeThread = useCallback(async (target: ScopedThreadRef) => {
+    const api = readEnvironmentApi(target.environmentId);
+    if (!api) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.unsnooze",
+      commandId: newCommandId(),
+      threadId: target.threadId,
+      reason: "user",
+    });
+  }, []);
+
   const decoupleThread = useCallback(
     async (target: ScopedThreadRef) => {
       const api = readEnvironmentApi(target.environmentId);
@@ -295,6 +356,10 @@ export function useThreadActions() {
   return {
     archiveThread,
     unarchiveThread,
+    settleThread,
+    unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     decoupleThread,
     deleteThread,
     confirmAndDeleteThread,

@@ -35,6 +35,7 @@ import {
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
+  DEFAULT_SIDEBAR_V2_ENABLED,
   DEFAULT_STATUS_LINE_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
@@ -1366,6 +1367,27 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Sidebar">
+        <SettingsRow
+          title="Inbox sidebar (beta)"
+          description="Use the flat inbox with active, snoozed, and settled thread shelves."
+          resetAction={
+            settings.sidebarV2Enabled !== DEFAULT_SIDEBAR_V2_ENABLED ? (
+              <SettingResetButton
+                label="inbox sidebar"
+                onClick={() => updateSettings({ sidebarV2Enabled: DEFAULT_SIDEBAR_V2_ENABLED })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarV2Enabled}
+              onCheckedChange={(checked) => updateSettings({ sidebarV2Enabled: Boolean(checked) })}
+            />
           }
         />
       </SettingsSection>

@@ -54,6 +54,7 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+export const DEFAULT_SIDEBAR_V2_ENABLED = false;
 
 export const ThreadCompletionNotificationMode = Schema.Literals(["off", "background-only", "all"]);
 export type ThreadCompletionNotificationMode = typeof ThreadCompletionNotificationMode.Type;
@@ -124,6 +125,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarV2Enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_ENABLED)),
   ),
   threadCompletionNotifications: ThreadCompletionNotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE)),
@@ -465,6 +469,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   uiDensity: Schema.optionalKey(UiDensity),
   uiFont: Schema.optionalKey(UiFont),
