@@ -1,0 +1,103 @@
+---
+title: Cloudflare
+description: Build and deploy full applications on Cloudflare with Alchemy — one Worker runtime plus resources like Durable Objects, D1, R2, Queues, and Hyperdrive, wired together by typed bindings.
+---
+
+An alchemy app on Cloudflare is one **Worker** runtime plus the
+resources it talks to — databases, object storage, queues,
+stateful objects — all declared in the same TypeScript program and
+wired together by typed bindings. Deploy the whole thing with
+`bun alchemy deploy`; Alchemy figures out what changed.
+
+New here? [Set up your account](/cloudflare/setup), then start the
+[tutorial](/cloudflare/tutorial/part-1).
+
+## Compute
+
+- [Workers](/cloudflare/compute/workers) — the compute runtime; every app has
+  at least one.
+- [Durable Objects](/cloudflare/compute/durable-objects) — globally-unique
+  stateful instances with transactional storage and typed RPC.
+- [Containers](/cloudflare/compute/containers) — long-lived processes and
+  arbitrary runtimes, paired with a Durable Object for typed RPC.
+- [Workflows](/cloudflare/compute/workflows) — durable multi-step jobs with
+  checkpointed, replayable steps.
+
+## Frontend
+
+- [Vite](/cloudflare/frontend/vite) — deploy any pure-Vite app
+  (SPAs, TanStack Start, React Router, SolidStart) as a Worker with
+  assets.
+- [Static sites](/cloudflare/frontend/static-site) — any build
+  command's static output, including frameworks Vite doesn't cover
+  yet.
+
+## Data
+
+- [D1](/cloudflare/data/d1) — serverless SQLite with migrations managed as
+  part of the deploy.
+- [KV](/cloudflare/data/kv) — edge key-value storage for config, sessions,
+  and cached lookups.
+- [R2](/cloudflare/data/r2) — object storage with read/write-scoped
+  bindings.
+- [Hyperdrive](/cloudflare/data/hyperdrive) — edge connection pooling for
+  external Postgres and MySQL.
+
+## Messaging
+
+- [Queues](/cloudflare/messaging/queues) — at-least-once message delivery
+  between Workers.
+
+## Networking
+
+- [Domains & DNS](/cloudflare/networking/domains) — zones, DNS records, and zone
+  settings as resources; adopt the domains you already own.
+
+## Email
+
+- [Email](/cloudflare/email) — route inbound mail on a zone you own
+  and send from Workers.
+
+## Security & secrets
+
+- [Secrets & env](/cloudflare/security/secrets-env) — bind `.env` values and
+  secrets into your Workers.
+
+## What are you building?
+
+| App shape | Stack |
+| --- | --- |
+| HTTP API | [Worker](/cloudflare/compute/workers) + [D1](/cloudflare/data/d1) — see [Effect HTTP API](/cloudflare/apis/effect-http-api) |
+| Call one Worker from another (internal RPC) | [Worker](/cloudflare/compute/workers) — see [Schemaless RPC](/cloudflare/compute/workers#schemaless-rpc) and the [concept](/apis/schemaless) |
+| Typed API for external clients | [Effect RPC](/cloudflare/apis/effect-rpc) for Effect clients, [Effect HTTP API](/cloudflare/apis/effect-http-api) for plain HTTP |
+| Real-time / WebSockets | [Durable Objects](/cloudflare/compute/durable-objects) — see [Accept WebSockets](/cloudflare/compute/hibernatable-websockets) |
+| Full-stack app | [Worker](/cloudflare/compute/workers) + a React SPA — see [Add a React SPA](/cloudflare/frontend/vite-spa) or [Frontend frameworks](/cloudflare/frontend/frontends) |
+| Background jobs | [Queues](/cloudflare/messaging/queues) |
+| Postgres-backed API | [Hyperdrive](/cloudflare/data/hyperdrive) + [Drizzle](/cloudflare/data/drizzle) |
+| Durable multi-step jobs | [Workflows](/cloudflare/compute/workflows) |
+| AI apps | [AI Gateway](/cloudflare/ai/ai-gateway), [Effect AI](/cloudflare/ai/effect-ai), [AI Search](/cloudflare/ai/ai-search) |
+| App on your own domain | [Domains & DNS](/cloudflare/networking/domains) — see [Custom domains & routes](/cloudflare/networking/custom-domains) |
+| Production observability | [Ship Worker telemetry to Axiom](/cloudflare/observability/axiom-observability) |
+
+For frontends, alchemy is Workers-first: Pages resources exist, but
+static assets served from a [Worker](/cloudflare/compute/workers) is the
+recommended path.
+
+## Where next
+
+- [Setup](/cloudflare/setup) — install alchemy and connect your
+  Cloudflare account.
+- [Tutorial](/cloudflare/tutorial/part-1) — from empty directory to a
+  deployed Worker with tests, stages, and CI.
+- [Custom domains & routes](/cloudflare/networking/custom-domains) — put
+  your Worker on a domain you own.
+- [Ship Worker telemetry to Axiom](/cloudflare/observability/axiom-observability) —
+  datasets, ingest tokens, and monitors in the same Stack as the Worker.
+- [API reference](/providers) — every Cloudflare resource and binding.
+
+## Everything else
+
+The blocks above are what most apps are built from, but coverage goes
+much further: the zero-trust and zone-security long tail — roughly 60
+more services, produced by the resource factory — ships as
+reference-only documentation in the [API reference](/providers).

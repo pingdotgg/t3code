@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -201,16 +201,42 @@ export const SHOWCASE_THREADS = [
     response:
       "The plan groups milestones without changing the underlying log stream, preserves plain-text output, and adds zero work to the hot path.",
   },
+  // Finished work, settled by hand: the list keeps it as a receded tail so
+  // the active block above reads as everything still in flight. The active
+  // block stays small enough that the settled tail begins above the fold —
+  // a store screenshot has to show that history exists, not just imply it.
   {
-    id: "scheduler-breathe",
-    projectId: "linux",
-    title: "Let the scheduler breathe",
-    branch: "perf/scheduler-breathe",
-    minutesAgo: 76,
-    request:
-      "Find a calmer balancing strategy for bursty mixed workloads without hurting tail latency.",
+    id: "handoff-haptics",
+    projectId: "t3code",
+    title: "Tune the handoff haptics",
+    branch: "feat/handoff-haptics",
+    minutesAgo: 5 * 60,
+    settled: true,
+    request: "Give the desktop-to-phone handoff a haptic that lands with the animation.",
     response:
-      "The new heuristic reduces needless migrations during short bursts while preserving the existing latency guardrails.",
+      "The handoff now taps once as the thread lands and stays silent on failure, so the phone never celebrates a handoff that did not happen.",
+  },
+  {
+    id: "streaming-shell",
+    projectId: "react",
+    title: "Stream the shell before the data",
+    branch: "feat/streaming-shell",
+    minutesAgo: 28 * 60,
+    settled: true,
+    request: "Get the app shell painted before any data request resolves.",
+    response:
+      "The shell now flushes on first byte and the data boundaries hydrate underneath it, so the first paint no longer waits on the slowest query.",
+  },
+  {
+    id: "quieter-oom",
+    projectId: "linux",
+    title: "Make the OOM killer explain itself",
+    branch: "feat/quieter-oom",
+    minutesAgo: 2 * 24 * 60,
+    settled: true,
+    request: "Make out-of-memory kills legible without adding a single allocation to the hot path.",
+    response:
+      "Kills now report the winning heuristic and the runner-up alongside the usual dump, assembled entirely from data the path already had.",
   },
 ] as const;
 
@@ -300,6 +326,7 @@ function insertThread(
     readonly branch: string;
     readonly minutesAgo: number;
     readonly state?: "working" | "approval" | "plan";
+    readonly settled?: boolean;
     readonly workspaceRoot: string;
   },
 ): void {
@@ -312,8 +339,8 @@ function insertThread(
         thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
         branch, worktree_path, latest_turn_id, latest_user_message_at, pending_approval_count,
         pending_user_input_count, has_actionable_proposed_plan, created_at, updated_at,
-        archived_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL)`,
+        archived_at, deleted_at, settled_override, settled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?)`,
     )
     .run(
       input.id,
@@ -330,6 +357,8 @@ function insertThread(
       input.state === "plan" ? 1 : 0,
       minutesBefore(now, input.minutesAgo + 120),
       updatedAt,
+      input.settled ? "settled" : null,
+      input.settled ? updatedAt : null,
     );
   database
     .prepare(
@@ -358,6 +387,48 @@ function insertThread(
     .run(input.id, isWorking ? "running" : "ready", isWorking ? turnId : null, updatedAt);
 }
 
+const SEEDED_PROJECTION_TABLES = [
+  "projection_pending_approvals",
+  "projection_thread_proposed_plans",
+  "projection_thread_activities",
+  "projection_thread_messages",
+  "projection_thread_sessions",
+  "projection_turns",
+  "projection_threads",
+  "projection_projects",
+  "projection_state",
+] as const;
+
+function hasSeedableSchema(dbPath: string): boolean {
+  let database: NodeSqlite.DatabaseSync;
+  try {
+    database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+  } catch {
+    return false;
+  }
+  try {
+    const row = database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN (${SEEDED_PROJECTION_TABLES.map(() => "?").join(", ")})`,
+      )
+      .get(...SEEDED_PROJECTION_TABLES) as { count: number };
+    return row.count === SEEDED_PROJECTION_TABLES.length;
+  } catch {
+    return false;
+  } finally {
+    database.close();
+  }
+}
+
+async function waitForSeedableSchema(dbPath: string, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (hasSeedableSchema(dbPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`The environment server did not migrate ${dbPath} within ${timeoutMs}ms.`);
+}
+
 function seedDatabase(
   dbPath: string,
   workspaceRoots: ReadonlyMap<string, string>,
@@ -365,20 +436,14 @@ function seedDatabase(
   threads: ReadonlyArray<(typeof SHOWCASE_THREADS)[number]>,
   now: number,
 ): void {
-  const database = new NodeSqlite.DatabaseSync(dbPath);
+  // The environment server is already running against this file and keeps
+  // writing (migrations, projections) while we seed, so the write lock is
+  // genuinely contended — without a busy timeout `BEGIN IMMEDIATE` fails
+  // instantly with SQLITE_BUSY on a loaded machine.
+  const database = new NodeSqlite.DatabaseSync(dbPath, { timeout: 30_000 });
   try {
     database.exec("BEGIN IMMEDIATE");
-    for (const table of [
-      "projection_pending_approvals",
-      "projection_thread_proposed_plans",
-      "projection_thread_activities",
-      "projection_thread_messages",
-      "projection_thread_sessions",
-      "projection_turns",
-      "projection_threads",
-      "projection_projects",
-      "projection_state",
-    ]) {
+    for (const table of SEEDED_PROJECTION_TABLES) {
       database.exec(`DELETE FROM ${table}`);
     }
     const insertProject = database.prepare(
@@ -506,7 +571,14 @@ function seedDatabase(
     }
     database.exec("COMMIT");
   } catch (error) {
-    database.exec("ROLLBACK");
+    // A failed BEGIN (or an error SQLite already auto-rolled back) leaves no
+    // transaction, and the rollback's own "cannot rollback" error would then
+    // replace the one that actually explains the failure.
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      // Nothing to roll back.
+    }
     throw error;
   } finally {
     database.close();
@@ -554,6 +626,9 @@ export async function seedShowcaseEnvironment(input: {
         });
       }),
   );
+  // The environment server begins listening before it finishes migrating the
+  // database, so wait for the schema before deleting from and reseeding it.
+  await waitForSeedableSchema(dbPath);
   seedDatabase(dbPath, workspaceRoots, projects, threads, now);
 
   const terminalDirectory = NodePath.join(input.baseDir, "userdata", "logs", "terminals");

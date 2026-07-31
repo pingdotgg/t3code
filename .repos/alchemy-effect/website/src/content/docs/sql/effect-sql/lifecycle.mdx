@@ -1,0 +1,101 @@
+---
+title: Connection lifecycle
+description: SQL clients build lazily on first query, memoize per execution, and tear down when the event settles — why, and what that means on workerd and Lambda.
+---
+
+Every alchemy SQL client — `SQL.Postgres`, `SQL.D1`,
+`Drizzle.Postgres`, `Drizzle.D1` — follows one lifecycle contract.
+This page is the canonical statement of that contract; the runtime
+pages link here.
+
+## Init runs once, events run many times
+
+A Worker's init closure runs once per isolate, then serves many
+events. A Lambda instance initializes once, then handles many
+invocations. Resolving a client at init is therefore an
+isolate-lifetime decision — and disposable resources must not live
+that long, because the instance scope may never close:
+
+```typescript
+Effect.gen(function* () {
+  const sql = yield* SQL.Postgres({ url });
+  // ✓ resolves a *recipe* at init — no connection yet
+
+  return {
+    fetch: Effect.gen(function* () {
+      const users = yield* sql`SELECT * FROM users`;
+      // ✓ the pool is created here, on the first query of the event
+    }),
+  };
+});
+```
+
+`yield* SQL.Postgres(...)` at init does not connect. It returns a
+chainable proxy over a memoized build — a recipe for a client, not a
+client.
+
+## One client per execution
+
+The first query of an execution — a `fetch`/`queue`/`scheduled`
+event, a Durable Object call, a Workflow run, a Lambda invocation —
+builds the real client and memoizes it on that execution's scope.
+Every later query in the same execution reuses it. When the event
+settles, the scope closes and the client's finalizer runs: the pool
+ends, the statement cache drops.
+
+Deploy and plan evaluate the same init code, and because nothing
+connects until a query runs inside an event, they never open a
+connection.
+
+## Why not a global pool
+
+On workerd, sockets and other I/O objects are pinned to the request
+that created them (the `IoContext`). A pool created during one
+request and reused by the next is a runtime error — so a
+per-execution pool is the only correct shape, and the per-execution
+memo makes it cost one build per event instead of one per query.
+Cross-request pooling is Hyperdrive's job: it holds the warm
+connections at the edge, and the Worker opens a cheap local
+connection to it each event. See
+[Hyperdrive](/cloudflare/data/hyperdrive).
+
+D1 is a native binding rather than a socket, but its client carries a
+prepared-statement cache with the same per-request constraint — same
+contract, same memo.
+
+## Narrowing with Effect.scoped
+
+The memo keys on the current scope, so wrapping queries in a nested
+`Effect.scoped` narrows both the memo and the client's lifetime to
+that block:
+
+```typescript
+fetch: Effect.gen(function* () {
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      yield* sql`...`; // client built here…
+    }),
+  ); // …and released here, before the response
+}),
+```
+
+Memo key and finalizer target are always the same scope object, so
+they cannot disagree.
+
+## Lambda and servers
+
+The contract is identical off Cloudflare: each Lambda invocation and
+each server request gets a fresh execution scope, clients build on
+first query and release on settle.
+[Functions & Servers](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+covers the instance-scope rules — what init may do, when instance
+finalizers run, and the Lambda SIGTERM window.
+
+## Where next
+
+- [Postgres](/sql/effect-sql/postgres) / [D1](/sql/effect-sql/d1) —
+  the clients this contract governs.
+- [Workers: isolate scope vs request scope](/cloudflare/compute/workers#isolate-scope-vs-request-scope)
+  — the same rules from the Worker's point of view.
+- [Functions & Servers](/infrastructure-as-effects/functions-and-servers)
+  — the cross-cloud runtime model.

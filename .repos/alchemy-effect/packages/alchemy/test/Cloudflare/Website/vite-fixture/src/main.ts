@@ -3,7 +3,7 @@
 // reference so Vite emits a real client bundle.
 //
 // `import.meta.env.VITE_TEST_MARKER` is referenced here so the
-// "Vite: env props" test can verify `Cloudflare.Vite({ env })` actually
+// "Vite: env props" test can verify `Cloudflare.Website.Vite({ env })` actually
 // reaches the client bundle. Vite inlines the value via the `define`
 // hook at build time; the integration test fetches the deployed JS
 // asset and asserts the value is present.

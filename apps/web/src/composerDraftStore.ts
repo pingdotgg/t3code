@@ -495,6 +495,13 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Clears only the prompt text and image attachments, preserving terminal /
+   * element contexts, preview annotations, and review comments. Used by the
+   * prompt stash, which can only round-trip text + images: clearing the
+   * session-bound contexts would destroy state nothing can restore.
+   */
+  clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -1333,6 +1340,10 @@ function createDraftThreadState(
     interactionMode?: ProviderInteractionMode;
   },
 ): DraftThreadState {
+  // A project change (including switching environments within a logical
+  // project) invalidates machine-specific context: the branch may not exist
+  // there and the worktree path certainly doesn't. The user's *intent* —
+  // env mode and start-from-origin — is machine-independent and carries.
   const projectChanged =
     existingThread !== undefined &&
     (existingThread.environmentId !== projectRef.environmentId ||
@@ -1351,9 +1362,7 @@ function createDraftThreadState(
       : (options.branch ?? null);
   const nextStartFromOrigin =
     options?.startFromOrigin === undefined
-      ? projectChanged
-        ? false
-        : (existingThread?.startFromOrigin ?? false)
+      ? (existingThread?.startFromOrigin ?? false)
       : options.startFromOrigin;
   return {
     threadId,
@@ -1367,12 +1376,7 @@ function createDraftThreadState(
     branch: nextBranch,
     worktreePath: nextWorktreePath,
     envMode:
-      options?.envMode ??
-      (nextWorktreePath
-        ? "worktree"
-        : projectChanged
-          ? "local"
-          : (existingThread?.envMode ?? "local")),
+      options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
     promotedTo: null,
   };
@@ -2091,7 +2095,7 @@ function hydratePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
@@ -2336,6 +2340,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             ) {
               return state;
             }
+            // Mirrors createDraftThreadState: a project/environment change
+            // drops machine-specific context (branch, worktree path) but
+            // keeps the user's env mode and start-from-origin intent.
             const projectChanged =
               nextProjectRef.environmentId !== existing.environmentId ||
               nextProjectRef.projectId !== existing.projectId;
@@ -2353,9 +2360,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : (options.branch ?? null);
             const nextStartFromOrigin =
               options.startFromOrigin === undefined
-                ? projectChanged
-                  ? false
-                  : existing.startFromOrigin
+                ? existing.startFromOrigin
                 : options.startFromOrigin;
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
@@ -2371,12 +2376,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               branch: nextBranch,
               worktreePath: nextWorktreePath,
               envMode:
-                options.envMode ??
-                (nextWorktreePath
-                  ? "worktree"
-                  : projectChanged
-                    ? "local"
-                    : (existing.envMode ?? "local")),
+                options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
               promotedTo: existing.promotedTo ?? null,
             };
@@ -3337,6 +3337,35 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               elementContexts: [],
               previewAnnotations: [],
               reviewComments: [],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearComposerPromptAndImages: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            for (const image of current.images) {
+              revokeObjectPreviewUrl(image.previewUrl);
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              prompt: ensureInlineTerminalContextPlaceholders("", current.terminalContexts.length),
+              images: [],
+              nonPersistedImageIds: [],
+              persistedAttachments: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

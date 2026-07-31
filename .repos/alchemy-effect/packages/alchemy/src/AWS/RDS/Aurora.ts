@@ -1,6 +1,8 @@
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type { Input } from "../../Input.ts";
+import { toWireSeconds } from "../../Util/Duration.ts";
 import * as Namespace from "../../Namespace.ts";
 import type { SecurityGroupId } from "../EC2/SecurityGroup.ts";
 import type { SubnetId } from "../EC2/Subnet.ts";
@@ -192,6 +194,85 @@ export interface AuroraProps {
    */
   dataApi?: boolean;
   /**
+   * Backup retention period (e.g. `"7 days"`), forwarded to the cluster.
+   */
+  backupRetentionPeriod?: Duration.Input;
+  /**
+   * Daily backup window (`hh:mm-hh:mm` UTC), forwarded to the cluster.
+   */
+  preferredBackupWindow?: string;
+  /**
+   * Weekly maintenance window, forwarded to the cluster.
+   */
+  preferredMaintenanceWindow?: string;
+  /**
+   * Encrypt cluster storage. Forwarded to the cluster.
+   */
+  storageEncrypted?: boolean;
+  /**
+   * KMS key for storage encryption. Forwarded to the cluster.
+   */
+  kmsKeyId?: string;
+  /**
+   * Enable IAM database authentication. Forwarded to the cluster.
+   */
+  enableIAMDatabaseAuthentication?: boolean;
+  /**
+   * Log types to export to CloudWatch Logs. Forwarded to the cluster.
+   */
+  enableCloudwatchLogsExports?: string[];
+  /**
+   * Block accidental deletion. Forwarded to the cluster and instances.
+   * @default false
+   */
+  deletionProtection?: boolean;
+  /**
+   * CA certificate identifier. Forwarded to the cluster.
+   */
+  caCertificateIdentifier?: string;
+  /**
+   * Listener port. Forwarded to the cluster.
+   */
+  port?: number;
+  /**
+   * Aurora MySQL backtrack window (e.g. `"1 hour"`). Forwarded to the
+   * cluster.
+   */
+  backtrackWindow?: Duration.Input;
+  /**
+   * Enhanced-monitoring + Performance Insights settings. Forwarded to the
+   * cluster (and the enhanced-monitoring role to the instances).
+   */
+  monitoring?: {
+    /**
+     * Enhanced-monitoring granularity (e.g. `"60 seconds"`). Sent to the
+     * API in whole seconds (valid: 0, 1, 5, 10, 15, 30, 60).
+     */
+    interval?: Duration.Input;
+    /**
+     * Existing IAM role ARN for enhanced monitoring. When omitted and
+     * `interval > 0`, Aurora creates one automatically.
+     */
+    roleArn?: Input<string>;
+    /**
+     * Enable Performance Insights on the cluster.
+     */
+    performanceInsights?: boolean;
+  };
+  /**
+   * Serverless v2 min/max ACUs. Shorthand for
+   * `serverlessV2ScalingConfiguration`.
+   */
+  scaling?: {
+    minCapacity?: number;
+    maxCapacity?: number;
+  };
+  /**
+   * Provisioned (non-serverless) instance class for the writer/readers, e.g.
+   * `db.r6g.large`. Defaults to `db.serverless`.
+   */
+  instanceClass?: string;
+  /**
    * Opt in to an auto-wired RDS Proxy.
    */
   proxy?: boolean | AuroraProxyProps;
@@ -242,7 +323,8 @@ const inferProxyEngineFamily = (engine: string) => {
  *
  * The return value intentionally exposes the underlying `DB*` resources so
  * users can expand into the lower-level surface without rewriting the stack.
- *
+ * @resource
+ * @section Creating a Database
  * @example Start a Small Aurora Cluster
  * ```typescript
  * const db = yield* AWS.RDS.Aurora("AppDb", {
@@ -251,6 +333,7 @@ const inferProxyEngineFamily = (engine: string) => {
  * });
  * ```
  *
+ * @section Scaling Out
  * @example Add Readers and a Proxy
  * ```typescript
  * const db = yield* AWS.RDS.Aurora("AppDb", {
@@ -259,6 +342,18 @@ const inferProxyEngineFamily = (engine: string) => {
  *   readers: 2,
  *   proxy: true,
  * });
+ * ```
+ *
+ * @section Querying from a Function
+ * @example Query over the Data API
+ * ```typescript
+ * // the Data API is enabled by default (dataApi: true) — bind
+ * // AWS.RDSData.ExecuteStatement to query without a VPC socket
+ * const executeStatement = yield* AWS.RDSData.ExecuteStatement(db.cluster, {
+ *   secret: db.secret,
+ *   database: "app",
+ * });
+ * const result = yield* executeStatement({ sql: "SELECT 1" });
  * ```
  */
 export const Aurora = (id: string, props: AuroraProps) =>
@@ -324,6 +419,33 @@ export const Aurora = (id: string, props: AuroraProps) =>
           })
         : undefined;
 
+      // Enhanced-monitoring role: reuse an explicit ARN, otherwise auto-create
+      // one when a non-zero interval is requested.
+      const monitoringInterval = props.monitoring?.interval;
+      const monitoringRole =
+        monitoringInterval !== undefined &&
+        (toWireSeconds(monitoringInterval) ?? 0) > 0 &&
+        !props.monitoring?.roleArn
+          ? yield* IAM.Role("MonitoringRole", {
+              assumeRolePolicyDocument: {
+                Version: "2012-10-17",
+                Statement: [
+                  {
+                    Effect: "Allow",
+                    Principal: { Service: "monitoring.rds.amazonaws.com" },
+                    Action: ["sts:AssumeRole"],
+                    Resource: ["*"],
+                  },
+                ],
+              },
+              managedPolicyArns: [
+                "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole",
+              ],
+              tags: mergeTags(commonTags, undefined),
+            })
+          : undefined;
+      const monitoringRoleArn = props.monitoring?.roleArn ?? monitoringRole?.roleArn; // prettier-ignore
+
       const cluster = yield* DBCluster("Cluster", {
         engine,
         engineVersion,
@@ -334,30 +456,82 @@ export const Aurora = (id: string, props: AuroraProps) =>
         vpcSecurityGroupIds: securityGroupIds,
         enableHttpEndpoint: props.dataApi ?? true,
         copyTagsToSnapshot: props.cluster?.copyTagsToSnapshot ?? true,
-        deletionProtection: props.cluster?.deletionProtection ?? false,
-        serverlessV2ScalingConfiguration: props.cluster
-          ?.serverlessV2ScalingConfiguration ?? {
-          MinCapacity: 0.5,
-          MaxCapacity: 1,
-        },
+        deletionProtection:
+          props.cluster?.deletionProtection ??
+          props.deletionProtection ??
+          false,
+        backupRetentionPeriod:
+          props.cluster?.backupRetentionPeriod ?? props.backupRetentionPeriod,
+        preferredBackupWindow:
+          props.cluster?.preferredBackupWindow ?? props.preferredBackupWindow,
+        preferredMaintenanceWindow:
+          props.cluster?.preferredMaintenanceWindow ??
+          props.preferredMaintenanceWindow,
+        storageEncrypted:
+          props.cluster?.storageEncrypted ?? props.storageEncrypted,
+        kmsKeyId: props.cluster?.kmsKeyId ?? props.kmsKeyId,
+        enableIAMDatabaseAuthentication:
+          props.cluster?.enableIAMDatabaseAuthentication ??
+          props.enableIAMDatabaseAuthentication,
+        enableCloudwatchLogsExports:
+          props.cluster?.enableCloudwatchLogsExports ??
+          props.enableCloudwatchLogsExports,
+        caCertificateIdentifier:
+          props.cluster?.caCertificateIdentifier ??
+          props.caCertificateIdentifier,
+        port: props.cluster?.port ?? props.port,
+        backtrackWindow:
+          props.cluster?.backtrackWindow ?? props.backtrackWindow,
+        monitoringInterval:
+          props.cluster?.monitoringInterval ?? monitoringInterval,
+        monitoringRoleArn:
+          props.cluster?.monitoringRoleArn ?? monitoringRoleArn,
+        enablePerformanceInsights:
+          props.cluster?.enablePerformanceInsights ??
+          props.monitoring?.performanceInsights,
+        serverlessV2ScalingConfiguration:
+          props.cluster?.serverlessV2ScalingConfiguration ??
+          (props.scaling
+            ? {
+                MinCapacity: props.scaling.minCapacity ?? 0.5,
+                MaxCapacity: props.scaling.maxCapacity ?? 1,
+              }
+            : {
+                MinCapacity: 0.5,
+                MaxCapacity: 1,
+              }),
         masterUserSecretArn: secret.secretArn,
         tags: mergeTags(commonTags, props.cluster?.tags),
         ...props.cluster,
       });
 
+      const defaultInstanceClass =
+        props.instance?.dbInstanceClass ??
+        props.instanceClass ??
+        "db.serverless";
+
       const writer = yield* DBInstance("Writer", {
         dbClusterIdentifier: cluster.dbClusterIdentifier,
-        dbInstanceClass: props.instance?.dbInstanceClass ?? "db.serverless",
+        dbInstanceClass: defaultInstanceClass,
         engine,
         engineVersion,
         dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
         dbParameterGroupName: parameterGroup?.dbParameterGroupName,
-        vpcSecurityGroupIds: securityGroupIds,
+        // No vpcSecurityGroupIds: cluster members inherit security groups from
+        // the DB cluster. Passing them here fails with "The requested DB
+        // Instance will be a member of a DB Cluster. Set vpc security group
+        // for the DB Cluster."
         publiclyAccessible: props.instance?.publiclyAccessible ?? false,
         promotionTier: props.instance?.promotionTier ?? 0,
         autoMinorVersionUpgrade:
           props.instance?.autoMinorVersionUpgrade ?? true,
         copyTagsToSnapshot: props.instance?.copyTagsToSnapshot ?? true,
+        monitoringInterval: props.instance?.monitoringInterval ?? monitoringInterval, // prettier-ignore
+        monitoringRoleArn:
+          props.instance?.monitoringRoleArn ?? monitoringRoleArn,
+        enablePerformanceInsights:
+          props.instance?.enablePerformanceInsights ??
+          props.monitoring?.performanceInsights,
         tags: mergeTags(commonTags, props.instance?.tags),
         ...props.instance,
       });
@@ -366,17 +540,24 @@ export const Aurora = (id: string, props: AuroraProps) =>
         Array.from({ length: props.readers ?? 0 }, (_, index) =>
           DBInstance(`Reader${index + 1}`, {
             dbClusterIdentifier: cluster.dbClusterIdentifier,
-            dbInstanceClass: props.instance?.dbInstanceClass ?? "db.serverless",
+            dbInstanceClass: defaultInstanceClass,
             engine,
             engineVersion,
             dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
             dbParameterGroupName: parameterGroup?.dbParameterGroupName,
-            vpcSecurityGroupIds: securityGroupIds,
+            // No vpcSecurityGroupIds: security groups belong on the DB
+            // cluster, not its member instances (see Writer above).
             publiclyAccessible: props.instance?.publiclyAccessible ?? false,
             promotionTier: index + 1,
             autoMinorVersionUpgrade:
               props.instance?.autoMinorVersionUpgrade ?? true,
             copyTagsToSnapshot: props.instance?.copyTagsToSnapshot ?? true,
+            monitoringInterval: props.instance?.monitoringInterval ?? monitoringInterval, // prettier-ignore
+            monitoringRoleArn:
+              props.instance?.monitoringRoleArn ?? monitoringRoleArn,
+            enablePerformanceInsights:
+              props.instance?.enablePerformanceInsights ??
+              props.monitoring?.performanceInsights,
             tags: mergeTags(commonTags, props.instance?.tags),
             ...props.instance,
           }),

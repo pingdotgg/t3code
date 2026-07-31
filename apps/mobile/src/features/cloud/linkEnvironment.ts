@@ -134,7 +134,14 @@ function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
     case "RelayEnvironmentLinkProofInvalidError":
       return `Relay rejected the environment link proof (${error.reason}).`;
     case "RelayEnvironmentConnectNotAuthorizedError":
-      return "Relay rejected the environment connection request.";
+      // "Not authorized" covers non-auth causes too; surface the reason so a
+      // missing link doesn't read as a credential problem.
+      if (error.reason === "environment_link_not_found") {
+        return "Relay has no active link for this environment. The environment server may not have re-established its link yet.";
+      }
+      return error.reason
+        ? `Relay rejected the environment connection request (${error.reason}).`
+        : "Relay rejected the environment connection request.";
     case "RelayEnvironmentEndpointUnavailableError":
       return `Relay could not reach the environment endpoint (${error.reason}).`;
     case "RelayEnvironmentEndpointTimedOutError":
@@ -143,6 +150,8 @@ function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
       return `Relay could not link the environment (${error.reason}).`;
     case "RelayEnvironmentLinkUnavailableError":
       return `Relay cannot provision the managed endpoint (${error.reason}).`;
+    case "RelayEnvironmentLinkLimitExceededError":
+      return `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
     case "RelayAgentActivityPublishProofExpiredError":
       return "Relay rejected an expired agent activity publish proof.";
     case "RelayAgentActivityPublishProofInvalidError":

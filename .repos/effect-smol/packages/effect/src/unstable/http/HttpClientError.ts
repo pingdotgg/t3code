@@ -7,26 +7,6 @@
  * failures uniformly while still matching on the reason `_tag` for retry
  * policy, logging, metrics, and user-facing messages.
  *
- * **Mental model**
- *
- * A client error reason belongs to one of two families. Request errors happen
- * before a response exists: `TransportError`, `EncodeError`, and
- * `InvalidUrlError`. Response errors include the response that triggered them:
- * `StatusCodeError`, `DecodeError`, and `EmptyBodyError`.
- *
- * **Common tasks**
- *
- * - Use `isHttpClientError` at untyped boundaries.
- * - Read `request` for the method and URL associated with any client failure.
- * - Match on `reason._tag` when different failures need different recovery.
- * - Read `response` only for response errors or after checking that it exists.
- *
- * **Gotchas**
- *
- * `response` is `undefined` for transport, encoding, and invalid URL failures.
- * Preserve the original `cause` when constructing reason classes so lower-level
- * platform or decoding details are not lost.
- *
  * @since 4.0.0
  */
 import * as Data from "../../Data.ts"
@@ -331,7 +311,7 @@ export class HttpClientErrorSchema extends Schema.ErrorClass<HttpClientErrorSche
       "EmptyBodyError"
     ] satisfies ReadonlyArray<HttpClientErrorReason["_tag"]>
   ),
-  cause: Schema.optional(Schema.Defect)
+  cause: Schema.optional(Schema.Defect())
 }) {
   /**
    * Builds the serializable schema representation for an HTTP client error.

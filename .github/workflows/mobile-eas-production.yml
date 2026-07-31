@@ -57,6 +57,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # No sparse-checkout here: it makes actions/checkout fetch with
+          # --filter=blob:none, and eas-cli archives the project via
+          # `git clone --depth 1 file://<workspace>`, which fails (exit 128)
+          # when the partial clone can't serve the unfetched blobs.
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
@@ -64,7 +68,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
 
       - name: Expose pnpm
         if: steps.expo-token.outputs.present == 'true'

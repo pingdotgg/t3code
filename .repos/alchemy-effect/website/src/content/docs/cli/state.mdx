@@ -1,0 +1,115 @@
+---
+title: state
+description: Inspect and manage the state store — list stacks, stages, and resources, print persisted state, and clear entries.
+---
+
+```sh
+alchemy state <subcommand> [file] [options]
+```
+
+Inspect and manage the state store — the record of which resources
+alchemy thinks exist for each stack/stage. Reads from whatever state
+layer the stack file configures (e.g. `Cloudflare.state(...)`), or
+from the on-disk `.alchemy/state` directory with `--local`. See
+[State Store](/state-store).
+
+The stack file is imported only to resolve its configured state layer
+— pass it via the standard `[file]` positional (defaults to
+`alchemy.run.ts`). There is no deploy-style `--stage` here: state
+commands address what they inspect explicitly, so `--stack`,
+`--stage`, and `--fqn` are addressing flags that appear only on the
+subcommands that need them.
+
+All six subcommands share these options:
+
+| Option              | Description                                                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--local`           | Read from local `.alchemy/state` instead of the stack's configured state store — e.g. to inspect orphaned local state after a partially-failed bootstrap |
+| `--profile <name>`  | Auth profile to use (defaults to `default` or `$ALCHEMY_PROFILE`)                                                                              |
+| `--env-file <path>` | Load environment variables from a file                                                                                                         |
+
+## `state stacks`
+
+```sh
+alchemy state stacks [file] [options]
+```
+
+List every stack name present in the state store.
+
+## `state stages`
+
+```sh
+alchemy state stages --stack <stack> [file] [options]
+```
+
+List every stage that has state recorded under `--stack`.
+
+## `state resources`
+
+```sh
+alchemy state resources --stack <stack> --stage <stage> [file] [options]
+```
+
+List the fully-qualified resource names (FQNs) tracked under a given
+stack/stage.
+
+## `state get`
+
+```sh
+alchemy state get --stack <stack> --stage <stage> --fqn <fqn>
+```
+
+Print a single resource's persisted state as JSON. Output uses the
+same encoding the store persists: redacted secrets are unwrapped into
+`{ __redacted__: ... }` and Resources are flattened. If no entry
+exists, it prints `(not found: <stack>/<stage>/<fqn>)`.
+
+```sh
+# get the FQN from `state resources`, then:
+alchemy state get --stack MyApp --stage prod --fqn Bucket
+```
+
+## `state tree`
+
+```sh
+alchemy state tree [file] [options]
+```
+
+Render the entire state store as a tree of stacks → stages →
+resources. See [Inspecting State](/cli/inspecting-state) for a worked
+example.
+
+## `state clear`
+
+```sh
+alchemy state clear [--stack <stack>] [--stage <stage>] [file] [options]
+```
+
+Delete state entries from the store.
+
+- Omit `--stack` to clear **all stacks** in the store.
+- Pass `--stack` to clear every stage under that stack.
+- Pass `--stack` and `--stage` to clear a single stage.
+- `--stage` without `--stack` is an error.
+
+A confirmation prompt lists the exact scope before anything is
+deleted.
+
+| Option  | Description                  |
+| ------- | ---------------------------- |
+| `--yes` | Skip the confirmation prompt |
+
+:::caution
+**Destructive but local-only** — the actual cloud resources are not
+touched, only alchemy's record of them. A subsequent `deploy`
+re-imports owned resources automatically; see
+[Inspecting State](/cli/inspecting-state) for the recovery workflow
+and [Adopting Resources](/cli/adopting-resources) for when `--adopt`
+is needed.
+:::
+
+## Where next
+
+- [Inspecting State](/cli/inspecting-state) — debugging and recovery workflows
+- [Adopting Resources](/cli/adopting-resources) — how deploy reclaims existing infrastructure
+- [State Store](/state-store) — where resource state lives

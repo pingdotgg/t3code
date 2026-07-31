@@ -74,6 +74,10 @@ export interface WebsiteInvalidationProps {
   paths?: "all" | "versioned" | string[];
 }
 
+/**
+ * Character encoding appended as `charset` to inferred text-based content
+ * types (`none` omits the charset entirely).
+ */
 export type WebsiteTextEncoding =
   | "utf-8"
   | "iso-8859-1"
@@ -196,6 +200,10 @@ export interface RouterBucketRouteProps {
   version?: Input<string>;
 }
 
+/**
+ * An inline route target: a destination URL string, a URL route with rewrite
+ * options, or an S3 bucket route.
+ */
 export type RouterRoute = string | RouterUrlRouteProps | RouterBucketRouteProps;
 
 export interface RouterProps {
@@ -224,12 +232,31 @@ export interface RouterProps {
   tags?: Record<string, string>;
 }
 
+/**
+ * The bucket route a `StaticSite` exposes for explicit `Router` composition.
+ */
 export type StaticSiteRouteTarget = RouterBucketRouteProps;
 
+/**
+ * Route targets returned by `SsrSite` for composition with
+ * `AWS.Website.Router` (used with `cdn: false`).
+ */
 export interface SsrSiteRouteTargets {
+  /**
+   * URL route pointing at the dynamic server origin.
+   */
   server: RouterUrlRouteProps;
+  /**
+   * Optional bucket route for the static asset origin.
+   */
   assets?: {
+    /**
+     * Path pattern the assets should be served under (e.g. `/_assets/*`).
+     */
     pattern: string;
+    /**
+     * S3 bucket route for the assets, including the OAC and version token.
+     */
     route: RouterBucketRouteProps;
   };
 }

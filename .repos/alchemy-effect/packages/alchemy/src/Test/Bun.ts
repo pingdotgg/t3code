@@ -1,3 +1,5 @@
+/** @effect-diagnostics anyUnknownInErrorContext:off */
+
 import bun from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -8,6 +10,17 @@ import type { AlchemyContext } from "../AlchemyContext.ts";
 import type { CompiledStack } from "../Stack.ts";
 import type { Stage } from "../Stage.ts";
 import * as Core from "./Core.ts";
+
+export {
+  executeWhenReady,
+  getWhenReady,
+  guardContentType,
+  guardedFetchLayer,
+  rpcClientLayer,
+  WorkerNotReady,
+  type EdgeGuardOptions,
+  type WhenReadyOptions,
+} from "./Http.ts";
 
 export type MakeOptions<ROut = any> = Core.MakeOptions<ROut>;
 export type ScratchStack = Core.ScratchStack;
