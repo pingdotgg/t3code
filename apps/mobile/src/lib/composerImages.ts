@@ -65,14 +65,6 @@ export async function pickComposerImages(input: { readonly existingCount: number
     };
   }
 
-  const permission = await imagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) {
-    return {
-      images: [],
-      error: "Allow photo library access to attach images.",
-    };
-  }
-
   const result = await imagePicker.launchImageLibraryAsync({
     mediaTypes: ["images"],
     allowsMultipleSelection: true,

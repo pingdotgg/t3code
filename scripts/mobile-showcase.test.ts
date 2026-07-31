@@ -216,17 +216,18 @@ it("configures every default device with an exact upload-ready store target", ()
   assert.deepStrictEqual(
     showcaseConfig.devices.map((device) => [
       device.id,
+      device.platform === "ios" ? (device.orientation ?? "portrait") : null,
       device.storeAsset.directory,
       device.storeAsset.width,
       device.storeAsset.height,
     ]),
     [
-      ["iphone-6.9", "apple/iphone-6.9", 1320, 2868],
-      ["iphone-6.5", "apple/iphone-6.5", 1284, 2778],
-      ["ipad-13", "apple/ipad-13", 2064, 2752],
-      ["pixel", "google-play/phone", 1080, 1920],
-      ["android-tablet-7", "google-play/tablet-7", 1080, 1920],
-      ["android-tablet-10", "google-play/tablet-10", 1440, 2560],
+      ["iphone-6.9", "portrait", "apple/iphone-6.9", 1320, 2868],
+      ["iphone-6.5", "portrait", "apple/iphone-6.5", 1284, 2778],
+      ["ipad-13", "landscape", "apple/ipad-13", 2752, 2064],
+      ["pixel", null, "google-play/phone", 1080, 1920],
+      ["android-tablet-7", null, "google-play/tablet-7", 1080, 1920],
+      ["android-tablet-10", null, "google-play/tablet-10", 1440, 2560],
     ],
   );
 });
@@ -244,22 +245,19 @@ it("selects a reachable LAN IPv4 address", () => {
 });
 
 it("maps capture scenes to the real application routes", () => {
-  assert.equal(showcaseSceneUrl("threads", "environment-1"), "t3code-dev://");
-  assert.equal(
-    showcaseSceneUrl("environments", "environment-1"),
-    "t3code-dev://settings/environments",
-  );
+  assert.equal(showcaseSceneUrl("threads", "environment-1"), "t3code://");
+  assert.equal(showcaseSceneUrl("environments", "environment-1"), "t3code://settings/environments");
   assert.equal(
     showcaseSceneUrl("thread", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center",
+    "t3code://threads/environment-1/remote-command-center",
   );
   assert.equal(
     showcaseSceneUrl("terminal", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
+    "t3code://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
   );
   assert.equal(
     showcaseSceneUrl("review", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center/review",
+    "t3code://threads/environment-1/remote-command-center/review",
   );
 });
 

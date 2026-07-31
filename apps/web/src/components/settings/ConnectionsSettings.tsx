@@ -49,6 +49,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { Input } from "../ui/input";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -1434,7 +1435,6 @@ function SavedBackendListRow({
             <div className="max-w-md">
               <ServerUpdateProgress
                 fromVersion={serverUpdateState.fromVersion}
-                serverLabel={`${environment.label} server`}
                 state={serverUpdateState}
               />
             </div>
@@ -3011,7 +3011,6 @@ export function ConnectionsSettings() {
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress
                       fromVersion={primaryServerUpdateState.fromVersion}
-                      serverLabel={primaryEnvironment?.label ?? "this server"}
                       state={primaryServerUpdateState}
                     />
                   ) : primaryVersionMismatch ? (
@@ -3353,7 +3352,7 @@ export function ConnectionsSettings() {
       )}
 
       <SettingsSection
-        title="Remote environments"
+        {...searchableSetting("remote-environments")}
         headerAction={
           <Dialog
             open={addBackendDialogOpen}
