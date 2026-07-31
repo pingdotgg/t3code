@@ -97,6 +97,9 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
     assert.include(script, "could not install 't3@latest'");
+    assert.include(script, "require_installed_t3_cli npx --yes --package 't3@latest'");
+    assert.include(script, "require_installed_t3_cli npm exec --yes --package 't3@latest'");
+    assert.include(script, "npm produced no t3 executable");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
@@ -129,6 +132,10 @@ describe("ssh tunnel scripts", () => {
 
     assert.include(script, "exec npx --yes 't3@nightly; touch /tmp/t3-owned' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@nightly; touch /tmp/t3-owned' -- \"$@\"");
+    assert.include(
+      script,
+      "require_installed_t3_cli npx --yes --package 't3@nightly; touch /tmp/t3-owned'",
+    );
     assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
 
@@ -173,6 +180,8 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
     assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
+    assert.include(buildRemoteLaunchScript(), 'if [ -s "$LOG_FILE" ]; then');
+    assert.include(buildRemoteLaunchScript(), "It wrote nothing to %s");
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
