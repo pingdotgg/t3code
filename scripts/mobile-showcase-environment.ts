@@ -144,19 +144,6 @@ export const SHOWCASE_ENVIRONMENTS = [
   },
 ] as const;
 
-type ShowcaseThreadFixture = {
-  readonly id: string;
-  readonly projectId: string;
-  readonly title: string;
-  readonly branch: string;
-  readonly minutesAgo: number;
-  readonly state?: "working" | "approval" | "plan";
-  readonly settled?: boolean;
-  readonly snoozeMinutes?: number;
-  readonly request: string;
-  readonly response: string | null;
-};
-
 export const SHOWCASE_THREADS = [
   {
     id: SHOWCASE_THREAD_ID,
@@ -263,7 +250,7 @@ export const SHOWCASE_THREADS = [
     response:
       "Kills now report the winning heuristic and the runner-up alongside the usual dump, assembled entirely from data the path already had.",
   },
-] as const satisfies ReadonlyArray<ShowcaseThreadFixture>;
+] as const;
 
 function minutesBefore(now: number, minutes: number): string {
   return new Date(now - minutes * 60_000).toISOString();
