@@ -41,6 +41,20 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+### Control When Finished Threads Settle
+
+Sidebar v2 (Thread List v2 on mobile) keeps completed work close at hand without forcing every
+thread out of your active list. Open **Settings → Beta** to control its two automatic settle
+triggers independently:
+
+- **Auto-settle inactive threads** moves threads after the configured inactivity window. On mobile,
+  this window is three days.
+- **Auto-settle merged or closed PR threads** moves threads when their pull request or merge request
+  reaches a terminal state.
+
+Turn both options off if you want threads to settle only when you do it manually. Existing installs
+keep both options on by default. Mobile stores these choices per device.
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

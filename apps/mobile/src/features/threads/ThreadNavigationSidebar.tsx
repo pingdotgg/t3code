@@ -29,7 +29,10 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
-import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
+import {
+  useThreadListV2Enabled,
+  useThreadListV2SettlementPreferences,
+} from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -207,6 +210,7 @@ function ThreadNavigationSidebarPane(
     unsettleThread,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
+  const threadListV2SettlementPreferences = useThreadListV2SettlementPreferences();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -501,6 +505,7 @@ function ThreadNavigationSidebarPane(
       changeRequestStateByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      ...threadListV2SettlementPreferences,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
@@ -521,6 +526,7 @@ function ThreadNavigationSidebarPane(
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    threadListV2SettlementPreferences,
     threadListV2Enabled,
     threads,
     selectedProjectScope,

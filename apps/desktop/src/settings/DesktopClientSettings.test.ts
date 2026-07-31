@@ -23,6 +23,7 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   providerModelPreferences: {},
   sidebarAutoSettleAfterDays: 3,
+  sidebarAutoSettleOnChangeRequestCompletion: true,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
@@ -153,6 +154,7 @@ describe("DesktopClientSettings", () => {
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
           assert.equal(persisted.value.timestampFormat, "24-hour");
+          assert.isTrue(persisted.value.sidebarAutoSettleOnChangeRequestCompletion);
         }
       }),
     ),

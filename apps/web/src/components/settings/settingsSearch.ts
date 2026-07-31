@@ -158,6 +158,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "sidebar-v2",
   },
   {
+    id: "auto-settle-merged-or-closed-pr-threads",
+    title: "Auto-settle merged or closed PR threads",
+    to: "/settings/beta",
+    targetId: "sidebar-v2",
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",

@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react";
+import {
+  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+} from "@t3tools/contracts";
 
 import {
   useClientSettings,
@@ -9,10 +14,6 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-
-const AUTO_SETTLE_MIN_DAYS = 1;
-const AUTO_SETTLE_MAX_DAYS = 90;
-const AUTO_SETTLE_DEFAULT_DAYS = 3;
 
 function AutoSettleDaysInput({
   value,
@@ -31,8 +32,8 @@ function AutoSettleDaysInput({
   return (
     <Input
       type="number"
-      min={AUTO_SETTLE_MIN_DAYS}
-      max={AUTO_SETTLE_MAX_DAYS}
+      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
       className="w-full sm:w-24"
       value={draft}
       onChange={(event) => {
@@ -43,8 +44,8 @@ function AutoSettleDaysInput({
         const parsed = Number(event.target.value);
         if (
           Number.isInteger(parsed) &&
-          parsed >= AUTO_SETTLE_MIN_DAYS &&
-          parsed <= AUTO_SETTLE_MAX_DAYS
+          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
+          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
         ) {
           onCommit(parsed);
         }
@@ -59,6 +60,9 @@ export function BetaSettingsPanel() {
   const sidebarV2Enabled = useSidebarV2Enabled();
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
+  );
+  const sidebarAutoSettleOnChangeRequestCompletion = useClientSettings(
+    (settings) => settings.sidebarAutoSettleOnChangeRequestCompletion,
   );
   const updateSettings = useUpdateClientSettings();
 
@@ -87,13 +91,15 @@ export function BetaSettingsPanel() {
           <>
             <SettingsRow
               title={searchableSetting("auto-settle-inactive-threads").title}
-              description="Threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
+              description="Threads with no activity for this long settle automatically."
               control={
                 <Switch
                   checked={sidebarAutoSettleAfterDays !== null}
                   onCheckedChange={(checked) =>
                     updateSettings({
-                      sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                      sidebarAutoSettleAfterDays: checked
+                        ? DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
+                        : null,
                     })
                   }
                   aria-label="Auto-settle inactive threads"
@@ -112,6 +118,21 @@ export function BetaSettingsPanel() {
                 }
               />
             ) : null}
+            <SettingsRow
+              title={searchableSetting("auto-settle-merged-or-closed-pr-threads").title}
+              description="Threads settle automatically when their pull request is merged or closed."
+              control={
+                <Switch
+                  checked={sidebarAutoSettleOnChangeRequestCompletion}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      sidebarAutoSettleOnChangeRequestCompletion: Boolean(checked),
+                    })
+                  }
+                  aria-label="Auto-settle merged or closed PR threads"
+                />
+              }
+            />
           </>
         ) : null}
       </SettingsSection>

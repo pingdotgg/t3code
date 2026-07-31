@@ -1,8 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { useMemo } from "react";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
-import { resolveThreadListV2Enabled } from "./threadListV2";
+import {
+  resolveThreadListV2Enabled,
+  resolveThreadListV2SettlementPreferences,
+} from "./threadListV2";
 
 /**
  * Resolved Thread List v2 state: the device-local preference if the user has
@@ -16,4 +20,25 @@ export function useThreadListV2Enabled(): boolean {
     preference: loaded ? preferencesResult.value.threadListV2Enabled : undefined,
     preferencesLoaded: loaded,
   });
+}
+
+export function useThreadListV2SettlementPreferences(): {
+  readonly autoSettleAfterDays: number | null;
+  readonly autoSettleOnChangeRequestCompletion: boolean;
+} {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value
+    : undefined;
+  const autoSettleInactive = preferences?.threadListV2AutoSettleInactive;
+  const autoSettleOnChangeRequestCompletion =
+    preferences?.threadListV2AutoSettleOnChangeRequestCompletion;
+  return useMemo(
+    () =>
+      resolveThreadListV2SettlementPreferences({
+        autoSettleInactive,
+        autoSettleOnChangeRequestCompletion,
+      }),
+    [autoSettleInactive, autoSettleOnChangeRequestCompletion],
+  );
 }

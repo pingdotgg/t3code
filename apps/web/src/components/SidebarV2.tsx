@@ -1176,6 +1176,9 @@ export default function SidebarV2() {
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettleOnChangeRequestCompletion = useClientSettings(
+    (s) => s.sidebarAutoSettleOnChangeRequestCompletion,
+  );
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -1592,7 +1595,12 @@ export default function SidebarV2() {
         snoozed.push(thread);
       } else if (
         supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+        effectiveSettled(thread, {
+          now,
+          autoSettleAfterDays,
+          autoSettleOnChangeRequestCompletion,
+          changeRequestState,
+        })
       ) {
         settled.push(thread);
       } else {
@@ -1612,6 +1620,7 @@ export default function SidebarV2() {
     };
   }, [
     autoSettleAfterDays,
+    autoSettleOnChangeRequestCompletion,
     changeRequestStateByKey,
     nowMinute,
     scopedProjectKeys,
