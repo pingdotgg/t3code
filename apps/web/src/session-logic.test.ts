@@ -961,6 +961,45 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolData).toEqual(item);
   });
 
+  it("preserves generated and viewed image paths for inline display", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "image-generation-complete",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          data: {
+            item: {
+              type: "imageGeneration",
+              savedPath: "/repo/project/generated/cat.png",
+              status: "completed",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "image-view-complete",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          data: {
+            item: {
+              type: "imageView",
+              path: "/repo/project/screenshots/app.webp",
+            },
+          },
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.imagePath)).toEqual([
+      "/repo/project/generated/cat.png",
+      "/repo/project/screenshots/app.webp",
+    ]);
+  });
+
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
       type: "mcpToolCall",

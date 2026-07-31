@@ -60,6 +60,7 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings } from "../hooks/useSettings";
+import { useAssetUrlState } from "../assets/assetUrls";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -70,6 +71,7 @@ import {
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
+  resolveMarkdownImageFileLinkMeta,
   rewriteMarkdownFileUriHref,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
@@ -148,6 +150,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
@@ -846,6 +849,46 @@ const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 /** Hosts whose favicon request already failed this session — skip straight to the globe. */
 const failedFaviconHosts = new Set<string>();
 
+function MarkdownWorkspaceImage({
+  filePath,
+  threadRef,
+  alt,
+  className,
+  onError,
+  ...props
+}: Omit<React.ComponentProps<"img">, "src"> & {
+  readonly filePath: string;
+  readonly threadRef: ScopedThreadRef;
+}) {
+  const assetUrl = useAssetUrlState(threadRef.environmentId, {
+    _tag: "workspace-file",
+    threadId: threadRef.threadId,
+    path: filePath,
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const label = alt?.trim() || filePath.split(/[\\/]/).at(-1) || "image";
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return <span className="text-destructive">Unable to load {label}.</span>;
+  }
+  if (assetUrl._tag !== "Success") {
+    return <span className="text-muted-foreground">Loading {label}…</span>;
+  }
+
+  return (
+    <img
+      {...props}
+      className={cn("max-h-[32rem] max-w-full rounded-md object-contain", className)}
+      src={assetUrl.url}
+      alt={alt}
+      onError={(event) => {
+        setFailedUrl(assetUrl.url);
+        onError?.(event);
+      }}
+    />
+  );
+}
+
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
   const [failedHost, setFailedHost] = useState<string | null>(null);
   return (
@@ -1445,6 +1488,20 @@ function ChatMarkdown({
               if (!Number.isSafeInteger(markerOffset)) return;
               onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
             }}
+          />
+        );
+      },
+      img({ node: _node, src, alt, ...props }) {
+        const fileLinkMeta = resolveMarkdownImageFileLinkMeta(src, cwd);
+        if (!fileLinkMeta || !threadRef) {
+          return <img {...props} src={src} alt={alt} />;
+        }
+        return (
+          <MarkdownWorkspaceImage
+            {...props}
+            filePath={fileLinkMeta.filePath}
+            threadRef={threadRef}
+            alt={alt}
           />
         );
       },

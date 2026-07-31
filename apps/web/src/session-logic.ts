@@ -72,6 +72,7 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
+  imagePath?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
@@ -740,6 +741,14 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.toolData = data.item;
     }
   }
+  if (itemType === "image_view") {
+    const data = asRecord(payload?.data);
+    const item = asRecord(data?.item);
+    const imagePath = asTrimmedString(item?.savedPath) ?? asTrimmedString(item?.path);
+    if (imagePath) {
+      entry.imagePath = imagePath;
+    }
+  }
   if (itemType) {
     entry.itemType = itemType;
   }
@@ -818,6 +827,7 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const imagePath = next.imagePath ?? previous.imagePath;
   return {
     ...previous,
     ...next,
@@ -832,6 +842,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(imagePath !== undefined ? { imagePath } : {}),
   };
 }
 

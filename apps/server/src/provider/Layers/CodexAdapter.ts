@@ -281,6 +281,7 @@ function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): stri
     "summary" in item ? item.summary : undefined,
     "text" in item ? item.text : undefined,
     "path" in item ? item.path : undefined,
+    "savedPath" in item ? item.savedPath : undefined,
     "prompt" in item ? item.prompt : undefined,
   ];
 
