@@ -266,9 +266,9 @@ function SidebarV2ThreadTooltip({
       side="right"
       align="start"
       sideOffset={4}
-      className="max-w-80 text-left whitespace-normal"
+      className="max-w-80 text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
     >
-      <div className="flex min-w-0 max-w-80 flex-col gap-2 px-0.5 py-1.5">
+      <div className="flex min-w-0 max-w-80 flex-col gap-2 p-[var(--floating-content-inset)]">
         <div className="min-w-0 truncate text-xs leading-none font-medium text-foreground">
           {thread.title}
         </div>
@@ -923,7 +923,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             />
           }
         >
-          <div className="relative z-10 h-[4.875rem] px-2.5 py-2">
+          <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               <ProjectFavicon
                 environmentId={thread.environmentId}
@@ -2415,7 +2415,7 @@ export default function SidebarV2() {
       <SidebarContent
         className="gap-0"
         fixedHeader={
-          <SidebarGroup className="gap-1 p-2">
+          <SidebarGroup className="gap-1 p-[var(--sidebar-content-inset)]">
             <div className="flex items-center gap-1">
               <div className="min-w-0 flex-1">
                 <CommandDialogTrigger
@@ -2563,7 +2563,7 @@ export default function SidebarV2() {
           </SidebarGroup>
         }
       >
-        <SidebarGroup className="px-2 pb-1 pt-0">
+        <SidebarGroup className="px-[var(--sidebar-content-inset)] pb-1 pt-0">
           <TooltipProvider
             key="sidebar-thread-tooltips-150"
             delay={150}
