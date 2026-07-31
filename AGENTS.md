@@ -39,6 +39,7 @@ Write only the small, concise amount of code needed to solve the problem; avoid 
 - External-store selectors must return a referentially stable snapshot when their input state is unchanged; fresh arrays or wrapper objects can trigger React error #185 (maximum update depth exceeded).
 - Checkpoint finalization must wait for provider runtime ingestion of the matching `turn.completed` event; independent subscribers can otherwise snapshot before queued tool activities are projected.
 - Full-thread diffs must filter checkpoint snapshots to the union of chat-attributed `turnFiles`; raw shared-worktree snapshots include unrelated changes from other chats.
+- Turn-scoped checkpoint attribution must only extract paths from file-change activities; read and search tools also carry path fields and can misattribute unrelated dirty-worktree changes, especially before a workspace handoff.
 - Retried sidebar mutations need durable mutation IDs; a lost response can hide a committed reorder, and replaying it without server deduplication can move the thread twice.
 - Packaged Dev builds must write their flavor-specific `productName` into ASAR metadata; Electron derives `app.getName()` from it, and a stale Alpha name makes Dev reuse Alpha's Chromium profile.
 - Filter archived sidebar hierarchies before tree normalization; archived parents must suppress both real and virtual descendants or stale children are resurrected as roots.

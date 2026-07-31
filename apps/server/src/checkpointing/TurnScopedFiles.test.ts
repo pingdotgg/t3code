@@ -35,7 +35,10 @@ describe("deriveTurnScopedCheckpointFiles", () => {
           id: "activity-1",
           kind: "tool.completed",
           turnId,
-          payload: { data: { filePath: "./src\\app.ts" } },
+          payload: {
+            itemType: "file_change",
+            data: { filePath: "./src\\app.ts" },
+          },
         }),
         makeActivity({
           id: "activity-2",
@@ -94,13 +97,54 @@ describe("deriveTurnScopedCheckpointFiles", () => {
           id: "activity-1",
           kind: "tool.updated",
           turnId,
-          payload: { data: { filePath: "/repo/src/reverted.ts" } },
+          payload: {
+            itemType: "file_change",
+            data: { filePath: "/repo/src/reverted.ts" },
+          },
         }),
       ],
     });
 
     expect(result).toEqual({
       agentTouchedPaths: ["src/reverted.ts"],
+      turnFiles: [],
+    });
+  });
+
+  it("does not attribute an existing workspace diff to a file read", () => {
+    const turnId = TurnId.make("turn-1");
+    const result = deriveTurnScopedCheckpointFiles({
+      cwd: "/repo",
+      turnId,
+      snapshotFiles: [
+        {
+          path: "apps/web/src/components/ChatView.tsx",
+          kind: "modified",
+          additions: 2,
+          deletions: 78,
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: "activity-read-chat-view",
+          kind: "tool.completed",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            data: {
+              copilotToolName: "view",
+              kind: "other",
+              rawInput: {
+                path: "/repo/apps/web/src/components/ChatView.tsx",
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    expect(result).toEqual({
+      agentTouchedPaths: [],
       turnFiles: [],
     });
   });
@@ -117,6 +161,7 @@ describe("deriveTurnScopedCheckpointFiles", () => {
           kind: "tool.completed",
           turnId,
           payload: {
+            itemType: "file_change",
             data: {
               files: [
                 { path: ":!src/secret.ts" },

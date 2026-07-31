@@ -9,7 +9,24 @@ import {
 } from "@t3tools/shared/toolChangedFiles";
 
 const TURN_SCOPED_ACTIVITY_KINDS = new Set(["tool.updated", "tool.completed"]);
+const FILE_CHANGE_TOOL_KINDS = new Set(["edit", "write", "delete", "move"]);
 const MAX_TURN_SCOPED_PATHS = 500;
+
+function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+function isFileChangeActivity(activity: OrchestrationThreadActivity): boolean {
+  const payload = asRecord(activity.payload);
+  const data = asRecord(payload?.data);
+  return (
+    payload?.itemType === "file_change" ||
+    data?.itemType === "file_change" ||
+    (typeof data?.kind === "string" && FILE_CHANGE_TOOL_KINDS.has(data.kind))
+  );
+}
 
 export interface DeriveTurnScopedCheckpointFilesInput {
   readonly snapshotFiles: ReadonlyArray<OrchestrationCheckpointFile>;
@@ -44,6 +61,9 @@ export function deriveTurnScopedCheckpointFiles(
       break;
     }
     if (activity.turnId !== input.turnId || !TURN_SCOPED_ACTIVITY_KINDS.has(activity.kind)) {
+      continue;
+    }
+    if (!isFileChangeActivity(activity)) {
       continue;
     }
 
