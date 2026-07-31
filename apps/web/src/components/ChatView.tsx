@@ -4787,6 +4787,7 @@ function ChatViewBody(
 
         {browserPanel.isOpen && !shouldUseRightPanelSheet && activeThreadRef ? (
           <RightPanelTabs
+            mode="inline"
             surfaces={browserPanel.surfaces}
             activeSurfaceId={browserPanel.activeSurfaceId}
             previewSessions={previewState.sessions}
@@ -4817,22 +4818,21 @@ function ChatViewBody(
                   markdownCwd={gitCwd ?? undefined}
                   workspaceRoot={activeWorkspaceRoot}
                   timestampFormat={timestampFormat}
-                  mode="sidebar"
+                  mode="sheet"
                   onClose={closePlanSidebar}
                 />
               ) : activeBrowserSurface?.kind === "preview" ? (
                 <PreviewPanel
-                  mode="inline"
+                  mode="embedded"
                   threadRef={activeThreadRef}
                   tabId={browserTabId}
                   configuredUrls={configuredPreviewUrls}
                   visible
-                  maximized={rightPanelMaximized}
                   onClose={closeBrowserPreview}
                 />
               ) : activeBrowserSurface?.kind === "diff" ? (
                 <Suspense fallback={null}>
-                  <DiffPanel mode="inline" />
+                  <DiffPanel mode="sheet" />
                 </Suspense>
               ) : activeBrowserSurface?.kind === "terminal" ? (
                 <PersistentThreadTerminalDrawer
@@ -4899,6 +4899,7 @@ function ChatViewBody(
         <RightPanelSheet open onClose={browserPanel.isOpen ? closeBrowserPreview : closeInsights}>
           {browserPanel.isOpen && activeThreadRef ? (
             <RightPanelTabs
+              mode="sheet"
               surfaces={browserPanel.surfaces}
               activeSurfaceId={browserPanel.activeSurfaceId}
               previewSessions={previewState.sessions}
@@ -4970,7 +4971,7 @@ function ChatViewBody(
                   />
                 ) : (
                   <PreviewPanel
-                    mode="sheet"
+                    mode="embedded"
                     threadRef={activeThreadRef}
                     tabId={browserTabId}
                     configuredUrls={configuredPreviewUrls}

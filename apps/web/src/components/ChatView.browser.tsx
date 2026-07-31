@@ -6619,7 +6619,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       maximizeButton.click();
       await vi.waitFor(() => {
-        expect(document.querySelector('[data-right-panel-maximized="true"]')).not.toBeNull();
+        expect(
+          document.querySelector(
+            '[data-preview-panel-mode="inline"][data-preview-panel-maximized="true"]',
+          ),
+        ).not.toBeNull();
       });
       document.querySelector<HTMLButtonElement>('[aria-label="Restore panel size"]')?.click();
       useRightPanelStore.getState().close(THREAD_REF);
