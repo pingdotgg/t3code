@@ -18,16 +18,7 @@ interface ShellEnvironmentConfig {
   readonly userShell: Option.Option<string>;
 }
 
-interface WindowsProbeOptions {
-  readonly loadProfile: boolean;
-}
-
-const DesktopShellEnvironmentProbe = Schema.Literals([
-  "login-shell",
-  "launchctl-path",
-  "powershell-profile",
-  "powershell-no-profile",
-]);
+const DesktopShellEnvironmentProbe = Schema.Literals(["login-shell", "launchctl-path"]);
 type DesktopShellEnvironmentProbe = typeof DesktopShellEnvironmentProbe.Type;
 
 const desktopShellEnvironmentCommandFields = {
@@ -83,8 +74,6 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_SESSION_TYPE",
   "WAYLAND_DISPLAY",
 ] as const;
-const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
-const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
@@ -238,19 +227,6 @@ const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
     })
     .join("; ");
 
-const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  [
-    "$ErrorActionPreference = 'Stop'",
-    ...names.flatMap((name) => {
-      return [
-        `Write-Output '${startMarker(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
-        "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
-        `Write-Output '${endMarker(name)}'`,
-      ];
-    }),
-  ].join("; ");
-
 const extractEnvironment = (output: string, names: ReadonlyArray<string>): EnvironmentPatch => {
   const environment: EnvironmentPatch = {};
 
@@ -343,64 +319,17 @@ const readLaunchctlPath = runCommandOutput({
   timeout: LAUNCHCTL_TIMEOUT,
 }).pipe(Effect.map(trimNonEmpty));
 
-const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEnvironment")(
-  function* (
-    names: ReadonlyArray<string>,
-    options: WindowsProbeOptions,
-  ): Effect.fn.Return<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> {
-    if (names.length === 0) return {};
-
-    const args = [
-      "-NoLogo",
-      ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
-      "-NonInteractive",
-      "-Command",
-      captureWindowsEnvironmentCommand(names),
-    ];
-
-    for (const command of WINDOWS_SHELL_CANDIDATES) {
-      const output = yield* runCommandOutput({
-        probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
-        command,
-        args,
-        timeout: LOGIN_SHELL_TIMEOUT,
-      });
-      const environment = extractEnvironment(output, names);
-      if (Object.keys(environment).length > 0) {
-        return environment;
-      }
-    }
-
-    return {};
-  },
-);
-
-const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWindowsEnvironment")(
-  function* (
-    config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-    const noProfile = yield* readWindowsEnvironment(["PATH"], { loadProfile: false });
-    const profile = yield* readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, {
-      loadProfile: true,
-    });
+const installWindowsEnvironment = (config: ShellEnvironmentConfig): Effect.Effect<void> =>
+  Effect.sync(() => {
     const mergedPath = mergePaths("win32", [
-      trimNonEmpty(profile.PATH),
       trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
-      trimNonEmpty(noProfile.PATH),
       readEnvPath(config.env),
     ]);
 
     if (Option.isSome(mergedPath)) {
       config.env.PATH = mergedPath.value;
     }
-    if (!config.env.FNM_DIR && profile.FNM_DIR) {
-      config.env.FNM_DIR = profile.FNM_DIR;
-    }
-    if (!config.env.FNM_MULTISHELL_PATH && profile.FNM_MULTISHELL_PATH) {
-      config.env.FNM_MULTISHELL_PATH = profile.FNM_MULTISHELL_PATH;
-    }
-  },
-);
+  });
 
 const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
   function* (

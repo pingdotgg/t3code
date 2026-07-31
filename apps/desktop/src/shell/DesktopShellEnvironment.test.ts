@@ -197,7 +197,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("loads PowerShell profile environment on Windows", () =>
+  it.effect("hydrates the Windows PATH without starting a shell", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         PATH: "C:\\Windows\\System32",
@@ -206,41 +206,29 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
+      const commands: ChildProcess.Command[] = [];
       yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
-          if (command._tag !== "StandardCommand") return "";
-          const loadProfile = !command.args.includes("-NoProfile");
-          return loadProfile
-            ? envOutput({
-                PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
-                FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
-                FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
-              })
-            : envOutput({ PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" });
+          commands.push(command);
+          return "";
         },
       });
 
       assert.equal(
         env.PATH,
         [
-          "C:\\Profile\\Node",
-          "C:\\Windows\\System32",
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
-          "C:\\Custom\\Bin",
+          "C:\\Windows\\System32",
         ].join(";"),
       );
-      assert.equal(env.FNM_DIR, "C:\\Users\\testuser\\AppData\\Roaming\\fnm");
-      assert.equal(
-        env.FNM_MULTISHELL_PATH,
-        "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
-      );
+      assert.lengthOf(commands, 0);
     }),
   );
 

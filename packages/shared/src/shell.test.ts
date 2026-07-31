@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -362,6 +364,44 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
 
       expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("preserves Windows PATH precedence and invalidates stale cached hits", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-shell-resolution-" });
+
+      return yield* Effect.gen(function* () {
+        const firstDir = path.join(tempDir, "first");
+        const secondDir = path.join(tempDir, "second");
+        yield* fileSystem.makeDirectory(firstDir);
+        yield* fileSystem.makeDirectory(secondDir);
+        const executable = path.join(secondDir, "provider-tool.CMD");
+        yield* fileSystem.writeFileString(executable, "@echo off\r\n");
+        const env = {
+          PATH: `${firstDir};${firstDir};${secondDir}`,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        };
+
+        expect(
+          yield* resolveCommandPath("provider-tool", { env }).pipe(
+            Effect.provideService(HostProcessPlatform, "win32"),
+          ),
+        ).toBe(executable);
+
+        yield* fileSystem.remove(executable);
+        const result = yield* resolveCommandPath("provider-tool", { env }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+      }).pipe(
+        Effect.ensuring(
+          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.orDie),
+        ),
+      );
     }),
   );
 });
