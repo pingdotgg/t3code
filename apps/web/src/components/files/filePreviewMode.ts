@@ -1,5 +1,7 @@
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
+export const isHtmlPreviewFile = (path: string): boolean => /\.html?$/i.test(path);
+
 export function setMarkdownTaskChecked(
   markdown: string,
   markerOffset: number,

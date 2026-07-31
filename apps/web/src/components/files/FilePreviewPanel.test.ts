@@ -5,7 +5,11 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isHtmlPreviewFile,
+  isMarkdownPreviewFile,
+  setMarkdownTaskChecked,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -63,6 +67,18 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("isHtmlPreviewFile", () => {
+  it("recognizes HTML files case-insensitively", () => {
+    expect(isHtmlPreviewFile("report.html")).toBe(true);
+    expect(isHtmlPreviewFile("artifacts/demo.HTM")).toBe(true);
+  });
+
+  it("does not treat other files as HTML", () => {
+    expect(isHtmlPreviewFile("report.html.ts")).toBe(false);
+    expect(isHtmlPreviewFile("docs/html.md")).toBe(false);
   });
 });
 

@@ -55,7 +55,11 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { LocalCommentAnnotation } from "./LocalCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isHtmlPreviewFile,
+  isMarkdownPreviewFile,
+  setMarkdownTaskChecked,
+} from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
@@ -81,6 +85,7 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
+const RENDER_HTML_STORAGE_KEY = "t3code.renderHtml";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
@@ -735,6 +740,24 @@ function RenderedMarkdownSurface({
   );
 }
 
+function RenderedHtmlSurface({
+  relativePath,
+  contents,
+}: {
+  relativePath: string;
+  contents: string;
+}) {
+  return (
+    <iframe
+      className="min-h-0 flex-1 border-0 bg-white"
+      title={`Rendered preview of ${relativePath}`}
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+      srcDoc={contents}
+    />
+  );
+}
+
 function initialExplorerOpen(): boolean {
   try {
     return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
@@ -778,6 +801,11 @@ export default function FilePreviewPanel({
     false,
     Schema.Boolean,
   );
+  const [renderHtmlPreferred, setRenderHtmlPreferred] = useLocalStorage(
+    RENDER_HTML_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   // Paired with the path on purpose: each file surface counts its reveals from
   // one, so a bare id would let a dismissed reveal on one file swallow the first
   // reveal on the next.
@@ -786,12 +814,20 @@ export default function FilePreviewPanel({
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const isHtml = relativePath ? isHtmlPreviewFile(relativePath) : false;
   // A reveal still wins over the preference: the line only exists in the source.
   const renderMarkdown =
     isMarkdown &&
     renderMarkdownPreferred &&
     (revealLine === null ||
       (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
+  const renderHtml =
+    isHtml &&
+    renderHtmlPreferred &&
+    (revealLine === null ||
+      (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
+  const renderDocument = renderMarkdown || renderHtml;
+  const renderDocumentLabel = isMarkdown ? "markdown" : "HTML";
   const canOpenInBrowser =
     relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
@@ -890,31 +926,38 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
-          {isMarkdown ? (
+          {isMarkdown || isHtml ? (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Toggle
                     className="shrink-0"
-                    pressed={renderMarkdown}
+                    pressed={renderDocument}
                     onPressedChange={(pressed) => {
-                      setRenderMarkdownPreferred(pressed);
+                      if (isMarkdown) setRenderMarkdownPreferred(pressed);
+                      if (isHtml) setRenderHtmlPreferred(pressed);
                       setHandledReveal(
                         pressed && relativePath !== null
                           ? { path: relativePath, requestId: revealRequestId }
                           : null,
                       );
                     }}
-                    aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                    aria-label={
+                      renderDocument
+                        ? `Show ${renderDocumentLabel} source`
+                        : `Show rendered ${renderDocumentLabel}`
+                    }
                     variant="ghost"
                     size="sm"
                   >
-                    {renderMarkdown ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
+                    {renderDocument ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
                   </Toggle>
                 }
               />
               <TooltipPopup>
-                {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                {renderDocument
+                  ? `Show ${renderDocumentLabel} source`
+                  : `Show rendered ${renderDocumentLabel}`}
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -996,6 +1039,8 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 onPendingChange={onPendingChange}
               />
+            ) : isHtml && renderHtml ? (
+              <RenderedHtmlSurface relativePath={relativePath} contents={file.data.contents} />
             ) : file.data.truncated ? (
               <Virtualizer
                 key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
