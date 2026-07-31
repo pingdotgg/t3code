@@ -445,6 +445,8 @@ const SEEDED_PROJECTION_TABLES = [
   "projection_state",
 ] as const;
 
+const SEEDED_THREAD_COLUMNS = ["snoozed_until", "snoozed_at"] as const;
+
 function hasSeedableSchema(dbPath: string): boolean {
   let database: NodeSqlite.DatabaseSync;
   try {
@@ -453,12 +455,18 @@ function hasSeedableSchema(dbPath: string): boolean {
     return false;
   }
   try {
-    const row = database
+    const tableCount = database
       .prepare(
         `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN (${SEEDED_PROJECTION_TABLES.map(() => "?").join(", ")})`,
       )
       .get(...SEEDED_PROJECTION_TABLES) as { count: number };
-    return row.count === SEEDED_PROJECTION_TABLES.length;
+    if (tableCount.count !== SEEDED_PROJECTION_TABLES.length) return false;
+
+    const threadColumns = database.prepare("PRAGMA table_info(projection_threads)").all() as Array<{
+      name: string;
+    }>;
+    const threadColumnNames = new Set(threadColumns.map((column) => column.name));
+    return SEEDED_THREAD_COLUMNS.every((column) => threadColumnNames.has(column));
   } catch {
     return false;
   } finally {
