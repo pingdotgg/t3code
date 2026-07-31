@@ -954,11 +954,19 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
 export function createStageWorkspaceConfig(input: {
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
+  readonly includeWslRuntime?: boolean;
   readonly allowBuilds?: Record<string, boolean>;
   readonly patchedDependencies?: Record<string, string>;
   readonly overrides?: Record<string, string>;
 }): StageWorkspaceConfig {
-  const { platform, arch, allowBuilds, patchedDependencies, overrides } = input;
+  const {
+    platform,
+    arch,
+    includeWslRuntime = false,
+    allowBuilds,
+    patchedDependencies,
+    overrides,
+  } = input;
   const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
   const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
   // Linux AppImages and Windows WSL backends both execute a Linux/glibc Node
@@ -972,7 +980,7 @@ export function createStageWorkspaceConfig(input: {
           cpu: hostCpu,
           libc: ["glibc"],
         }
-      : platform === "win"
+      : platform === "win" && includeWslRuntime
         ? {
             os: Array.from(new Set([hostOs, "linux"])),
             cpu: hostCpu,
@@ -1534,6 +1542,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  includeWslRuntime = false,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -1544,10 +1553,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    // Only the Windows WSL backend needs files outside the asar (see
-    // WINDOWS_ASAR_UNPACK); macOS and Linux stay packed — smart unpack
-    // extracts native libraries, which fff-node finds in app.asar.unpacked.
-    ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
+    // Only a Windows build carrying the WSL backend needs files outside the
+    // asar (see WINDOWS_ASAR_UNPACK). Without a supplied Linux node-pty
+    // prebuild the WSL backend cannot start, so avoid expanding the full server
+    // and node_modules payload onto disk. Smart unpack still extracts native
+    // libraries required by the primary Windows backend.
+    ...(platform === "win" && includeWslRuntime
+      ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] }
+      : {}),
     extraResources: DESKTOP_EXTRA_RESOURCES,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -1934,6 +1947,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      options.platform === "win" && options.wslPrebuild !== undefined,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -1946,6 +1960,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageWorkspaceConfig = createStageWorkspaceConfig({
     platform: options.platform,
     arch: options.arch,
+    includeWslRuntime: options.platform === "win" && options.wslPrebuild !== undefined,
     allowBuilds: workspaceAllowBuilds,
     patchedDependencies: stagePatchedDependencies,
     overrides: resolvedOverrides,
