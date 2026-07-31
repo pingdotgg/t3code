@@ -542,6 +542,11 @@ export const make = Effect.gen(function* () {
       withRelayClientTracing,
     );
 
+  // Every internally triggered publish for a thread shares this worker so an
+  // older network request cannot finish after a newer orchestration/provider
+  // update and overwrite the relay with stale state.
+  const worker = yield* makeDrainableWorker(publishThread);
+
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
@@ -566,10 +571,10 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
       return true;
     }
-    yield* Effect.logInfo("publishing active agent activity snapshot", {
+    yield* Effect.logInfo("queueing active agent activity snapshot", {
       count: activeThreadIds.length,
     });
-    yield* Effect.forEach(activeThreadIds, publishThread, { concurrency: 4, discard: true });
+    yield* Effect.forEach(activeThreadIds, worker.enqueue, { discard: true });
     return true;
   });
 
@@ -590,8 +595,6 @@ export const make = Effect.gen(function* () {
         yield* Effect.sleep("5 seconds");
       }
     });
-
-  const worker = yield* makeDrainableWorker(publishThread);
 
   schedulePublishConfirm = (threadId) =>
     Effect.forkDetach(

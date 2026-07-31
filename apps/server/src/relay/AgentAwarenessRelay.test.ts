@@ -668,7 +668,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ),
   );
 
-  it.effect("publishes agent activity to the relay transport URL, not the relay issuer", () =>
+  it.effect("serializes provider-change republishes behind in-flight orchestration publishes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const originalFetch = globalThis.fetch;
@@ -678,7 +678,15 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const fetchSeen = yield* Deferred.make<URL>();
         const providerRepublishSeen = yield* Deferred.make<void>();
         const publishedProviderNames: Array<string | undefined> = [];
+        const completedProviderNames: Array<string | undefined> = [];
         let fetchCount = 0;
+        let inFlightFetches = 0;
+        let maxInFlightFetches = 0;
+        let releaseFirstPublish = () => {};
+        const firstPublishGate = new Promise<void>((resolve) => {
+          releaseFirstPublish = resolve;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFirstPublish));
         const userSpans: Array<string> = [];
         const productSpans: Array<string> = [];
         const collectingTracer = (spans: Array<string>) =>
@@ -783,14 +791,22 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           ) as {
             readonly state?: { readonly providerName?: string };
           };
-          publishedProviderNames.push(payload.state?.providerName);
+          const providerName = payload.state?.providerName;
+          publishedProviderNames.push(providerName);
           fetchCount += 1;
+          inFlightFetches += 1;
+          maxInFlightFetches = Math.max(maxInFlightFetches, inFlightFetches);
           const url = new URL(
             typeof input === "string" || input instanceof URL
               ? input
               : (input as unknown as { readonly url: string }).url,
           );
           runFork(Deferred.succeed(fetchSeen, url));
+          if (fetchCount === 1) {
+            await firstPublishGate;
+          }
+          completedProviderNames.push(providerName);
+          inFlightFetches -= 1;
           if (fetchCount >= 2) {
             runFork(Deferred.succeed(providerRepublishSeen, undefined));
           }
@@ -862,8 +878,20 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           yield* providerRegistry.update({
             liveDriver: ProviderDriverKind.make("codex"),
           });
+          // Let the registry subscriber consume the change while the Cursor
+          // request is still held open. A direct publish would now overlap it;
+          // the shared worker must only queue the Codex update.
+          for (let index = 0; index < 5; index++) {
+            yield* Effect.yieldNow;
+          }
+          expect(publishedProviderNames).toEqual(["cursor"]);
+          expect(inFlightFetches).toBe(1);
+
+          releaseFirstPublish();
           yield* Deferred.await(providerRepublishSeen).pipe(Effect.timeout("2 seconds"));
           expect(publishedProviderNames).toEqual(["cursor", "codex"]);
+          expect(completedProviderNames).toEqual(["cursor", "codex"]);
+          expect(maxInFlightFetches).toBe(1);
 
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");
