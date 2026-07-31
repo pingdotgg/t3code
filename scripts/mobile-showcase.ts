@@ -90,6 +90,7 @@ interface IosCaptureCleanup {
   readonly udid: string;
   readonly startedByRunner: boolean;
   readonly createdByRunner: boolean;
+  readonly restorePortrait: boolean;
 }
 
 interface AndroidCaptureCleanup {
@@ -775,6 +776,22 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
   ]);
 }
 
+async function setIosSimulatorOrientation(
+  orientation: NonNullable<ShowcaseIosDevice["orientation"]>,
+  udid: string,
+): Promise<void> {
+  await runCommand("open", ["-a", "Simulator", "--args", "-CurrentDeviceUDID", udid]);
+  const menuItem = orientation === "landscape" ? "Landscape Right" : "Portrait";
+  await runCommand("osascript", [
+    "-e",
+    'tell application "Simulator" to activate',
+    "-e",
+    `tell application "System Events" to tell process "Simulator" to click menu item "${menuItem}" of menu "Orientation" of menu item "Orientation" of menu "Device" of menu bar item "Device" of menu bar 1`,
+    "-e",
+    "delay 1",
+  ]);
+}
+
 async function iosAppContainer(udid: string): Promise<string> {
   return (
     await commandOutput("xcrun", ["simctl", "get_app_container", udid, ANDROID_PACKAGE, "data"])
@@ -811,7 +828,12 @@ async function captureIos(
 ): Promise<void> {
   const { simulator, createdByRunner } = await ensureIosSimulator(capture.device);
   const startedByRunner = simulator.state !== "Booted";
-  registerCleanup({ udid: simulator.udid, startedByRunner, createdByRunner });
+  registerCleanup({
+    udid: simulator.udid,
+    startedByRunner,
+    createdByRunner,
+    restorePortrait: capture.device.orientation === "landscape",
+  });
   if (!startedByRunner) {
     // Clear transient SpringBoard state (permission prompts, stale URL-open
     // confirmations, keyboards) without erasing the developer's simulator.
@@ -870,6 +892,9 @@ async function captureIos(
       "--showcaseScene",
       firstScene,
     ]);
+    if (capture.device.orientation === "landscape") {
+      await setIosSimulatorOrientation("landscape", simulator.udid);
+    }
   };
   await NodeFSP.rm(readyPath, { force: true });
   await NodeFSP.writeFile(scenePath, firstScene);
@@ -900,6 +925,9 @@ async function captureIos(
       `${scene}.png`,
     );
     await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
+    if (capture.device.orientation === "landscape") {
+      await runCommand("sips", ["--rotate", "90", destination]);
+    }
     await finalizeCapture(destination, capture.device);
   }
 }
@@ -1315,6 +1343,9 @@ async function main(): Promise<void> {
         }
       }
       for (const cleanup of iosCleanups) {
+        if (cleanup.restorePortrait) {
+          await setIosSimulatorOrientation("portrait", cleanup.udid).catch(() => undefined);
+        }
         if (cleanup.startedByRunner || cleanup.createdByRunner) {
           await runCommand("xcrun", ["simctl", "shutdown", cleanup.udid]).catch(() => undefined);
         }
