@@ -125,8 +125,8 @@ function clampDrawerHeight(height: number): number {
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
 }
 
-function writeSystemMessage(terminal: Terminal, message: string): void {
-  terminal.write(`\r\n[terminal] ${message}\r\n`);
+export function writeSystemMessage(terminal: ScrollbackTerminal, message: string): void {
+  writePreservingScrollback(terminal, `\r\n[terminal] ${message}\r\n`);
 }
 
 function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
@@ -1043,19 +1043,20 @@ export function TerminalViewport({
       hasHandledExitRef.current = false;
     } else if (
       (current.status === "closed" || current.status === "exited") &&
-      current.status !== previous.status &&
-      !hasHandledExitRef.current
+      current.status !== previous.status
     ) {
-      hasHandledExitRef.current = true;
       writeSystemMessage(
         terminal,
         current.status === "closed" ? "Terminal closed" : "Process exited",
       );
-      window.setTimeout(() => {
-        if (hasHandledExitRef.current) {
-          handleSessionExited();
-        }
-      }, 0);
+      if (!hasHandledExitRef.current) {
+        hasHandledExitRef.current = true;
+        window.setTimeout(() => {
+          if (hasHandledExitRef.current) {
+            handleSessionExited();
+          }
+        }, 0);
+      }
     }
 
     if (previous.version === 0 && autoFocus && focusOnInitialSessionSyncRef.current) {

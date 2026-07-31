@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ghosttyThemeSearchPaths,
+  mergeGhosttyColors,
   parseGhosttyConfig,
   splitThemeSelection,
 } from "./ghosttyStyle.ts";
@@ -34,11 +35,29 @@ describe("parseGhosttyConfig", () => {
       cursor-color = #c0ffee
     `);
 
-    expect(config.colors.background).toBeUndefined();
-    expect(config.colors.foreground).toBeUndefined();
+    expect(config.colors.background).toBe("");
+    expect(config.colors.foreground).toBe("");
     expect(config.colors.cursor).toBe("#c0ffee");
     expect(config.colors.palette[0]).toBe("");
     expect(config.colors.palette[1]).toBe("#222222");
+  });
+
+  it("keeps explicit color clears when merging user config over a theme", () => {
+    const theme = parseGhosttyConfig(`
+      background = #000000
+      palette = 0=#111111
+      palette = 1=#222222
+    `);
+    const user = parseGhosttyConfig(`
+      background =
+      palette = 0=
+    `);
+
+    const colors = mergeGhosttyColors(theme.colors, user.colors);
+
+    expect(colors.background).toBe("");
+    expect(colors.palette[0]).toBe("");
+    expect(colors.palette[1]).toBe("#222222");
   });
 });
 

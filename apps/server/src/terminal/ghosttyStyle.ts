@@ -20,11 +20,11 @@ interface MutableThemeColors {
   cursor?: string | undefined;
   selectionBackground?: string | undefined;
   selectionForeground?: string | undefined;
-  palette: Array<string>;
+  palette: Array<string | undefined>;
 }
 
 function emptyColors(): MutableThemeColors {
-  return { palette: Array.from({ length: PALETTE_SIZE }, () => "") };
+  return { palette: Array.from({ length: PALETTE_SIZE }, () => undefined) };
 }
 
 function stripQuotes(value: string): string {
@@ -37,24 +37,19 @@ function stripQuotes(value: string): string {
 function applyColorEntry(colors: MutableThemeColors, key: string, value: string): void {
   switch (key) {
     case "background":
-      if (value.length === 0) delete colors.background;
-      else colors.background = value;
+      colors.background = value;
       return;
     case "foreground":
-      if (value.length === 0) delete colors.foreground;
-      else colors.foreground = value;
+      colors.foreground = value;
       return;
     case "cursor-color":
-      if (value.length === 0) delete colors.cursor;
-      else colors.cursor = value;
+      colors.cursor = value;
       return;
     case "selection-background":
-      if (value.length === 0) delete colors.selectionBackground;
-      else colors.selectionBackground = value;
+      colors.selectionBackground = value;
       return;
     case "selection-foreground":
-      if (value.length === 0) delete colors.selectionForeground;
-      else colors.selectionForeground = value;
+      colors.selectionForeground = value;
       return;
     case "palette": {
       const match = value.match(/^(\d+)\s*=\s*(\S*)$/);
@@ -134,42 +129,46 @@ export function splitThemeSelection(theme: string): { light?: string; dark?: str
 
 function hasAnyColor(colors: MutableThemeColors): boolean {
   return (
-    colors.background !== undefined ||
-    colors.foreground !== undefined ||
-    colors.cursor !== undefined ||
-    colors.selectionBackground !== undefined ||
-    colors.selectionForeground !== undefined ||
-    colors.palette.some((entry) => entry.length > 0)
+    (colors.background?.length ?? 0) > 0 ||
+    (colors.foreground?.length ?? 0) > 0 ||
+    (colors.cursor?.length ?? 0) > 0 ||
+    (colors.selectionBackground?.length ?? 0) > 0 ||
+    (colors.selectionForeground?.length ?? 0) > 0 ||
+    colors.palette.some((entry) => (entry?.length ?? 0) > 0)
   );
 }
 
-function mergeColors(base: MutableThemeColors, override: MutableThemeColors): MutableThemeColors {
+export function mergeGhosttyColors(
+  base: MutableThemeColors,
+  override: MutableThemeColors,
+): MutableThemeColors {
   return {
-    background: override.background ?? base.background,
-    foreground: override.foreground ?? base.foreground,
-    cursor: override.cursor ?? base.cursor,
-    selectionBackground: override.selectionBackground ?? base.selectionBackground,
-    selectionForeground: override.selectionForeground ?? base.selectionForeground,
-    palette: base.palette.map((entry, index) => {
-      const overrideEntry = override.palette[index] ?? "";
-      return overrideEntry.length > 0 ? overrideEntry : entry;
-    }),
+    background: override.background !== undefined ? override.background : base.background,
+    foreground: override.foreground !== undefined ? override.foreground : base.foreground,
+    cursor: override.cursor !== undefined ? override.cursor : base.cursor,
+    selectionBackground:
+      override.selectionBackground !== undefined
+        ? override.selectionBackground
+        : base.selectionBackground,
+    selectionForeground:
+      override.selectionForeground !== undefined
+        ? override.selectionForeground
+        : base.selectionForeground,
+    palette: base.palette.map((entry, index) =>
+      override.palette[index] !== undefined ? override.palette[index] : entry,
+    ),
   };
 }
 
 function toThemeColors(colors: MutableThemeColors): ServerTerminalThemeColors | undefined {
   if (!hasAnyColor(colors)) return undefined;
   return {
-    ...(colors.background !== undefined ? { background: colors.background } : {}),
-    ...(colors.foreground !== undefined ? { foreground: colors.foreground } : {}),
-    ...(colors.cursor !== undefined ? { cursor: colors.cursor } : {}),
-    ...(colors.selectionBackground !== undefined
-      ? { selectionBackground: colors.selectionBackground }
-      : {}),
-    ...(colors.selectionForeground !== undefined
-      ? { selectionForeground: colors.selectionForeground }
-      : {}),
-    palette: colors.palette,
+    ...(colors.background ? { background: colors.background } : {}),
+    ...(colors.foreground ? { foreground: colors.foreground } : {}),
+    ...(colors.cursor ? { cursor: colors.cursor } : {}),
+    ...(colors.selectionBackground ? { selectionBackground: colors.selectionBackground } : {}),
+    ...(colors.selectionForeground ? { selectionForeground: colors.selectionForeground } : {}),
+    palette: colors.palette.map((entry) => entry ?? ""),
   };
 }
 
@@ -268,7 +267,7 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
     Effect.gen(function* () {
       const themeColors = themeName ? yield* loadThemeColors(themeName) : emptyColors();
       // Explicit colors in the user config override the selected theme.
-      return toThemeColors(mergeColors(themeColors, config.colors));
+      return toThemeColors(mergeGhosttyColors(themeColors, config.colors));
     });
 
   const light = yield* resolveModeColors(themeSelection.light);

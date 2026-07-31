@@ -6,6 +6,7 @@ import {
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
   writePreservingScrollback,
+  writeSystemMessage,
 } from "./ThreadTerminalDrawer";
 
 describe("resolveTerminalFontFamily", () => {
@@ -52,6 +53,26 @@ describe("writePreservingScrollback", () => {
 
     writePreservingScrollback(terminal, "one\ntwo\n");
 
+    expect(scrollDeltas).toEqual([-22]);
+  });
+
+  it("preserves a scrolled-back viewport for system messages", () => {
+    let scrollbackLength = 100;
+    const writes: Array<string> = [];
+    const scrollDeltas: Array<number> = [];
+    const terminal = {
+      getScrollbackLength: () => scrollbackLength,
+      getViewportY: () => 20,
+      scrollLines: (amount: number) => scrollDeltas.push(amount),
+      write: (data: string) => {
+        writes.push(data);
+        scrollbackLength = 102;
+      },
+    };
+
+    writeSystemMessage(terminal, "Process exited");
+
+    expect(writes).toEqual(["\r\n[terminal] Process exited\r\n"]);
     expect(scrollDeltas).toEqual([-22]);
   });
 });
