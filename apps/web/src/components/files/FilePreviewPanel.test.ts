@@ -8,6 +8,7 @@ import {
 import {
   isHtmlPreviewFile,
   isMarkdownPreviewFile,
+  prepareHtmlPreviewDocument,
   setMarkdownTaskChecked,
 } from "./filePreviewMode";
 
@@ -79,6 +80,38 @@ describe("isHtmlPreviewFile", () => {
   it("does not treat other files as HTML", () => {
     expect(isHtmlPreviewFile("report.html.ts")).toBe(false);
     expect(isHtmlPreviewFile("docs/html.md")).toBe(false);
+  });
+});
+
+describe("prepareHtmlPreviewDocument", () => {
+  const assetUrl = "https://example.test/api/assets/signed-token/report.html";
+
+  it("inserts the signed asset directory at the start of an existing head", () => {
+    expect(
+      prepareHtmlPreviewDocument(
+        '<!doctype html><html><head><link href="styles.css"></head><body></body></html>',
+        assetUrl,
+      ),
+    ).toBe(
+      '<!doctype html><html><head><base href="https://example.test/api/assets/signed-token/"><link href="styles.css"></head><body></body></html>',
+    );
+  });
+
+  it("adds a head when the document omits one", () => {
+    expect(prepareHtmlPreviewDocument("<!doctype html><main>Report</main>", assetUrl)).toBe(
+      '<!doctype html><head><base href="https://example.test/api/assets/signed-token/"></head><main>Report</main>',
+    );
+  });
+
+  it("resolves an authored relative base against the signed asset directory", () => {
+    expect(
+      prepareHtmlPreviewDocument(
+        '<html><head><base target="_blank" href="assets/"></head></html>',
+        assetUrl,
+      ),
+    ).toBe(
+      '<html><head><base target="_blank" href="https://example.test/api/assets/signed-token/assets/"></head></html>',
+    );
   });
 });
 

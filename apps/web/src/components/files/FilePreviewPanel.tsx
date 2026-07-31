@@ -58,6 +58,7 @@ import { fileBreadcrumbs } from "./filePath";
 import {
   isHtmlPreviewFile,
   isMarkdownPreviewFile,
+  prepareHtmlPreviewDocument,
   setMarkdownTaskChecked,
 } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
@@ -741,19 +742,44 @@ function RenderedMarkdownSurface({
 }
 
 function RenderedHtmlSurface({
+  environmentId,
+  threadRef,
+  absolutePath,
   relativePath,
   contents,
 }: {
+  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
+  absolutePath: string;
   relativePath: string;
   contents: string;
 }) {
+  const assetUrl = useAssetUrlState(environmentId, {
+    _tag: "workspace-file",
+    threadId: threadRef.threadId,
+    path: absolutePath,
+  });
+  const resolvedAssetUrl = assetUrl._tag === "Success" ? assetUrl.url : null;
+  const previewDocument = useMemo(
+    () => (resolvedAssetUrl ? prepareHtmlPreviewDocument(contents, resolvedAssetUrl) : contents),
+    [contents, resolvedAssetUrl],
+  );
+
+  if (assetUrl._tag === "Loading") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+        <LoaderCircle className="size-5 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <iframe
       className="min-h-0 flex-1 border-0 bg-white"
       title={`Rendered preview of ${relativePath}`}
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"
-      srcDoc={contents}
+      srcDoc={previewDocument}
     />
   );
 }
@@ -1039,8 +1065,14 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 onPendingChange={onPendingChange}
               />
-            ) : isHtml && renderHtml ? (
-              <RenderedHtmlSurface relativePath={relativePath} contents={file.data.contents} />
+            ) : isHtml && renderHtml && absolutePath ? (
+              <RenderedHtmlSurface
+                environmentId={environmentId}
+                threadRef={threadRef}
+                absolutePath={absolutePath}
+                relativePath={relativePath}
+                contents={file.data.contents}
+              />
             ) : file.data.truncated ? (
               <Virtualizer
                 key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
