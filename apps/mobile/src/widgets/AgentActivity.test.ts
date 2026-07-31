@@ -12,6 +12,7 @@ vi.mock("@expo/ui/swift-ui", () => ({
 }));
 
 vi.mock("@expo/ui/swift-ui/modifiers", () => ({
+  aspectRatio: (value: unknown) => value,
   background: (color: unknown, shape: unknown) => ({ background: color, shape }),
   font: (value: unknown) => value,
   foregroundStyle: (value: unknown) => value,
@@ -347,6 +348,26 @@ describe("AgentActivity widget layout", () => {
     expect(banner).toContain('"assetName":"Cursor"');
     expect(banner).toContain('"assetName":"Claude"');
     expect(banner).not.toContain('"assetName":"Codex"');
+  });
+
+  it("aspect-fits provider marks inside their fixed layout slots", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activities: [makeRow({ providerName: "cursor" })],
+      },
+      environment as never,
+    );
+
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain('"assetName":"Cursor"');
+    expect(banner).toContain('"width":11,"height":11');
+    expect(banner).toContain('"contentMode":"fit"');
+
+    const watch = JSON.stringify(layout.bannerSmall);
+    expect(watch).toContain('"assetName":"Cursor"');
+    expect(watch).toContain('"width":13,"height":13');
+    expect(watch).toContain('"contentMode":"fit"');
   });
 
   it("keeps active work dominant while a recent failed row remains", () => {

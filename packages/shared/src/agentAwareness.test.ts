@@ -7,7 +7,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import { projectThreadAwareness } from "./agentAwareness.ts";
 
@@ -103,20 +103,21 @@ describe("projectThreadAwareness", () => {
     });
   });
 
-  it("falls back to the provider instance before a session is materialized", () => {
+  it("uses the resolved provider driver before a session is materialized", () => {
     const state = projectThreadAwareness({
       environmentId: "env-1" as EnvironmentId,
+      providerDriver: ProviderDriverKind.make("cursor"),
       project,
       thread: thread({
         modelSelection: {
-          instanceId: ProviderInstanceId.make("cursor_work"),
+          instanceId: ProviderInstanceId.make("work"),
           model: "gpt-5.4",
         },
         hasPendingApprovals: true,
       }),
     });
 
-    expect(state?.providerName).toBe("cursor_work");
+    expect(state?.providerName).toBe("cursor");
   });
 
   it("projects completed turns as completed even when teardown settled them as interrupted", () => {

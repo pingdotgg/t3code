@@ -1,6 +1,7 @@
 import { Circle, HStack, Image, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
+  aspectRatio,
   background,
   font,
   foregroundStyle,
@@ -286,10 +287,11 @@ export function AgentActivity(
 
   // Same container trick as the T3 mark: Image only honors `resizable`, so the
   // frame sizes it and the container's foreground style tints the template.
-  // Square frame — the provider marks are all roughly 1:1, unlike the wordmark.
+  // Keep a square outer slot for row alignment, then aspect-fit the mark inside
+  // it so taller Cursor/OpenCode and wider fallback artwork are not distorted.
   const renderMark = (assetName: string, size: number, color: string) => (
     <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color)]}>
-      <Image assetName={assetName} modifiers={[resizable()]} />
+      <Image assetName={assetName} modifiers={[resizable(), aspectRatio({ contentMode: "fit" })]} />
     </HStack>
   );
 

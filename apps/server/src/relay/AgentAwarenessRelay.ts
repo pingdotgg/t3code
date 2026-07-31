@@ -3,6 +3,7 @@ import type {
   OrchestrationEvent,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
+  ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -44,6 +45,7 @@ import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environme
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -234,6 +236,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationThreadShell>;
   readonly project: Option.Option<OrchestrationProjectShell>;
+  readonly providerDriver?: ProviderDriverKind;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -258,6 +261,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
     state: sanitizeRelayAgentActivityState(
       projectThreadAwareness({
         environmentId: input.environmentId,
+        ...(input.providerDriver === undefined ? {} : { providerDriver: input.providerDriver }),
         project: input.project.value,
         thread: input.thread.value,
       }),
@@ -294,6 +298,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const snapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const crypto = yield* Crypto.Crypto;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const activeSnapshotPublishedRef = yield* Ref.make(false);
@@ -407,11 +412,29 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
       : Option.none<OrchestrationProjectShell>();
+    const providerDriver = Option.isSome(thread)
+      ? yield* providerInstances.getInstance(thread.value.modelSelection.instanceId).pipe(
+          Effect.flatMap((instance) => {
+            if (instance !== undefined) {
+              return Effect.succeed(instance.driverKind);
+            }
+            return providerInstances.listUnavailable.pipe(
+              Effect.map(
+                (providers) =>
+                  providers.find(
+                    (provider) => provider.instanceId === thread.value.modelSelection.instanceId,
+                  )?.driver,
+              ),
+            );
+          }),
+        )
+      : undefined;
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
+      ...(providerDriver === undefined ? {} : { providerDriver }),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);

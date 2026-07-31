@@ -16,7 +16,7 @@ import type {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { CommandId, ProviderInstanceId } from "@t3tools/contracts";
+import { CommandId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { RELAY_ACTIVITY_PUBLISH_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
@@ -38,6 +38,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import {
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
@@ -96,6 +97,17 @@ function makeMemorySecretStore() {
     setString: (name: string, value: string) => store.set(name, encodeSecret(value)),
   };
 }
+
+const providerInstanceRegistryLayer = Layer.succeed(
+  ProviderInstanceRegistry.ProviderInstanceRegistry,
+  {
+    getInstance: () => Effect.void,
+    listInstances: Effect.succeed([]),
+    listUnavailable: Effect.succeed([]),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.never,
+  },
+);
 
 describe.sequential("signRelayAgentActivityPublishProof", () => {
   it("distinguishes pending link credentials from disabled publication", () => {
@@ -283,6 +295,39 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       projectId: "project-1",
       state: null,
       reason: "project-not-found",
+    });
+  });
+
+  it("carries a resolved provider driver into pre-session activity", () => {
+    const environmentId = "env-1" as EnvironmentId;
+    const threadId = "thread-1" as ThreadId;
+    const projectId = "project-1" as ProjectId;
+    const thread = {
+      id: threadId,
+      projectId,
+      title: "Waiting for approval",
+      modelSelection: { instanceId: ProviderInstanceId.make("work"), model: "gpt-5.4" },
+      session: null,
+      latestTurn: null,
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      hasPendingApprovals: true,
+      hasPendingUserInput: false,
+    } as OrchestrationThreadShell;
+
+    expect(
+      AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot({
+        environmentId,
+        threadId,
+        thread: Option.some(thread),
+        project: Option.some({
+          id: projectId,
+          title: "T3 Code",
+        } as OrchestrationProjectShell),
+        providerDriver: ProviderDriverKind.make("cursor"),
+      }).state,
+    ).toMatchObject({
+      providerName: "cursor",
+      modelTitle: "gpt-5.4",
     });
   });
 
@@ -507,6 +552,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies ExecutionEnvironmentDescriptor;
 
         const layer = Layer.mergeAll(
+          providerInstanceRegistryLayer,
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
@@ -657,6 +703,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         );
 
         const layer = Layer.mergeAll(
+          providerInstanceRegistryLayer,
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
