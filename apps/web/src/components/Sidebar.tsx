@@ -178,6 +178,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveResponsiveShortcutLabel,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -3495,10 +3496,9 @@ export default function Sidebar() {
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
       : null;
-  const commandPaletteShortcutLabel = shortcutLabelForCommand(
-    keybindings,
-    "commandPalette.toggle",
-    newThreadShortcutLabelOptions,
+  const commandPaletteShortcutLabel = resolveResponsiveShortcutLabel(
+    shortcutLabelForCommand(keybindings, "commandPalette.toggle", newThreadShortcutLabelOptions),
+    isMobile,
   );
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;

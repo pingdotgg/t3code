@@ -113,6 +113,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
+  resolveResponsiveShortcutLabel,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
@@ -2398,7 +2399,10 @@ export default function SidebarV2() {
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
-  const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
+  const commandPaletteShortcutLabel = resolveResponsiveShortcutLabel(
+    shortcutLabelForCommand(keybindings, "commandPalette.toggle"),
+    isMobile,
+  );
   // Same resolution as v1: prefer the local-thread binding, fall back to
   // chat.new, no platform gating — web users have working shortcuts too.
   const newThreadShortcutLabel =
