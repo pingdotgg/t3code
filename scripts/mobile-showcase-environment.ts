@@ -154,6 +154,19 @@ export const SHOWCASE_ENVIRONMENTS = [
   },
 ] as const;
 
+type ShowcaseThreadFixture = {
+  readonly id: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly branch: string;
+  readonly minutesAgo: number;
+  readonly state?: "working" | "approval" | "plan";
+  readonly settled?: boolean;
+  readonly snoozeMinutes?: number;
+  readonly request: string;
+  readonly response: string | null;
+};
+
 export const SHOWCASE_THREADS = [
   {
     id: SHOWCASE_THREAD_ID,
@@ -198,6 +211,7 @@ export const SHOWCASE_THREADS = [
       "Keep hydration errors precise, but make the development copy unexpectedly delightful.",
     response:
       "The diagnostics still lead with the exact mismatch and component stack. A tiny optional haiku now closes the expanded explanation.",
+    snoozeMinutes: 90,
   },
   {
     id: "beautiful-boot",
@@ -210,6 +224,17 @@ export const SHOWCASE_THREADS = [
       "Design a clearer boot timeline that remains useful over serial and never hides kernel detail.",
     response:
       "The plan groups milestones without changing the underlying log stream, preserves plain-text output, and adds zero work to the hot path.",
+  },
+  {
+    id: "patient-penguins",
+    projectId: "linux",
+    title: "Teach penguins to wait patiently",
+    branch: "feat/patient-penguins",
+    minutesAgo: 52,
+    request: "Make delayed work easier to follow without adding noise to the scheduler trace.",
+    response:
+      "Delayed work now carries a concise reason through the trace, so the wait is legible without changing scheduling behavior.",
+    snoozeMinutes: 8 * 60,
   },
   // Finished work, settled by hand: the list keeps it as a receded tail so
   // the active block above reads as everything still in flight. The active
@@ -248,7 +273,7 @@ export const SHOWCASE_THREADS = [
     response:
       "Kills now report the winning heuristic and the runner-up alongside the usual dump, assembled entirely from data the path already had.",
   },
-] as const;
+] as const satisfies ReadonlyArray<ShowcaseThreadFixture>;
 
 function minutesBefore(now: number, minutes: number): string {
   return new Date(now - minutes * 60_000).toISOString();
@@ -337,20 +362,29 @@ function insertThread(
     readonly minutesAgo: number;
     readonly state?: "working" | "approval" | "plan";
     readonly settled?: boolean;
+    readonly snoozeMinutes?: number;
     readonly workspaceRoot: string;
   },
 ): void {
   const turnId = `${input.id}-turn`;
   const updatedAt = minutesBefore(now, input.minutesAgo);
   const isWorking = input.state === "working";
+  const snoozedUntil =
+    input.snoozeMinutes === undefined
+      ? null
+      : new Date(now + input.snoozeMinutes * 60_000).toISOString();
+  const snoozedAt =
+    input.snoozeMinutes === undefined
+      ? null
+      : minutesBefore(now, Math.max(1, Math.floor(input.minutesAgo / 2)));
   database
     .prepare(
       `INSERT INTO projection_threads (
         thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
         branch, worktree_path, latest_turn_id, latest_user_message_at, pending_approval_count,
         pending_user_input_count, has_actionable_proposed_plan, created_at, updated_at,
-        archived_at, deleted_at, settled_override, settled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?)`,
+        archived_at, deleted_at, settled_override, settled_at, snoozed_until, snoozed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -369,6 +403,8 @@ function insertThread(
       updatedAt,
       input.settled ? "settled" : null,
       input.settled ? updatedAt : null,
+      snoozedUntil,
+      snoozedAt,
     );
   database
     .prepare(
