@@ -19,6 +19,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
+  HourglassIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
@@ -319,7 +320,12 @@ function SidebarV2ThreadTooltip({
               </div>
             </div>
           ) : null}
-          {thread.session?.lastError ? (
+          {thread.session?.usageLimit ? (
+            <div className="flex min-w-0 items-center gap-2 text-warning">
+              <HourglassIcon className="size-3 shrink-0 stroke-current" />
+              <div className="min-w-0 truncate">Usage limit</div>
+            </div>
+          ) : thread.session?.lastError ? (
             <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
               <div className="min-w-0 truncate">Error occurred</div>

@@ -72,6 +72,30 @@ export type RuntimeThreadState = typeof RuntimeThreadState.Type;
 const RuntimeTurnState = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
 export type RuntimeTurnState = typeof RuntimeTurnState.Type;
 
+/**
+ * Provider-agnostic rate-limit window state.
+ *
+ * Adapters normalize their native vocabulary onto this triple so ingestion can
+ * react without knowing which provider produced the event.
+ */
+export const RuntimeRateLimitStatus = Schema.Literals(["allowed", "warning", "rejected"]);
+export type RuntimeRateLimitStatus = typeof RuntimeRateLimitStatus.Type;
+
+/**
+ * Normalized "the provider's usage window is exhausted" marker.
+ *
+ * Built exclusively from structured provider fields (never raw error text) so
+ * the message stays safe to surface verbatim in clients.
+ *
+ * `resetsAt` is epoch milliseconds; clients format it in the viewer's locale.
+ */
+export const RuntimeUsageLimit = Schema.Struct({
+  windowType: Schema.optional(TrimmedNonEmptyStringSchema),
+  resetsAt: Schema.optional(Schema.Number),
+  message: TrimmedNonEmptyStringSchema,
+});
+export type RuntimeUsageLimit = typeof RuntimeUsageLimit.Type;
+
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
 export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
 
@@ -366,6 +390,9 @@ const TurnCompletedPayload = Schema.Struct({
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+  // Set when the turn stopped because the provider's usage window ran out.
+  // Distinguishes "out of usage" from a malfunction for any `state`.
+  usageLimit: Schema.optional(RuntimeUsageLimit),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
 
@@ -536,6 +563,12 @@ export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
   rateLimits: Schema.Unknown,
+  // Normalized view of `rateLimits`, filled in by the adapter. Optional so
+  // legacy/raw-only emitters keep validating; ingestion falls back to reading
+  // the provider-native shape out of `rateLimits` when these are absent.
+  status: Schema.optional(RuntimeRateLimitStatus),
+  windowType: Schema.optional(TrimmedNonEmptyStringSchema),
+  resetsAt: Schema.optional(Schema.Number),
 });
 export type AccountRateLimitsUpdatedPayload = typeof AccountRateLimitsUpdatedPayload.Type;
 

@@ -22,6 +22,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
+  buildUsageLimitMessage,
+  normalizeUsageLimitResetsAt,
+  parseUsageLimitStderrLine,
+} from "@t3tools/shared/usageLimit";
+import {
   ApprovalRequestId,
   type CanonicalItemType,
   type CanonicalRequestType,
@@ -39,6 +44,8 @@ import {
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
+  type RuntimeRateLimitStatus,
+  type RuntimeUsageLimit,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
@@ -201,6 +208,16 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  /**
+   * Latest *rejected* rate-limit window observed for this session.
+   *
+   * Set by `rate_limit_event`, by a `blocking_limit` result, or by the CLI's
+   * stderr usage-limit line; cleared when a new turn starts or a later
+   * rate-limit event reports the window is open again. While set, an
+   * otherwise-silent stream end is attributed to the usage limit instead of
+   * being reported as a bare interruption.
+   */
+  usageLimit: RuntimeUsageLimit | undefined;
   stopped: boolean;
 }
 
@@ -1007,6 +1024,69 @@ function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStat
     return "cancelled";
   }
   return "failed";
+}
+
+/**
+ * `terminal_reason` values that mean "the account ran out of usage", not
+ * "something went wrong". `rapid_refill_breaker` is the burst-protection
+ * cousin of `blocking_limit`; both stop the run until a window reopens.
+ */
+const USAGE_LIMIT_TERMINAL_REASONS = new Set(["blocking_limit", "rapid_refill_breaker"]);
+
+function isUsageLimitResult(result: SDKResultMessage): boolean {
+  const terminalReason = (result as { readonly terminal_reason?: string }).terminal_reason;
+  return terminalReason !== undefined && USAGE_LIMIT_TERMINAL_REASONS.has(terminalReason);
+}
+
+/**
+ * Map the SDK's rate-limit status onto the provider-agnostic vocabulary.
+ */
+function normalizeClaudeRateLimitStatus(status: unknown): RuntimeRateLimitStatus | undefined {
+  switch (status) {
+    case "allowed":
+      return "allowed";
+    case "allowed_warning":
+      return "warning";
+    case "rejected":
+      return "rejected";
+    default:
+      return undefined;
+  }
+}
+
+interface ClaudeRateLimitSnapshot {
+  readonly status: RuntimeRateLimitStatus | undefined;
+  readonly windowType: string | undefined;
+  readonly resetsAt: number | undefined;
+}
+
+/**
+ * Pull `rate_limit_info` off an SDK rate-limit message without trusting its
+ * runtime shape (the SDK's union does not narrow here).
+ */
+function readClaudeRateLimitSnapshot(message: SDKMessage): ClaudeRateLimitSnapshot {
+  const info = (message as { readonly rate_limit_info?: unknown }).rate_limit_info;
+  if (!info || typeof info !== "object") {
+    return { status: undefined, windowType: undefined, resetsAt: undefined };
+  }
+  const record = info as Record<string, unknown>;
+  const windowType = typeof record.rateLimitType === "string" ? record.rateLimitType : undefined;
+  return {
+    status: normalizeClaudeRateLimitStatus(record.status),
+    ...(windowType ? { windowType } : { windowType: undefined }),
+    resetsAt: normalizeUsageLimitResetsAt(record.resetsAt),
+  };
+}
+
+function makeUsageLimit(input: {
+  readonly windowType?: string | undefined;
+  readonly resetsAt?: number | undefined;
+}): RuntimeUsageLimit {
+  return {
+    ...(input.windowType ? { windowType: input.windowType } : {}),
+    ...(input.resetsAt !== undefined ? { resetsAt: input.resetsAt } : {}),
+    message: buildUsageLimitMessage(input),
+  };
 }
 
 function streamKindFromDeltaType(deltaType: string): ClaudeTextStreamKind {
@@ -1883,7 +1963,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     status: ProviderRuntimeTurnStatus,
     errorMessage?: string,
     result?: SDKResultMessage,
+    options?: { readonly usageLimit?: RuntimeUsageLimit | undefined },
   ) {
+    const usageLimitPayload = options?.usageLimit ? { usageLimit: options.usageLimit } : {};
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
@@ -1977,6 +2059,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ? { totalCostUsd: result.total_cost_usd }
             : {}),
           ...(errorMessage ? { errorMessage } : {}),
+          ...usageLimitPayload,
         },
         providerRefs: {},
       });
@@ -2052,6 +2135,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
         ...(errorMessage ? { errorMessage } : {}),
+        ...usageLimitPayload,
       },
       providerRefs: nativeProviderRefs(context),
     });
@@ -2553,6 +2637,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // A usage-limit terminal reason is an expected stop, not a malfunction:
+    // it completes the turn with a structured marker (never raw error text)
+    // and skips the runtime.error row that would style it as a failure.
+    if (isUsageLimitResult(message)) {
+      const usageLimit = context.usageLimit ?? makeUsageLimit({});
+      context.usageLimit = usageLimit;
+      yield* completeTurn(context, "interrupted", usageLimit.message, message, { usageLimit });
+      return;
+    }
+
     const status = turnStatusFromResult(message);
     const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
 
@@ -2906,11 +3000,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const snapshot = readClaudeRateLimitSnapshot(message);
+      // Remember a rejected window so a subsequent silent stream end can be
+      // attributed to it; a reopened window clears the marker.
+      if (snapshot.status === "rejected") {
+        context.usageLimit = makeUsageLimit(snapshot);
+      } else if (snapshot.status !== undefined) {
+        context.usageLimit = undefined;
+      }
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
         payload: {
           rateLimits: message,
+          ...(snapshot.status ? { status: snapshot.status } : {}),
+          ...(snapshot.windowType ? { windowType: snapshot.windowType } : {}),
+          ...(snapshot.resetsAt !== undefined ? { resetsAt: snapshot.resetsAt } : {}),
         },
       });
       return;
@@ -3001,11 +3106,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // A rejected usage window recorded during this turn outranks the generic
+    // exit reasons below: without it, a limit-blocked run ends as a bare
+    // "stream ended" interruption and the client shows a clean completion.
+    const usageLimit = context.usageLimit;
+
     if (Exit.isFailure(exit)) {
       if (isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
           yield* completeTurn(context, "interrupted", "Claude runtime interrupted.");
         }
+      } else if (usageLimit) {
+        yield* completeTurn(context, "interrupted", usageLimit.message, undefined, { usageLimit });
       } else {
         const failures = exit.cause.reasons.flatMap((reason) =>
           Cause.isFailReason(reason) ? [reason.error] : [],
@@ -3018,7 +3130,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* completeTurn(context, "failed", message);
       }
     } else if (context.turnState) {
-      yield* completeTurn(context, "interrupted", "Claude runtime stream ended.");
+      yield* usageLimit
+        ? completeTurn(context, "interrupted", usageLimit.message, undefined, { usageLimit })
+        : completeTurn(context, "interrupted", "Claude runtime stream ended.");
     }
 
     yield* stopSessionInternal(context, {
@@ -3521,6 +3635,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(ultracode ? { ultracode: true } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+
+      // Last-resort usage-limit signal. When the CLI is blocked before it can
+      // emit a rate_limit_event or a blocking_limit result it still prints
+      // "Claude AI usage limit reached|<epoch>" on stderr. Only the structured
+      // epoch is kept — raw stderr never reaches user-facing copy. Buffered
+      // until the session context exists, since stderr can precede it.
+      let pendingStderrUsageLimit: RuntimeUsageLimit | undefined;
+      const handleQueryStderr = (data: string) => {
+        const parsed = parseUsageLimitStderrLine(data);
+        if (!parsed) {
+          return;
+        }
+        const usageLimit = makeUsageLimit(parsed);
+        const active = sessions.get(threadId);
+        if (active) {
+          active.usageLimit = usageLimit;
+        } else {
+          pendingStderrUsageLimit = usageLimit;
+        }
+      };
+
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3542,6 +3677,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        stderr: handleQueryStderr,
         canUseTool,
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
@@ -3640,6 +3776,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        usageLimit: pendingStderrUsageLimit,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -3782,6 +3919,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const updatedAt = yield* nowIso;
       context.turnState = turnState;
+      // A new turn means the caller believes usage is available again; a
+      // still-closed window re-announces itself via rate_limit_event.
+      context.usageLimit = undefined;
       context.session = {
         ...context.session,
         status: "running",

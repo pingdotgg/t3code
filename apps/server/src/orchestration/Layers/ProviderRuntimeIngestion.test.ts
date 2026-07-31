@@ -361,6 +361,125 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("surfaces a usage-limit turn completion as a session banner plus work-log row", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-usage-limit-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-usage-limit"),
+    });
+
+    await waitForThread(harness.readModel, (thread) => thread.session?.status === "running");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-usage-limit-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-usage-limit"),
+      payload: {
+        state: "interrupted",
+        errorMessage: "5-hour usage limit reached.",
+        usageLimit: {
+          windowType: "five_hour",
+          resetsAt: 1_800_000_000_000,
+          message: "5-hour usage limit reached.",
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.usageLimit != null &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "usage-limit.reached",
+        ),
+    );
+
+    // Out of usage is not an error status and must not populate lastError.
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.lastError).toBe(null);
+    expect(thread.session?.usageLimit).toEqual({
+      windowType: "five_hour",
+      resetsAt: 1_800_000_000_000,
+      message: "5-hour usage limit reached.",
+      provider: "codex",
+    });
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.kind === "usage-limit.reached",
+    );
+    expect(activity?.summary).toBe("Usage limit reached");
+    expect(activity?.tone).toBe("info");
+    expect(activity?.payload).toEqual({
+      message: "5-hour usage limit reached.",
+      windowType: "five_hour",
+      resetsAt: 1_800_000_000_000,
+      provider: "codex",
+    });
+  });
+
+  it("sets and clears the usage-limit banner from account.rate-limits.updated", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Raw provider shape only (no normalized fields): ingestion must tolerate it.
+    harness.emit({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-rate-limits-rejected"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        rateLimits: {
+          rate_limit_info: {
+            status: "rejected",
+            rateLimitType: "seven_day",
+            resetsAt: 1_800_000_000,
+          },
+        },
+      },
+    });
+
+    let thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.usageLimit != null,
+    );
+    expect(thread.session?.usageLimit).toEqual({
+      windowType: "seven_day",
+      resetsAt: 1_800_000_000_000,
+      message: "weekly usage limit reached. Resets at 2027-01-15T08:00:00.000Z.",
+      provider: "codex",
+    });
+    // A rejected window on its own is not a work-log event.
+    expect(
+      thread.activities.some(
+        (entry: ProviderRuntimeTestActivity) => entry.kind === "usage-limit.reached",
+      ),
+    ).toBe(false);
+
+    harness.emit({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-rate-limits-allowed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        rateLimits: {},
+        status: "allowed",
+      },
+    });
+
+    thread = await waitForThread(harness.readModel, (entry) => entry.session?.usageLimit == null);
+    expect(thread.session?.usageLimit ?? null).toBe(null);
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = "2026-01-01T00:00:00.000Z";

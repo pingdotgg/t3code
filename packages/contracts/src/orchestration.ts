@@ -270,6 +270,21 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * Provider-agnostic "this account's usage window is exhausted" state.
+ *
+ * Distinct from `lastError`: hitting a plan's usage window is an expected,
+ * non-destructive stop, so clients render it as a warning rather than a
+ * failure. `resetsAt` is epoch milliseconds, formatted client-side.
+ */
+export const OrchestrationSessionUsageLimit = Schema.Struct({
+  provider: Schema.optional(TrimmedNonEmptyString),
+  windowType: Schema.optional(TrimmedNonEmptyString),
+  resetsAt: Schema.optional(Schema.Number),
+  message: TrimmedNonEmptyString,
+});
+export type OrchestrationSessionUsageLimit = typeof OrchestrationSessionUsageLimit.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -278,6 +293,7 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  usageLimit: Schema.optional(Schema.NullOr(OrchestrationSessionUsageLimit)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;

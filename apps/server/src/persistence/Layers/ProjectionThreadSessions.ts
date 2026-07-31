@@ -1,9 +1,12 @@
+import { OrchestrationSessionUsageLimit } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
-import { toPersistenceSqlError } from "../Errors.ts";
+import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 
 import {
   ProjectionThreadSession,
@@ -13,11 +16,25 @@ import {
   GetProjectionThreadSessionInput,
 } from "../Services/ProjectionThreadSessions.ts";
 
+// `usage_limit` is a nullable JSON text column.
+const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession.mapFields(
+  Struct.assign({
+    usageLimit: Schema.NullOr(Schema.fromJsonString(OrchestrationSessionUsageLimit)),
+  }),
+);
+
+function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+  return (cause: unknown) =>
+    Schema.isSchemaError(cause)
+      ? toPersistenceDecodeError(decodeOperation)(cause)
+      : toPersistenceSqlError(sqlOperation)(cause);
+}
+
 const makeProjectionThreadSessionRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upsertProjectionThreadSessionRow = SqlSchema.void({
-    Request: ProjectionThreadSession,
+    Request: ProjectionThreadSessionDbRowSchema,
     execute: (row) =>
       sql`
         INSERT INTO projection_thread_sessions (
@@ -28,6 +45,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           runtime_mode,
           active_turn_id,
           last_error,
+          usage_limit,
           updated_at
         )
         VALUES (
@@ -38,6 +56,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           ${row.runtimeMode},
           ${row.activeTurnId},
           ${row.lastError},
+          ${row.usageLimit},
           ${row.updatedAt}
         )
         ON CONFLICT (thread_id)
@@ -48,13 +67,14 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           runtime_mode = excluded.runtime_mode,
           active_turn_id = excluded.active_turn_id,
           last_error = excluded.last_error,
+          usage_limit = excluded.usage_limit,
           updated_at = excluded.updated_at
       `,
   });
 
   const getProjectionThreadSessionRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadSessionInput,
-    Result: ProjectionThreadSession,
+    Result: ProjectionThreadSessionDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -65,6 +85,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          usage_limit AS "usageLimit",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
@@ -82,13 +103,21 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
 
   const upsert: ProjectionThreadSessionRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadSessionRow(row).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadSessionRepository.upsert:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadSessionRepository.upsert:query",
+          "ProjectionThreadSessionRepository.upsert:encode",
+        ),
+      ),
     );
 
   const getByThreadId: ProjectionThreadSessionRepositoryShape["getByThreadId"] = (input) =>
     getProjectionThreadSessionRow(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProjectionThreadSessionRepository.getByThreadId:query"),
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadSessionRepository.getByThreadId:query",
+          "ProjectionThreadSessionRepository.getByThreadId:decode",
+        ),
       ),
     );
 

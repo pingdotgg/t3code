@@ -47,6 +47,7 @@ import {
   EyeIcon,
   GlobeIcon,
   HammerIcon,
+  HourglassIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
@@ -1756,6 +1757,7 @@ type WorkEntryIconName =
   | "eye"
   | "globe"
   | "hammer"
+  | "hourglass"
   | "message-circle"
   | "square-pen"
   | "terminal"
@@ -1777,6 +1779,8 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
       return <HammerIcon className={className} aria-hidden />;
+    case "hourglass":
+      return <HourglassIcon className={className} aria-hidden />;
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
     case "square-pen":
@@ -1929,8 +1933,16 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
-  const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
+  // Running out of plan usage is a warning, not a failure: same amber chrome
+  // as runtime warnings, but an hourglass instead of the failure "x".
+  const isUsageLimitEntry = workEntry.sourceActivityKind === "usage-limit.reached";
+  const showWarningIndicator =
+    workEntry.sourceActivityKind === "runtime.warning" || isUsageLimitEntry;
+  const entryIconName = isUsageLimitEntry
+    ? "hourglass"
+    : showWarningIndicator
+      ? "x"
+      : workEntryIconName(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
@@ -1948,13 +1960,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
   const iconWrapperClass = cn(
     "flex size-5 shrink-0 items-center justify-center",
-    showWarningIndicator
-      ? "text-destructive"
-      : showDestructiveRowStyle
+    isUsageLimitEntry
+      ? "text-warning"
+      : showWarningIndicator
         ? "text-destructive"
-        : workEntry.tone === "tool" || showFailedIndicator
-          ? "text-muted-foreground/65"
-          : iconConfig.className,
+        : showDestructiveRowStyle
+          ? "text-destructive"
+          : workEntry.tone === "tool" || showFailedIndicator
+            ? "text-muted-foreground/65"
+            : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"

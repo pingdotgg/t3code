@@ -523,7 +523,12 @@ export function projectEvent(
 
         // Leaving the "running" session status is the turn-end signal: settle
         // a still-running latest turn so its duration reflects the whole turn.
-        const settledTurnState = settledTurnStateForSessionStatus(session.status);
+        // A usage-limit stop settles as "interrupted", not "completed":
+        // the run did not finish, it ran out of usage.
+        const settledTurnState =
+          session.usageLimit != null
+            ? ("interrupted" as const)
+            : settledTurnStateForSessionStatus(session.status);
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {

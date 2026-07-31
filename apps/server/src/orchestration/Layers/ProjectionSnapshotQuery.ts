@@ -5,6 +5,7 @@ import {
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
+  OrchestrationSessionUsageLimit,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   OrchestrationThreadSearchSource,
@@ -87,7 +88,12 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
-const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+// `usage_limit` is a nullable JSON text column.
+const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession.mapFields(
+  Struct.assign({
+    usageLimit: Schema.NullOr(Schema.fromJsonString(OrchestrationSessionUsageLimit)),
+  }),
+);
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -266,6 +272,7 @@ function mapSessionRow(
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
+    ...(row.usageLimit !== null ? { usageLimit: row.usageLimit } : {}),
     updatedAt: row.updatedAt,
   };
 }
@@ -546,6 +553,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          usage_limit AS "usageLimit",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
@@ -567,6 +575,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.usage_limit AS "usageLimit",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -592,6 +601,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.usage_limit AS "usageLimit",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -983,6 +993,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          usage_limit AS "usageLimit",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
@@ -1290,6 +1301,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
+                  ...(row.usageLimit !== null ? { usageLimit: row.usageLimit } : {}),
                   updatedAt: row.updatedAt,
                 });
               }

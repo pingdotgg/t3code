@@ -1248,6 +1248,9 @@ const make = Effect.gen(function* () {
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,
+        // A session stopped while out of usage keeps its banner; only a new
+        // turn (or a reopened window) clears it.
+        usageLimit: thread.session?.usageLimit ?? null,
         updatedAt: now,
       },
       createdAt: now,

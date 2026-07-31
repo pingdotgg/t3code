@@ -691,6 +691,47 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("labels a usage-limit stop with the locale-formatted reset time", () => {
+    const resetsAt = Date.parse("2026-02-23T19:00:00.000Z");
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "usage-limit",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "usage-limit.reached",
+        summary: "Usage limit reached",
+        tone: "info",
+        payload: {
+          message: "5-hour usage limit reached.",
+          windowType: "five_hour",
+          resetsAt,
+          provider: "claudeAgent",
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry?.sourceActivityKind).toBe("usage-limit.reached");
+    expect(entry?.tone).toBe("info");
+    expect(entry?.label).toContain("5-hour usage limit reached - resets at");
+    // Formatted in the viewer's locale, not echoed from the server message.
+    expect(entry?.label).not.toContain("Z");
+  });
+
+  it("falls back to the bare headline when no reset time is known", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "usage-limit-no-reset",
+        kind: "usage-limit.reached",
+        summary: "Usage limit reached",
+        tone: "info",
+        payload: { message: "Usage limit reached." },
+      }),
+    ]);
+
+    expect(entries[0]?.label).toBe("Usage limit reached");
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

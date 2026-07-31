@@ -1,3 +1,4 @@
+import { usageLimitWindowLabel } from "@t3tools/shared/usageLimit";
 import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import {
@@ -674,6 +675,35 @@ function extractWorkLogToolLifecycleStatus(
   return undefined;
 }
 
+/**
+ * Timeline label for a usage-limit stop, e.g.
+ * "Usage limit reached - resets at 7:00 PM".
+ *
+ * Built from the structured payload so the reset time renders in the viewer's
+ * locale rather than the server's.
+ */
+function usageLimitWorkLogLabel(payload: Record<string, unknown> | null): string {
+  const windowLabel = usageLimitWindowLabel(
+    typeof payload?.windowType === "string" ? payload.windowType : null,
+  );
+  const headline = windowLabel ? `${windowLabel} usage limit reached` : "Usage limit reached";
+  const resetsAt = typeof payload?.resetsAt === "number" ? payload.resetsAt : undefined;
+  if (resetsAt === undefined || !Number.isFinite(resetsAt)) {
+    return headline;
+  }
+  const reset = new Date(resetsAt);
+  const sameDay = new Date().toDateString() === reset.toDateString();
+  const formatted = sameDay
+    ? reset.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : reset.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+  return `${headline} - resets at ${formatted}`;
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const payload =
     activity.payload && typeof activity.payload === "object"
@@ -708,7 +738,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
-    label: taskLabel || activity.summary,
+    label:
+      activity.kind === "usage-limit.reached"
+        ? usageLimitWorkLogLabel(payload)
+        : taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
         ? "thinking"
