@@ -52,6 +52,15 @@ class ArchiveCodecError extends Schema.TaggedErrorClass<ArchiveCodecError>()("Ar
 const isArchiveCodecError = Schema.is(ArchiveCodecError);
 const isThreadColdStorageError = Schema.is(ThreadColdStorageError);
 
+const normalizeThreadColdStorageError = (
+  operation: string,
+  threadId: ThreadId,
+  cause: unknown,
+): ThreadColdStorageError =>
+  isThreadColdStorageError(cause) && cause.operation === operation && cause.threadId === threadId
+    ? cause
+    : new ThreadColdStorageError({ operation, threadId, cause });
+
 class ArchiveTableValidationError extends Schema.TaggedErrorClass<ArchiveTableValidationError>()(
   "ArchiveTableValidationError",
   {
@@ -884,13 +893,7 @@ const make = Effect.gen(function* () {
       getTreeSemaphore(threadId),
       ({ semaphore }) => semaphore.withPermit(effect),
       releaseTreeSemaphore,
-    ).pipe(
-      Effect.mapError((cause) =>
-        isThreadColdStorageError(cause)
-          ? cause
-          : new ThreadColdStorageError({ operation, threadId, cause }),
-      ),
-    );
+    ).pipe(Effect.mapError((cause) => normalizeThreadColdStorageError(operation, threadId, cause)));
 
   const listIds = (query: string, operation: string) =>
     sql.unsafe(query).pipe(
@@ -911,9 +914,7 @@ const make = Effect.gen(function* () {
           threadId,
           false,
           quiesce.pipe(
-            Effect.mapError(
-              (cause) => new ThreadColdStorageError({ operation: "archive", threadId, cause }),
-            ),
+            Effect.mapError((cause) => normalizeThreadColdStorageError("archive", threadId, cause)),
           ),
         ),
       ),

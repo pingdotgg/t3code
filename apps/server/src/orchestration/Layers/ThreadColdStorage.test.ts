@@ -10,7 +10,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { ThreadColdStorage } from "../Services/ThreadColdStorage.ts";
+import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadColdStorage.ts";
 import { ThreadColdStorageLive } from "./ThreadColdStorage.ts";
 
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
@@ -42,6 +42,46 @@ const layer = it.layer(
 );
 
 layer("ThreadColdStorage", (it) => {
+  it.effect("normalizes typed quiesce failures at the archive boundary", () =>
+    Effect.gen(function* () {
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-quiesce-failure");
+      const quiesceFailure = { _tag: "QuiesceFailure" } as const;
+
+      yield* insertArchivedThread(threadId, "Quiesce failure thread");
+
+      const archiveFailure = yield* Effect.flip(
+        storage.archiveThread(threadId, Effect.fail(quiesceFailure)),
+      );
+
+      assert.strictEqual(archiveFailure.operation, "archive");
+      assert.strictEqual(archiveFailure.threadId, threadId);
+      assert.strictEqual(archiveFailure.cause, quiesceFailure);
+
+      const normalizedFailure = new ThreadColdStorageError({
+        operation: "archive",
+        threadId,
+        cause: quiesceFailure,
+      });
+      const repeatedFailure = yield* Effect.flip(
+        storage.archiveThread(threadId, Effect.fail(normalizedFailure)),
+      );
+      assert.strictEqual(repeatedFailure, normalizedFailure);
+
+      const differentlyAttributedFailure = new ThreadColdStorageError({
+        operation: "restore",
+        threadId,
+        cause: quiesceFailure,
+      });
+      const attributedFailure = yield* Effect.flip(
+        storage.archiveThread(threadId, Effect.fail(differentlyAttributedFailure)),
+      );
+      assert.strictEqual(attributedFailure.operation, "archive");
+      assert.strictEqual(attributedFailure.threadId, threadId);
+      assert.strictEqual(attributedFailure.cause, differentlyAttributedFailure);
+    }),
+  );
+
   it.effect("discovers archived shells before a lifecycle manifest exists", () =>
     Effect.gen(function* () {
       const storage = yield* ThreadColdStorage;
