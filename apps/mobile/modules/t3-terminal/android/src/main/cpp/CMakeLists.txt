@@ -13,7 +13,7 @@ add_library(t3terminal SHARED t3_terminal_jni.cpp)
 
 target_include_directories(
   t3terminal
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../Vendor/libghostty-vt/include"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../../../native/libghostty-vt/include"
 )
 
 target_link_options(

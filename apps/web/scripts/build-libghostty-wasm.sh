@@ -5,10 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_DIR="$(cd "${WEB_DIR}/../.." && pwd)"
-MOBILE_VENDOR_DIR="${REPO_DIR}/apps/mobile/modules/t3-terminal/Vendor/libghostty-vt"
+CANONICAL_VENDOR_DIR="${REPO_DIR}/native/libghostty-vt"
 VENDOR_DIR="${WEB_DIR}/src/terminal/ghostty/vendor"
 
-GHOSTTY_REVISION="$(tr -d '[:space:]' < "${MOBILE_VENDOR_DIR}/VERSION")"
+GHOSTTY_REVISION="$(tr -d '[:space:]' < "${CANONICAL_VENDOR_DIR}/VERSION")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
 GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"

@@ -12,7 +12,7 @@ boundaries, keyboard encoding, selection, and scrollback:
 - Android links the native shared library and converts render state into a compact JNI snapshot.
 - Web loads a separately cached WebAssembly build and reads render state into a Canvas 2D surface.
 - Both artifacts are built from the revision in
-  `apps/mobile/modules/t3-terminal/Vendor/libghostty-vt/VERSION`.
+  `native/libghostty-vt/VERSION`.
 
 The platform adapters deliberately own only platform behavior. Android owns its Kotlin Canvas and
 touch integration. Web owns browser font shaping, the hidden IME textarea, clipboard and DOM input,
