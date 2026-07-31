@@ -109,6 +109,7 @@ interface HomeScreenProps {
 /* ─── Layout constants ───────────────────────────────────────────────── */
 
 const ESTIMATED_THREAD_ROW_HEIGHT = 72;
+const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 /**
  * Top spacing between the list and the Android custom header. The Android
  * header (AndroidHomeHeader) is rendered in-flow above this screen and
@@ -196,6 +197,10 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
+  const iosBottomToolbarClearance =
+    Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
+      ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
+      : 0;
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
@@ -877,7 +882,7 @@ export function HomeScreen(props: HomeScreenProps) {
       <View
         className="flex-1 items-center justify-center bg-screen px-8"
         style={{
-          paddingBottom: Math.max(insets.bottom, 24),
+          paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
           paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
         }}
       >
@@ -1019,7 +1024,7 @@ export function HomeScreen(props: HomeScreenProps) {
             contentContainerStyle={{
               paddingBottom:
                 Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 96
+                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
                   : Math.max(insets.bottom, 16) + 88,
             }}
           />
@@ -1060,16 +1065,19 @@ export function HomeScreen(props: HomeScreenProps) {
           scrollEventThrottle={16}
           contentContainerStyle={{
             // Android reserves room for the floating new-task FAB
-            // (56 button + 16 gap + bottom inset).
+            // (56 button + 16 gap + bottom inset). Pre-glass iOS shows a
+            // standard 44pt bottom toolbar that overlays the list and is not
+            // reflected in insets while contentInsetAdjustmentBehavior is
+            // "never".
             paddingBottom:
               Platform.OS === "ios"
-                ? Math.max(insets.bottom, 24) + 24
+                ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
                 : Math.max(insets.bottom, 16) + 88,
           }}
           scrollIndicatorInsets={
             Platform.OS === "ios"
               ? {
-                  bottom: Math.max(insets.bottom, 16) + 24,
+                  bottom: Math.max(insets.bottom, 16) + 24 + iosBottomToolbarClearance,
                   top: 0,
                 }
               : undefined
