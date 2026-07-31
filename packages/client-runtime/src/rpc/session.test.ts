@@ -287,6 +287,40 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("reaches ready when a newer server sends unknown config members", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+
+      const shortcut = {
+        key: "p",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      };
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        keybindings: [
+          { command: "someFuture.toggle", shortcut },
+          { command: "terminal.toggle", shortcut },
+        ],
+        issues: [{ kind: "keybindings.future-issue", message: "From a newer server" }],
+        availableEditors: ["some-future-editor", "zed"],
+      });
+      yield* Fiber.join(readyFiber);
+
+      const config = yield* session.initialConfig;
+      expect(config.keybindings).toEqual([{ command: "terminal.toggle", shortcut }]);
+      expect(config.issues).toEqual([]);
+      expect(config.availableEditors).toEqual(["zed"]);
+    }),
+  );
+
   it.effect("uses the legacy config RPC for probes when the server lacks the capability", () =>
     Effect.scoped(
       Effect.gen(function* () {
