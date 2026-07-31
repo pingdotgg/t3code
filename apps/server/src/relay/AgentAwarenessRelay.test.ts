@@ -668,7 +668,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ),
   );
 
-  it.effect("serializes provider-change republishes behind in-flight orchestration publishes", () =>
+  it.effect("serializes each thread while publishing unrelated threads concurrently", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const originalFetch = globalThis.fetch;
@@ -677,11 +677,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const events = yield* Queue.unbounded<OrchestrationEvent>();
         const fetchSeen = yield* Deferred.make<URL>();
         const providerRepublishSeen = yield* Deferred.make<void>();
-        const publishedProviderNames: Array<string | undefined> = [];
-        const completedProviderNames: Array<string | undefined> = [];
-        let fetchCount = 0;
+        const unrelatedPublishSeen = yield* Deferred.make<void>();
+        const publishedStates: string[] = [];
+        const completedStates: string[] = [];
         let inFlightFetches = 0;
         let maxInFlightFetches = 0;
+        let sameThreadOverlap = false;
+        const inFlightThreadIds = new Set<string>();
         let releaseFirstPublish = () => {};
         const firstPublishGate = new Promise<void>((resolve) => {
           releaseFirstPublish = resolve;
@@ -708,6 +710,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const now = "2026-05-25T00:00:00.000Z";
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
+        const otherThreadId = "thread-2" as ThreadId;
         const environmentId = "env-1" as EnvironmentId;
 
         const project = {
@@ -757,6 +760,20 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
         } satisfies OrchestrationThreadShell;
+        const otherThread = {
+          ...thread,
+          id: otherThreadId,
+          title: "Run unrelated agent",
+          latestTurn: {
+            ...thread.latestTurn,
+            turnId: "turn-2" as TurnId,
+          },
+          session: {
+            ...thread.session,
+            threadId: otherThreadId,
+            activeTurnId: "turn-2" as TurnId,
+          },
+        } satisfies OrchestrationThreadShell;
 
         const descriptor = {
           environmentId,
@@ -789,11 +806,19 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
                     : String(encodedBody),
                 )
           ) as {
-            readonly state?: { readonly providerName?: string };
+            readonly state?: {
+              readonly providerName?: string;
+              readonly threadId?: string;
+            };
           };
+          const publishedThreadId = payload.state?.threadId ?? "unknown";
           const providerName = payload.state?.providerName;
-          publishedProviderNames.push(providerName);
-          fetchCount += 1;
+          const publishedState = `${publishedThreadId}:${providerName ?? "unknown"}`;
+          publishedStates.push(publishedState);
+          if (inFlightThreadIds.has(publishedThreadId)) {
+            sameThreadOverlap = true;
+          }
+          inFlightThreadIds.add(publishedThreadId);
           inFlightFetches += 1;
           maxInFlightFetches = Math.max(maxInFlightFetches, inFlightFetches);
           const url = new URL(
@@ -802,12 +827,16 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               : (input as unknown as { readonly url: string }).url,
           );
           runFork(Deferred.succeed(fetchSeen, url));
-          if (fetchCount === 1) {
+          if (publishedThreadId === otherThreadId && providerName === "codex") {
+            runFork(Deferred.succeed(unrelatedPublishSeen, undefined));
+          }
+          if (publishedThreadId === threadId && providerName === "cursor") {
             await firstPublishGate;
           }
-          completedProviderNames.push(providerName);
+          completedStates.push(publishedState);
+          inFlightThreadIds.delete(publishedThreadId);
           inFlightFetches -= 1;
-          if (fetchCount >= 2) {
+          if (publishedThreadId === threadId && providerName === "codex") {
             runFork(Deferred.succeed(providerRepublishSeen, undefined));
           }
           return Response.json({ ok: true, deliveries: [] });
@@ -839,10 +868,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               Effect.succeed({
                 snapshotSequence: 1,
                 projects: [project],
-                threads: [thread],
+                threads: [thread, otherThread],
                 updatedAt: now,
               } satisfies OrchestrationShellSnapshot),
-            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+            getThreadShellById: (requestedThreadId: ThreadId) =>
+              Effect.succeed(
+                Option.some(requestedThreadId === otherThreadId ? otherThread : thread),
+              ),
             getProjectShellById: () => Effect.succeed(Option.some(project)),
           } as unknown as ProjectionSnapshotQueryShape),
         );
@@ -873,25 +905,28 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
           const url = yield* Deferred.await(fetchSeen).pipe(Effect.timeout("2 seconds"));
           expect(url.origin).toBe("https://transport.example.test");
-          expect(publishedProviderNames).toEqual(["cursor"]);
+          expect(publishedStates).toEqual(["thread-1:cursor"]);
 
           yield* providerRegistry.update({
             liveDriver: ProviderDriverKind.make("codex"),
           });
-          // Let the registry subscriber consume the change while the Cursor
-          // request is still held open. A direct publish would now overlap it;
-          // the shared worker must only queue the Codex update.
+          // Let the registry subscriber queue both active threads while the
+          // Cursor request is held open. The same-thread Codex update must
+          // wait, while the unrelated thread should use another worker slot.
           for (let index = 0; index < 5; index++) {
             yield* Effect.yieldNow;
           }
-          expect(publishedProviderNames).toEqual(["cursor"]);
+          expect(yield* Deferred.isDone(unrelatedPublishSeen)).toBe(true);
+          expect(publishedStates).toEqual(["thread-1:cursor", "thread-2:codex"]);
+          expect(publishedStates).not.toContain("thread-1:codex");
           expect(inFlightFetches).toBe(1);
 
           releaseFirstPublish();
           yield* Deferred.await(providerRepublishSeen).pipe(Effect.timeout("2 seconds"));
-          expect(publishedProviderNames).toEqual(["cursor", "codex"]);
-          expect(completedProviderNames).toEqual(["cursor", "codex"]);
-          expect(maxInFlightFetches).toBe(1);
+          expect(publishedStates).toEqual(["thread-1:cursor", "thread-2:codex", "thread-1:codex"]);
+          expect(completedStates).toEqual(["thread-2:codex", "thread-1:cursor", "thread-1:codex"]);
+          expect(maxInFlightFetches).toBe(2);
+          expect(sameThreadOverlap).toBe(false);
 
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");

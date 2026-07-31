@@ -94,4 +94,44 @@ describe("makeKeyedCoalescingWorker", () => {
       }),
     ),
   );
+
+  it.live("serializes each key while processing different keys concurrently", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const firstFollowupStarted = yield* Deferred.make<void>();
+        const secondKeyStarted = yield* Deferred.make<void>();
+
+        const worker = yield* makeKeyedCoalescingWorker<string, string, never, never>({
+          concurrency: 2,
+          merge: (_current, next) => next,
+          process: (key, value) =>
+            Effect.gen(function* () {
+              if (key === "first" && value === "initial") {
+                yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseFirst);
+              }
+              if (key === "first" && value === "followup") {
+                yield* Deferred.succeed(firstFollowupStarted, undefined).pipe(Effect.orDie);
+              }
+              if (key === "second") {
+                yield* Deferred.succeed(secondKeyStarted, undefined).pipe(Effect.orDie);
+              }
+            }),
+        });
+
+        yield* worker.enqueue("first", "initial");
+        yield* Deferred.await(firstStarted);
+        yield* worker.enqueue("first", "followup");
+        yield* worker.enqueue("second", "initial");
+        yield* Deferred.await(secondKeyStarted);
+
+        expect(yield* Deferred.isDone(firstFollowupStarted)).toBe(false);
+
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(firstFollowupStarted);
+      }),
+    ),
+  );
 });

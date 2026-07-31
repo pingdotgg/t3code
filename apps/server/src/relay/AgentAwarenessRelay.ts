@@ -13,7 +13,7 @@ import {
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   normalizeRelayIssuer,
@@ -542,10 +542,16 @@ export const make = Effect.gen(function* () {
       withRelayClientTracing,
     );
 
-  // Every internally triggered publish for a thread shares this worker so an
-  // older network request cannot finish after a newer orchestration/provider
-  // update and overwrite the relay with stale state.
-  const worker = yield* makeDrainableWorker(publishThread);
+  // A key never has more than one active publish, so an older network request
+  // cannot finish after a newer update for the same thread. Different threads
+  // retain bounded concurrency so one slow relay request cannot block every
+  // approval/completion behind it.
+  const worker = yield* makeKeyedCoalescingWorker<ThreadId, true, never, never>({
+    concurrency: 4,
+    merge: () => true,
+    process: (threadId) => publishThread(threadId),
+  });
+  const enqueuePublish = (threadId: ThreadId) => worker.enqueue(threadId, true);
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
@@ -574,7 +580,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.logInfo("queueing active agent activity snapshot", {
       count: activeThreadIds.length,
     });
-    yield* Effect.forEach(activeThreadIds, worker.enqueue, { discard: true });
+    yield* Effect.forEach(activeThreadIds, enqueuePublish, { discard: true });
     return true;
   });
 
@@ -599,7 +605,7 @@ export const make = Effect.gen(function* () {
   schedulePublishConfirm = (threadId) =>
     Effect.forkDetach(
       Effect.sleep("5 seconds").pipe(
-        Effect.andThen(worker.enqueue(threadId)),
+        Effect.andThen(enqueuePublish(threadId)),
         Effect.catchCause((cause) =>
           Effect.logWarning("deferred agent activity confirmation failed", {
             threadId,
@@ -686,7 +692,7 @@ export const make = Effect.gen(function* () {
           return Effect.logDebug("agent activity publishing queued thread publish", {
             eventType: event.type,
             threadId,
-          }).pipe(Effect.andThen(worker.enqueue(threadId)));
+          }).pipe(Effect.andThen(enqueuePublish(threadId)));
         }),
       );
     },
