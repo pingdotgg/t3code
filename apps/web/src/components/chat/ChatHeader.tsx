@@ -31,6 +31,7 @@ import { buildThreadRouteParams } from "~/threadRoutes";
 import type { GitActionsControlHandle } from "../GitActionsControl";
 import { HeaderIconActionButton } from "../HeaderIconActionButton";
 import { SidebarPanelIcon } from "../icons/custom";
+import { DesktopSidebarReopenButton } from "../sidebar/DesktopSidebarReopenButton";
 import type { NewProjectScriptInput, ProjectScriptActionResult } from "../ProjectScriptsControl";
 import {
   ThreadBreadcrumbProjectChipContent,
@@ -40,6 +41,7 @@ import {
 } from "../ThreadBreadcrumb";
 import { Badge } from "../ui/badge";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { SidebarTrigger } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChatHeaderActionsMenu } from "./ChatHeaderActionsMenu";
 
@@ -158,6 +160,8 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3 md:overflow-visible">
+        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        <DesktopSidebarReopenButton className="md:ml-0" />
         {activeProjectName && activeProjectId ? (
           <nav
             aria-label="Thread breadcrumb"

@@ -155,7 +155,6 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
@@ -2496,7 +2495,6 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(threadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -5981,7 +5979,7 @@ function ChatViewContent(props: ChatViewProps) {
         <header
           data-chat-header
           className={cn(
-            "border-b border-border/70 bg-background px-[calc(env(safe-area-inset-left)+0.625rem)] pr-[calc(env(safe-area-inset-right)+0.625rem)] [--workspace-topbar-height:40px] transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "border-b border-border/70 bg-background px-[calc(env(safe-area-inset-left)+0.625rem)] pr-[calc(env(safe-area-inset-right)+0.625rem)] [--workspace-topbar-height:40px]",
             isElectron
               ? cn(
                   "workspace-topbar drag-region relative [--workspace-topbar-height:39px]",
@@ -5990,7 +5988,6 @@ function ChatViewContent(props: ChatViewProps) {
                     "wco:pr-[var(--workspace-native-controls-inset)]",
                 )
               : "workspace-topbar",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
           <ChatHeader
@@ -6092,7 +6089,6 @@ function ChatViewContent(props: ChatViewProps) {
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                topFadeEnabled={!hasTimelineTopBanner}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6283,7 +6279,7 @@ function ChatViewContent(props: ChatViewProps) {
                     </div>
                     <div
                       aria-hidden
-                      className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                      className="h-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:h-[calc(env(safe-area-inset-bottom)+1rem)]"
                     />
                   </div>
                 </div>

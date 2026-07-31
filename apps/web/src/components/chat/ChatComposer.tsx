@@ -2614,7 +2614,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ref={composerSurfaceRef}
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "chat-composer-surface rounded-[20px] border transition-[background-color,border-color,box-shadow] duration-(--motion-duration-fast) ease-(--motion-ease-standard) motion-reduce:transition-none",
+              "chat-composer-surface rounded-[20px] border backdrop-blur-md transition-[background-color,border-color,box-shadow] duration-(--motion-duration-fast) ease-(--motion-ease-standard) motion-reduce:transition-none",
               isDragOverComposer ? "border-primary/70! bg-accent/30!" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,

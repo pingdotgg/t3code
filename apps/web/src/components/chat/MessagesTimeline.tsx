@@ -152,9 +152,32 @@ interface TimelineRowActivityState {
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
-const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
+type TimelineRenderItem =
+  | {
+      id: string;
+      kind: "standalone-row";
+      row: MessagesTimelineRow;
+    }
+  | {
+      id: string;
+      kind: "user-section";
+      userRow: Extract<MessagesTimelineRow, { kind: "message" }>;
+      contentRows: MessagesTimelineRow[];
+    };
+
+const TIMELINE_LIST_HEADER = <div className="h-px" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const STICKY_USER_MESSAGE_SURFACE_STYLE = {
+  backgroundColor: "var(--chat-area-background, var(--background))",
+} as const;
+const STICKY_USER_MESSAGE_SHADOW_STYLE = {
+  backgroundColor: "rgb(0 0 0 / 0.16)",
+} as const;
+const STICKY_USER_MESSAGE_FADE_STYLE = {
+  background:
+    "linear-gradient(to bottom, rgb(from var(--chat-area-background, var(--background)) r g b / 1) 0%, rgb(from var(--chat-area-background, var(--background)) r g b / 0.78) 62%, rgb(from var(--chat-area-background, var(--background)) r g b / 0) 100%)",
+} as const;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 // ---------------------------------------------------------------------------
@@ -330,14 +353,53 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
-  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
-  const stickyUserMessageIndices = useMemo(
-    () =>
-      rows.flatMap((row, index) =>
-        row.kind === "message" && row.message.role === "user" ? [index] : [],
-      ),
-    [rows],
-  );
+  // Group each user message with the content rows that follow it, so the user
+  // message can stick within its own section (and get pushed away by the next
+  // section) instead of snapping between list-level sticky headers.
+  const renderedItems = useMemo<TimelineRenderItem[]>(() => {
+    const nextItems: TimelineRenderItem[] = [];
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      if (!row) {
+        continue;
+      }
+
+      if (row.kind === "message" && row.message.role === "user") {
+        const contentRows: MessagesTimelineRow[] = [];
+        let cursor = index + 1;
+        while (cursor < rows.length) {
+          const nextRow = rows[cursor];
+          if (!nextRow) {
+            cursor += 1;
+            continue;
+          }
+          if (nextRow.kind === "message" && nextRow.message.role === "user") {
+            break;
+          }
+          contentRows.push(nextRow);
+          cursor += 1;
+        }
+
+        nextItems.push({
+          id: `user-section:${row.id}`,
+          kind: "user-section",
+          userRow: row,
+          contentRows,
+        });
+        index = cursor - 1;
+        continue;
+      }
+
+      nextItems.push({
+        id: row.id,
+        kind: "standalone-row",
+        row,
+      });
+    }
+    return nextItems;
+  }, [rows]);
+  const minimapItems = useMemo(() => deriveTimelineMinimapItems(renderedItems), [renderedItems]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -360,13 +422,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [anchorMessageId, onAnchorSizeChanged],
   );
   const anchoredEndSpace = useMemo(() => {
-    const config = resolveChatListAnchoredEndSpace(rows, anchorMessageId, (row) =>
-      row.kind === "message" ? row.message.id : null,
+    const config = resolveChatListAnchoredEndSpace(renderedItems, anchorMessageId, (item) =>
+      item.kind === "user-section"
+        ? item.userRow.message.id
+        : item.row.kind === "message"
+          ? item.row.message.id
+          : null,
     );
     return config
       ? { ...config, onReady: handleAnchorReady, onSizeChanged: handleAnchorSizeChanged }
       : undefined;
-  }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows]);
+  }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, renderedItems]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -472,20 +538,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
-    ({ item }: { item: MessagesTimelineRow }) => (
+    ({ item }: { item: TimelineRenderItem }) => (
       <div
         className={cn(
-          "mx-auto w-full min-w-0 max-w-3xl overflow-x-clip",
-          item.kind === "message" &&
-            item.message.role === "user" &&
-            "bg-background/96 py-2 shadow-[0_16px_24px_-22px_color-mix(in_srgb,var(--foreground)_35%,transparent)] backdrop-blur-md",
+          "mx-auto w-full min-w-0 max-w-3xl",
+          item.kind === "standalone-row" && "overflow-x-clip",
         )}
-        data-sticky-user-message={
-          item.kind === "message" && item.message.role === "user" ? "true" : undefined
-        }
         data-timeline-root="true"
       >
-        <TimelineRowContent row={item} />
+        {item.kind === "standalone-row" ? (
+          <TimelineRowContent row={item.row} />
+        ) : (
+          <TimelineUserSection userRow={item.userRow} contentRows={item.contentRows} />
+        )}
       </div>
     ),
     [],
@@ -508,14 +573,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
-          <LegendList<MessagesTimelineRow>
+          <LegendList<TimelineRenderItem>
             ref={listRef}
-            data={rows}
+            data={renderedItems}
             keyExtractor={keyExtractor}
             getItemType={getItemType}
             renderItem={renderItem}
-            stickyHeaderIndices={stickyUserMessageIndices}
-            stickyHeaderConfig={{ offset: 0 }}
             estimatedItemSize={90}
             initialScrollAtEnd
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
@@ -565,12 +628,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 });
 
-function keyExtractor(item: MessagesTimelineRow) {
+function keyExtractor(item: TimelineRenderItem) {
   return item.id;
 }
 
-function getItemType(item: MessagesTimelineRow) {
-  return item.kind === "message" ? `message:${item.message.role}` : item.kind;
+function getItemType(item: TimelineRenderItem) {
+  if (item.kind === "user-section") {
+    return "user-section";
+  }
+  return item.row.kind === "message" ? `message:${item.row.message.role}` : item.row.kind;
 }
 
 interface TimelineMinimapItem {
@@ -589,37 +655,30 @@ interface TimelinePositionState {
 }
 
 function deriveTimelineMinimapItems(
-  rows: ReadonlyArray<MessagesTimelineRow>,
+  items: ReadonlyArray<TimelineRenderItem>,
 ): TimelineMinimapItem[] {
-  const items: TimelineMinimapItem[] = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "message" || row.message.role !== "user") {
+  const minimapItems: TimelineMinimapItem[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item?.kind !== "user-section") {
       continue;
     }
 
-    items.push({
-      id: row.id,
+    minimapItems.push({
+      id: item.userRow.id,
       rowIndex: index,
-      userText: compactMinimapPreview(row.message.text),
-      assistantText: compactMinimapPreview(resolveFinalAssistantTextForTurn(rows, index)),
+      userText: compactMinimapPreview(item.userRow.message.text),
+      assistantText: compactMinimapPreview(resolveFinalAssistantTextForTurn(item.contentRows)),
     });
   }
-  return items;
+  return minimapItems;
 }
 
-function resolveFinalAssistantTextForTurn(
-  rows: ReadonlyArray<MessagesTimelineRow>,
-  userRowIndex: number,
-) {
+function resolveFinalAssistantTextForTurn(contentRows: ReadonlyArray<MessagesTimelineRow>) {
   let finalAssistantText: string | null = null;
-  for (let index = userRowIndex + 1; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "message") {
+  for (const row of contentRows) {
+    if (row.kind !== "message") {
       continue;
-    }
-    if (row.message.role === "user") {
-      break;
     }
     if (row.message.role === "assistant") {
       finalAssistantText = row.message.text ?? null;
@@ -860,6 +919,51 @@ type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
+
+const TimelineUserSection = memo(function TimelineUserSection({
+  userRow,
+  contentRows,
+}: {
+  userRow: Extract<TimelineRow, { kind: "message" }>;
+  contentRows: MessagesTimelineRow[];
+}) {
+  return (
+    <section className="relative">
+      <div data-sticky-user-message="true" className="sticky top-0 z-20 w-full py-2">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-2 inset-y-3 z-0 rounded-[26px] opacity-40 blur-xl sm:inset-x-4"
+          style={STICKY_USER_MESSAGE_SHADOW_STYLE}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 -inset-x-3 z-0 opacity-95 blur-lg sm:-inset-x-5"
+          style={STICKY_USER_MESSAGE_SURFACE_STYLE}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-[-0.75rem] bottom-[-1rem] z-0 h-12 opacity-90 blur-xl sm:-inset-x-5"
+          style={STICKY_USER_MESSAGE_FADE_STYLE}
+        />
+        <div
+          className="relative z-10"
+          data-timeline-row-id={userRow.id}
+          data-timeline-row-kind={userRow.kind}
+          data-message-id={userRow.message.id}
+          data-message-role={userRow.message.role}
+        >
+          <UserTimelineRow row={userRow} />
+        </div>
+      </div>
+
+      <div className="overflow-x-clip">
+        {contentRows.map((row) => (
+          <TimelineRowContent key={row.id} row={row} />
+        ))}
+      </div>
+    </section>
+  );
+});
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (

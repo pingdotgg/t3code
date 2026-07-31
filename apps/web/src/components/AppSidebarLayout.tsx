@@ -11,7 +11,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { resolveShortcutCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useSidebarV2Enabled } from "../hooks/useSettings";
@@ -24,15 +24,7 @@ import {
   THREAD_SIDEBAR_MIN_WIDTH,
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
-import {
-  Sidebar,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
-  useSidebar,
-  useSidebarVisibility,
-} from "./ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -57,25 +49,9 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
-export function shouldRenderExternalSidebarControl(isSidebarVisible: boolean): boolean {
-  return !isSidebarVisible;
-}
-
-export function resolveExternalSidebarControlHeight(pathname: string, electron: boolean): string {
-  const isThreadRoute =
-    pathname.startsWith("/draft/") ||
-    (/^\/[^/]+\/[^/]+$/.test(pathname) &&
-      !pathname.startsWith("/settings/") &&
-      !pathname.startsWith("/connect"));
-  if (!isThreadRoute) return "var(--workspace-topbar-height)";
-  return electron ? "39px" : "40px";
-}
-
-function SidebarControl() {
+function SidebarToggleKeybinding() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
-  const isSidebarVisible = useSidebarVisibility();
-  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -98,27 +74,7 @@ function SidebarControl() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, toggleSidebar]);
 
-  if (!shouldRenderExternalSidebarControl(isSidebarVisible)) {
-    return null;
-  }
-
-  return (
-    <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-external-sidebar-control-height,var(--workspace-topbar-height))] items-center"
-      data-sidebar-control=""
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger className="pointer-events-auto" aria-label="Toggle main sidebar" />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
-    </div>
-  );
+  return null;
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
@@ -145,10 +101,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
-    "--workspace-external-sidebar-control-height": resolveExternalSidebarControlHeight(
-      pathname,
-      isElectron,
-    ),
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
@@ -216,7 +168,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarRail />
       </Sidebar>
       {children}
-      <SidebarControl />
+      <SidebarToggleKeybinding />
     </SidebarProvider>
   );
 }

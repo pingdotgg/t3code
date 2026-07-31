@@ -28,7 +28,6 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { Project, SidebarThreadSummary } from "../types";
 import { useUiStateStore } from "../uiStateStore";
 import { cn } from "~/lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import {
   getNoActiveThreadProjectItems,
   getNoActiveThreadRecentThreadItems,
@@ -633,9 +632,8 @@ export function NoActiveThreadState() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <header
           className={cn(
-            "px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
+            "px-3 sm:px-5",
             isElectron ? "workspace-topbar drag-region" : "workspace-topbar",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
           <div className="flex min-w-0 flex-1 items-center gap-2 wco:pr-[var(--workspace-native-controls-inset)]">

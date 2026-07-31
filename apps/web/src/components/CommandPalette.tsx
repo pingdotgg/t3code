@@ -25,17 +25,15 @@ import {
 import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
-  ArrowDownIcon,
-  ArrowLeftIcon,
-  ArrowUpIcon,
-  CornerLeftUpIcon,
-  FolderIcon,
-  FolderPlusIcon,
-  LinkIcon,
-  MessageSquareIcon,
-  SettingsIcon,
-  SquarePenIcon,
-} from "lucide-react";
+  IconArrowDown as ArrowDownIcon,
+  IconArrowLeft as ArrowLeftIcon,
+  IconArrowUp as ArrowUpIcon,
+  IconArrowshapeTurnUpBackward as CornerLeftUpIcon,
+  IconBubbleLeftAndTextBubbleRight as ThreadIcon,
+  IconCube as CubeIcon,
+  IconFolder as FolderIcon,
+  IconFolderBadgePlus as FolderPlusIcon,
+} from "symbols-react";
 import {
   useCallback,
   useDeferredValue,
@@ -107,7 +105,15 @@ import {
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { AzureDevOpsIcon, BitbucketIcon, GitLabIcon } from "./Icons";
+import {
+  AddProjectFolderIcon,
+  AddProjectIcon,
+  GitHubRepoIcon,
+  GitUrlIcon,
+  NewThreadIcon,
+  SettingsHexIcon,
+} from "./icons/custom";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
@@ -239,7 +245,7 @@ function remoteProjectSourceProvider(
 function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: string): ReactNode {
   switch (source) {
     case "github":
-      return <GitHubIcon className={className} />;
+      return <GitHubRepoIcon className={className} />;
     case "gitlab":
       return <GitLabIcon className={className} />;
     case "bitbucket":
@@ -247,7 +253,7 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
     case "azure-devops":
       return <AzureDevOpsIcon className={className} />;
     case "url":
-      return <LinkIcon className={className} />;
+      return <GitUrlIcon className={className} />;
   }
 }
 
@@ -909,7 +915,7 @@ function OpenCommandPaletteDialog(props: {
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
-        icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+        icon: <ThreadIcon className={ITEM_ICON_CLASS} />,
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
         runThread: async (thread) => {
@@ -1030,7 +1036,7 @@ function OpenCommandPaletteDialog(props: {
           searchTerms: ["local", "folder", "directory", "browse"],
           title: "Local folder",
           description: "Browse a folder on disk",
-          icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+          icon: <AddProjectFolderIcon className="size-4 text-muted-foreground/80" />,
           keepOpen: true,
           run: async () => {
             await startAddProjectBrowse(environmentId);
@@ -1117,7 +1123,7 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       pushPaletteView({
-        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+        addonIcon: <AddProjectIcon className="size-5 fill-current" />,
         groups: buildAddProjectSourceGroups(
           environmentId,
           buildAddProjectRemoteSourceReadiness(
@@ -1163,7 +1169,7 @@ function OpenCommandPaletteDialog(props: {
   const openAddProjectFlow = useCallback(() => {
     if (addProjectEnvironmentOptions.length > 1) {
       pushPaletteView({
-        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+        addonIcon: <AddProjectIcon className="size-5 fill-current" />,
         groups: addProjectEnvironmentGroups,
       });
       return;
@@ -1218,7 +1224,7 @@ function OpenCommandPaletteDialog(props: {
         ]
       : projectThreadItems;
     pushPaletteView({
-      addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
+      addonIcon: <NewThreadIcon className={ADDON_ICON_CLASS} />,
       groups: [
         {
           value: "projects",
@@ -1247,7 +1253,7 @@ function OpenCommandPaletteDialog(props: {
     setViewStack([]);
     setQuery("");
     pushPaletteView({
-      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      addonIcon: <CubeIcon className={ADDON_ICON_CLASS} />,
       groups: [
         {
           value: "projects",
@@ -1275,7 +1281,7 @@ function OpenCommandPaletteDialog(props: {
             New thread in <span className="font-semibold">{activeProjectTitle}</span>
           </>
         ),
-        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+        icon: <NewThreadIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.new",
         run: async () => {
           await startNewThreadFromContext({
@@ -1293,8 +1299,8 @@ function OpenCommandPaletteDialog(props: {
       value: "action:new-thread-in",
       searchTerms: ["new thread", "project", "pick", "choose", "select"],
       title: "New thread in...",
-      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-      addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
+      icon: <NewThreadIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <NewThreadIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
@@ -1321,7 +1327,7 @@ function OpenCommandPaletteDialog(props: {
       "environment",
     ],
     title: "Add project",
-    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+    icon: <AddProjectIcon className="size-4 fill-muted-foreground/80" />,
     keepOpen: true,
     run: async () => {
       openAddProjectFlow();
@@ -1335,7 +1341,7 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["add project", "open", "wsl", "linux", "folder", "directory"],
       title: "Open WSL folder",
       description: wslAddProjectEnvironmentOption.label,
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      icon: <AddProjectFolderIcon className="size-4 text-muted-foreground/80" />,
       keepOpen: true,
       run: async () => {
         await startAddProjectBrowse(wslAddProjectEnvironmentOption.environmentId);
@@ -1348,7 +1354,7 @@ function OpenCommandPaletteDialog(props: {
     value: "action:settings",
     searchTerms: ["settings", "preferences", "configuration", "keybindings"],
     title: "Open settings",
-    icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+    icon: <SettingsHexIcon className="size-4 text-muted-foreground/80" />,
     run: async () => {
       await navigate({ to: "/settings" });
     },
@@ -2036,13 +2042,13 @@ function OpenCommandPaletteDialog(props: {
                       aria-label="Back"
                       onClick={popView}
                     >
-                      <ArrowLeftIcon />
+                      <ArrowLeftIcon className="fill-current" />
                     </button>
                   ),
                 }
               : isBrowsing && !isSubmenu
                 ? {
-                    startAddon: <FolderPlusIcon />,
+                    startAddon: <FolderPlusIcon className="fill-current" />,
                   }
                 : {})}
             onKeyDown={handleKeyDown}
@@ -2170,10 +2176,10 @@ function OpenCommandPaletteDialog(props: {
           <div className="flex items-center gap-3">
             <KbdGroup className="items-center gap-1.5">
               <Kbd>
-                <ArrowUpIcon />
+                <ArrowUpIcon className="fill-current" />
               </Kbd>
               <Kbd>
-                <ArrowDownIcon />
+                <ArrowDownIcon className="fill-current" />
               </Kbd>
               <span>Navigate</span>
             </KbdGroup>
