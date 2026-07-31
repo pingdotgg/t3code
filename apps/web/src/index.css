@@ -386,6 +386,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     border-radius: 0.75rem;
   }
 
+  /* The pulse is the destination indicator; without it (reduced motion), the
+     focus outline takes over, so exactly one indicator shows at a time. */
+  .settings-page-scroll-fade .settings-search-target-pulse:focus {
+    outline: none;
+  }
+
   .workspace-titlebar-controls {
     position: absolute;
     top: var(--workspace-controls-top);
