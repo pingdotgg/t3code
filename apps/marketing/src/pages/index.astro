@@ -833,13 +833,22 @@ const faqs = [
     let demoReadyStartedAt = performance.now();
     let heroDemoIsReady = false;
     let heroRevealStarted = false;
+    const heroMobileImagesReady = () =>
+      heroMobileImages.every((image) => image.complete && image.naturalWidth > 0);
+    // Hidden store must not block the desktop demo reveal on narrow viewports,
+    // but is-loaded still waits for real image completion so a later resize
+    // into the visible range does not flash grayscale-off empty cards.
     let heroMobileStoreIsReady =
       !heroMobileStore ||
-      heroMobileImages.every((image) => image.complete && image.naturalWidth > 0) ||
+      heroMobileImagesReady() ||
       getComputedStyle(heroMobileStore).display === "none";
 
     const applyHeroDemoScale = () => {
       heroDemoIframe.style.transform = `scale(${heroDemoFrame.clientWidth / 1200})`;
+    };
+    const applyHeroMobileStoreLoaded = () => {
+      if (!heroMobileStore || !heroMobileImagesReady()) return;
+      heroMobileStore.classList.add("is-loaded");
     };
     const revealHeroPreviewsTogether = (allowPhoneFallback = false) => {
       if (
@@ -854,17 +863,23 @@ const faqs = [
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           heroDemoFrame.classList.add("is-ready");
-          heroMobileStore?.classList.add("is-loaded");
+          applyHeroMobileStoreLoaded();
         });
       });
     };
     const markHeroMobileStoreReady = () => {
-      heroMobileStoreIsReady = heroMobileImages.every(
-        (image) => image.complete && image.naturalWidth > 0,
-      );
-      revealHeroPreviewsTogether();
+      if (!heroMobileImagesReady()) return;
+      heroMobileStoreIsReady = true;
+      if (heroRevealStarted) {
+        applyHeroMobileStoreLoaded();
+      } else {
+        revealHeroPreviewsTogether();
+      }
     };
-    if (!heroMobileStoreIsReady) {
+    // Always wire loads when images are incomplete, including while the store
+    // is display:none. Lazy images often only start after the container is
+    // shown; those late loads still need to flip is-loaded.
+    if (heroMobileStore && !heroMobileImagesReady()) {
       heroMobileImages
         .filter((image) => !image.complete || image.naturalWidth === 0)
         .forEach((image) =>
