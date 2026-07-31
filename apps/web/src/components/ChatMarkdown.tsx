@@ -37,6 +37,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import { selectSidebarThreadSummaryByRef, useStore } from "../store";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { readEnvironmentApi } from "~/environmentApi";
 import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
@@ -453,7 +454,6 @@ interface MarkdownFileLinkProps {
 
 interface MarkdownThreadLinkProps {
   threadRef: ScopedThreadRef;
-  children: ReactNode;
   className?: string | undefined;
 }
 
@@ -480,18 +480,23 @@ function resolveMarkdownThreadRef(
 
 const MarkdownThreadLink = memo(function MarkdownThreadLink({
   threadRef,
-  children,
   className,
 }: MarkdownThreadLinkProps) {
   const navigate = useNavigate();
   const href = buildThreadHref(threadRef.environmentId, threadRef.threadId);
+  const threadTitle = useStore(
+    (state) => selectSidebarThreadSummaryByRef(state, threadRef)?.title.trim() || null,
+  );
+  const label = threadTitle ?? threadRef.threadId;
 
   return (
     <a
       href={href}
       className={cn(MARKDOWN_THREAD_LINK_CLASS_NAME, className)}
-      title={`Open thread ${threadRef.threadId}`}
-      aria-label={`Open thread ${threadRef.threadId}`}
+      title={
+        threadTitle ? `${threadTitle}\n${threadRef.threadId}` : `Open thread ${threadRef.threadId}`
+      }
+      aria-label={`Open thread ${label}`}
       onClick={(event) => {
         if (
           event.button !== 0 ||
@@ -514,7 +519,7 @@ const MarkdownThreadLink = memo(function MarkdownThreadLink({
       }}
     >
       <MessageSquareIcon className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
-      <span className="truncate font-mono">{children}</span>
+      <span className={cn("truncate", threadTitle ? null : "font-mono")}>{label}</span>
     </a>
   );
 });
@@ -849,11 +854,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false, threadRef }: ChatMarkdow
     ({ node, href, ...props }: MarkdownFunctionComponentProps<"a">) => {
       const linkedThreadRef = resolveMarkdownThreadRef(node?.properties);
       if (linkedThreadRef) {
-        return (
-          <MarkdownThreadLink threadRef={linkedThreadRef} className={props.className}>
-            {props.children}
-          </MarkdownThreadLink>
-        );
+        return <MarkdownThreadLink threadRef={linkedThreadRef} className={props.className} />;
       }
 
       const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
@@ -908,11 +909,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false, threadRef }: ChatMarkdow
     ({ node, children, className, ...props }: MarkdownFunctionComponentProps<"code">) => {
       const linkedThreadRef = resolveMarkdownThreadRef(node?.properties);
       if (linkedThreadRef) {
-        return (
-          <MarkdownThreadLink threadRef={linkedThreadRef} className={className}>
-            {linkedThreadRef.threadId}
-          </MarkdownThreadLink>
-        );
+        return <MarkdownThreadLink threadRef={linkedThreadRef} className={className} />;
       }
 
       if (node?.properties?.dataInlineCode != null) {
