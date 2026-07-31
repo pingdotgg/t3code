@@ -370,7 +370,8 @@ function NativeHeaderToolbarRoot(props: {
   const navigation = useNativeStackNavigation();
   const items = useMemo(() => collectToolbarItems(props.children), [props.children]);
 
-  useEffect(() => {
+  // Swap toolbar owners before paint so split and compact headers cannot clear each other.
+  useLayoutEffect(() => {
     if (!navigation) {
       return;
     }
