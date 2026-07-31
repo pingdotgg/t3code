@@ -22,9 +22,17 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
 describe("fitPictureInPictureContentSize", () => {
-  it("fits landscape and portrait viewports without letterboxing the window", () => {
-    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 16 / 9)).toEqual([480, 270]);
-    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 9 / 16)).toEqual([240, 427]);
+  it("preserves the PiP content area across aspect-ratio changes", () => {
+    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 16 / 9)).toEqual([523, 294]);
+    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 9 / 16)).toEqual([294, 523]);
+  });
+
+  it("does not collapse toward the minimum size when orientation changes repeatedly", () => {
+    const portrait = PreviewManager.fitPictureInPictureContentSize([523, 294], 9 / 16);
+    const landscape = PreviewManager.fitPictureInPictureContentSize(portrait, 16 / 9);
+
+    expect(portrait).toEqual([294, 523]);
+    expect(landscape).toEqual([523, 294]);
   });
 });
 
@@ -974,6 +982,92 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("emits debugger screencast frames only while recording is active", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let debuggerMessage:
+          | ((event: unknown, method: string, params: Record<string, unknown>) => void)
+          | undefined;
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("scheduled-recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const sendCommand = vi.fn(async (method: string) =>
+          method === "Runtime.evaluate" ? { result: { value: null } } : undefined,
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(
+              (
+                event: string,
+                listener: (event: unknown, method: string, params: Record<string, unknown>) => void,
+              ) => {
+                if (event === "message") debuggerMessage = listener;
+              },
+            ),
+            off: vi.fn(),
+          },
+          capturePage,
+        } as never);
+        const recordingFrames: DesktopPreviewRecordingFrame[] = [];
+
+        yield* manager.subscribeRecordingFrames((frame) =>
+          Effect.sync(() => {
+            recordingFrames.push(frame);
+          }),
+        );
+        yield* manager.createTab("tab_screencast_guard");
+        yield* manager.registerWebview("tab_screencast_guard", 42);
+        yield* manager.automationEvaluate("tab_screencast_guard", { expression: "null" });
+
+        debuggerMessage?.({}, "Page.screencastFrame", {
+          sessionId: 1,
+          data: "inactive-frame",
+          metadata: { deviceWidth: 1280, deviceHeight: 720 },
+        });
+        yield* Effect.yieldNow;
+        expect(recordingFrames).toHaveLength(0);
+
+        yield* manager.startRecording("tab_screencast_guard");
+        recordingFrames.length = 0;
+        debuggerMessage?.({}, "Page.screencastFrame", {
+          sessionId: 2,
+          data: "active-frame",
+          metadata: { deviceWidth: 1280, deviceHeight: 720 },
+        });
+        yield* Effect.yieldNow;
+
+        expect(recordingFrames).toEqual([
+          expect.objectContaining({
+            tabId: "tab_screencast_guard",
+            data: "active-frame",
+            width: 1280,
+            height: 720,
+          }),
+        ]);
+        yield* manager.stopRecording("tab_screencast_guard");
+      }),
+    ),
+  );
+
   effectIt.effect("shares background frame capture between recording and picture-in-picture", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -1065,7 +1159,7 @@ describe("PreviewManager", () => {
           skipTransformProcessType: true,
         });
         expect(pictureInPictureWindow.setAspectRatio.mock.calls).toEqual([[0], [1280 / 720]]);
-        expect(pictureInPictureWindow.setContentSize).toHaveBeenCalledWith(480, 270, false);
+        expect(pictureInPictureWindow.setContentSize).toHaveBeenCalledWith(523, 294, false);
         expect(pictureInPictureWindow.setAspectRatio.mock.invocationCallOrder[0]).toBeLessThan(
           pictureInPictureWindow.setContentSize.mock.invocationCallOrder[0] ?? 0,
         );

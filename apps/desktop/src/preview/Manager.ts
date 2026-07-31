@@ -104,6 +104,7 @@ const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
 const PICTURE_IN_PICTURE_MIN_HEIGHT = 160;
+const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -164,8 +165,8 @@ export const fitPictureInPictureContentSize = (
 ): readonly [width: number, height: number] => {
   const currentWidth = Math.max(1, current[0] ?? PICTURE_IN_PICTURE_INITIAL_WIDTH);
   const currentHeight = Math.max(1, current[1] ?? PICTURE_IN_PICTURE_INITIAL_HEIGHT);
-  let width =
-    currentWidth / currentHeight > aspectRatio ? currentHeight * aspectRatio : currentWidth;
+  const currentArea = currentWidth * currentHeight;
+  let width = Math.sqrt(currentArea * aspectRatio);
   let height = width / aspectRatio;
   const minimumScale = Math.max(
     1,
@@ -670,10 +671,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ),
     );
 
+  const tabIdForWebContents = Effect.fnUntraced(function* (webContentsId: number) {
+    const tabs = yield* SynchronizedRef.get(tabsRef);
+    return (
+      Array.from(tabs.entries()).find(([, tab]) => tab.webContentsId === webContentsId)?.[0] ?? null
+    );
+  });
+
   const pushBounded = <A>(buffer: ReadonlyArray<A>, entry: A): ReadonlyArray<A> =>
     [...buffer, entry].slice(-DIAGNOSTIC_BUFFER_LIMIT);
 
-  const captureDiagnosticMessage = Effect.fn("PreviewManager.captureDiagnosticMessage")(function* (
+  const captureDiagnosticMessage = Effect.fnUntraced(function* (
     webContentsId: number,
     method: string,
     params: Record<string, unknown>,
@@ -851,11 +859,53 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const createControlSession = Effect.fn("PreviewManager.createControlSession")(function* () {
           const semaphore = yield* Semaphore.make(1);
           const scope = yield* Scope.fork(parentScope, "sequential");
-          const handleDebuggerMessage = Effect.fn("PreviewManager.handleDebuggerMessage")(
-            function* (method: string, params: Record<string, unknown>) {
-              yield* captureDiagnosticMessage(wc.id, method, params);
-            },
-          );
+          const handleDebuggerMessage = Effect.fnUntraced(function* (
+            method: string,
+            params: Record<string, unknown>,
+          ) {
+            if (method === "Page.screencastFrame") {
+              const sessionId = params["sessionId"];
+              if (typeof sessionId === "number") {
+                yield* attemptPromise(
+                  {
+                    operation: "ackScreencastFrame",
+                    webContentsId: wc.id,
+                  },
+                  () => wc.debugger.sendCommand("Page.screencastFrameAck", { sessionId }),
+                ).pipe(Effect.ignore);
+              }
+              const tabId = yield* tabIdForWebContents(wc.id);
+              const metadata =
+                typeof params["metadata"] === "object" && params["metadata"] !== null
+                  ? (params["metadata"] as Record<string, unknown>)
+                  : {};
+              if (tabId && typeof params["data"] === "string") {
+                const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(
+                  tabId,
+                );
+                if (captureSession?.consumers.has("recording")) {
+                  const receivedAt = yield* currentIso;
+                  const listeners = yield* Ref.get(recordingFrameListenersRef);
+                  const frame: DesktopPreviewRecordingFrame = {
+                    tabId,
+                    data: params["data"],
+                    width:
+                      typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
+                    height:
+                      typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
+                    receivedAt,
+                  };
+                  yield* Effect.forEach(
+                    listeners,
+                    (listener) =>
+                      deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
+                    { discard: true },
+                  );
+                }
+              }
+            }
+            yield* captureDiagnosticMessage(wc.id, method, params);
+          });
           const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
             runFork(handleDebuggerMessage(method, params));
           };
@@ -2074,7 +2124,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               tabId,
             );
             const aspectRatio = frame.width / frame.height;
-            if (previousAspectRatio !== aspectRatio) {
+            if (
+              previousAspectRatio === undefined ||
+              Math.abs(previousAspectRatio - aspectRatio) > PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
+            ) {
               yield* attempt(
                 {
                   operation: "pictureInPicture.setAspectRatio",

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -19,6 +20,30 @@ export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximu
 
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
+
+/**
+ * Wire codec for server→client arrays whose element unions grow over time
+ * (new literal members, new struct variants). Decoding drops elements the
+ * current build cannot decode instead of failing the whole payload — a client
+ * has to keep decoding configs sent by servers newer than itself, and
+ * rejecting the payload would take down the connection over data the client
+ * couldn't act on anyway. Encoding is the plain array encoding.
+ */
+export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) => {
+  const decodeElement = Schema.decodeUnknownOption(element as never);
+  return Schema.Array(Schema.Unknown).pipe(
+    Schema.decodeTo(
+      Schema.Array(element),
+      SchemaTransformation.transform<ReadonlyArray<Element["Encoded"]>, ReadonlyArray<unknown>>({
+        decode: (values) =>
+          values.filter((value) => Option.isSome(decodeElement(value))) as ReadonlyArray<
+            Element["Encoded"]
+          >,
+        encode: (values) => values,
+      }),
+    ),
+  );
+};
 
 /**
  * Construct a branded identifier. Enforces non-empty trimmed strings
@@ -43,6 +68,8 @@ export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
+export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
+export type RpcClientId = typeof RpcClientId.Type;
 
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;
