@@ -25,6 +25,7 @@ import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
+import { CodexSessionImportLive } from "./provider/Layers/CodexSessionImport.ts";
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
@@ -396,7 +397,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provide(NetService.layer),
 );
 
-const RuntimeServicesLive = ServerRuntimeStartup.layer.pipe(
+const RuntimeServicesLive = Layer.mergeAll(ServerRuntimeStartup.layer, CodexSessionImportLive).pipe(
   Layer.provideMerge(RuntimeDependenciesLive),
 );
 

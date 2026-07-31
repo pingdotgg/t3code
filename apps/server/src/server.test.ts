@@ -9,6 +9,8 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
+  type CodexSessionImportInput,
+  type CodexSessionListInput,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   EventId,
@@ -86,6 +88,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as CodexSessionImport from "./provider/Services/CodexSessionImport.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -330,6 +333,7 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    codexSessionImport?: Partial<CodexSessionImport.CodexSessionImport["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -565,18 +569,25 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([]),
-          refresh: () => Effect.succeed([]),
-          refreshInstance: () => Effect.succeed([]),
-          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
-            ),
-          setProviderMaintenanceActionState: () => Effect.succeed([]),
-          streamChanges: Stream.empty,
-          ...options?.layers?.providerRegistry,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            refresh: () => Effect.succeed([]),
+            refreshInstance: () => Effect.succeed([]),
+            getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
+              ),
+            setProviderMaintenanceActionState: () => Effect.succeed([]),
+            streamChanges: Stream.empty,
+            ...options?.layers?.providerRegistry,
+          }),
+          Layer.mock(CodexSessionImport.CodexSessionImport)({
+            list: () => Effect.succeed({ sessions: [], truncated: false }),
+            import: () => Effect.succeed({ importedThreadIds: [], alreadyImportedThreadIds: [] }),
+            ...options?.layers?.codexSessionImport,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ServerSettings.ServerSettingsService)({
@@ -3892,6 +3903,75 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.auth.policy, "desktop-managed-local");
       assert.equal(response.shellResumeCompletionMarker, true);
       assert.equal(response.threadResumeCompletionMarker, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket RPCs for importing Codex sessions", () =>
+    Effect.gen(function* () {
+      const listInputs: CodexSessionListInput[] = [];
+      const importInputs: CodexSessionImportInput[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          codexSessionImport: {
+            list: (input) =>
+              Effect.sync(() => {
+                listInputs.push(input);
+                return {
+                  sessions: [
+                    {
+                      externalThreadId: "native-codex-thread",
+                      title: "Existing Codex session",
+                      preview: "Please continue this task.",
+                      createdAt: "2026-01-01T00:00:00.000Z",
+                      updatedAt: "2026-01-02T00:00:00.000Z",
+                      source: "cli",
+                      archived: false,
+                      importedThreadId: null,
+                    },
+                  ],
+                  truncated: false,
+                };
+              }),
+            import: (input) =>
+              Effect.sync(() => {
+                importInputs.push(input);
+                return {
+                  importedThreadIds: [ThreadId.make("codex:codex:native-codex-thread")],
+                  alreadyImportedThreadIds: [],
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const projectId = ProjectId.make("project-codex-session-import-rpc");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const listed = yield* client[WS_METHODS.codexListSessions]({
+              projectId,
+              providerInstanceId,
+            });
+            const imported = yield* client[WS_METHODS.codexImportSessions]({
+              projectId,
+              providerInstanceId,
+              externalThreadIds: ["native-codex-thread"],
+            });
+            return { listed, imported };
+          }),
+        ),
+      );
+
+      assert.equal(result.listed.sessions[0]?.externalThreadId, "native-codex-thread");
+      assert.deepEqual(result.imported.importedThreadIds, [
+        ThreadId.make("codex:codex:native-codex-thread"),
+      ]);
+      assert.deepEqual(listInputs, [{ projectId, providerInstanceId }]);
+      assert.deepEqual(importInputs, [
+        { projectId, providerInstanceId, externalThreadIds: ["native-codex-thread"] },
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

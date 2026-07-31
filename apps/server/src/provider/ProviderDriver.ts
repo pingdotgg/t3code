@@ -31,7 +31,11 @@ import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
+import type {
+  ProviderAdapterError,
+  ProviderDriverError,
+  ProviderThreadHistoryError,
+} from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
@@ -53,6 +57,54 @@ export interface ProviderDriverMetadata {
 }
 
 /**
+ * Read-only provider conversation metadata used to adopt an existing native
+ * session into T3. Providers opt in explicitly; the normal runtime adapter
+ * remains focused on active session lifecycle and turn delivery.
+ */
+export interface ProviderThreadHistoryCandidate {
+  readonly externalThreadId: string;
+  readonly title: string;
+  readonly preview: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly source: string;
+  readonly archived: boolean;
+}
+
+export interface ProviderThreadHistoryMessage {
+  readonly externalMessageId: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly createdAt: string;
+}
+
+export interface ProviderThreadHistory {
+  readonly externalThreadId: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly messages: ReadonlyArray<ProviderThreadHistoryMessage>;
+}
+
+export interface ProviderThreadHistorySource {
+  readonly listThreads: (input: { readonly cwd: string }) => Effect.Effect<
+    {
+      readonly threads: ReadonlyArray<ProviderThreadHistoryCandidate>;
+      readonly truncated: boolean;
+    },
+    ProviderThreadHistoryError
+  >;
+  /**
+   * Read a selection through one provider connection. Import callers always
+   * batch this work so a multi-select does not spawn one native process per
+   * source thread.
+   */
+  readonly readThreads: (input: {
+    readonly cwd: string;
+    readonly externalThreadIds: ReadonlyArray<string>;
+  }) => Effect.Effect<ReadonlyArray<ProviderThreadHistory>, ProviderThreadHistoryError>;
+}
+
+/**
  * One materialized provider instance. Held by the registry, looked up by
  * `instanceId`, torn down by closing the scope it was created in.
  *
@@ -71,6 +123,8 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /** Optional read-only history bridge for importing native provider sessions. */
+  readonly threadHistory?: ProviderThreadHistorySource;
 }
 
 export interface ProviderContinuationIdentity {

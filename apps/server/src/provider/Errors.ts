@@ -157,6 +157,24 @@ export class ProviderDriverError extends Schema.TaggedErrorClass<ProviderDriverE
 }
 
 /**
+ * ProviderThreadHistoryError - A provider's optional native-history bridge
+ * could not discover or read a persisted conversation.
+ */
+export class ProviderThreadHistoryError extends Schema.TaggedErrorClass<ProviderThreadHistoryError>()(
+  "ProviderThreadHistoryError",
+  {
+    provider: Schema.String,
+    operation: Schema.Literals(["list", "read"]),
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider thread history failed (${this.provider}) during ${this.operation}: ${this.detail}`;
+  }
+}
+
+/**
  * ProviderSessionNotFoundError - Provider-facing session not found.
  */
 export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<ProviderSessionNotFoundError>()(

@@ -138,6 +138,7 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { CodexSessionImportDialog } from "./CodexSessionImportDialog";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -1229,6 +1230,9 @@ export default function SidebarV2() {
     },
   });
   const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
+    null,
+  );
+  const [codexImportTarget, setCodexImportTarget] = useState<SidebarProjectGroupMember | null>(
     null,
   );
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
@@ -3137,6 +3141,30 @@ export default function SidebarV2() {
                       </Select>
                     </label>
                   </div>
+                  {serverConfigs.get(member.environmentId)?.environment.capabilities
+                    .codexSessionImport === true ? (
+                    <div className="flex flex-col gap-3 rounded-lg border bg-muted/28 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="grid gap-0.5">
+                        <p className="font-medium text-foreground">Codex sessions</p>
+                        <p className="text-sm text-muted-foreground">
+                          Import existing conversations from Codex without changing their source
+                          data.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => {
+                          const target = member;
+                          setProjectActionsTarget(null);
+                          window.requestAnimationFrame(() => setCodexImportTarget(target));
+                        }}
+                      >
+                        Import Codex sessions
+                      </Button>
+                    </div>
+                  ) : null}
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
                       <Button
@@ -3206,6 +3234,13 @@ export default function SidebarV2() {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+      <CodexSessionImportDialog
+        open={codexImportTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setCodexImportTarget(null);
+        }}
+        project={codexImportTarget}
+      />
       <SidebarChromeFooter />
     </>
   );
