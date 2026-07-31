@@ -1001,43 +1001,88 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
   projectTitle: string | null;
+  environmentLabel: string | null;
+  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
   resultId: string;
   onHighlight: () => void;
   onSelect: () => void;
 }) {
+  const { thread } = props;
+  // Same details tooltip as the regular rows: a search hit is still a thread,
+  // and the hover card is how you disambiguate identically-titled results.
+  const gitCwd = thread.worktreePath ?? props.projectCwd;
+  const gitStatus = useEnvironmentQuery(
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
+    activeWorktreePath: thread.worktreePath,
+    activeThreadBranch: thread.branch,
+    currentGitBranch: gitStatus.data?.refName ?? null,
+  });
+  const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const driverKind = providerEntry?.driverKind ?? null;
+  const selectedModel = providerEntry?.models.find(
+    (model) => model.slug === thread.modelSelection.model,
+  );
+  const modelLabel = selectedModel
+    ? getTriggerDisplayModelLabel(selectedModel)
+    : thread.modelSelection.model;
   return (
     <li role="presentation" className="list-none">
-      <button
-        id={props.resultId}
-        type="button"
-        role="option"
-        aria-selected={props.isHighlighted}
-        aria-current={props.isRouteActive ? "page" : undefined}
-        aria-label={
-          props.projectTitle ? `${props.thread.title}, ${props.projectTitle}` : props.thread.title
-        }
-        onMouseMove={props.onHighlight}
-        onClick={props.onSelect}
-        className={cn(
-          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
-          props.isHighlighted || props.isRouteActive
-            ? "bg-sidebar-row-active text-sidebar-foreground"
-            : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-        )}
-      >
-        <ProjectFavicon
-          environmentId={props.thread.environmentId}
-          cwd={props.projectCwd ?? ""}
-          className="size-4 shrink-0"
-          fallbackIcon={MessageSquareIcon}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              id={props.resultId}
+              type="button"
+              role="option"
+              aria-selected={props.isHighlighted}
+              aria-current={props.isRouteActive ? "page" : undefined}
+              aria-label={
+                props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
+              }
+              onMouseMove={props.onHighlight}
+              onClick={props.onSelect}
+              className={cn(
+                "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
+                props.isHighlighted || props.isRouteActive
+                  ? "bg-sidebar-row-active text-sidebar-foreground"
+                  : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+              )}
+            />
+          }
+        >
+          <ProjectFavicon
+            environmentId={thread.environmentId}
+            cwd={props.projectCwd ?? ""}
+            className="size-4 shrink-0"
+            fallbackIcon={MessageSquareIcon}
+          />
+          <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
+            {threadTimeLabel(thread)}
+          </span>
+        </TooltipTrigger>
+        <SidebarV2ThreadTooltip
+          thread={thread}
+          projectTitle={props.projectTitle}
+          projectCwd={props.projectCwd}
+          environmentLabel={props.environmentLabel}
+          driverKind={driverKind}
+          modelInstanceId={modelInstanceId}
+          modelLabel={modelLabel}
+          branchMismatch={branchMismatch}
         />
-        <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
-        <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
-          {threadTimeLabel(props.thread)}
-        </span>
-      </button>
+      </Tooltip>
     </li>
   );
 });
@@ -2520,37 +2565,46 @@ export default function SidebarV2() {
         <SidebarGroup className="px-2 pb-1 pt-0">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
-              <ul
-                id="sidebar-thread-search-results"
-                role="listbox"
-                aria-label="Thread search results"
-                className="flex flex-col gap-px"
+              <TooltipProvider
+                key="sidebar-thread-search-tooltips-150"
+                delay={150}
+                closeDelay={0}
+                timeout={400}
               >
-                {threadSearchResults.map((thread, index) => {
-                  const threadKey = scopedThreadKey(
-                    scopeThreadRef(thread.environmentId, thread.id),
-                  );
-                  return (
-                    <SidebarV2SearchResultRow
-                      key={threadKey}
-                      thread={thread}
-                      projectCwd={
-                        projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
-                      }
-                      projectTitle={
-                        projectDisplayNameByKey.get(
-                          `${thread.environmentId}:${thread.projectId}`,
-                        ) ?? null
-                      }
-                      isHighlighted={activeSearchResultIndex === index}
-                      isRouteActive={routeThreadKey === threadKey}
-                      resultId={`sidebar-thread-search-result-${index}`}
-                      onHighlight={() => setActiveSearchResultIndex(index)}
-                      onSelect={() => selectThreadSearchResult(thread)}
-                    />
-                  );
-                })}
-              </ul>
+                <ul
+                  id="sidebar-thread-search-results"
+                  role="listbox"
+                  aria-label="Thread search results"
+                  className="flex flex-col gap-px"
+                >
+                  {threadSearchResults.map((thread, index) => {
+                    const threadKey = scopedThreadKey(
+                      scopeThreadRef(thread.environmentId, thread.id),
+                    );
+                    return (
+                      <SidebarV2SearchResultRow
+                        key={threadKey}
+                        thread={thread}
+                        projectCwd={
+                          projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                        }
+                        projectTitle={
+                          projectDisplayNameByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
+                        environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
+                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        isHighlighted={activeSearchResultIndex === index}
+                        isRouteActive={routeThreadKey === threadKey}
+                        resultId={`sidebar-thread-search-result-${index}`}
+                        onHighlight={() => setActiveSearchResultIndex(index)}
+                        onSelect={() => selectThreadSearchResult(thread)}
+                      />
+                    );
+                  })}
+                </ul>
+              </TooltipProvider>
             ) : (
               <p
                 role="status"
