@@ -9,6 +9,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   isExpiredAgentActivityState,
@@ -52,18 +54,44 @@ export const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const deliveryLocksRef = yield* Ref.make<ReadonlyMap<string, Semaphore.Semaphore>>(new Map());
 
-  const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
+  const getDeliveryLock = Effect.fnUntraced(function* (userId: string) {
+    const existing = (yield* Ref.get(deliveryLocksRef)).get(userId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = yield* Semaphore.make(1);
+    return yield* Ref.modify(deliveryLocksRef, (locks) => {
+      const current = locks.get(userId);
+      if (current) {
+        return [current, locks] as const;
+      }
+      const next = new Map(locks);
+      next.set(userId, created);
+      return [created, next] as const;
+    });
+  });
+
+  const withDeliveryLock = <A, E, R>(
+    userId: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.flatMap(getDeliveryLock(userId), (lock) => lock.withPermit(effect));
+
+  const publishForDeliveryUserUnsafe = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
-    readonly nowMs: number;
   }) {
+    const now = yield* DateTime.now;
+    const nowMs = now.epochMilliseconds;
     const activeStates = yield* rows.listForUser({ userId: input.deliveryUser.userId });
     const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
       ? makeAggregateState({
           activeStates,
           terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-          nowMs: input.nowMs,
+          nowMs,
         })
       : null;
     const notificationOnlyAggregate =
@@ -73,7 +101,7 @@ export const make = Effect.gen(function* () {
         ? makeAggregateState({
             activeStates: isTerminalPhase(input.state) ? [] : [input.state],
             terminalState: isTerminalPhase(input.state) ? input.state : null,
-            nowMs: input.nowMs,
+            nowMs,
           })
         : null;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
@@ -85,7 +113,7 @@ export const make = Effect.gen(function* () {
             apnsDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
-              nowMs: input.nowMs,
+              nowMs,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -101,6 +129,12 @@ export const make = Effect.gen(function* () {
     return deliveriesByTarget.flat();
   });
 
+  // A user's aggregate is a snapshot across every linked environment. Keep
+  // snapshot creation and queue insertion in one per-user lane so a paused
+  // older request cannot enqueue a partial aggregate after a newer one.
+  const publishForDeliveryUser = (input: Parameters<typeof publishForDeliveryUserUnsafe>[0]) =>
+    withDeliveryLock(input.deliveryUser.userId, publishForDeliveryUserUnsafe(input));
+
   return AgentActivityPublisher.of({
     replayForLiveActivityRegistration: Effect.fn(
       "relay.agent_activity_publisher.replay_for_live_activity_registration",
@@ -109,28 +143,33 @@ export const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.deviceId,
         "relay.operation": "replayForLiveActivityRegistration",
       });
-      const { activeStates, targets } = yield* Effect.all(
-        {
-          activeStates: rows.listForUser({ userId: input.userId }),
-          targets: liveActivities.listTargets({ userId: input.userId }),
-        },
-        { concurrency: 2 },
+      return yield* withDeliveryLock(
+        input.userId,
+        Effect.gen(function* () {
+          const { activeStates, targets } = yield* Effect.all(
+            {
+              activeStates: rows.listForUser({ userId: input.userId }),
+              targets: liveActivities.listTargets({ userId: input.userId }),
+            },
+            { concurrency: 2 },
+          );
+          const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
+          if (target === null) {
+            return null;
+          }
+          const now = yield* DateTime.now;
+          const aggregate = makeAggregateState({
+            activeStates,
+            terminalState: null,
+            nowMs: now.epochMilliseconds,
+          });
+          return yield* apnsDeliveries.sendForTarget({
+            target,
+            aggregate,
+            nowMs: now.epochMilliseconds,
+          });
+        }),
       );
-      const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
-      if (target === null) {
-        return null;
-      }
-      const now = yield* DateTime.now;
-      const aggregate = makeAggregateState({
-        activeStates,
-        terminalState: null,
-        nowMs: now.epochMilliseconds,
-      });
-      return yield* apnsDeliveries.sendForTarget({
-        target,
-        aggregate,
-        nowMs: now.epochMilliseconds,
-      });
     }),
     publish: Effect.fn("relay.agent_activity_publisher.publish")(function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -159,14 +198,12 @@ export const make = Effect.gen(function* () {
         environmentId: input.environmentId,
         environmentPublicKey: input.environmentPublicKey,
       });
-      const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
-            nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },
       );
