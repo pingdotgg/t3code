@@ -778,9 +778,10 @@ export const dpopClientApi = HttpApiBuilder.group(
           },
           mapRelayCommonApiErrors("invalid_dpop"),
           mapErrorTags({
-            EnvironmentConnectNotAuthorized: (_error, traceId) =>
+            EnvironmentConnectNotAuthorized: (error, traceId) =>
               new RelayEnvironmentConnectNotAuthorizedError({
                 code: "environment_connect_not_authorized",
+                reason: error.reason,
                 traceId,
               }),
             EnvironmentMintRequestFailed: (_error, traceId) =>
@@ -820,9 +821,10 @@ export const dpopClientApi = HttpApiBuilder.group(
           },
           mapRelayCommonApiErrors("invalid_dpop"),
           mapErrorTags({
-            EnvironmentConnectNotAuthorized: (_error, traceId) =>
+            EnvironmentConnectNotAuthorized: (error, traceId) =>
               new RelayEnvironmentConnectNotAuthorizedError({
                 code: "environment_connect_not_authorized",
+                reason: error.reason,
                 traceId,
               }),
             EnvironmentMintRequestFailed: (_error, traceId) =>

@@ -27,14 +27,17 @@ import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
+import {
+  createNativeMailSearchToolbarItem,
+  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
+} from "../layout/native-mail-search-toolbar";
 import {
   formatArchivedThreadRelativeTime,
   type ArchivedThreadGroup,
   type ArchivedThreadSortOrder,
 } from "./archivedThreadList";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
@@ -74,7 +77,8 @@ function ArchivedThreadsHeader(props: {
   const searchIconColor = useThemeColor("--color-icon");
   const searchTextColor = useThemeColor("--color-foreground");
   const usesNativeChrome = Platform.OS === "ios";
-  const usesCompactMailToolbar = Platform.OS === "ios" && width < 700;
+  const usesCompactMailToolbar =
+    Platform.OS === "ios" && width < 700 && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
   const androidFilterActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -276,7 +280,11 @@ function ArchivedThreadsHeader(props: {
                 ...(usesNativeChrome
                   ? {
                       allowToolbarIntegration: true,
-                      placement: "integratedButton" as const,
+                      // "integratedButton" is an iOS 26 search-bar placement;
+                      // pre-glass iOS keeps the default pull-down placement.
+                      ...(NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
+                        ? { placement: "integratedButton" as const }
+                        : null),
                     }
                   : {
                       placement: "stacked" as const,
