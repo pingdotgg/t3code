@@ -42,6 +42,16 @@ layer("NodeSqliteClient", (it) => {
       assert.equal(error.reason.operation, "prepare");
     }),
   );
+
+  it.effect("uses full synchronous durability", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      const rows = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous;`;
+
+      assert.equal(rows[0]?.synchronous, 2);
+    }),
+  );
 });
 
 it.effect("returns a typed failure when the database cannot be opened", () =>
