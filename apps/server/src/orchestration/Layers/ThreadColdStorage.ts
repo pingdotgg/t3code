@@ -49,6 +49,9 @@ class ArchiveCodecError extends Schema.TaggedErrorClass<ArchiveCodecError>()("Ar
   }
 }
 
+const isArchiveCodecError = Schema.is(ArchiveCodecError);
+const isThreadColdStorageError = Schema.is(ThreadColdStorageError);
+
 class ArchiveTableValidationError extends Schema.TaggedErrorClass<ArchiveTableValidationError>()(
   "ArchiveTableValidationError",
   {
@@ -146,9 +149,7 @@ function decodeRows(data: Uint8Array): Effect.Effect<ReadonlyArray<SqlRow>, Arch
       }),
     ),
     Effect.mapError((cause) =>
-      cause instanceof ArchiveCodecError
-        ? cause
-        : new ArchiveCodecError({ operation: "decode", cause }),
+      isArchiveCodecError(cause) ? cause : new ArchiveCodecError({ operation: "decode", cause }),
     ),
   );
 }
@@ -362,7 +363,7 @@ const make = Effect.gen(function* () {
   const archiveImpl = Effect.fn("archiveThreadImpl")(function* (
     threadId: ThreadId,
     allowRestored: boolean,
-    quiesce: Effect.Effect<void, unknown>,
+    quiesce: Effect.Effect<void, ThreadColdStorageError>,
   ) {
     const manifestRows = (yield* sql.unsafe(
       `SELECT root_thread_id, archived_at, status
@@ -883,7 +884,13 @@ const make = Effect.gen(function* () {
       getTreeSemaphore(threadId),
       ({ semaphore }) => semaphore.withPermit(effect),
       releaseTreeSemaphore,
-    ).pipe(Effect.mapError((cause) => new ThreadColdStorageError({ operation, threadId, cause })));
+    ).pipe(
+      Effect.mapError((cause) =>
+        isThreadColdStorageError(cause)
+          ? cause
+          : new ThreadColdStorageError({ operation, threadId, cause }),
+      ),
+    );
 
   const listIds = (query: string, operation: string) =>
     sql.unsafe(query).pipe(
@@ -896,8 +903,20 @@ const make = Effect.gen(function* () {
     );
 
   return {
-    archiveThread: (threadId, quiesce = Effect.void) =>
-      wrap("archive", threadId, archiveImpl(threadId, false, quiesce)),
+    archiveThread: <E>(threadId: ThreadId, quiesce: Effect.Effect<void, E> = Effect.void) =>
+      wrap(
+        "archive",
+        threadId,
+        archiveImpl(
+          threadId,
+          false,
+          quiesce.pipe(
+            Effect.mapError(
+              (cause) => new ThreadColdStorageError({ operation: "archive", threadId, cause }),
+            ),
+          ),
+        ),
+      ),
     restoreTree: (threadId) => wrap("restore", threadId, restoreTreeImpl(threadId)),
     rollbackRestoreTree: (threadId) =>
       wrap("rollback-restore", threadId, rollbackRestoreTreeImpl(threadId)),
