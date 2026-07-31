@@ -681,6 +681,43 @@ describe("getRepositoryCloneUrls bare name resolution", () => {
     }),
   );
 
+  it.effect("fails naming every owner when several exact matches share the bare name", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([
+          { fullName: "team-a/core" },
+          { fullName: "team-b/core" },
+          { fullName: "team-c/core-docs" },
+        ]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "team-a/core",
+          url: "https://sollit.ghe.com/team-a/core",
+          sshUrl: "git@sollit.ghe.com:team-a/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "core",
+          host: "sollit.ghe.com",
+        })
+        .pipe(Effect.flip);
+
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("team-a/core");
+      expect(error.detail).toContain("team-b/core");
+      expect(error.detail).not.toContain("team-c/core-docs");
+    }),
+  );
+
   it.effect("never calls search for an owner/repo reference on enterprise", () =>
     Effect.gen(function* () {
       const searchRepositories = vi.fn(() => Effect.succeed([]));

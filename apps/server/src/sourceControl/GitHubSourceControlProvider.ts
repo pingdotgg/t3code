@@ -204,23 +204,35 @@ function isBareRepositoryName(repository: string): boolean {
   return !repository.includes("/");
 }
 
+const AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT = 5;
+
+type RepositorySearchMatch =
+  | { readonly _tag: "match"; readonly fullName: string }
+  | { readonly _tag: "ambiguous"; readonly candidates: ReadonlyArray<string> }
+  | { readonly _tag: "none" };
+
 // Bare names resolve against the caller's personal namespace on `gh repo
 // view`, which is usually empty on an enterprise host. Prefer the search
 // result whose repo-name segment matches the query exactly (search ranking
-// otherwise happily puts e.g. "core-documentation" ahead of "core").
+// otherwise happily puts e.g. "core-documentation" ahead of "core"). Several
+// owners can hold the same repo name, and search ranking is no basis for
+// picking between them, so report that back instead of guessing.
 function pickRepositorySearchMatch(
   query: string,
   results: ReadonlyArray<GitHubCli.GitHubRepositorySearchResult>,
-): string | null {
+): RepositorySearchMatch {
   if (results.length === 0) {
-    return null;
+    return { _tag: "none" };
   }
 
   const normalizedQuery = query.toLowerCase();
-  const exact = results.find(
+  const exact = results.filter(
     (result) => result.fullName.split("/").pop()?.toLowerCase() === normalizedQuery,
   );
-  return (exact ?? results[0]!).fullName;
+  if (exact.length > 1) {
+    return { _tag: "ambiguous", candidates: exact.map((result) => result.fullName) };
+  }
+  return { _tag: "match", fullName: (exact[0] ?? results[0]!).fullName };
 }
 
 export const makeProvider = (kind: GitHubProviderKind) =>
@@ -258,19 +270,29 @@ export const makeProvider = (kind: GitHubProviderKind) =>
           ),
           Effect.flatMap((results) => {
             const match = pickRepositorySearchMatch(repository, results);
-            if (match) {
-              return Effect.succeed(match);
+            if (match._tag === "match") {
+              return Effect.succeed(match.fullName);
             }
+
+            const safeRepository =
+              SourceControlProvider.transportSafeSourceControlErrorValue(repository);
+            const hostLabel = input.host ?? "the configured host";
             return Effect.fail(
               new SourceControlProviderError({
                 provider: kind,
                 operation: "getRepositoryCloneUrls",
                 command: "gh",
                 cwd: input.cwd,
-                repository: SourceControlProvider.transportSafeSourceControlErrorValue(repository),
-                detail: `No repository named "${repository}" was found on ${
-                  input.host ?? "the configured host"
-                }.`,
+                repository: safeRepository,
+                detail:
+                  match._tag === "ambiguous"
+                    ? `Several repositories on ${hostLabel} are named "${safeRepository}": ${match.candidates
+                        .slice(0, AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT)
+                        .map((candidate) =>
+                          SourceControlProvider.transportSafeSourceControlErrorValue(candidate),
+                        )
+                        .join(", ")}. Enter the full owner/repo path.`
+                    : `No repository named "${safeRepository}" was found on ${hostLabel}.`,
               }),
             );
           }),
