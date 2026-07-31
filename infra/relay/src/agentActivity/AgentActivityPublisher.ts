@@ -49,36 +49,92 @@ export class AgentActivityPublisher extends Context.Service<
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
+interface KeyedLockEntry {
+  readonly semaphore: Semaphore.Semaphore;
+  readonly users: number;
+}
+
+const makeKeyedLock = Effect.gen(function* () {
+  const entriesRef = yield* Ref.make<ReadonlyMap<string, KeyedLockEntry>>(new Map());
+  const entriesGuard = yield* Semaphore.make(1);
+
+  return <A, E, R>(key: string, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.acquireUseRelease(
+      entriesGuard.withPermit(
+        Effect.gen(function* () {
+          const entries = yield* Ref.get(entriesRef);
+          const existing = entries.get(key);
+          if (existing) {
+            yield* Ref.set(
+              entriesRef,
+              new Map(entries).set(key, {
+                semaphore: existing.semaphore,
+                users: existing.users + 1,
+              }),
+            );
+            return existing.semaphore;
+          }
+
+          const semaphore = yield* Semaphore.make(1);
+          yield* Ref.set(entriesRef, new Map(entries).set(key, { semaphore, users: 1 }));
+          return semaphore;
+        }),
+      ),
+      (semaphore) => semaphore.withPermit(effect),
+      (semaphore) =>
+        entriesGuard.withPermit(
+          Ref.update(entriesRef, (entries) => {
+            const existing = entries.get(key);
+            if (!existing || existing.semaphore !== semaphore) {
+              return entries;
+            }
+            const next = new Map(entries);
+            if (existing.users === 1) {
+              next.delete(key);
+            } else {
+              next.set(key, { semaphore, users: existing.users - 1 });
+            }
+            return next;
+          }),
+        ),
+    );
+});
+
 export const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
-  const deliveryLocksRef = yield* Ref.make<ReadonlyMap<string, Semaphore.Semaphore>>(new Map());
+  const withDeliveryLock = yield* makeKeyedLock;
+  const withThreadPublishLock = yield* makeKeyedLock;
 
-  const getDeliveryLock = Effect.fnUntraced(function* (userId: string) {
-    const existing = (yield* Ref.get(deliveryLocksRef)).get(userId);
-    if (existing) {
-      return existing;
-    }
-
-    const created = yield* Semaphore.make(1);
-    return yield* Ref.modify(deliveryLocksRef, (locks) => {
-      const current = locks.get(userId);
-      if (current) {
-        return [current, locks] as const;
-      }
-      const next = new Map(locks);
-      next.set(userId, created);
-      return [created, next] as const;
-    });
-  });
-
-  const withDeliveryLock = <A, E, R>(
-    userId: string,
+  const withDeliveryLocks = <A, E, R>(
+    userIds: ReadonlyArray<string>,
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E, R> =>
-    Effect.flatMap(getDeliveryLock(userId), (lock) => lock.withPermit(effect));
+    [...new Set(userIds)]
+      .sort()
+      .reduceRight<Effect.Effect<A, E, R>>(
+        (locked, userId) => withDeliveryLock(userId, locked),
+        effect,
+      );
+
+  const persistState = (input: {
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+    readonly threadId: string;
+    readonly state: RelayAgentActivityState | null;
+  }) =>
+    input.state
+      ? rows.upsert({
+          environmentPublicKey: input.environmentPublicKey,
+          state: input.state,
+        })
+      : rows.remove({
+          environmentId: input.environmentId,
+          environmentPublicKey: input.environmentPublicKey,
+          threadId: input.threadId,
+        });
 
   const publishForDeliveryUserUnsafe = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
@@ -90,7 +146,7 @@ export const make = Effect.gen(function* () {
     const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
       ? makeAggregateState({
           activeStates,
-          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
+          terminalState: null,
           nowMs,
         })
       : null;
@@ -128,12 +184,6 @@ export const make = Effect.gen(function* () {
     );
     return deliveriesByTarget.flat();
   });
-
-  // A user's aggregate is a snapshot across every linked environment. Keep
-  // snapshot creation and queue insertion in one per-user lane so a paused
-  // older request cannot enqueue a partial aggregate after a newer one.
-  const publishForDeliveryUser = (input: Parameters<typeof publishForDeliveryUserUnsafe>[0]) =>
-    withDeliveryLock(input.deliveryUser.userId, publishForDeliveryUserUnsafe(input));
 
   return AgentActivityPublisher.of({
     replayForLiveActivityRegistration: Effect.fn(
@@ -177,43 +227,47 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
-      if (input.state) {
-        // Terminal states are persisted too (pruned by the cron after they
-        // age out) so a thread that finishes while other agents are active
-        // stays visible as Done/Failed in subsequent aggregates instead of
-        // silently vanishing from the Live Activity.
-        yield* rows.upsert({
-          environmentPublicKey: input.environmentPublicKey,
-          state: input.state,
-        });
-      } else {
-        yield* rows.remove({
-          environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
-          threadId: input.threadId,
-        });
-      }
 
-      const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
-        environmentId: input.environmentId,
-        environmentPublicKey: input.environmentPublicKey,
-      });
-      const deliveriesByUser = yield* Effect.forEach(
-        deliveryUsers,
-        (deliveryUser) =>
-          publishForDeliveryUser({
-            deliveryUser,
-            state: input.state,
-          }),
-        { concurrency: 4 },
+      return yield* withThreadPublishLock(
+        `${input.environmentId}\u0000${input.threadId}`,
+        Effect.gen(function* () {
+          const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+            environmentId: input.environmentId,
+            environmentPublicKey: input.environmentPublicKey,
+          });
+          return yield* withDeliveryLocks(
+            deliveryUsers.map((deliveryUser) => deliveryUser.userId),
+            Effect.gen(function* () {
+              // Terminal states are persisted too (pruned by the cron after
+              // they age out) so a finished thread stays visible in later
+              // aggregates. Persistence is inside every affected user's lane,
+              // keeping the row snapshot and queue insertion atomic per user.
+              yield* persistState({
+                environmentId: input.environmentId,
+                environmentPublicKey: input.environmentPublicKey,
+                threadId: input.threadId,
+                state: input.state,
+              });
+              const deliveriesByUser = yield* Effect.forEach(
+                deliveryUsers,
+                (deliveryUser) =>
+                  publishForDeliveryUserUnsafe({
+                    deliveryUser,
+                    state: input.state,
+                  }),
+                { concurrency: 4 },
+              );
+              const deliveries = deliveriesByUser.flat();
+              return {
+                ok: true,
+                deliveries: deliveries.filter(
+                  (delivery): delivery is RelayDeliveryResult => delivery !== null,
+                ),
+              };
+            }),
+          );
+        }),
       );
-      const deliveries = deliveriesByUser.flat();
-      return {
-        ok: true,
-        deliveries: deliveries.filter(
-          (delivery): delivery is RelayDeliveryResult => delivery !== null,
-        ),
-      };
     }),
   });
 });

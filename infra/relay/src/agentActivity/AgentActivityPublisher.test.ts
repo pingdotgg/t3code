@@ -149,25 +149,25 @@ function makePublisherLayer(input: {
 }
 
 describe("AgentActivityPublisher", () => {
-  it.effect("does not enqueue an older aggregate after a newer thread for the same user", () =>
+  it.effect("does not enqueue an older same-thread state after a newer publish", () =>
     Effect.gen(function* () {
-      const firstSnapshotCaptured = yield* Deferred.make<void>();
-      const secondThreadUpserted = yield* Deferred.make<void>();
-      const releaseFirstSnapshot = yield* Deferred.make<void>();
+      const firstUserLookupStarted = yield* Deferred.make<void>();
+      const releaseFirstUserLookup = yield* Deferred.make<void>();
       const firstState: RelayAgentActivityState = {
         ...state,
-        threadId: "thread-a" as RelayAgentActivityState["threadId"],
-        threadTitle: "Thread A",
+        phase: "completed",
+        headline: "Done",
+        updatedAt: "1970-01-01T00:00:01.000Z",
       };
       const secondState: RelayAgentActivityState = {
         ...state,
-        threadId: "thread-b" as RelayAgentActivityState["threadId"],
-        threadTitle: "Thread B",
-        updatedAt: "1970-01-01T00:00:01.000Z",
+        phase: "failed",
+        headline: "Failed",
+        updatedAt: "1970-01-01T00:00:02.000Z",
       };
       const currentStates = new Map<string, RelayAgentActivityState>();
-      const sentThreadIds: Array<ReadonlyArray<string>> = [];
-      let firstList = true;
+      const sentStates: Array<string> = [];
+      let firstUserLookup = true;
 
       const program = Effect.gen(function* () {
         const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
@@ -179,7 +179,7 @@ describe("AgentActivityPublisher", () => {
             state: firstState,
           })
           .pipe(Effect.forkChild);
-        yield* Deferred.await(firstSnapshotCaptured);
+        yield* Deferred.await(firstUserLookupStarted);
 
         const secondPublish = yield* publisher
           .publish({
@@ -189,10 +189,9 @@ describe("AgentActivityPublisher", () => {
             state: secondState,
           })
           .pipe(Effect.forkChild);
-        yield* Deferred.await(secondThreadUpserted);
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
-        yield* Deferred.succeed(releaseFirstSnapshot, undefined);
+        yield* Deferred.succeed(releaseFirstUserLookup, undefined);
         yield* Effect.all([Fiber.join(firstPublish), Fiber.join(secondPublish)], {
           concurrency: 2,
         });
@@ -201,24 +200,26 @@ describe("AgentActivityPublisher", () => {
           makePublisherLayer({
             rows: {
               upsert: ({ state: nextState }) =>
-                Effect.sync(() => {
-                  currentStates.set(nextState.threadId, nextState);
-                }).pipe(
-                  Effect.andThen(
-                    nextState.threadId === secondState.threadId
-                      ? Deferred.succeed(secondThreadUpserted, undefined)
-                      : Effect.void,
-                  ),
+                Effect.sync(() => currentStates.set(nextState.threadId, nextState)).pipe(
+                  Effect.asVoid,
                 ),
-              listForUser: () =>
+              listForUser: () => Effect.succeed(Array.from(currentStates.values())),
+            },
+            links: {
+              listDeliveryUsersForEnvironment: () =>
                 Effect.gen(function* () {
-                  const snapshot = Array.from(currentStates.values());
-                  if (firstList) {
-                    firstList = false;
-                    yield* Deferred.succeed(firstSnapshotCaptured, undefined);
-                    yield* Deferred.await(releaseFirstSnapshot);
+                  if (firstUserLookup) {
+                    firstUserLookup = false;
+                    yield* Deferred.succeed(firstUserLookupStarted, undefined);
+                    yield* Deferred.await(releaseFirstUserLookup);
                   }
-                  return snapshot;
+                  return [
+                    {
+                      userId: "dev:julius",
+                      notificationsEnabled: true,
+                      liveActivitiesEnabled: true,
+                    },
+                  ];
                 }),
             },
             liveActivities: {
@@ -227,9 +228,8 @@ describe("AgentActivityPublisher", () => {
             apnsDeliveries: {
               sendForTarget: (input) =>
                 Effect.sync(() => {
-                  sentThreadIds.push(
-                    input.aggregate?.activities.map((activity) => activity.threadId) ?? [],
-                  );
+                  const delivered = input.aggregate?.activities[0];
+                  sentStates.push(`${delivered?.phase}:${delivered?.updatedAt}`);
                   return null;
                 }),
             },
@@ -239,9 +239,9 @@ describe("AgentActivityPublisher", () => {
 
       yield* program;
 
-      expect(sentThreadIds).toEqual([
-        [firstState.threadId],
-        [firstState.threadId, secondState.threadId],
+      expect(sentStates).toEqual([
+        `${firstState.phase}:${firstState.updatedAt}`,
+        `${secondState.phase}:${secondState.updatedAt}`,
       ]);
     }),
   );
@@ -513,7 +513,7 @@ describe("AgentActivityPublisher", () => {
                       Effect.sync(() => {
                         upserts.push(input);
                       }),
-                    listForUser: () => Effect.succeed([]),
+                    listForUser: () => Effect.succeed([completedState]),
                   }),
                 ),
                 Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
