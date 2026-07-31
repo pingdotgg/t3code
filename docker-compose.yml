@@ -1,0 +1,38 @@
+services:
+  t3code:
+    build:
+      context: .
+      args:
+        CODEX_VERSION: ${CODEX_VERSION:-latest}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-latest}
+        GROK_VERSION: ${GROK_VERSION:-}
+    image: t3code:local
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HOME: /home/t3
+      T3CODE_HOME: /home/t3/.t3
+      T3CODE_HOST: 0.0.0.0
+      T3CODE_PORT: 8989
+      T3CODE_NO_BROWSER: "1"
+      CODEX_HOME: /home/t3/.codex
+      CLAUDE_CONFIG_DIR: /home/t3/.claude
+      DISABLE_AUTOUPDATER: "1"
+    ports:
+      - "${T3CODE_BIND_ADDRESS:-127.0.0.1}:${T3CODE_PORT:-3773}:3773"
+    volumes:
+      - t3-home:/home/t3
+      - t3-workspace:/workspace
+    working_dir: /workspace
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=2g
+      - /run:rw,nosuid,nodev,size=16m
+
+volumes:
+  t3-home:
+  t3-workspace:

@@ -33,6 +33,16 @@ This will launch T3 Code's backend on your machine as well as the local web app 
 
 Tip: Use `npx t3@latest --help` for the full CLI reference.
 
+### Docker Compose
+
+The repository includes a Compose setup with Codex, Claude Code, Cursor Agent,
+Grok, and OpenCode preinstalled. Workspaces, T3 Code state, and provider
+authentication all live in dedicated Docker volumes, with no host filesystem
+or credential mounts.
+
+See [Run T3 Code with Docker Compose](docs/user/containers.md) for setup,
+authentication, and host-permission details.
+
 ### Desktop app
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:

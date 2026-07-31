@@ -3,6 +3,7 @@
 ## Using T3 Code
 
 - [Install and first run](./user/install.md)
+- [Docker Compose](./user/containers.md)
 - [Permission modes](./user/permission-modes.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Remote access](./user/remote-access.md)
