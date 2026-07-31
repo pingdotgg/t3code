@@ -104,10 +104,10 @@ import {
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
+import { formatCompactWorkingDuration } from "@t3tools/shared/orchestrationTiming";
 import { cn } from "~/lib/utils";
 import {
   buildBulkTitleRegenerationContextMenuItem,
-  formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
@@ -220,7 +220,7 @@ function WorkingDuration(props: { startedAt: string | null }) {
   if (Number.isNaN(startedMs)) return null;
   return (
     <span className="font-mono tabular-nums">
-      {formatWorkingDurationLabel(Date.now() - startedMs)}
+      {formatCompactWorkingDuration(Date.now() - startedMs)}
     </span>
   );
 }

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
+import { formatCompactWorkingDuration } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -67,11 +68,11 @@ const EMPTY_PROGRESS: GitActionProgress = {
   description: null,
 };
 
-function formatElapsedSeconds(ms: number | null): string | null {
+function formatElapsedDescription(ms: number | null): string | null {
   if (ms === null) return null;
-  const elapsed = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (elapsed < 2) return null;
-  return `Running for ${elapsed}s`;
+  const elapsedMs = Date.now() - ms;
+  if (elapsedMs < 2_000) return null;
+  return `Running for ${formatCompactWorkingDuration(elapsedMs)}`;
 }
 
 export function useGitActionProgress(target: VcsActionTarget): GitActionProgress {
@@ -105,7 +106,7 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
   if (actionState.isRunning) {
     const description =
       actionState.lastOutputLine ??
-      formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs);
+      formatElapsedDescription(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs);
     return {
       phase: "running",
       label: actionState.currentLabel,

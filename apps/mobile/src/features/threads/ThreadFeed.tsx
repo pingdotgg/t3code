@@ -3,7 +3,7 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
+import { formatWorkingDuration } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -1032,7 +1032,7 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
     return () => clearInterval(intervalId);
   }, [props.startedAt]);
 
-  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+  const durationLabel = formatWorkingDuration(nowMs - Date.parse(props.startedAt));
 
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">

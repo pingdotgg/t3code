@@ -271,6 +271,18 @@ export function formatDuration(durationMs: number): string {
     return tenths >= 10 ? "10s" : `${tenths.toFixed(1)}s`;
   }
   if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
+
+  if (durationMs >= 86_400_000) {
+    const days = Math.floor(durationMs / 86_400_000);
+    const hours = Math.floor((durationMs % 86_400_000) / 3_600_000);
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+  if (durationMs >= 3_600_000) {
+    const hours = Math.floor(durationMs / 3_600_000);
+    const minutes = Math.floor((durationMs % 3_600_000) / 60_000);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
   const minutes = Math.floor(durationMs / 60_000);
   const seconds = Math.round((durationMs % 60_000) / 1_000);
   if (seconds === 0) return `${minutes}m`;

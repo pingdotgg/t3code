@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type ScopedThreadRef } from "@t3tools/contracts";
+import { formatCompactWorkingDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -241,13 +242,7 @@ function formatElapsedDescription(startedAtMs: number | null): string | undefine
   if (startedAtMs === null) {
     return undefined;
   }
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
-  if (elapsedSeconds < 60) {
-    return `Running for ${elapsedSeconds}s`;
-  }
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
-  return `Running for ${minutes}m ${seconds}s`;
+  return `Running for ${formatCompactWorkingDuration(Date.now() - startedAtMs)}`;
 }
 
 function resolveProgressDescription(progress: ActiveGitActionProgress): string | undefined {
