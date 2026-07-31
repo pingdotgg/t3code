@@ -266,7 +266,7 @@ function ChatThreadRouteView() {
 
   if (agentRun && serverThread) {
     return (
-      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-chat-background text-foreground md:h-dvh">
         <AgentRunChatView
           agentRun={agentRun}
           environmentId={threadRef.environmentId}
@@ -291,7 +291,7 @@ function ChatThreadRouteView() {
   if (!shouldUseDiffSheet) {
     return (
       <>
-        <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+        <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-chat-background text-foreground md:h-dvh">
           {splitArea}
         </SidebarInset>
         <DiffPanelInlineSidebar
@@ -306,7 +306,7 @@ function ChatThreadRouteView() {
 
   return (
     <>
-      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-chat-background text-foreground md:h-dvh">
         {splitArea}
       </SidebarInset>
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>

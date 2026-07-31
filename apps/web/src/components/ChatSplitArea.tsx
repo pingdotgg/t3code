@@ -759,7 +759,10 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
     return (
       <div
         {...paneDragProps}
-        className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", focusRing)}
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col bg-chat-background",
+          focusRing,
+        )}
       >
         <div className="drag-region flex h-13 shrink-0 items-center justify-end border-b border-border/40 px-2">
           <div className="no-drag">{paneActions}</div>
@@ -777,7 +780,10 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
     return (
       <div
         {...paneDragProps}
-        className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", focusRing)}
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col bg-chat-background",
+          focusRing,
+        )}
       >
         <ChatSplitDraftPane
           leafId={leafId}
@@ -795,7 +801,7 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
   return (
     <div
       {...paneDragProps}
-      className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", focusRing)}
+      className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-chat-background", focusRing)}
     >
       <ChatView
         environmentId={serverTarget.threadRef.environmentId}

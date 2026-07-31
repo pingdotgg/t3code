@@ -4514,7 +4514,7 @@ function ChatViewBody(
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-chat-background">
       {/* Top bar */}
       <header
         className={cn(
