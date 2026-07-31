@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,6 +15,7 @@ import {
   disableTailscaleServe,
   ensureTailscaleServe,
   isTailscaleIpv4Address,
+  MACOS_TAILSCALE_APP_EXECUTABLE,
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
   readTailscaleStatus,
@@ -21,6 +23,7 @@ import {
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleCommandTimeoutError,
+  TailscaleExecutableFileCheck,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -209,6 +212,93 @@ describe("tailscale", () => {
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message, "Failed to spawn tailscale status.");
       assert.notInclude(error.message, systemCause.message);
+    });
+  });
+
+  it.effect("falls back to the macOS Tailscale.app binary when `tailscale` isn't on PATH", () => {
+    const notFoundCause = PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      cause: new Error("ENOENT"),
+    });
+    const spawnedCommands: Array<string> = [];
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as { readonly command: string };
+        spawnedCommands.push(childProcess.command);
+        return childProcess.command === "tailscale"
+          ? Effect.fail(notFoundCause)
+          : Effect.succeed(mockHandle({ stdout: tailscaleStatusWithSingleIpJson }));
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const status = yield* readTailscaleStatus.pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(
+          TailscaleExecutableFileCheck,
+          (filePath) => filePath === MACOS_TAILSCALE_APP_EXECUTABLE,
+        ),
+        Effect.provide(layer),
+      );
+
+      assert.deepEqual(status, {
+        magicDnsName: "desktop.tail.ts.net",
+        tailnetIpv4Addresses: ["100.90.1.2"],
+      });
+      assert.deepEqual(spawnedCommands, ["tailscale", MACOS_TAILSCALE_APP_EXECUTABLE]);
+    });
+  });
+
+  it.effect("does not fall back when the macOS Tailscale.app binary isn't installed either", () => {
+    const notFoundCause = PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      cause: new Error("ENOENT"),
+    });
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.fail(notFoundCause)),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(TailscaleExecutableFileCheck, () => false),
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, TailscaleCommandSpawnError);
+      assert.strictEqual(error.cause, notFoundCause);
+    });
+  });
+
+  it.effect("does not fall back to the macOS binary on non-macOS platforms", () => {
+    const notFoundCause = PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      cause: new Error("ENOENT"),
+    });
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.fail(notFoundCause)),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(TailscaleExecutableFileCheck, () => true),
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, TailscaleCommandSpawnError);
+      assert.strictEqual(error.cause, notFoundCause);
     });
   });
 
