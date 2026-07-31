@@ -25,7 +25,7 @@ The web terminal vendors a WebAssembly build from the same revision and uses the
 - License: MIT
 
 Ghostty's MIT license applies to the vendored Android and web libraries. Keep this notice and both
-artifacts in sync when updating `Vendor/libghostty-vt`.
+artifacts in sync when updating the repository-root `native/libghostty-vt`.
 
 ## MesloLGS NF (Android terminal font)
 
