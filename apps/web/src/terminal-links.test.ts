@@ -67,6 +67,13 @@ describe("extractTerminalLinks", () => {
     );
   });
 
+  it("does not match supported schemes inside longer scheme names", () => {
+    const line =
+      "hotel:123 demagnet:foo x-mailto:user@example.com x+mailto:user@example.com x.mailto:user@example.com";
+
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
   it("trims trailing punctuation from links", () => {
     const line = "(https://example.com/docs), ./src/main.ts:12.";
     expect(extractTerminalLinks(line)).toEqual([
