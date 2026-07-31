@@ -200,9 +200,82 @@ export const discovery = {
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
 
+function isBareRepositoryName(repository: string): boolean {
+  return !repository.includes("/");
+}
+
+// Bare names resolve against the caller's personal namespace on `gh repo
+// view`, which is usually empty on an enterprise host. Prefer the search
+// result whose repo-name segment matches the query exactly (search ranking
+// otherwise happily puts e.g. "core-documentation" ahead of "core").
+function pickRepositorySearchMatch(
+  query: string,
+  results: ReadonlyArray<GitHubCli.GitHubRepositorySearchResult>,
+): string | null {
+  if (results.length === 0) {
+    return null;
+  }
+
+  const normalizedQuery = query.toLowerCase();
+  const exact = results.find(
+    (result) => result.fullName.split("/").pop()?.toLowerCase() === normalizedQuery,
+  );
+  return (exact ?? results[0]!).fullName;
+}
+
 export const makeProvider = (kind: GitHubProviderKind) =>
   Effect.gen(function* () {
     const github = yield* GitHubCli.GitHubCli;
+
+    const resolveRepositoryReference = (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host?: string;
+    }): Effect.Effect<string, SourceControlProviderError> => {
+      const repository = input.repository.trim();
+      if (kind !== "github-enterprise" || !isBareRepositoryName(repository)) {
+        return Effect.succeed(repository);
+      }
+
+      return github
+        .searchRepositories({
+          cwd: input.cwd,
+          query: repository,
+          ...(input.host ? { host: input.host } : {}),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: kind,
+                operation: "getRepositoryCloneUrls",
+                command: error.command,
+                cwd: input.cwd,
+                repository: SourceControlProvider.transportSafeSourceControlErrorValue(repository),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+          Effect.flatMap((results) => {
+            const match = pickRepositorySearchMatch(repository, results);
+            if (match) {
+              return Effect.succeed(match);
+            }
+            return Effect.fail(
+              new SourceControlProviderError({
+                provider: kind,
+                operation: "getRepositoryCloneUrls",
+                command: "gh",
+                cwd: input.cwd,
+                repository: SourceControlProvider.transportSafeSourceControlErrorValue(repository),
+                detail: `No repository named "${repository}" was found on ${
+                  input.host ?? "the configured host"
+                }.`,
+              }),
+            );
+          }),
+        );
+    };
 
     const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
       (input) => {
@@ -338,28 +411,32 @@ export const makeProvider = (kind: GitHubProviderKind) =>
             ),
           ),
       getRepositoryCloneUrls: (input) =>
-        github
-          .getRepositoryCloneUrls({
-            cwd: input.cwd,
-            repository: input.repository,
-            ...(input.host ? { host: input.host } : {}),
-          })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
-                  provider: kind,
-                  operation: "getRepositoryCloneUrls",
-                  command: error.command,
-                  cwd: input.cwd,
-                  repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                    input.repository,
-                  ),
-                  detail: error.detail,
-                  cause: error,
-                }),
-            ),
+        resolveRepositoryReference(input).pipe(
+          Effect.flatMap((repository) =>
+            github
+              .getRepositoryCloneUrls({
+                cwd: input.cwd,
+                repository,
+                ...(input.host ? { host: input.host } : {}),
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new SourceControlProviderError({
+                      provider: kind,
+                      operation: "getRepositoryCloneUrls",
+                      command: error.command,
+                      cwd: input.cwd,
+                      repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                        input.repository,
+                      ),
+                      detail: error.detail,
+                      cause: error,
+                    }),
+                ),
+              ),
           ),
+        ),
       createRepository: (input) =>
         github
           .createRepository({

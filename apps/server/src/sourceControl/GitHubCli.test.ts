@@ -344,6 +344,62 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("searches repositories and decodes full names", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              { fullName: "Sollit/core-documentation" },
+              { fullName: "Sollit/core" },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.searchRepositories({
+        cwd: "/repo",
+        query: "core",
+      });
+
+      assert.deepStrictEqual(result, [
+        { fullName: "Sollit/core-documentation" },
+        { fullName: "Sollit/core" },
+      ]);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["search", "repos", "core", "--limit", "20", "--json", "fullName"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("treats empty repository search output as no results", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.searchRepositories({ cwd: "/repo", query: "core" });
+
+      assert.deepStrictEqual(result, []);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("surfaces a decode error for invalid repository search JSON", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not json")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh.searchRepositories({ cwd: "/repo", query: "core" }).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitHubRepositorySearchDecodeError");
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
@@ -421,6 +477,28 @@ describe("GitHubCli host targeting", () => {
       yield* cli.getRepositoryCloneUrls({ cwd: "/repo", repository: "owner/repo" });
 
       expect(mockRun.mock.calls[0]![0]).not.toHaveProperty("env");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("sets GH_HOST when searching repositories with a host", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([{ fullName: "Sollit/core" }]),
+          ),
+        ),
+      );
+
+      const cli = yield* GitHubCli.GitHubCli;
+      yield* cli.searchRepositories({
+        cwd: "/repo",
+        query: "core",
+        host: "sollit.ghe.com",
+      });
+
+      expect(mockRun.mock.calls[0]![0].env?.GH_HOST).toBe("sollit.ghe.com");
     }).pipe(Effect.provide(layer)),
   );
 

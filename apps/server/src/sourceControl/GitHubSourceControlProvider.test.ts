@@ -562,6 +562,191 @@ describe("refineUnknownGitHubRemote", () => {
   });
 });
 
+function makeProviderOfKind(
+  kind: "github" | "github-enterprise",
+  github: Partial<GitHubCli.GitHubCli["Service"]>,
+) {
+  return GitHubSourceControlProvider.makeProvider(kind).pipe(
+    Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
+  );
+}
+
+describe("getRepositoryCloneUrls bare name resolution", () => {
+  it.effect("resolves a bare enterprise name via search, preferring the exact-name match", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([
+          { fullName: "Sollit/core-documentation" },
+          { fullName: "Sollit/core" },
+          { fullName: "Sollit/frontend-core" },
+          { fullName: "Sollit/portal-core-service" },
+        ]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "core",
+        host: "sollit.ghe.com",
+      });
+
+      expect(searchRepositories).toHaveBeenCalledWith({
+        cwd: "/repo",
+        query: "core",
+        host: "sollit.ghe.com",
+      });
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/core",
+        host: "sollit.ghe.com",
+      });
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "Sollit/core",
+        url: "https://sollit.ghe.com/Sollit/core",
+        sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+      });
+    }),
+  );
+
+  it.effect("falls back to the first search result when no bare name matches exactly", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([{ fullName: "Sollit/widget-service" }, { fullName: "Sollit/mywidget" }]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/widget-service",
+          url: "https://sollit.ghe.com/Sollit/widget-service",
+          sshUrl: "git@sollit.ghe.com:Sollit/widget-service.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "widget",
+        host: "sollit.ghe.com",
+      });
+
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/widget-service",
+        host: "sollit.ghe.com",
+      });
+    }),
+  );
+
+  it.effect("fails with a detail naming the query and host when search returns zero results", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/typo-name",
+          url: "https://sollit.ghe.com/Sollit/typo-name",
+          sshUrl: "git@sollit.ghe.com:Sollit/typo-name.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "typo-name",
+          host: "sollit.ghe.com",
+        })
+        .pipe(Effect.flip);
+
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("typo-name");
+      expect(error.detail).toContain("sollit.ghe.com");
+    }),
+  );
+
+  it.effect("never calls search for an owner/repo reference on enterprise", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "Sollit/core",
+        host: "sollit.ghe.com",
+      });
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/core",
+        host: "sollit.ghe.com",
+      });
+    }),
+  );
+
+  it.effect("never calls search for a bare name on plain github.com", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "octocat/core",
+          url: "https://github.com/octocat/core",
+          sshUrl: "git@github.com:octocat/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "core",
+      });
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "core",
+      });
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/core",
+        url: "https://github.com/octocat/core",
+        sshUrl: "git@github.com:octocat/core.git",
+      });
+    }),
+  );
+});
+
 describe("makeProvider", () => {
   it.effect("tags change requests and errors with the enterprise kind", () =>
     Effect.gen(function* () {

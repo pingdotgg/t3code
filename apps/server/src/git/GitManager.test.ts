@@ -567,6 +567,14 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             cause: new Error(`Unexpected repository create: ${input.repository}`),
           }),
         ),
+      searchRepositories: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected repository search: ${input.query}`),
+          }),
+        ),
       checkoutPullRequest: (input) =>
         execute({
           cwd: input.cwd,
