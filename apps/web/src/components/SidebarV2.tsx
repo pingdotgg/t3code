@@ -172,6 +172,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Collapsing Settled is a lasting preference — someone who tucks history away
 // doesn't want it back on the next launch.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:settled-expanded";
+const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -1730,8 +1731,15 @@ export default function SidebarV2() {
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
   // shortcuts or multi-select), matching the settled tail's paging model.
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
+  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useLocalStorage(
+    SNOOZED_SHELF_EXPANDED_KEY,
+    false,
+    Schema.Boolean,
+  );
+  const toggleSnoozedShelf = useCallback(
+    () => setSnoozedShelfExpanded((value) => !value),
+    [setSnoozedShelfExpanded],
+  );
   const visibleSnoozedThreads = useMemo(() => {
     if (snoozedShelfExpanded) return snoozedThreads;
     // The open thread must never vanish behind the collapsed shelf: a
