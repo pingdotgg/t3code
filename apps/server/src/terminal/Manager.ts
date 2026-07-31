@@ -552,7 +552,9 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
     platform === "win32" && requestedCommand !== null
       ? yield* resolveCommandPath(requestedCommand, { env }).pipe(
           Effect.provideService(HostProcessPlatform, platform),
-          Effect.catchTag("CommandResolutionError", () => Effect.succeed(requestedCommand)),
+          Effect.catchTags({
+            CommandResolutionError: () => Effect.succeed(requestedCommand),
+          }),
         )
       : requestedCommand;
   const requested = shellCandidateFromCommand(resolvedRequestedCommand, platform);
