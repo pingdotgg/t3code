@@ -2611,7 +2611,9 @@ export default function SidebarV2() {
                       }
                       snoozeWakeLabelText={
                         section === "snoozed" && thread.snoozedUntil != null
-                          ? snoozeWakeLabel(thread.snoozedUntil, new Date())
+                          ? snoozeWakeLabel(thread.snoozedUntil, {
+                              now: new Date().toISOString(),
+                            })
                           : null
                       }
                       // All sections: a woken thread can classify straight
