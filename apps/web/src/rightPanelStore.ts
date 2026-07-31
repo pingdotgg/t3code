@@ -155,6 +155,24 @@ const withPlanAutoOpenEnabled = (state: ThreadRightPanelState): ThreadRightPanel
   return withoutDisabled;
 };
 
+const selectFallbackSurface = (
+  current: ThreadRightPanelState,
+  surfaces: RightPanelSurface[],
+  preferredIndex: number,
+): RightPanelSurface | null => {
+  const fallbackCandidate =
+    surfaces[Math.min(Math.max(preferredIndex, 0), surfaces.length - 1)] ?? null;
+  if (!current.planSidebarAutoOpenDisabled || fallbackCandidate?.kind !== "plan") {
+    return fallbackCandidate;
+  }
+  return surfaces.find((surface) => surface.kind !== "plan") ?? fallbackCandidate;
+};
+
+const isDismissedPlanFallback = (
+  current: ThreadRightPanelState,
+  surface: RightPanelSurface | null,
+): boolean => current.planSidebarAutoOpenDisabled === true && surface?.kind === "plan";
+
 const updateThread = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
@@ -385,15 +403,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (terminalIds.length === 0) {
               const index = current.surfaces.findIndex((entry) => entry.id === surfaceId);
               const surfaces = current.surfaces.filter((entry) => entry.id !== surfaceId);
-              const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+              const fallback = selectFallbackSurface(current, surfaces, index);
+              const activeSurfaceRemoved = current.activeSurfaceId === surfaceId;
               return {
                 ...current,
-                isOpen: surfaces.length > 0 && current.isOpen,
+                isOpen:
+                  surfaces.length > 0 &&
+                  current.isOpen &&
+                  !(activeSurfaceRemoved && isDismissedPlanFallback(current, fallback)),
                 surfaces,
-                activeSurfaceId:
-                  current.activeSurfaceId === surfaceId
-                    ? (fallback?.id ?? null)
-                    : current.activeSurfaceId,
+                activeSurfaceId: activeSurfaceRemoved
+                  ? (fallback?.id ?? null)
+                  : current.activeSurfaceId,
               };
             }
             return {
@@ -433,16 +454,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const next = { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
               return closingPlan ? withPlanAutoOpenDisabled(next) : next;
             }
-            const fallbackCandidate = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
-            const fallback =
-              current.planSidebarAutoOpenDisabled && fallbackCandidate?.kind === "plan"
-                ? (surfaces.find((surface) => surface.kind !== "plan") ?? fallbackCandidate)
-                : fallbackCandidate;
-            const fallbackIsDismissedPlan =
-              fallback?.kind === "plan" && current.planSidebarAutoOpenDisabled;
+            const fallback = selectFallbackSurface(current, surfaces, index);
             const next = {
               ...current,
-              isOpen: surfaces.length > 0 && current.isOpen && !fallbackIsDismissedPlan,
+              isOpen:
+                surfaces.length > 0 &&
+                current.isOpen &&
+                !isDismissedPlanFallback(current, fallback),
               surfaces,
               activeSurfaceId: fallback?.id ?? null,
             };
@@ -527,12 +545,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface) => surface.id === current.activeSurfaceId,
             );
             const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
+            const fallback = selectFallbackSurface(
+              current,
+              surfaces,
+              fallbackBrowser ? surfaces.indexOf(fallbackBrowser) : 0,
+            );
             return {
               ...current,
+              isOpen: activeStillExists
+                ? current.isOpen
+                : surfaces.length > 0 &&
+                  current.isOpen &&
+                  !isDismissedPlanFallback(current, fallback),
               surfaces,
-              activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
-                : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : (fallback?.id ?? null),
             };
           }),
         })),
@@ -547,13 +573,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );
+            const fallback = selectFallbackSurface(current, surfaces, surfaces.length - 1);
             return {
               ...current,
-              isOpen: surfaces.length > 0 ? current.isOpen : false,
+              isOpen: activeStillExists
+                ? current.isOpen
+                : surfaces.length > 0 &&
+                  current.isOpen &&
+                  !isDismissedPlanFallback(current, fallback),
               surfaces,
-              activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
-                : (surfaces.at(-1)?.id ?? null),
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : (fallback?.id ?? null),
             };
           }),
         })),

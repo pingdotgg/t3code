@@ -444,6 +444,21 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("does not reopen dismissed Plan when closing the final terminal pane", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
   it("closing the active surface activates a neighboring surface", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
@@ -569,5 +584,35 @@ describe("rightPanelStore", () => {
         (surface) => surface.id,
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
+  });
+
+  it("does not reopen dismissed Plan when browser surfaces reconcile away", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, []);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
+  it("does not reopen dismissed Plan when file surfaces reconcile away", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
   });
 });
