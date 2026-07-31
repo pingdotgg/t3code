@@ -516,6 +516,20 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("re-enables Plan auto-open when closing surfaces to the right activates Plan", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().closeSurfacesToRight(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
+  });
+
   it("closing all surfaces closes the panel", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");

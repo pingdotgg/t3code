@@ -467,6 +467,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0 || index === current.surfaces.length - 1) return current;
+            const surface = current.surfaces[index];
             const surfaces = current.surfaces.slice(0, index + 1);
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
@@ -476,6 +477,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               surfaces,
               activeSurfaceId: activeStillExists ? current.activeSurfaceId : surfaceId,
             };
+            if (!activeStillExists && surface?.kind === "plan") {
+              return withPlanAutoOpenEnabled(next);
+            }
             return current.surfaces.some((entry) => entry.kind === "plan") &&
               !surfaces.some((entry) => entry.kind === "plan")
               ? withPlanAutoOpenDisabled(next)
