@@ -737,6 +737,18 @@ label:has(> select#reasoning-effort) select {
   height: 1.25em;
 }
 
+/* Single-line toolbar shared by the browser chrome and file preview headers.
+   Without the explicit flex context the row's controls stack vertically. */
+.surface-subheader {
+  display: flex;
+  height: calc(var(--spacing) * 10);
+  min-height: calc(var(--spacing) * 10);
+  flex-shrink: 0;
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: var(--background);
+}
+
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
   background: color-mix(in srgb, var(--background) 94%, var(--card));

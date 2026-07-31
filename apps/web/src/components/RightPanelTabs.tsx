@@ -15,9 +15,11 @@ import { type MouseEvent, type ReactNode, useState } from "react";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
+import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
 
 type Props = {
+  readonly mode: PreviewPanelMode;
   readonly surfaces: readonly RightPanelSurface[];
   readonly activeSurfaceId: string | null;
   readonly previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
@@ -110,6 +112,7 @@ function Icon({
 }
 
 export function RightPanelTabs({
+  mode,
   surfaces,
   activeSurfaceId,
   previewSessions,
@@ -135,15 +138,15 @@ export function RightPanelTabs({
   };
 
   return (
-    <section
-      className={cn(
-        "flex min-h-0 w-[min(42vw,36rem)] min-w-80 flex-col border-l border-border bg-card max-[980px]:w-full max-[980px]:min-w-0",
-        maximized && "w-full max-w-none",
-      )}
-      data-right-panel-maximized={maximized ? "true" : "false"}
-    >
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+    <PreviewPanelShell mode={mode} maximized={maximized}>
+      <div
+        className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-card px-2"
+        data-right-panel-tabbar
+      >
+        <div
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+          data-right-panel-tab-list
+        >
           {surfaces.map((surface) => {
             const title = titleFor(surface, previewSessions, terminalLabels);
             const active = surface.id === activeSurfaceId;
@@ -215,38 +218,38 @@ export function RightPanelTabs({
               </div>
             );
           })}
+          <Menu>
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Add surface"
+                  className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Plus className="size-4" />
+                </button>
+              }
+            />
+            <MenuPopup>
+              <MenuItem onClick={onAddBrowser}>Browser</MenuItem>
+              <MenuItem onClick={onAddTerminal}>Terminal</MenuItem>
+              <MenuItem onClick={onAddFiles}>Files</MenuItem>
+              <MenuItem onClick={onAddDiff}>Diff</MenuItem>
+            </MenuPopup>
+          </Menu>
         </div>
-        <Menu>
-          <MenuTrigger
-            render={
-              <button
-                type="button"
-                aria-label="Add surface"
-                className="rounded p-1 hover:bg-accent"
-              >
-                <Plus className="size-4" />
-              </button>
-            }
-          />
-          <MenuPopup>
-            <MenuItem onClick={onAddBrowser}>Browser</MenuItem>
-            <MenuItem onClick={onAddTerminal}>Terminal</MenuItem>
-            <MenuItem onClick={onAddFiles}>Files</MenuItem>
-            <MenuItem onClick={onAddDiff}>Diff</MenuItem>
-          </MenuPopup>
-        </Menu>
         {onToggleMaximize ? (
           <button
             type="button"
             aria-label={maximized ? "Restore panel size" : "Maximize panel"}
             onClick={onToggleMaximize}
-            className="rounded p-1 hover:bg-accent"
+            className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </button>
         ) : null}
       </div>
-      <div className="min-h-0 flex-1">{children}</div>
-    </section>
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+    </PreviewPanelShell>
   );
 }
