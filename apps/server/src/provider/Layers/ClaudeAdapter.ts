@@ -158,6 +158,8 @@ interface PendingApproval {
 interface PendingUserInput {
   readonly questions: ReadonlyArray<UserInputQuestion>;
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+  /** Unparks the waiting handler as cancelled. Session teardown must call it. */
+  readonly cancel: () => void;
 }
 
 interface ToolInFlight {
@@ -3054,6 +3056,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     context.pendingApprovals.clear();
 
+    // Same reason as the approvals above: a request nobody can answer any more
+    // must not stay open, or the thread can never be settled.
+    for (const pending of [...context.pendingUserInputs.values()]) {
+      pending.cancel();
+    }
+
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
     }
@@ -3235,6 +3243,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const pendingInput: PendingUserInput = {
           questions,
           answers: answersDeferred,
+          cancel: () => onAbort(),
         };
 
         // Emit user-input.requested so the UI can present the questions.
