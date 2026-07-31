@@ -75,7 +75,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const canGoBack = useCanGoBack();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -104,12 +104,19 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       }
 
       event.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
+      if (isMobile) {
+        setOpenMobile(true);
+      } else if (!open) {
+        setOpen(true);
+      }
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isMobile, open, setOpen, setOpenMobile]);
 
   const handleSectionClick = useCallback(
     (to: SettingsPath) => {

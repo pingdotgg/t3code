@@ -31,12 +31,14 @@ describe("settings search targets", () => {
     const focus = vi.fn();
     const remove = vi.fn();
     const add = vi.fn();
+    const addEventListener = vi.fn();
     const target = {
       tagName: "SECTION",
       firstElementChild: { scrollIntoView: headerScrollIntoView },
       scrollIntoView: sectionScrollIntoView,
       focus,
       classList: { remove, add },
+      addEventListener,
       offsetWidth: 100,
     } as unknown as HTMLElement;
     vi.stubGlobal("document", {
@@ -55,6 +57,7 @@ describe("settings search targets", () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(remove).toHaveBeenCalledWith("settings-search-target-pulse");
     expect(add).toHaveBeenCalledWith("settings-search-target-pulse");
+    expect(addEventListener).toHaveBeenCalledWith("blur", expect.any(Function), { once: true });
   });
 
   it("does not animate the destination when reduced motion is requested", () => {

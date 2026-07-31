@@ -55,6 +55,11 @@ function scrollAndFocusSettingsTarget(target: HTMLElement): void {
   if (prefersReducedMotion) return;
   void target.offsetWidth;
   target.classList.add("settings-search-target-pulse");
+  // The class also suppresses the focus outline (the pulse is the destination
+  // indicator), so drop it once the element is no longer the destination.
+  target.addEventListener("blur", () => target.classList.remove("settings-search-target-pulse"), {
+    once: true,
+  });
 }
 
 function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
