@@ -417,7 +417,7 @@ export function projectServerWelcome(
 export function isSameServerReleaseLine(left: string, right: string): boolean {
   if (left === right) return true;
   const stripChannel = (version: string) =>
-    version.replace(/-nightly\.\d{8}\.\d+$/, "").replace(/-dev(\.\d+)?$/, "");
+    version.replace(/-nightly\.\d{8}(\.\d+)?$/, "").replace(/-dev(\.\d+)?$/, "");
   return stripChannel(left) === stripChannel(right);
 }
 

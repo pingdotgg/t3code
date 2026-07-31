@@ -1404,10 +1404,6 @@ const faqs = [
     transform: translateY(0);
   }
 
-  @media (max-width: 1100px) {
-    .hero-mobile-store { display: none; }
-  }
-
   /* ── Harnesses ─────────────────────────────────────────── */
 
   /* ── Mobile ────────────────────────────────────────────── */
@@ -2475,7 +2471,10 @@ const faqs = [
       padding: 64px 24px;
     }
     .container { padding-left: 20px; padding-right: 20px; }
-    .hero-preview { display: none; }
+    .hero-preview,
+    .hero-mobile-store {
+      display: none;
+    }
     .git-visual { display: none; }
     .endorsements-head {
       margin-bottom: 40px;
