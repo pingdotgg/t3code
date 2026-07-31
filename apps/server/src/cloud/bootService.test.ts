@@ -12,6 +12,7 @@ import {
   HostProcessArguments,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserName,
 } from "@t3tools/shared/hostProcess";
 
 import { reconcileService } from "../cli/service.ts";
@@ -60,10 +61,11 @@ const makeHost = (entry: string): BootService.BootServiceHost => ({
   cliEntryPath: entry,
 });
 
-const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
+const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux", userName = "t3user") =>
   Effect.provide(
     Layer.mergeAll(
       Layer.succeed(HostProcessPlatform, platform),
+      Layer.succeed(HostProcessUserName, userName),
       ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
     ),
   );
@@ -222,7 +224,10 @@ it.layer(NodeServices.layer)("BootService", (it) => {
           // restart (not enable --now) so repairing a stale unit replaces a
           // running process instead of leaving the old one until reboot.
           "systemctl --user restart t3code.service",
-          "loginctl enable-linger",
+          // The user is passed explicitly (resolved from the effective uid),
+          // because the bare form resolves the caller through a logind session
+          // that does not exist under WSL2.
+          "loginctl enable-linger t3user",
         ],
       );
 
@@ -243,6 +248,32 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.isFalse(statusAfter.installed);
       const removedAgain = yield* service.uninstall;
       assert.isFalse(removedAgain);
+    }),
+  );
+
+  it.effect("enables linger for the resolved user so it works without a logind session", () =>
+    Effect.gen(function* () {
+      const { dirs } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs(dirs.home, "linux", "caesar"),
+      );
+
+      yield* service.install;
+
+      // The username must be forwarded verbatim — the bare `loginctl
+      // enable-linger` needs a logind session (absent under WSL2), so the
+      // explicit form is what makes install succeed there.
+      assert.deepEqual(
+        commands.filter(({ command }) => command === "loginctl"),
+        [{ command: "loginctl", args: ["enable-linger", "caesar"] }],
+      );
     }),
   );
 

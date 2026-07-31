@@ -13,6 +13,7 @@ import {
   HostProcessArguments,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserName,
 } from "@t3tools/shared/hostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -197,6 +198,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     cliEntryPath: hostArguments[1] ?? "",
   };
   const platform = yield* HostProcessPlatform;
+  const userName = yield* HostProcessUserName;
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -340,10 +342,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         BOOT_SERVICE_UNIT_FILE,
       ]);
       // Linger keeps the user manager (and this service) running without an
-      // open session — the whole point on a box reached over SSH. No
-      // username argument: loginctl defaults to the calling user, which is
-      // always right, while $USER can be stale (su without -l) or unset.
-      yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
+      // open session — the whole point on a box reached over SSH. Pass the
+      // user explicitly (resolved from the effective uid, so it is never the
+      // stale-or-unset $USER): the bare `loginctl enable-linger` resolves the
+      // caller through their logind *session*, which does not exist under
+      // WSL2 (no XDG_SESSION_ID), so the no-arg form fails there while the
+      // explicit user works everywhere.
+      yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger", userName]);
     }).pipe(Effect.tapError(() => rollbackFailedInstall(previousUnit)));
 
     return plan;

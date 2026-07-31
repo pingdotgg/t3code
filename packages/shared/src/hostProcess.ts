@@ -51,4 +51,16 @@ export const HostProcessArguments = Context.Reference<ReadonlyArray<string>>(
   },
 );
 
+/**
+ * The calling user's account name, resolved from the effective uid rather than
+ * `$USER`. `$USER` can be stale (`su` without `-l`) or unset, while
+ * `os.userInfo()` reads the passwd database by uid and is always the real user.
+ */
+export const HostProcessUserName = Context.Reference<string>(
+  "@t3tools/shared/hostProcess/HostProcessUserName",
+  {
+    defaultValue: () => NodeOS.userInfo().username,
+  },
+);
+
 export const isHostWindows = Effect.map(HostProcessPlatform, (platform) => platform === "win32");
