@@ -201,9 +201,9 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
       textGenerationModelSelection: {
         instanceId: ProviderInstanceId.make(instanceId),
         model:
-          DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+          DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
           DEFAULT_MODEL_BY_PROVIDER[driver] ??
-          DEFAULT_GIT_TEXT_GENERATION_MODEL,
+          DEFAULT_TEXT_GENERATION_MODEL,
       } satisfies ModelSelection,
     };
   }

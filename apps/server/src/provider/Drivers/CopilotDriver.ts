@@ -21,8 +21,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { makeCopilotTextGeneration } from "../../textGeneration/CopilotTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCopilotAdapter } from "../Layers/CopilotAdapter.ts";
 import {
@@ -49,7 +51,9 @@ export type CopilotDriverEnv =
   | Path.Path
   | Context.Service.Identifier<typeof HostProcessPlatform>
   | ProviderEventLoggers
-  | ServerConfig;
+  | ServerConfig
+  | BackgroundPolicy.BackgroundPolicy
+  | ServerSettingsService;
 
 const withInstanceIdentity =
   (input: {

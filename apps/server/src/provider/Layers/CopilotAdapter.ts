@@ -453,6 +453,7 @@ function permissionAutoApprovedByRuntimeMode(
 ): boolean {
   switch (runtimeMode) {
     case "full-access":
+    case "auto":
       return true;
     case "auto-accept-edits":
       return request.kind === "write";
