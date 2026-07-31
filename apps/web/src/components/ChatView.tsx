@@ -4362,6 +4362,41 @@ function ChatViewBody(
     return (await api.git.listOpenPullRequests({ cwd: gitCwd })).pullRequests;
   }, [environmentId, gitCwd]);
 
+  // Copilot session startup is ~2.2s, and only `session/new` needs the thread.
+  // Warming on intent lets the agent be ready by the time the run dispatches.
+  const prewarmProviderSession = useCallback(() => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !gitCwd) {
+      return;
+    }
+    // Must mirror `onRunWorkflow`'s resolution exactly, including the
+    // composer's selection: warming a different provider instance than the run
+    // will use spawns a process nobody adopts and leaves the worker cold.
+    const sendCtx = composerRef.current?.getSendContext();
+    const instanceId = (
+      settings.agentWorkflows.reviewChanges.modelSelection ??
+      sendCtx?.selectedModelSelection ??
+      activeProject?.defaultModelSelection ??
+      activeThread?.modelSelection
+    )?.instanceId;
+    if (!instanceId) {
+      return;
+    }
+    void api.server
+      .prewarmProviderSession({
+        instanceId,
+        cwd: gitCwd,
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+      })
+      .catch(() => undefined);
+  }, [
+    environmentId,
+    gitCwd,
+    settings.agentWorkflows.reviewChanges.modelSelection,
+    activeProject?.defaultModelSelection,
+    activeThread?.modelSelection,
+  ]);
+
   const workflowHeaderActions = useMemo((): AgentWorkflowHeaderAction[] => {
     const projectUnavailableReason =
       activeProject === undefined
@@ -4521,6 +4556,7 @@ function ChatViewBody(
           onRunProjectScript={runProjectScript}
           onRunWorkflow={onRunWorkflow}
           onListOpenPullRequests={listOpenPullRequests}
+          onPrewarmProviderSession={prewarmProviderSession}
           onNavigateThread={navigateToThread}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}

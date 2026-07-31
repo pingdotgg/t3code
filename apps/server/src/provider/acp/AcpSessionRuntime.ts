@@ -58,6 +58,13 @@ export interface AcpSessionRuntimeOptions {
   };
 }
 
+/**
+ * The parts of the runtime's logging that are bound to a thread. A prewarmed
+ * process is created before its thread is known, so these are late-bound at
+ * adoption rather than captured at construction.
+ */
+export type AcpNativeLoggers = Pick<AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging">;
+
 export interface AcpSessionRequestLogEvent {
   readonly method: string;
   readonly payload: unknown;
@@ -92,7 +99,27 @@ export interface AcpSessionRuntimeShape {
   readonly handleUnknownExtNotification: EffectAcpClient.AcpClientShape["handleUnknownExtNotification"];
   readonly handleExtRequest: EffectAcpClient.AcpClientShape["handleExtRequest"];
   readonly handleExtNotification: EffectAcpClient.AcpClientShape["handleExtNotification"];
-  readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+  readonly start: (overrides?: {
+    readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  }) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+  /**
+   * Completes the thread-independent part of startup (`initialize` +
+   * `authenticate`) so a later `start` only pays for `session/new`. Safe to run
+   * before a thread exists: no session is created and no thread-bound MCP
+   * credential is sent.
+   */
+  readonly warmup: Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /**
+   * Whether the underlying agent process is still alive. Used to reject a
+   * pooled runtime whose process died while it sat idle.
+   */
+  readonly isProcessAlive: Effect.Effect<boolean>;
+  /**
+   * Rebinds the thread-scoped native loggers. A prewarmed process is spawned
+   * before its thread exists, so the adopting session must install its own
+   * loggers or the session would emit no native ACP request/protocol events.
+   */
+  readonly bindNativeLoggers: (loggers: AcpNativeLoggers) => Effect.Effect<void>;
   readonly getEvents: () => Stream.Stream<AcpParsedSessionEvent, never>;
   readonly discardPendingEvents: Effect.Effect<ReadonlyArray<AcpParsedSessionEvent>>;
   readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
@@ -132,6 +159,17 @@ type AcpStartState =
       readonly deferred: Deferred.Deferred<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
     }
   | { readonly _tag: "Started"; readonly result: AcpStartedState };
+
+type AcpHandshakeState =
+  | { readonly _tag: "NotStarted" }
+  | {
+      readonly _tag: "Running";
+      readonly deferred: Deferred.Deferred<
+        EffectAcpSchema.InitializeResponse,
+        EffectAcpErrors.AcpError
+      >;
+    }
+  | { readonly _tag: "Completed"; readonly result: EffectAcpSchema.InitializeResponse };
 
 export interface AcpAssistantSegmentState {
   readonly nextSegmentIndex: number;
@@ -173,10 +211,22 @@ const makeAcpSessionRuntime = (
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const handshakeStateRef = yield* Ref.make<AcpHandshakeState>({ _tag: "NotStarted" });
     const sessionMcpServers = options.mcpServers ?? [];
 
+    // Read through a ref so an adopted prewarmed process logs into the thread
+    // that took it, not the (absent) thread it was spawned for.
+    const nativeLoggersRef = yield* Ref.make<AcpNativeLoggers>({
+      ...(options.requestLogger ? { requestLogger: options.requestLogger } : {}),
+      ...(options.protocolLogging ? { protocolLogging: options.protocolLogging } : {}),
+    });
+
     const logRequest = (event: AcpSessionRequestLogEvent) =>
-      options.requestLogger ? options.requestLogger(event) : Effect.void;
+      Ref.get(nativeLoggersRef).pipe(
+        Effect.flatMap((loggers) =>
+          loggers.requestLogger ? loggers.requestLogger(event) : Effect.void,
+        ),
+      );
 
     const runLoggedRequest = <A>(
       method: string,
@@ -239,7 +289,12 @@ const makeAcpSessionRuntime = (
         ...(options.protocolLogging?.logOutgoing !== undefined
           ? { logOutgoing: options.protocolLogging.logOutgoing }
           : {}),
-        ...(options.protocolLogging?.logger ? { logger: options.protocolLogging.logger } : {}),
+        logger: (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
+          Ref.get(nativeLoggersRef).pipe(
+            Effect.flatMap((loggers) =>
+              loggers.protocolLogging?.logger ? loggers.protocolLogging.logger(event) : Effect.void,
+            ),
+          ),
       }),
     ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
 
@@ -414,7 +469,10 @@ const makeAcpSessionRuntime = (
         }),
       );
 
-    const startOnce = Effect.gen(function* () {
+    // `initialize` and `authenticate` carry no session, thread, or MCP state, so
+    // they can run before a thread exists. Cached separately from session
+    // creation so a prewarmed process pays only for `session/new` on adoption.
+    const handshakeOnce = Effect.gen(function* () {
       const initializePayload = {
         protocolVersion: 1,
         clientCapabilities: initializeClientCapabilities,
@@ -463,27 +521,49 @@ const makeAcpSessionRuntime = (
         acp.agent.authenticate(authenticatePayload),
       );
 
-      let sessionId: string;
-      let sessionSetupResult:
-        | EffectAcpSchema.LoadSessionResponse
-        | EffectAcpSchema.NewSessionResponse
-        | EffectAcpSchema.ResumeSessionResponse;
-      if (options.resumeSessionId) {
-        const loadPayload = {
-          sessionId: options.resumeSessionId,
-          cwd: options.cwd,
-          mcpServers: sessionMcpServers,
-        } satisfies EffectAcpSchema.LoadSessionRequest;
-        const resumed = yield* runLoggedRequest(
-          "session/load",
-          loadPayload,
-          acp.agent.loadSession(loadPayload),
-        ).pipe(Effect.exit);
-        if (Exit.isSuccess(resumed)) {
-          sessionId = options.resumeSessionId;
-          sessionSetupResult = resumed.value;
-        } else if (options.resumeFallback === "fail") {
-          return yield* Effect.failCause(resumed.cause);
+      return initializeResult;
+    });
+
+    const createSessionOnce = (
+      initializeResult: EffectAcpSchema.InitializeResponse,
+      mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>,
+    ) =>
+      Effect.gen(function* () {
+        const sessionMcpServers = mcpServers;
+        let sessionId: string;
+        let sessionSetupResult:
+          | EffectAcpSchema.LoadSessionResponse
+          | EffectAcpSchema.NewSessionResponse
+          | EffectAcpSchema.ResumeSessionResponse;
+        if (options.resumeSessionId) {
+          const loadPayload = {
+            sessionId: options.resumeSessionId,
+            cwd: options.cwd,
+            mcpServers: sessionMcpServers,
+          } satisfies EffectAcpSchema.LoadSessionRequest;
+          const resumed = yield* runLoggedRequest(
+            "session/load",
+            loadPayload,
+            acp.agent.loadSession(loadPayload),
+          ).pipe(Effect.exit);
+          if (Exit.isSuccess(resumed)) {
+            sessionId = options.resumeSessionId;
+            sessionSetupResult = resumed.value;
+          } else if (options.resumeFallback === "fail") {
+            return yield* Effect.failCause(resumed.cause);
+          } else {
+            const createPayload = {
+              cwd: options.cwd,
+              mcpServers: sessionMcpServers,
+            } satisfies EffectAcpSchema.NewSessionRequest;
+            const created = yield* runLoggedRequest(
+              "session/new",
+              createPayload,
+              acp.agent.createSession(createPayload),
+            );
+            sessionId = created.sessionId;
+            sessionSetupResult = created;
+          }
         } else {
           const createPayload = {
             cwd: options.cwd,
@@ -497,63 +577,90 @@ const makeAcpSessionRuntime = (
           sessionId = created.sessionId;
           sessionSetupResult = created;
         }
-      } else {
-        const createPayload = {
-          cwd: options.cwd,
-          mcpServers: sessionMcpServers,
-        } satisfies EffectAcpSchema.NewSessionRequest;
-        const created = yield* runLoggedRequest(
-          "session/new",
-          createPayload,
-          acp.agent.createSession(createPayload),
-        );
-        sessionId = created.sessionId;
-        sessionSetupResult = created;
-      }
 
-      yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+        yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
+        yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
 
-      const nextState = {
-        sessionId,
-        initializeResult,
-        sessionSetupResult,
-        modelConfigId: extractModelConfigId(sessionSetupResult),
-      } satisfies AcpStartedState;
-      return nextState;
-    });
+        const nextState = {
+          sessionId,
+          initializeResult,
+          sessionSetupResult,
+          modelConfigId: extractModelConfigId(sessionSetupResult),
+        } satisfies AcpStartedState;
+        return nextState;
+      });
 
-    const start = Effect.gen(function* () {
+    const handshakeOnceCached = Effect.gen(function* () {
       const deferred = yield* Deferred.make<
-        AcpSessionRuntimeStartResult,
+        EffectAcpSchema.InitializeResponse,
         EffectAcpErrors.AcpError
       >();
-      const effect = yield* Ref.modify(startStateRef, (state) => {
+      const effect = yield* Ref.modify(handshakeStateRef, (state) => {
         switch (state._tag) {
-          case "Started":
+          case "Completed":
             return [Effect.succeed(state.result), state] as const;
-          case "Starting":
+          case "Running":
             return [Deferred.await(state.deferred), state] as const;
           case "NotStarted":
             return [
-              startOnce.pipe(
+              handshakeOnce.pipe(
                 Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
+                  Ref.set(handshakeStateRef, { _tag: "Completed", result }).pipe(
                     Effect.andThen(Deferred.succeed(deferred, result)),
                   ),
                 ),
                 Effect.onError((cause) =>
                   Deferred.failCause(deferred, cause).pipe(
-                    Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                    Effect.andThen(Ref.set(handshakeStateRef, { _tag: "NotStarted" })),
                   ),
                 ),
               ),
-              { _tag: "Starting", deferred } satisfies AcpStartState,
+              { _tag: "Running", deferred } satisfies AcpHandshakeState,
             ] as const;
         }
       });
       return yield* effect;
     });
+
+    const startOnce = (mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>) =>
+      handshakeOnceCached.pipe(
+        Effect.flatMap((initializeResult) => createSessionOnce(initializeResult, mcpServers)),
+      );
+
+    const start = (overrides?: {
+      readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+    }) =>
+      Effect.gen(function* () {
+        const deferred = yield* Deferred.make<
+          AcpSessionRuntimeStartResult,
+          EffectAcpErrors.AcpError
+        >();
+        const effect = yield* Ref.modify(startStateRef, (state) => {
+          switch (state._tag) {
+            case "Started":
+              return [Effect.succeed(state.result), state] as const;
+            case "Starting":
+              return [Deferred.await(state.deferred), state] as const;
+            case "NotStarted":
+              return [
+                startOnce(overrides?.mcpServers ?? sessionMcpServers).pipe(
+                  Effect.tap((result) =>
+                    Ref.set(startStateRef, { _tag: "Started", result }).pipe(
+                      Effect.andThen(Deferred.succeed(deferred, result)),
+                    ),
+                  ),
+                  Effect.onError((cause) =>
+                    Deferred.failCause(deferred, cause).pipe(
+                      Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                    ),
+                  ),
+                ),
+                { _tag: "Starting", deferred } satisfies AcpStartState,
+              ] as const;
+          }
+        });
+        return yield* effect;
+      });
     const discardPendingEvents = Queue.clear(eventQueue).pipe(
       Effect.tap(() => Ref.set(assistantSegmentRef, { nextSegmentIndex: 0 })),
     );
@@ -574,7 +681,10 @@ const makeAcpSessionRuntime = (
       handleUnknownExtNotification: acp.handleUnknownExtNotification,
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
-      start: () => start,
+      start: (overrides) => start(overrides),
+      warmup: Effect.asVoid(handshakeOnceCached),
+      isProcessAlive: child.isRunning.pipe(Effect.orElseSucceed(() => false)),
+      bindNativeLoggers: (loggers) => Ref.set(nativeLoggersRef, loggers),
       getEvents: () => Stream.fromQueue(eventQueue),
       discardPendingEvents,
       getModeState: Ref.get(modeStateRef),

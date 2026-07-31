@@ -1152,6 +1152,18 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ).pipe(Effect.map((commands) => ({ commands }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverPrewarmProviderSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverPrewarmProviderSession,
+            providerService
+              .prewarmSession({
+                instanceId: input.instanceId,
+                cwd: input.cwd,
+                runtimeMode: input.runtimeMode,
+              })
+              .pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverListSkills]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverListSkills,

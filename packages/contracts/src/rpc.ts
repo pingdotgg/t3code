@@ -129,6 +129,7 @@ import {
   ServerProviderListCommandsError,
   ServerProviderListCommandsInput,
   ServerProviderListCommandsResult,
+  ServerProviderPrewarmSessionInput,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerProviderUpdatedPayload,
@@ -259,6 +260,7 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverListProviderCommands: "server.listProviderCommands",
+  serverPrewarmProviderSession: "server.prewarmProviderSession",
   serverListSkills: "server.listSkills",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
@@ -321,6 +323,11 @@ export const WsServerListProviderCommandsRpc = Rpc.make(WS_METHODS.serverListPro
   payload: ServerProviderListCommandsInput,
   success: ServerProviderListCommandsResult,
   error: ServerProviderListCommandsError,
+});
+
+export const WsServerPrewarmProviderSessionRpc = Rpc.make(WS_METHODS.serverPrewarmProviderSession, {
+  payload: ServerProviderPrewarmSessionInput,
+  success: Schema.Struct({}),
 });
 
 export const WsServerListSkillsRpc = Rpc.make(WS_METHODS.serverListSkills, {
@@ -890,6 +897,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerListProviderCommandsRpc,
+  WsServerPrewarmProviderSessionRpc,
   WsServerListSkillsRpc,
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,

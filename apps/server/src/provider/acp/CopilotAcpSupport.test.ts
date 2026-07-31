@@ -17,6 +17,7 @@ import {
   buildCopilotAcpSpawnInput,
   buildCopilotMcpServerOptions,
   buildCopilotMcpServers,
+  bindPrewarmedCopilotRuntime,
   isCopilotPlanModeId,
   logMissingCopilotMcpProviderSession,
   normalizeCopilotAcpModeId,
@@ -255,4 +256,66 @@ describe("Copilot ACP mode ids", () => {
     expect(isCopilotPlanModeId(COPILOT_LEGACY_PLAN_MODE_ID)).toBe(true);
     expect(isCopilotPlanModeId(COPILOT_LEGACY_AGENT_MODE_ID)).toBe(false);
   });
+});
+
+describe("bindPrewarmedCopilotRuntime", () => {
+  const makePooledRuntime = () => {
+    const starts: Array<unknown> = [];
+    const bound: Array<unknown> = [];
+    const runtime = {
+      start: (overrides?: unknown) => {
+        starts.push(overrides);
+        return Effect.void;
+      },
+      bindNativeLoggers: (loggers: unknown) => {
+        bound.push(loggers);
+        return Effect.void;
+      },
+      warmup: Effect.void,
+    } as unknown as Parameters<typeof bindPrewarmedCopilotRuntime>[0];
+    return { runtime, starts, bound };
+  };
+
+  const threadMcpServers = [
+    { name: "t3-code", url: "http://127.0.0.1:1/mcp", headers: [] },
+  ] as unknown as ReturnType<typeof buildCopilotMcpServers>;
+
+  const noLoggers = {} as Parameters<typeof bindPrewarmedCopilotRuntime>[2];
+
+  it("supplies this thread's MCP servers at session/new", () =>
+    Effect.gen(function* () {
+      const { runtime, starts } = makePooledRuntime();
+
+      const bound = yield* bindPrewarmedCopilotRuntime(runtime, threadMcpServers, noLoggers);
+      yield* bound.start();
+
+      expect(starts).toHaveLength(1);
+      expect((starts[0] as { mcpServers: unknown }).mcpServers).toBe(threadMcpServers);
+    }).pipe(Effect.runPromise));
+
+  it("refuses to let overrides replace the thread's MCP credential", () =>
+    Effect.gen(function* () {
+      const { runtime, starts } = makePooledRuntime();
+      const otherThreadServers = [
+        { name: "t3-code", url: "http://127.0.0.1:2/mcp", headers: [] },
+      ] as unknown as ReturnType<typeof buildCopilotMcpServers>;
+
+      const bound = yield* bindPrewarmedCopilotRuntime(runtime, threadMcpServers, noLoggers);
+      yield* bound.start({ mcpServers: otherThreadServers });
+
+      expect((starts[0] as { mcpServers: unknown }).mcpServers).toBe(threadMcpServers);
+    }).pipe(Effect.runPromise));
+
+  it("installs the adopting thread's native loggers", () =>
+    Effect.gen(function* () {
+      const { runtime, bound } = makePooledRuntime();
+      const loggers = {
+        requestLogger: () => Effect.void,
+        protocolLogging: { logIncoming: true, logOutgoing: true, logger: () => Effect.void },
+      } as unknown as Parameters<typeof bindPrewarmedCopilotRuntime>[2];
+
+      yield* bindPrewarmedCopilotRuntime(runtime, threadMcpServers, loggers);
+
+      expect(bound).toEqual([loggers]);
+    }).pipe(Effect.runPromise));
 });

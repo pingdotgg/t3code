@@ -19,6 +19,7 @@ import type {
   ProviderSessionStartInput,
   ThreadId,
   ProviderTurnStartResult,
+  RuntimeMode,
   TurnId,
 } from "@t3tools/contracts";
 import type { Effect } from "effect";
@@ -49,6 +50,15 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly provider: ProviderDriverKind;
   readonly capabilities: ProviderAdapterCapabilities;
+
+  /**
+   * Optionally warm an agent process for an anticipated turn. Adapters that
+   * cannot warm simply omit this.
+   */
+  readonly prewarmSession?: (input: {
+    readonly cwd: string;
+    readonly runtimeMode: RuntimeMode;
+  }) => Effect.Effect<void>;
 
   /**
    * Start a provider-backed session.

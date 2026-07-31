@@ -76,10 +76,13 @@ import {
   selectCopilotPermissionForRuntimeMode,
 } from "../acp/CopilotAcpPermissions.ts";
 import {
+  buildCopilotAcpSpawnInput,
+  COPILOT_ACP_SHARED_RUNTIME_OPTIONS,
   makeCopilotAcpRuntime,
   prepareCopilotCustomInstructions,
   resolveCopilotAcpModeId,
 } from "../acp/CopilotAcpSupport.ts";
+import { makeCopilotSessionPrewarmPool } from "../acp/CopilotSessionPrewarmPool.ts";
 import {
   copilotFatalToolCallErrorMessage,
   detectCopilotFatalToolCallError,
@@ -537,6 +540,8 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
     const serverConfig = yield* Effect.service(ServerConfig);
     const serverSettingsService = yield* ServerSettingsService;
     const customInstructionsDir = yield* prepareCopilotCustomInstructions(serverConfig.stateDir);
+    // Owned by the adapter so warmed processes die with the provider instance.
+    const prewarmPool = yield* makeCopilotSessionPrewarmPool();
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -862,6 +867,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           cwd: input.cwd,
           baseDir: serverConfig.baseDir,
           customInstructionsDir,
+          prewarmPool,
           runtimeMode: input.runtimeMode,
           ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
           ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
@@ -2007,10 +2013,37 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
       ),
     );
 
+    const prewarmSession: CopilotAdapterShape["prewarmSession"] = (input) =>
+      Effect.gen(function* () {
+        const copilotSettings = yield* serverSettingsService.getSettings.pipe(
+          Effect.map((settings) => settings.providers.copilot),
+        );
+        yield* prewarmPool.prewarm({
+          spawn: buildCopilotAcpSpawnInput(
+            copilotSettings.binaryPath ? { binaryPath: copilotSettings.binaryPath } : undefined,
+            nodePath.resolve(input.cwd.trim()),
+            input.runtimeMode,
+            customInstructionsDir,
+          ),
+          runtimeOptions: {
+            ...COPILOT_ACP_SHARED_RUNTIME_OPTIONS,
+            cwd: nodePath.resolve(input.cwd.trim()),
+            // Whether protocol logging is on is adapter-level, so it can be set
+            // now; only the logger itself is thread-bound and late-bound at
+            // adoption.
+            ...(nativeEventLogger
+              ? { protocolLogging: { logIncoming: true, logOutgoing: true } }
+              : {}),
+          },
+          childProcessSpawner,
+        });
+      }).pipe(Effect.ignore);
+
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
       startSession,
+      prewarmSession,
       forkSession,
       sendTurn,
       interruptTurn,

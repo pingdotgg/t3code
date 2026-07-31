@@ -1034,6 +1034,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const prewarmSession: ProviderServiceShape["prewarmSession"] = (input) =>
+    registry.getByInstance(input.instanceId).pipe(
+      Effect.flatMap((adapter) =>
+        // Only adapters that implement warming pay anything here.
+        adapter.prewarmSession
+          ? adapter.prewarmSession({ cwd: input.cwd, runtimeMode: input.runtimeMode })
+          : Effect.void,
+      ),
+      Effect.ignore,
+    );
+
   const getCapabilities: ProviderServiceShape["getCapabilities"] = (instanceId) =>
     registry.getByInstance(instanceId).pipe(Effect.map((adapter) => adapter.capabilities));
 
@@ -1140,6 +1151,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToUserInput,
     stopSession,
     listSessions,
+    prewarmSession,
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,

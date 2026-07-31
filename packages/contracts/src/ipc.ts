@@ -66,6 +66,7 @@ import type {
   ServerExportThreadMarkdownResult,
   ServerListSkillsResult,
   ServerProviderListCommandsInput,
+  ServerProviderPrewarmSessionInput,
   ServerProviderListCommandsResult,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
@@ -855,6 +856,7 @@ export interface LocalApi {
     listProviderCommands: (
       input: ServerProviderListCommandsInput,
     ) => Promise<ServerProviderListCommandsResult>;
+    prewarmProviderSession: (input: ServerProviderPrewarmSessionInput) => Promise<unknown>;
     listSkills: () => Promise<ServerListSkillsResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
@@ -955,6 +957,7 @@ export interface EnvironmentApi {
     listProviderCommands: (
       input: ServerProviderListCommandsInput,
     ) => Promise<ServerProviderListCommandsResult>;
+    prewarmProviderSession: (input: ServerProviderPrewarmSessionInput) => Promise<unknown>;
   };
   workflow: {
     run: (input: WorkflowRunInput) => Promise<WorkflowRunResult>;

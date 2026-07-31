@@ -163,6 +163,7 @@ describe("ProviderSessionReaper", () => {
       stopSession,
       listSessions:
         input.listSessionsImplementation ?? (() => Effect.succeed(input.activeSessions ?? [])),
+      prewarmSession: () => Effect.void,
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: (instanceId) => {
         const driverKind = ProviderDriverKind.make(String(instanceId));

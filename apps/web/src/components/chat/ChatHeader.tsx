@@ -60,6 +60,7 @@ interface ChatHeaderProps {
   onRunProjectScript: (script: ProjectScript) => void;
   onRunWorkflow: (request: AgentWorkflowRunRequest) => void;
   onListOpenPullRequests: () => Promise<ReadonlyArray<GitResolvedPullRequest>>;
+  onPrewarmProviderSession: () => void;
   onNavigateThread: (threadId: ThreadId) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -99,6 +100,7 @@ export const ChatHeader = memo(function ChatHeader({
   onRunProjectScript,
   onRunWorkflow,
   onListOpenPullRequests,
+  onPrewarmProviderSession,
   onNavigateThread,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -161,6 +163,7 @@ export const ChatHeader = memo(function ChatHeader({
           actions={workflowActions}
           onRun={onRunWorkflow}
           onListOpenPullRequests={onListOpenPullRequests}
+          onPrewarmProviderSession={onPrewarmProviderSession}
         />
         <WorkflowRunsButton runs={workflowRuns} onNavigateThread={onNavigateThread} />
         <Tooltip>

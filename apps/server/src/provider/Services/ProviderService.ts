@@ -22,6 +22,7 @@ import type {
   ProviderSessionForkInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  RuntimeMode,
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -89,6 +90,16 @@ export interface ProviderServiceShape {
    * Aggregates runtime session lists from all registered adapters.
    */
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+
+  /**
+   * Warms an agent process for an anticipated turn. Best effort: unsupported
+   * providers and failures resolve successfully.
+   */
+  readonly prewarmSession: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly cwd: string;
+    readonly runtimeMode: RuntimeMode;
+  }) => Effect.Effect<void>;
 
   /**
    * Read capabilities for the adapter bound to a configured provider instance.

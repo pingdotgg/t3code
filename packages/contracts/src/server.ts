@@ -13,6 +13,7 @@ import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeMode } from "./orchestration.ts";
 import { ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -83,6 +84,17 @@ export type ServerProviderListCommandsInput = typeof ServerProviderListCommandsI
 export const ServerProviderListCommandsResult = Schema.Struct({
   commands: Schema.Array(ServerProviderSlashCommand),
 });
+
+/**
+ * Warms a provider session for a workspace ahead of an anticipated turn. Best
+ * effort and side-effect free from the caller's perspective.
+ */
+export const ServerProviderPrewarmSessionInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+  runtimeMode: RuntimeMode,
+});
+export type ServerProviderPrewarmSessionInput = typeof ServerProviderPrewarmSessionInput.Type;
 export type ServerProviderListCommandsResult = typeof ServerProviderListCommandsResult.Type;
 
 export const ServerRefreshProvidersInput = Schema.Struct({
