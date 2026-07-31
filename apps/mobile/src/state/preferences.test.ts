@@ -124,6 +124,58 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("persists a functional update made before the initial load finishes", () =>
+    Effect.gen(function* () {
+      const pendingLoad = deferred<Preferences>();
+      let stored: Preferences = {
+        threadLastVisitedAtById: {
+          existing: "2026-06-01T12:00:00.000Z",
+        },
+      };
+      const state = makePreferencesState({
+        load: Effect.promise(() => pendingLoad.promise),
+        savePatch: (patch) => Effect.succeed(patch),
+        update: (transform) =>
+          Effect.sync(() => {
+            stored = { ...stored, ...transform(stored) };
+            return stored;
+          }),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        threadLastVisitedAtById: {
+          ...current.threadLastVisitedAtById,
+          opened: "2026-06-01T12:01:00.000Z",
+        },
+      }));
+      pendingLoad.resolve({
+        threadLastVisitedAtById: {
+          existing: "2026-06-01T12:00:00.000Z",
+        },
+      });
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))).toEqual(
+            {
+              threadLastVisitedAtById: {
+                existing: "2026-06-01T12:00:00.000Z",
+                opened: "2026-06-01T12:01:00.000Z",
+              },
+            },
+          );
+        }),
+      );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
   it.effect("falls back to empty preferences when secure storage cannot be read", () =>
     Effect.gen(function* () {
       const state = makePreferencesState({
@@ -178,6 +230,61 @@ describe("mobile preferences state", () => {
               baseFontSize: 18,
               codeFontSize: 15,
             },
+          );
+        }),
+      );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("merges concurrent functional updates against the latest preferences", () =>
+    Effect.gen(function* () {
+      let stored: Preferences = {
+        threadLastVisitedAtById: {
+          existing: "2026-06-01T12:00:00.000Z",
+        },
+      };
+      const state = makePreferencesState({
+        load: Effect.sync(() => stored),
+        savePatch: (patch) => Effect.succeed(patch),
+        update: (transform) =>
+          Effect.sync(() => {
+            stored = { ...stored, ...transform(stored) };
+            return stored;
+          }),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        threadLastVisitedAtById: {
+          ...current.threadLastVisitedAtById,
+          first: "2026-06-01T12:01:00.000Z",
+        },
+      }));
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        threadLastVisitedAtById: {
+          ...current.threadLastVisitedAtById,
+          second: "2026-06-01T12:02:00.000Z",
+        },
+      }));
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(stored.threadLastVisitedAtById).toEqual({
+            existing: "2026-06-01T12:00:00.000Z",
+            first: "2026-06-01T12:01:00.000Z",
+            second: "2026-06-01T12:02:00.000Z",
+          });
+          expect(Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))).toEqual(
+            stored,
           );
         }),
       );

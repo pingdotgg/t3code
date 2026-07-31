@@ -2,14 +2,23 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
   useFocusEffect,
+  useIsFocused,
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { AppState, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -58,6 +67,11 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import {
+  resolveOpenThreadVisitedAt,
+  shouldMarkThreadVisited,
+  useThreadVisits,
+} from "../../state/thread-visits";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -78,6 +92,15 @@ interface ThreadInspectorSelection {
 }
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
+
+function subscribeToAppState(onStoreChange: () => void): () => void {
+  const subscription = AppState.addEventListener("change", onStoreChange);
+  return () => subscription.remove();
+}
+
+function getAppStateSnapshot() {
+  return AppState.currentState;
+}
 
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
@@ -188,6 +211,13 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const isFocused = useIsFocused();
+  const appState = useSyncExternalStore(
+    subscribeToAppState,
+    getAppStateSnapshot,
+    getAppStateSnapshot,
+  );
+  const { markVisited } = useThreadVisits();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -203,6 +233,18 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const openThreadVisitedAt =
+    selectedThread === null ? null : resolveOpenThreadVisitedAt(selectedThread);
+  useEffect(() => {
+    if (
+      !shouldMarkThreadVisited({ appState, isFocused }) ||
+      routeThreadIdentity === null ||
+      openThreadVisitedAt === null
+    ) {
+      return;
+    }
+    markVisited(routeThreadIdentity, openThreadVisitedAt);
+  }, [appState, isFocused, markVisited, openThreadVisitedAt, routeThreadIdentity]);
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );

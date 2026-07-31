@@ -23,6 +23,7 @@ export interface Preferences {
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly projectGroupingEnabled?: boolean;
+  readonly threadLastVisitedAtById?: Readonly<Record<string, string>>;
   /**
    * Device-local mirror of the web beta's `sidebarV2Enabled`. Mobile has no
    * client-settings sync, so the flat v2 thread list is opted out of per
@@ -80,6 +81,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
+    threadLastVisitedAtById?: Readonly<Record<string, string>>;
     threadListV2Enabled?: boolean;
   } = {};
 
@@ -109,6 +111,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;
+  }
+  if (
+    typeof parsed.threadLastVisitedAtById === "object" &&
+    parsed.threadLastVisitedAtById !== null &&
+    !Array.isArray(parsed.threadLastVisitedAtById)
+  ) {
+    preferences.threadLastVisitedAtById = Object.fromEntries(
+      Object.entries(parsed.threadLastVisitedAtById).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === "string" && !Number.isNaN(Date.parse(entry[1])),
+      ),
+    );
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;

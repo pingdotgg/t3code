@@ -421,6 +421,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly projectCwd: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
+  readonly lastVisitedAt?: string | null;
   readonly isLast: boolean;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
@@ -451,7 +452,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
-  const status = resolveThreadStatus(thread);
+  const status = resolveThreadStatus(thread, props.lastVisitedAt);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,

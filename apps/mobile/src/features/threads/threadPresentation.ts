@@ -1,6 +1,6 @@
 import type { StatusTone } from "../../components/StatusPill";
 import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
-import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 export function threadSortValue(thread: EnvironmentThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
@@ -13,7 +13,8 @@ export type ThreadStatusKind =
   | "working"
   | "connecting"
   | "error"
-  | "plan-ready";
+  | "plan-ready"
+  | "done";
 
 export interface ThreadStatusPresentation extends StatusTone {
   readonly kind: ThreadStatusKind;
@@ -41,6 +42,20 @@ function isLatestTurnSettled(
   return session.status !== "running";
 }
 
+export function hasUnseenCompletion(input: {
+  readonly latestTurn: OrchestrationLatestTurn | null;
+  readonly lastVisitedAt: string | null | undefined;
+}): boolean {
+  if (input.latestTurn?.state !== "completed" || !input.latestTurn.completedAt) return false;
+  const completedAt = Date.parse(input.latestTurn.completedAt);
+  if (Number.isNaN(completedAt)) return false;
+  if (!input.lastVisitedAt) return false;
+
+  const lastVisitedAt = Date.parse(input.lastVisitedAt);
+  if (Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
+}
+
 /**
  * Resolves the user-facing status of a thread, in priority order. Returns
  * `null` for quiescent threads so rows stay free of "Idle"-style noise.
@@ -48,6 +63,7 @@ function isLatestTurnSettled(
  */
 export function resolveThreadStatus(
   thread: EnvironmentThreadShell,
+  lastVisitedAt?: string | null,
 ): ThreadStatusPresentation | null {
   if (thread.hasPendingApprovals) {
     return {
@@ -121,6 +137,18 @@ export function resolveThreadStatus(
       textClassName: "text-violet-700 dark:text-violet-300",
       iconColor: "#bf5af2",
       iconBackground: "rgba(191,90,242,0.22)",
+      pulse: false,
+    };
+  }
+
+  if (hasUnseenCompletion({ latestTurn: thread.latestTurn, lastVisitedAt })) {
+    return {
+      kind: "done",
+      label: "Done",
+      pillClassName: "bg-emerald-500/12 dark:bg-emerald-500/16",
+      textClassName: "text-emerald-700 dark:text-emerald-300",
+      iconColor: "#30d158",
+      iconBackground: "rgba(48,209,88,0.22)",
       pulse: false,
     };
   }

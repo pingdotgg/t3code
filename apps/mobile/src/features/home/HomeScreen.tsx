@@ -28,13 +28,14 @@ import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { scopedProjectKey } from "../../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { useThreadVisits } from "../../state/thread-visits";
 import {
   PendingTaskListRow,
   ThreadListGroupHeader,
@@ -191,6 +192,7 @@ export function HomeScreen(props: HomeScreenProps) {
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const { lastVisitedAtByThreadKey } = useThreadVisits();
   const threadListV2Enabled = useThreadListV2Enabled();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -669,6 +671,9 @@ export function HomeScreen(props: HomeScreenProps) {
                   (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
               )?.driver ?? null
           }
+          lastVisitedAt={
+            lastVisitedAtByThreadKey[scopedThreadKey(thread.environmentId, thread.id)] ?? null
+          }
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
@@ -703,6 +708,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       handleUnsettleThread,
+      lastVisitedAtByThreadKey,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,
@@ -727,6 +733,7 @@ export function HomeScreen(props: HomeScreenProps) {
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
+      lastVisitedAtByThreadKey,
       serverConfigs,
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
@@ -735,6 +742,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       projectByKey,
       projectCwdByKey,
+      lastVisitedAtByThreadKey,
       props.searchQuery,
       props.savedConnectionsById,
       serverConfigs,
@@ -746,11 +754,18 @@ export function HomeScreen(props: HomeScreenProps) {
   const extraData = useMemo(
     () => ({
       projectCwdByKey,
+      lastVisitedAtByThreadKey,
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
       threadSearchMatchByKey,
     }),
-    [projectCwdByKey, props.savedConnectionsById, props.searchQuery, threadSearchMatchByKey],
+    [
+      projectCwdByKey,
+      lastVisitedAtByThreadKey,
+      props.savedConnectionsById,
+      props.searchQuery,
+      threadSearchMatchByKey,
+    ],
   );
 
   const renderItem = useCallback(
@@ -802,6 +817,9 @@ export function HomeScreen(props: HomeScreenProps) {
                 projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
                 null
               }
+              lastVisitedAt={
+                lastVisitedAtByThreadKey[scopedThreadKey(thread.environmentId, thread.id)] ?? null
+              }
               isLast={item.isLast}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
@@ -833,6 +851,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      lastVisitedAtByThreadKey,
       projectCwdByKey,
       props.onArchiveThread,
       props.onDeletePendingTask,
