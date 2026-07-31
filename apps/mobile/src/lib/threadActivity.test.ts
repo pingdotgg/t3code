@@ -66,6 +66,16 @@ describe("pending user input answers", () => {
     expect(
       togglePendingUserInputOptionSelection(multiSelectQuestion, ordersAndListings, "Orders"),
     ).toEqual({ customAnswer: "", selectedOptionLabels: ["Listings"] });
+
+    const paddedOrders = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "  Orders  ",
+    );
+    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionLabels: ["Orders"] });
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, paddedOrders, "  Orders  "),
+    ).toEqual({ customAnswer: "" });
   });
 
   it("builds array answers for multi-select questions", () => {

@@ -1367,11 +1367,13 @@ export function togglePendingUserInputOptionSelection(
   draft: PendingUserInputDraftAnswer | undefined,
   optionLabel: string,
 ): PendingUserInputDraftAnswer {
+  const normalizedOptionLabel = optionLabel.trim();
+
   if (question.multiSelect) {
     const selectedOptionLabels = normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
-    const nextSelectedOptionLabels = selectedOptionLabels.includes(optionLabel)
-      ? selectedOptionLabels.filter((label) => label !== optionLabel)
-      : [...selectedOptionLabels, optionLabel];
+    const nextSelectedOptionLabels = selectedOptionLabels.includes(normalizedOptionLabel)
+      ? selectedOptionLabels.filter((label) => label !== normalizedOptionLabel)
+      : [...selectedOptionLabels, normalizedOptionLabel];
 
     return {
       customAnswer: "",
@@ -1383,7 +1385,7 @@ export function togglePendingUserInputOptionSelection(
 
   return {
     customAnswer: "",
-    selectedOptionLabels: [optionLabel],
+    selectedOptionLabels: [normalizedOptionLabel],
   };
 }
 
