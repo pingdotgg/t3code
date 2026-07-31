@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
+import { resolveMarkdownImageFileLinkMeta } from "./markdown-links";
 import type {
   ChatMessage,
   ProposedPlan,
@@ -744,10 +745,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (itemType === "image_view") {
     const data = asRecord(payload?.data);
     const item = asRecord(data?.item);
+    const detailPath = asTrimmedString(payload?.detail);
     const imagePath =
       asTrimmedString(item?.savedPath) ??
       asTrimmedString(item?.path) ??
-      asTrimmedString(payload?.detail);
+      changedFiles.find((path) => resolveMarkdownImageFileLinkMeta(path, "/") !== null) ??
+      (detailPath && resolveMarkdownImageFileLinkMeta(detailPath, "/") ? detailPath : null);
     if (imagePath) {
       entry.imagePath = imagePath;
     }

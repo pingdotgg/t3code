@@ -987,12 +987,43 @@ describe("deriveWorkLogEntries", () => {
           },
         },
       }),
+      makeActivity({
+        id: "claude-image-view-complete",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          detail: 'ReadImage: {"path":"/repo/project/screenshots/claude.png"}',
+          data: {
+            files: [{ path: "/repo/project/screenshots/claude.png" }],
+          },
+        },
+      }),
+      makeActivity({
+        id: "image-view-with-summary-only",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          detail: 'ReadImage: {"path":"/repo/project/screenshots/missing.png"}',
+          data: {},
+        },
+      }),
     ];
 
-    expect(deriveWorkLogEntries(activities).map((entry) => entry.imagePath)).toEqual([
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.find((entry) => entry.id === "image-generation-complete")?.imagePath).toBe(
       "/repo/project/generated/cat.png",
+    );
+    expect(entries.find((entry) => entry.id === "image-view-complete")?.imagePath).toBe(
       "/repo/project/screenshots/app.webp",
-    ]);
+    );
+    expect(entries.find((entry) => entry.id === "claude-image-view-complete")?.imagePath).toBe(
+      "/repo/project/screenshots/claude.png",
+    );
+    expect(
+      entries.find((entry) => entry.id === "image-view-with-summary-only")?.imagePath,
+    ).toBeUndefined();
   });
 
   it("keeps MCP payloads while collapsing lifecycle updates", () => {

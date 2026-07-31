@@ -207,9 +207,9 @@ describe("projectActivityPayload", () => {
   });
 
   it("keeps image paths available after projecting nested provider data", () => {
-    const projected = projectActivityPayload(fixtures[6]!);
+    const projectedCodex = projectActivityPayload(fixtures[6]!);
 
-    expect(projected.payload).toEqual({
+    expect(projectedCodex.payload).toEqual({
       itemType: "image_view",
       title: "image_view",
       detail: "/repo/project/generated/cat.png",
@@ -217,7 +217,35 @@ describe("projectActivityPayload", () => {
       requestKind: "command",
       data: {},
     });
-    expect(deriveWorkLogEntries([projected])[0]?.imagePath).toBe("/repo/project/generated/cat.png");
+    expect(deriveWorkLogEntries([projectedCodex])[0]?.imagePath).toBe(
+      "/repo/project/generated/cat.png",
+    );
+
+    const projectedClaude = projectActivityPayload(
+      makeActivity(
+        "claude-image",
+        "image_view",
+        {
+          toolName: "ReadImage",
+          input: { path: "/repo/project/screenshots/claude.png" },
+        },
+        'ReadImage: {"path":"/repo/project/screenshots/claude.png"}',
+      ),
+    );
+
+    expect(projectedClaude.payload).toEqual({
+      itemType: "image_view",
+      title: "image_view",
+      detail: 'ReadImage: {"path":"/repo/project/screenshots/claude.png"}',
+      status: "completed",
+      requestKind: "command",
+      data: {
+        files: [{ path: "/repo/project/screenshots/claude.png" }],
+      },
+    });
+    expect(deriveWorkLogEntries([projectedClaude])[0]?.imagePath).toBe(
+      "/repo/project/screenshots/claude.png",
+    );
   });
 
   it("projects snapshot and event transports without mutating their sources", () => {

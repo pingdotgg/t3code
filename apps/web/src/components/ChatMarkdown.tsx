@@ -851,6 +851,7 @@ const failedFaviconHosts = new Set<string>();
 
 function MarkdownWorkspaceImage({
   filePath,
+  markdownSrc,
   threadRef,
   alt,
   className,
@@ -858,6 +859,7 @@ function MarkdownWorkspaceImage({
   ...props
 }: Omit<React.ComponentProps<"img">, "src"> & {
   readonly filePath: string;
+  readonly markdownSrc: string;
   readonly threadRef: ScopedThreadRef;
 }) {
   const assetUrl = useAssetUrlState(threadRef.environmentId, {
@@ -879,6 +881,7 @@ function MarkdownWorkspaceImage({
     <img
       {...props}
       className={cn("max-h-[32rem] max-w-full rounded-md object-contain", className)}
+      data-markdown-src={markdownSrc}
       src={assetUrl.url}
       alt={alt}
       onError={(event) => {
@@ -1500,6 +1503,7 @@ function ChatMarkdown({
           <MarkdownWorkspaceImage
             {...props}
             filePath={fileLinkMeta.filePath}
+            markdownSrc={src ?? fileLinkMeta.filePath}
             threadRef={threadRef}
             alt={alt}
           />
