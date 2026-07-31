@@ -406,6 +406,38 @@ describe("AgentActivity widget layout", () => {
     expect(watch).not.toContain("Recently failed");
   });
 
+  it("keeps a usable hero when capped rows omit the active agent", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activeCount: 1,
+        activities: [
+          makeRow({
+            threadId: "failed",
+            threadTitle: "Recently failed",
+            phase: "failed",
+            status: "Failed",
+            deepLink: "/threads/env-1/failed",
+          }),
+        ],
+      },
+      environment as never,
+    );
+
+    const compact = JSON.stringify(layout.compactTrailing);
+    expect(compact).toContain("Working");
+    expect(compact).not.toContain("Idle");
+    expect(compact).not.toContain("Failed");
+
+    const watch = JSON.stringify(layout.bannerSmall);
+    expect(watch).toContain("Agents active");
+    expect(watch).toContain("Recently failed");
+
+    for (const region of [layout.banner, layout.expandedBottom]) {
+      expect(JSON.stringify(region)).toContain('"widgetURL":"t3code://threads/env-1/failed"');
+    }
+  });
+
   it("names the project on every row so each one says where it is working", () => {
     const layout = AgentActivity(
       {

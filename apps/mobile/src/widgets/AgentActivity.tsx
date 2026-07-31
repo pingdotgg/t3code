@@ -138,8 +138,12 @@ export function AgentActivity(
   // A recently failed row can remain in the aggregate while other work is
   // active. It should stay visible in the list, but must not replace the
   // compact/Watch status of the active work.
-  const heroRow = attentionRow ?? (allDone ? (failedRow ?? topRow) : activeRow);
-  const tint = phaseTint(heroRow?.phase);
+  // If an upstream cap leaves only terminal rows, keep a concrete hero for
+  // card/deep-link rendering while the summary still reflects activeCount.
+  const heroRow = attentionRow ?? (allDone ? (failedRow ?? topRow) : (activeRow ?? topRow));
+  const heroPhase =
+    !allDone && attentionRow === undefined && activeRow === undefined ? "running" : heroRow?.phase;
+  const tint = phaseTint(heroPhase);
   // Headline count leans on the accent when a human is actually blocked.
   const headerTint = attentionRow ? phaseTint(attentionRow.phase) : tint;
 
@@ -184,7 +188,7 @@ export function AgentActivity(
         return "Idle";
     }
   };
-  const pillLabel = allDone ? doneLabel : pillHeadline(heroRow?.phase);
+  const pillLabel = allDone ? doneLabel : pillHeadline(heroPhase);
 
   // Any registered scheme variant routes back to this app; taps are delivered
   // to the widget's containing app, so the prod scheme is safe for all builds.
