@@ -1044,6 +1044,7 @@ function makeHandlersLayer(backend: DemoBackend) {
           ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           dispatchDemoCommand(store, command),
+        [ORCHESTRATION_WS_METHODS.searchThreads]: () => Effect.succeed({ matches: [] }),
         [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: () =>
           Effect.sync(() => store.archivedSnapshot()),
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
@@ -1052,6 +1053,8 @@ function makeHandlersLayer(backend: DemoBackend) {
           Effect.succeed(demoThreadDiff(input.threadId, 0, input.toTurnCount)),
         [WS_METHODS.serverUpdateProvider]: () => unsupported("serverUpdateProvider"),
         [WS_METHODS.serverUpdateServer]: () => unsupported("serverUpdateServer"),
+        [WS_METHODS.serverUpdateServerWithProgress]: () =>
+          Stream.fail(unsupportedError("serverUpdateServerWithProgress")),
         [WS_METHODS.serverUpsertKeybinding]: () => unsupported("serverUpsertKeybinding"),
         [WS_METHODS.serverRemoveKeybinding]: () => unsupported("serverRemoveKeybinding"),
         [WS_METHODS.serverDiscoverSourceControl]: () => unsupported("serverDiscoverSourceControl"),
@@ -1078,6 +1081,8 @@ function makeHandlersLayer(backend: DemoBackend) {
           unsupported("sourceControlPublishRepository"),
         [WS_METHODS.projectsListEntries]: () => unsupported("projectsListEntries"),
         [WS_METHODS.projectsReadFile]: () => unsupported("projectsReadFile"),
+        [WS_METHODS.projectsSearchContents]: () =>
+          Effect.succeed({ matches: [], truncated: false }),
         [WS_METHODS.projectsSearchEntries]: () => unsupported("projectsSearchEntries"),
         [WS_METHODS.projectsWriteFile]: () => unsupported("projectsWriteFile"),
         [WS_METHODS.shellOpenInEditor]: () => unsupported("shellOpenInEditor"),
