@@ -34,9 +34,7 @@ import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import {
   EMPTY_PROVIDER_COMMAND_CATALOG,
-  mapAcpAvailableCommandsToProviderCatalog,
   mapOpenCodeSdkCatalogToProviderCatalog,
-  providerCommandCatalogIsEmpty,
   type ProviderCommandCatalog,
 } from "./providerCommandCatalog.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -171,9 +169,8 @@ export interface OpenCodeRuntimeShape {
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
   /**
-   * Load slash/skill catalogs when the primary inventory left them empty.
-   * Order: B (SDK via serve/server URL) → A (`opencode acp` available_commands).
-   * Filesystem discovery (C) is handled by the provider layer.
+   * Load slash/skill catalogs via the OpenCode SDK (`/command` + `/skill`).
+   * Spawns a short-lived local serve when `serverUrl` is absent.
    */
   readonly loadProviderCommandCatalog: (input: {
     readonly binaryPath: string;
@@ -799,8 +796,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       }
 
       // CLI inventory does not expose commands/skills; callers that need a
-      // catalog should open an SDK session (server URL or local serve) and use
-      // loadOpenCodeInventory, or fall back to ACP / filesystem discovery.
+      // catalog open an SDK session via loadProviderCommandCatalog.
       return {
         providerList: { all: allProviders, default: {}, connected },
         agents,
@@ -809,166 +805,26 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       };
     });
 
-  const loadProviderCommandCatalogViaSdk = (input: {
-    readonly binaryPath: string;
-    readonly directory: string;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly serverUrl?: string | null;
-    readonly serverPassword?: string;
-  }): Effect.Effect<ProviderCommandCatalog, OpenCodeRuntimeError, Scope.Scope> =>
-    Effect.gen(function* () {
-      const server = yield* connectToOpenCodeServer({
-        binaryPath: input.binaryPath,
-        serverUrl: input.serverUrl,
-        environment: input.environment,
-      });
-      const client = createOpenCodeSdkClient({
-        baseUrl: server.url,
-        directory: input.directory,
-        ...(input.serverPassword ? { serverPassword: input.serverPassword } : {}),
-      });
-      const inventory = yield* loadOpenCodeInventory(client);
-      return mapOpenCodeSdkCatalogToProviderCatalog({
-        commands: inventory.commands,
-        skills: inventory.skills,
-      });
-    });
-
-  const loadProviderCommandCatalogViaAcp = (input: {
-    readonly binaryPath: string;
-    readonly directory: string;
-    readonly environment?: NodeJS.ProcessEnv;
-  }): Effect.Effect<ProviderCommandCatalog, OpenCodeRuntimeError, Scope.Scope> =>
-    Effect.gen(function* () {
-      const env = input.environment ?? process.env;
-      const spawnCommand = yield* resolveCommand(input.binaryPath || "opencode", ["acp"], env);
-      const handle = yield* spawner
-        .spawn(
-          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-            cwd: input.directory,
-            env,
-            shell: spawnCommand.shell,
-          }),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OpenCodeRuntimeError({
-                operation: "loadProviderCommandCatalogViaAcp",
-                detail: openCodeRuntimeErrorDetail(cause),
-                cause,
-              }),
-          ),
-        );
-
-      const encoder = new TextEncoder();
-      const writeLine = (message: unknown) =>
-        handle.stdin.write(encoder.encode(`${JSON.stringify(message)}\n`)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OpenCodeRuntimeError({
-                operation: "loadProviderCommandCatalogViaAcp",
-                detail: "Failed to write ACP request.",
-                cause,
-              }),
-          ),
-          Effect.asVoid,
-        );
-
-      yield* writeLine({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: 1,
-          clientCapabilities: {},
-          clientInfo: { name: "t3-code-opencode-catalog", version: "0.0.0" },
-        },
-      });
-      yield* writeLine({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "session/new",
-        params: { cwd: input.directory, mcpServers: [] },
-      });
-
-      let buffer = "";
-      type AcpCommand = {
-        readonly name: string;
-        readonly description?: string;
-        readonly input?: { readonly hint?: string } | null;
-        readonly _meta?: { readonly [x: string]: unknown } | null;
-      };
-      const found = yield* Deferred.make<ReadonlyArray<AcpCommand>>();
-      let availableCommands: ReadonlyArray<AcpCommand> = [];
-
-      const reader = yield* handle.stdout.pipe(
-        Stream.decodeText(),
-        Stream.runForEach((chunk) =>
-          Effect.gen(function* () {
-            buffer += chunk;
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-              try {
-                const message = JSON.parse(trimmed) as {
-                  readonly method?: string;
-                  readonly params?: {
-                    readonly update?: {
-                      readonly sessionUpdate?: string;
-                      readonly availableCommands?: ReadonlyArray<AcpCommand>;
-                    };
-                  };
-                };
-                if (
-                  message.method === "session/update" &&
-                  message.params?.update?.sessionUpdate === "available_commands_update" &&
-                  Array.isArray(message.params.update.availableCommands) &&
-                  message.params.update.availableCommands.length > 0
-                ) {
-                  availableCommands = message.params.update.availableCommands;
-                  yield* Deferred.succeed(found, availableCommands).pipe(Effect.ignore);
-                }
-              } catch {
-                // ignore non-JSON chatter
-              }
-            }
-          }),
-        ),
-        Effect.forkScoped,
-      );
-
-      const commands = yield* Deferred.await(found).pipe(
-        Effect.timeoutOption(8_000),
-        Effect.map((option) => (Option.isSome(option) ? option.value : availableCommands)),
-        Effect.ensuring(
-          Effect.all([Fiber.interrupt(reader), handle.kill()], { concurrency: "unbounded" }).pipe(
-            Effect.ignore,
-          ),
-        ),
-      );
-
-      return mapAcpAvailableCommandsToProviderCatalog(commands);
-    });
-
   const loadProviderCommandCatalog: OpenCodeRuntimeShape["loadProviderCommandCatalog"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
-        // B — SDK
-        const fromSdk = yield* loadProviderCommandCatalogViaSdk(input).pipe(
-          Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG),
-        );
-        if (!providerCommandCatalogIsEmpty(fromSdk)) {
-          return fromSdk;
-        }
-        // A — ACP
-        return yield* loadProviderCommandCatalogViaAcp(input).pipe(
-          Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG),
-        );
+        const server = yield* connectToOpenCodeServer({
+          binaryPath: input.binaryPath,
+          serverUrl: input.serverUrl,
+          environment: input.environment,
+        });
+        const client = createOpenCodeSdkClient({
+          baseUrl: server.url,
+          directory: input.directory,
+          ...(input.serverPassword ? { serverPassword: input.serverPassword } : {}),
+        });
+        const inventory = yield* loadOpenCodeInventory(client);
+        return mapOpenCodeSdkCatalogToProviderCatalog({
+          commands: inventory.commands,
+          skills: inventory.skills,
+        });
       }),
-    );
+    ).pipe(Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG));
 
   return {
     startOpenCodeServerProcess,
