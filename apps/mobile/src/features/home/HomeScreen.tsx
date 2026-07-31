@@ -572,10 +572,26 @@ export function HomeScreen(props: HomeScreenProps) {
     () => setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT),
     [],
   );
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
-  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
+  const snoozedShelfExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.threadListV2SnoozedShelfExpanded === true;
+  const toggleSnoozedShelf = useCallback(
+    () =>
+      savePreferences({
+        threadListV2SnoozedShelfExpanded: !snoozedShelfExpanded,
+      }),
+    [savePreferences, snoozedShelfExpanded],
+  );
+  const settledShelfExpanded =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    preferencesResult.value.threadListV2SettledShelfExpanded !== false;
+  const toggleSettledShelf = useCallback(
+    () =>
+      savePreferences({
+        threadListV2SettledShelfExpanded: !settledShelfExpanded,
+      }),
+    [savePreferences, settledShelfExpanded],
+  );
   // now is quantized to the minute and ticks so the inactivity auto-settle
   // boundary is actually crossed while the app stays open (mirrors web);
   // without a clock dependency the partition memoizes a frozen "now".
