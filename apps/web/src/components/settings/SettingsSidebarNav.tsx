@@ -75,7 +75,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   return (
     <>
       <SidebarContent className="overflow-x-hidden">
-        <SidebarGroup className="p-2">
+        <SidebarGroup className="p-[var(--sidebar-content-inset)]">
           <SidebarMenu>
             {SETTINGS_NAV_ITEMS.map((item) => {
               const Icon = item.icon;
@@ -95,7 +95,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="p-[var(--sidebar-content-inset)]">
         <T3ConnectSidebarSignIn />
         <div className="flex items-center gap-1">
           <SidebarMenu className="min-w-0 flex-1">
