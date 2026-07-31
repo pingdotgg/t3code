@@ -481,7 +481,12 @@ function resolveCommandCandidates(
 
 const WINDOWS_COMMAND_LOOKUP_BATCH_SIZE = 32;
 const WINDOWS_COMMAND_LOOKUP_CONCURRENCY = 16;
-const resolvedCommandPathCache = new Map<string, string>();
+export const ResolvedCommandPathCache = Context.Reference<Map<string, string>>(
+  "@t3tools/shared/shell/ResolvedCommandPathCache",
+  {
+    defaultValue: () => new Map(),
+  },
+);
 
 function commandResolutionCacheKey(
   command: string,
@@ -515,6 +520,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
 ): Effect.fn.Return<string, CommandResolutionError, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
+  const resolvedCommandPathCache = yield* ResolvedCommandPathCache;
   const platform = options.platform;
   const env = options.env ?? process.env;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
