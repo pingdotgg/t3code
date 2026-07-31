@@ -13,6 +13,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
   ThreadId,
+  UserInputQuestion,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -54,7 +55,7 @@ export interface ThreadDetailScreenProps {
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
-  readonly activePendingUserInputAnswers: Record<string, string> | null;
+  readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
@@ -89,7 +90,7 @@ export interface ThreadDetailScreenProps {
   ) => Promise<unknown>;
   readonly onSelectUserInputOption: (
     requestId: ApprovalRequestId,
-    questionId: string,
+    question: UserInputQuestion,
     label: string,
   ) => void;
   readonly onChangeUserInputCustomAnswer: (
