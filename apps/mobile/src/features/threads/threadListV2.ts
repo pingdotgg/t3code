@@ -178,8 +178,6 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
-  /** First settled row after the card block draws the SETTLED divider. */
-  readonly showSettledDivider: boolean;
   /** Snoozed-shelf row: shows the wake countdown and offers Wake. */
   readonly snoozed: boolean;
   readonly isLast: boolean;
@@ -194,6 +192,10 @@ export interface ThreadListV2Layout {
   /** Index in `items` where the Snoozed shelf header belongs. The header is
       still rendered when the shelf is collapsed and no snoozed rows exist. */
   readonly snoozedShelfHeaderIndex: number | null;
+  /** Total settled threads in scope, including rows hidden by collapse/paging. */
+  readonly settledCount: number;
+  /** Index in `items` where the Settled shelf header belongs. */
+  readonly settledShelfHeaderIndex: number | null;
   /** Soonest wake time among snoozed threads, or null. Callers arm
       a timeout at this boundary so the list re-partitions the moment a
       snooze expires instead of on the next minute tick. */
@@ -223,10 +225,18 @@ export interface ThreadListV2SnoozedShelfListItem {
   readonly expanded: boolean;
 }
 
+export interface ThreadListV2SettledShelfListItem {
+  readonly type: "v2-settled-shelf";
+  readonly key: "v2-settled-shelf";
+  readonly count: number;
+  readonly expanded: boolean;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
-  | ThreadListV2SnoozedShelfListItem;
+  | ThreadListV2SnoozedShelfListItem
+  | ThreadListV2SettledShelfListItem;
 
 /**
  * Builds the shared mobile order: active → pending → snoozed shelf → settled.
@@ -239,6 +249,9 @@ export function buildThreadListV2ListItems(input: {
   readonly snoozedCount?: number;
   readonly snoozedShelfExpanded?: boolean;
   readonly snoozedShelfHeaderIndex?: number | null;
+  readonly settledCount?: number;
+  readonly settledShelfExpanded?: boolean;
+  readonly settledShelfHeaderIndex?: number | null;
   readonly snoozeLabelNow?: string;
 }): ThreadListV2ListItem[] {
   const threadItems = input.items.map(
@@ -262,27 +275,30 @@ export function buildThreadListV2ListItems(input: {
   );
   const snoozedCount = input.snoozedCount ?? 0;
   const snoozedShelfHeaderIndex = input.snoozedShelfHeaderIndex ?? null;
+  const settledCount = input.settledCount ?? 0;
+  const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
+  const activeEnd = snoozedShelfHeaderIndex ?? settledShelfHeaderIndex ?? threadItems.length;
+  const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
+  const result: ThreadListV2ListItem[] = [...threadItems.slice(0, activeEnd), ...pendingItems];
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
-    return [
-      ...threadItems.slice(0, snoozedShelfHeaderIndex),
-      ...pendingItems,
-      {
-        type: "v2-snoozed-shelf",
-        key: "v2-snoozed-shelf",
-        count: snoozedCount,
-        expanded: input.snoozedShelfExpanded === true,
-      },
-      ...threadItems.slice(snoozedShelfHeaderIndex),
-    ];
+    result.push({
+      type: "v2-snoozed-shelf",
+      key: "v2-snoozed-shelf",
+      count: snoozedCount,
+      expanded: input.snoozedShelfExpanded === true,
+    });
+    result.push(...threadItems.slice(snoozedShelfHeaderIndex, snoozedEnd));
   }
-  if (pendingItems.length === 0) return threadItems;
-
-  const settledStart = threadItems.findIndex(
-    (entry) => entry.type === "v2-thread" && entry.item.showSettledDivider,
-  );
-  return settledStart === -1
-    ? [...threadItems, ...pendingItems]
-    : [...threadItems.slice(0, settledStart), ...pendingItems, ...threadItems.slice(settledStart)];
+  if (settledShelfHeaderIndex !== null && settledCount > 0) {
+    result.push({
+      type: "v2-settled-shelf",
+      key: "v2-settled-shelf",
+      count: settledCount,
+      expanded: input.settledShelfExpanded !== false,
+    });
+    result.push(...threadItems.slice(settledShelfHeaderIndex));
+  }
+  return result;
 }
 
 /**
@@ -321,6 +337,8 @@ export function buildThreadListV2Items(input: {
   readonly snoozeNow?: string;
   /** Expands the snoozed shelf into rows. Collapsed is the default. */
   readonly snoozedShelfExpanded?: boolean;
+  /** Expands the settled shelf into rows. Expanded is the default. */
+  readonly settledShelfExpanded?: boolean;
   /** The selected thread remains visible on an otherwise collapsed shelf so
       a split-view detail can never lose its navigation row. */
   readonly selectedThreadKey?: string | null;
@@ -402,15 +420,24 @@ export function buildThreadListV2Items(input: {
       firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
   );
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
-  const visibleSettled =
+  const pagedSettled =
     orderedSettled.length > settledLimit ? orderedSettled.slice(0, settledLimit) : orderedSettled;
+  const selectedSettled = orderedSettled
+    .slice(pagedSettled.length)
+    .find((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey);
+  if (selectedSettled !== undefined) pagedSettled.push(selectedSettled);
+  const visibleSettled =
+    input.settledShelfExpanded !== false
+      ? pagedSettled
+      : pagedSettled.filter(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
 
   const items: ThreadListV2Item[] = [];
   for (const thread of orderedActive) {
     items.push({
       thread,
       variant: "card",
-      showSettledDivider: false,
       snoozed: false,
       isLast: false,
     });
@@ -420,16 +447,15 @@ export function buildThreadListV2Items(input: {
     items.push({
       thread,
       variant: "slim",
-      showSettledDivider: false,
       snoozed: true,
       isLast: false,
     });
   }
-  for (const [index, thread] of visibleSettled.entries()) {
+  const settledShelfHeaderIndex = orderedSettled.length > 0 ? items.length : null;
+  for (const thread of visibleSettled) {
     items.push({
       thread,
       variant: "slim",
-      showSettledDivider: index === 0,
       snoozed: false,
       isLast: false,
     });
@@ -440,9 +466,11 @@ export function buildThreadListV2Items(input: {
   }
   return {
     items,
-    hiddenSettledCount: orderedSettled.length - visibleSettled.length,
+    hiddenSettledCount: orderedSettled.length - pagedSettled.length,
     snoozedCount: orderedSnoozed.length,
     snoozedShelfHeaderIndex,
+    settledCount: orderedSettled.length,
+    settledShelfHeaderIndex,
     nextSnoozeWakeAt,
   };
 }
