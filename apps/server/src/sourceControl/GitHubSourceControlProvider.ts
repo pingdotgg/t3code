@@ -212,11 +212,11 @@ type RepositorySearchMatch =
   | { readonly _tag: "none" };
 
 // Bare names resolve against the caller's personal namespace on `gh repo
-// view`, which is usually empty on an enterprise host. Prefer the search
-// result whose repo-name segment matches the query exactly (search ranking
-// otherwise happily puts e.g. "core-documentation" ahead of "core"). Several
-// owners can hold the same repo name, and search ranking is no basis for
-// picking between them, so report that back instead of guessing.
+// view`, which is usually empty on an enterprise host, so they go through
+// search instead. An exact repo-name match wins outright; a sole near match
+// still resolves, since that is the whole point of accepting a bare name.
+// Anything else is a choice between repositories that search ranking is no
+// basis for making, so report the candidates rather than guess.
 function pickRepositorySearchMatch(
   query: string,
   results: ReadonlyArray<GitHubCli.GitHubRepositorySearchResult>,
@@ -229,10 +229,14 @@ function pickRepositorySearchMatch(
   const exact = results.filter(
     (result) => result.fullName.split("/").pop()?.toLowerCase() === normalizedQuery,
   );
-  if (exact.length > 1) {
-    return { _tag: "ambiguous", candidates: exact.map((result) => result.fullName) };
+  if (exact.length === 1) {
+    return { _tag: "match", fullName: exact[0]!.fullName };
   }
-  return { _tag: "match", fullName: (exact[0] ?? results[0]!).fullName };
+  const candidates = exact.length > 1 ? exact : results;
+  if (candidates.length > 1) {
+    return { _tag: "ambiguous", candidates: candidates.map((result) => result.fullName) };
+  }
+  return { _tag: "match", fullName: candidates[0]!.fullName };
 }
 
 export const makeProvider = (kind: GitHubProviderKind) =>
@@ -286,7 +290,7 @@ export const makeProvider = (kind: GitHubProviderKind) =>
                 repository: safeRepository,
                 detail:
                   match._tag === "ambiguous"
-                    ? `Several repositories on ${hostLabel} are named "${safeRepository}": ${match.candidates
+                    ? `More than one repository on ${hostLabel} matches "${safeRepository}": ${match.candidates
                         .slice(0, AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT)
                         .map((candidate) =>
                           SourceControlProvider.transportSafeSourceControlErrorValue(candidate),

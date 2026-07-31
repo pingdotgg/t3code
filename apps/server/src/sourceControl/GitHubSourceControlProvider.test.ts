@@ -619,10 +619,10 @@ describe("getRepositoryCloneUrls bare name resolution", () => {
     }),
   );
 
-  it.effect("falls back to the first search result when no bare name matches exactly", () =>
+  it.effect("resolves a sole near match when no bare name matches exactly", () =>
     Effect.gen(function* () {
       const searchRepositories = vi.fn(() =>
-        Effect.succeed([{ fullName: "Sollit/widget-service" }, { fullName: "Sollit/mywidget" }]),
+        Effect.succeed([{ fullName: "Sollit/widget-service" }]),
       );
       const getRepositoryCloneUrls = vi.fn(() =>
         Effect.succeed({
@@ -648,6 +648,38 @@ describe("getRepositoryCloneUrls bare name resolution", () => {
         repository: "Sollit/widget-service",
         host: "sollit.ghe.com",
       });
+    }),
+  );
+
+  it.effect("fails rather than rank near matches when none of them is exact", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([{ fullName: "Sollit/widget-service" }, { fullName: "Sollit/mywidget" }]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/widget-service",
+          url: "https://sollit.ghe.com/Sollit/widget-service",
+          sshUrl: "git@sollit.ghe.com:Sollit/widget-service.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "widget",
+          host: "sollit.ghe.com",
+        })
+        .pipe(Effect.flip);
+
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("Sollit/widget-service");
+      expect(error.detail).toContain("Sollit/mywidget");
     }),
   );
 
