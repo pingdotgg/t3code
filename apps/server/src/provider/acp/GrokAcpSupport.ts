@@ -1,9 +1,4 @@
-import {
-  type GrokSettings,
-  ProviderDriverKind,
-  type ServerProviderSkill,
-  type ServerProviderSlashCommand,
-} from "@t3tools/contracts";
+import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,8 +8,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
+import { mapAcpAvailableCommandsToProviderCatalog } from "../providerCommandCatalog.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
+
+export { mapAcpAvailableCommandsToProviderCatalog };
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
@@ -110,77 +108,4 @@ export function applyGrokAcpModelSelection<E>(input: {
   return input.runtime
     .setSessionModel(input.requestedModelId)
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
-}
-
-function nonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function metaString(
-  meta: { readonly [x: string]: unknown } | null | undefined,
-  key: string,
-): string | undefined {
-  if (!meta || typeof meta !== "object") {
-    return undefined;
-  }
-  return nonEmptyString(meta[key]);
-}
-
-/**
- * Map ACP `availableCommands` (including Grok skill entries with `_meta.path`)
- * into the provider status fields the web/mobile slash and skill pickers read.
- *
- * - every named command becomes a slash command (`/`)
- * - commands with a filesystem `_meta.path` also become skills (`$`)
- */
-export function mapAcpAvailableCommandsToProviderCatalog(
-  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand> | null | undefined,
-): {
-  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
-  readonly skills: ReadonlyArray<ServerProviderSkill>;
-} {
-  const slashByName = new Map<string, ServerProviderSlashCommand>();
-  const skillsByName = new Map<string, ServerProviderSkill>();
-
-  for (const command of commands ?? []) {
-    const name = nonEmptyString(command.name);
-    if (!name) {
-      continue;
-    }
-    const key = name.toLowerCase();
-    const description = nonEmptyString(command.description);
-    const hint = nonEmptyString(command.input?.hint);
-
-    if (!slashByName.has(key)) {
-      slashByName.set(key, {
-        name,
-        ...(description ? { description } : {}),
-        ...(hint ? { input: { hint } } : {}),
-      });
-    }
-
-    const path = metaString(command._meta, "path");
-    if (!path || skillsByName.has(key)) {
-      continue;
-    }
-    const scope = metaString(command._meta, "scope");
-    skillsByName.set(key, {
-      name,
-      path,
-      enabled: true,
-      ...(description ? { description } : {}),
-      ...(scope ? { scope } : {}),
-    });
-  }
-
-  return {
-    slashCommands: [...slashByName.values()].sort((left, right) =>
-      left.name.localeCompare(right.name),
-    ),
-    skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
-  };
 }

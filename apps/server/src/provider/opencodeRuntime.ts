@@ -4,6 +4,7 @@ import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3t
 import {
   createOpencodeClient,
   type Agent,
+  type Command,
   type FilePartInput,
   type Model,
   type OpencodeClient,
@@ -31,6 +32,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
+import {
+  EMPTY_PROVIDER_COMMAND_CATALOG,
+  mapAcpAvailableCommandsToProviderCatalog,
+  mapOpenCodeSdkCatalogToProviderCatalog,
+  providerCommandCatalogIsEmpty,
+  type ProviderCommandCatalog,
+} from "./providerCommandCatalog.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -98,9 +106,19 @@ export interface OpenCodeCommandResult {
   readonly code: number;
 }
 
+export interface OpenCodeSkill {
+  readonly name: string;
+  readonly description?: string;
+  readonly location: string;
+}
+
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  /** OpenCode `/command` list (slash commands + skill-sourced entries). */
+  readonly commands: ReadonlyArray<Command>;
+  /** OpenCode `/skill` list (paths for the `$` picker). */
+  readonly skills: ReadonlyArray<OpenCodeSkill>;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -152,6 +170,18 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
+  /**
+   * Load slash/skill catalogs when the primary inventory left them empty.
+   * Order: B (SDK via serve/server URL) → A (`opencode acp` available_commands).
+   * Filesystem discovery (C) is handled by the provider layer.
+   */
+  readonly loadProviderCommandCatalog: (input: {
+    readonly binaryPath: string;
+    readonly directory: string;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly serverUrl?: string | null;
+    readonly serverPassword?: string;
+  }) => Effect.Effect<ProviderCommandCatalog, never>;
 }
 
 function parseServerUrlFromOutput(output: string): string | null {
@@ -649,9 +679,52 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
+  const loadCommands = (client: OpencodeClient) =>
+    runOpenCodeSdk("command.list", () => client.command.list()).pipe(
+      Effect.map((result) => result.data ?? []),
+      // Catalog is optional for model inventory — empty is better than failing ready.
+      Effect.orElseSucceed(() => [] as ReadonlyArray<Command>),
+    );
+
+  const loadSkills = (client: OpencodeClient) =>
+    runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
+      Effect.map((result) => {
+        const rows = result.data ?? [];
+        return rows.flatMap((row) => {
+          const name = typeof row.name === "string" ? row.name.trim() : "";
+          const location = typeof row.location === "string" ? row.location.trim() : "";
+          if (!name || !location) {
+            return [];
+          }
+          const description =
+            typeof row.description === "string" && row.description.trim().length > 0
+              ? row.description.trim()
+              : undefined;
+          return [
+            {
+              name,
+              location,
+              ...(description ? { description } : {}),
+            } satisfies OpenCodeSkill,
+          ];
+        });
+      }),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<OpenCodeSkill>),
+    );
+
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+    Effect.all(
+      [loadProviders(client), loadAgents(client), loadCommands(client), loadSkills(client)],
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(
+      Effect.map(([providerList, agents, commands, skills]) => ({
+        providerList,
+        agents,
+        commands,
+        skills,
+      })),
     );
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
@@ -725,11 +798,177 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         agents = parseAgentListCliOutput(agentsResult.value.stdout);
       }
 
+      // CLI inventory does not expose commands/skills; callers that need a
+      // catalog should open an SDK session (server URL or local serve) and use
+      // loadOpenCodeInventory, or fall back to ACP / filesystem discovery.
       return {
         providerList: { all: allProviders, default: {}, connected },
         agents,
+        commands: [],
+        skills: [],
       };
     });
+
+  const loadProviderCommandCatalogViaSdk = (input: {
+    readonly binaryPath: string;
+    readonly directory: string;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly serverUrl?: string | null;
+    readonly serverPassword?: string;
+  }): Effect.Effect<ProviderCommandCatalog, OpenCodeRuntimeError, Scope.Scope> =>
+    Effect.gen(function* () {
+      const server = yield* connectToOpenCodeServer({
+        binaryPath: input.binaryPath,
+        serverUrl: input.serverUrl,
+        environment: input.environment,
+      });
+      const client = createOpenCodeSdkClient({
+        baseUrl: server.url,
+        directory: input.directory,
+        ...(input.serverPassword ? { serverPassword: input.serverPassword } : {}),
+      });
+      const inventory = yield* loadOpenCodeInventory(client);
+      return mapOpenCodeSdkCatalogToProviderCatalog({
+        commands: inventory.commands,
+        skills: inventory.skills,
+      });
+    });
+
+  const loadProviderCommandCatalogViaAcp = (input: {
+    readonly binaryPath: string;
+    readonly directory: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  }): Effect.Effect<ProviderCommandCatalog, OpenCodeRuntimeError, Scope.Scope> =>
+    Effect.gen(function* () {
+      const env = input.environment ?? process.env;
+      const spawnCommand = yield* resolveCommand(input.binaryPath || "opencode", ["acp"], env);
+      const handle = yield* spawner
+        .spawn(
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            cwd: input.directory,
+            env,
+            shell: spawnCommand.shell,
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OpenCodeRuntimeError({
+                operation: "loadProviderCommandCatalogViaAcp",
+                detail: openCodeRuntimeErrorDetail(cause),
+                cause,
+              }),
+          ),
+        );
+
+      const encoder = new TextEncoder();
+      const writeLine = (message: unknown) =>
+        handle.stdin.write(encoder.encode(`${JSON.stringify(message)}\n`)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OpenCodeRuntimeError({
+                operation: "loadProviderCommandCatalogViaAcp",
+                detail: "Failed to write ACP request.",
+                cause,
+              }),
+          ),
+          Effect.asVoid,
+        );
+
+      yield* writeLine({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: "t3-code-opencode-catalog", version: "0.0.0" },
+        },
+      });
+      yield* writeLine({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/new",
+        params: { cwd: input.directory, mcpServers: [] },
+      });
+
+      let buffer = "";
+      type AcpCommand = {
+        readonly name: string;
+        readonly description?: string;
+        readonly input?: { readonly hint?: string } | null;
+        readonly _meta?: { readonly [x: string]: unknown } | null;
+      };
+      const found = yield* Deferred.make<ReadonlyArray<AcpCommand>>();
+      let availableCommands: ReadonlyArray<AcpCommand> = [];
+
+      const reader = yield* handle.stdout.pipe(
+        Stream.decodeText(),
+        Stream.runForEach((chunk) =>
+          Effect.gen(function* () {
+            buffer += chunk;
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const message = JSON.parse(trimmed) as {
+                  readonly method?: string;
+                  readonly params?: {
+                    readonly update?: {
+                      readonly sessionUpdate?: string;
+                      readonly availableCommands?: ReadonlyArray<AcpCommand>;
+                    };
+                  };
+                };
+                if (
+                  message.method === "session/update" &&
+                  message.params?.update?.sessionUpdate === "available_commands_update" &&
+                  Array.isArray(message.params.update.availableCommands) &&
+                  message.params.update.availableCommands.length > 0
+                ) {
+                  availableCommands = message.params.update.availableCommands;
+                  yield* Deferred.succeed(found, availableCommands).pipe(Effect.ignore);
+                }
+              } catch {
+                // ignore non-JSON chatter
+              }
+            }
+          }),
+        ),
+        Effect.forkScoped,
+      );
+
+      const commands = yield* Deferred.await(found).pipe(
+        Effect.timeoutOption(8_000),
+        Effect.map((option) => (Option.isSome(option) ? option.value : availableCommands)),
+        Effect.ensuring(
+          Effect.all([Fiber.interrupt(reader), handle.kill()], { concurrency: "unbounded" }).pipe(
+            Effect.ignore,
+          ),
+        ),
+      );
+
+      return mapAcpAvailableCommandsToProviderCatalog(commands);
+    });
+
+  const loadProviderCommandCatalog: OpenCodeRuntimeShape["loadProviderCommandCatalog"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // B — SDK
+        const fromSdk = yield* loadProviderCommandCatalogViaSdk(input).pipe(
+          Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG),
+        );
+        if (!providerCommandCatalogIsEmpty(fromSdk)) {
+          return fromSdk;
+        }
+        // A — ACP
+        return yield* loadProviderCommandCatalogViaAcp(input).pipe(
+          Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG),
+        );
+      }),
+    );
 
   return {
     startOpenCodeServerProcess,
@@ -738,6 +977,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     createOpenCodeSdkClient,
     loadOpenCodeInventory,
     loadInventoryFromCli,
+    loadProviderCommandCatalog,
   } satisfies OpenCodeRuntimeShape;
 });
 

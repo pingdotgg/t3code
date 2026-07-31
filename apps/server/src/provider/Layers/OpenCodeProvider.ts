@@ -2,11 +2,14 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -22,7 +25,14 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
+import {
+  EMPTY_PROVIDER_COMMAND_CATALOG,
+  mapOpenCodeSdkCatalogToProviderCatalog,
+  providerCommandCatalogIsEmpty,
+} from "../providerCommandCatalog.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { expandHomePath } from "../../pathExpansion.ts";
+import { parse as parseYamlDocument } from "yaml";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
@@ -424,17 +434,57 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     return fallback(Cause.squash(inventoryExit.cause), version);
   }
 
+  const inventory = inventoryExit.value;
   const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value),
+    flattenOpenCodeModels(inventory),
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const connectedCount = inventoryExit.value.providerList.connected.length;
+  const connectedCount = inventory.providerList.connected.length;
+
+  // Command/skill catalog: B (SDK) → A (ACP) → C (filesystem skills).
+  let catalog = mapOpenCodeSdkCatalogToProviderCatalog({
+    commands: inventory.commands,
+    skills: inventory.skills,
+  });
+
+  if (providerCommandCatalogIsEmpty(catalog)) {
+    catalog = yield* openCodeRuntime
+      .loadProviderCommandCatalog({
+        binaryPath: openCodeSettings.binaryPath,
+        directory: cwd,
+        environment: resolvedEnvironment,
+        ...(isExternalServer
+          ? {
+              serverUrl: openCodeSettings.serverUrl,
+              ...(openCodeSettings.serverPassword
+                ? { serverPassword: openCodeSettings.serverPassword }
+                : {}),
+            }
+          : {}),
+      })
+      .pipe(Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG));
+  }
+
+  if (catalog.skills.length === 0) {
+    const fsSkills = yield* discoverOpenCodeSkillsFromFilesystem(cwd).pipe(
+      Effect.orElseSucceed(() => [] as ReadonlyArray<ServerProviderSkill>),
+    );
+    if (fsSkills.length > 0) {
+      catalog = {
+        slashCommands: catalog.slashCommands,
+        skills: fsSkills,
+      };
+    }
+  }
+
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,
     models,
+    slashCommands: catalog.slashCommands,
+    skills: catalog.skills,
     probe: {
       installed: true,
       version,
@@ -452,3 +502,71 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     },
   });
 });
+
+const OPENCODE_SKILL_FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+/**
+ * Option C: scan OpenCode skill directories on disk when SDK/ACP catalogs are empty.
+ * Paths mirror OpenCode's own loader (project + global + external agent skills).
+ */
+export const discoverOpenCodeSkillsFromFilesystem = (
+  cwd: string,
+): Effect.Effect<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = expandHomePath("~") ?? "";
+    const roots: ReadonlyArray<{ readonly directory: string; readonly scope: string }> = [
+      { directory: path.join(cwd, ".opencode", "skill"), scope: "project" },
+      { directory: path.join(cwd, ".opencode", "skills"), scope: "project" },
+      { directory: path.join(home, ".config", "opencode", "skill"), scope: "user" },
+      { directory: path.join(home, ".config", "opencode", "skills"), scope: "user" },
+      { directory: path.join(home, ".agents", "skills"), scope: "user" },
+      { directory: path.join(home, ".claude", "skills"), scope: "user" },
+    ];
+
+    const skillsByName = new Map<string, ServerProviderSkill>();
+
+    for (const root of roots) {
+      const entries = yield* fs.readDirectory(root.directory).pipe(Effect.orElseSucceed(() => []));
+      for (const entry of entries) {
+        const skillMd = path.join(root.directory, entry, "SKILL.md");
+        const exists = yield* fs.exists(skillMd).pipe(Effect.orElseSucceed(() => false));
+        if (!exists) {
+          continue;
+        }
+        const contents = yield* fs.readFileString(skillMd).pipe(Effect.orElseSucceed(() => ""));
+        const match = OPENCODE_SKILL_FRONTMATTER.exec(contents);
+        let name = entry;
+        let description: string | undefined;
+        if (match?.[1]) {
+          try {
+            const parsed = parseYamlDocument(match[1]) as Record<string, unknown> | null;
+            if (parsed && typeof parsed === "object") {
+              if (typeof parsed.name === "string" && parsed.name.trim()) {
+                name = parsed.name.trim();
+              }
+              if (typeof parsed.description === "string" && parsed.description.trim()) {
+                description = parsed.description.trim();
+              }
+            }
+          } catch {
+            // keep directory name
+          }
+        }
+        const key = name.toLowerCase();
+        if (skillsByName.has(key)) {
+          continue;
+        }
+        skillsByName.set(key, {
+          name,
+          path: skillMd,
+          enabled: true,
+          scope: root.scope,
+          ...(description ? { description } : {}),
+        });
+      }
+    }
+
+    return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  });
