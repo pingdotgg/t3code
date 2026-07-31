@@ -906,18 +906,20 @@ const make = Effect.gen(function* () {
     );
 
   return {
-    archiveThread: <E>(threadId: ThreadId, quiesce: Effect.Effect<void, E> = Effect.void) =>
-      wrap(
-        "archive",
+    archiveThread: <E>(threadId: ThreadId, quiesce: Effect.Effect<void, E> = Effect.void) => {
+      const operation = "archive";
+      return wrap(
+        operation,
         threadId,
         archiveImpl(
           threadId,
           false,
           quiesce.pipe(
-            Effect.mapError((cause) => normalizeThreadColdStorageError("archive", threadId, cause)),
+            Effect.mapError((cause) => normalizeThreadColdStorageError(operation, threadId, cause)),
           ),
         ),
-      ),
+      );
+    },
     restoreTree: (threadId) => wrap("restore", threadId, restoreTreeImpl(threadId)),
     rollbackRestoreTree: (threadId) =>
       wrap("rollback-restore", threadId, rollbackRestoreTreeImpl(threadId)),
