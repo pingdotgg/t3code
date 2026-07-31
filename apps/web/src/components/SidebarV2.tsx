@@ -6,7 +6,12 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { sortThreadsForListV2 } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  resolveSettledTimestamp,
+  sortSettledThreadsForListV2,
+  sortThreadsForListV2,
+  threadListV2Priority,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -116,13 +121,11 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
-  resolveSettledTimestamp,
   resolveSidebarV2Status,
   searchSidebarThreadsByTitle,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -1578,7 +1581,7 @@ export default function SidebarV2() {
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
-    const wokeThreadKeys = new Set<string>();
+    const wokeAtByThreadKey = new Map<string, string>();
     for (const thread of visible) {
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
@@ -1591,7 +1594,7 @@ export default function SidebarV2() {
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       const wokeAt = supportsSnooze ? threadWokeAt(thread, { now: preciseNow }) : null;
-      if (wokeAt !== null) wokeThreadKeys.add(threadKey);
+      if (wokeAt !== null) wokeAtByThreadKey.set(threadKey, wokeAt);
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
@@ -1612,19 +1615,21 @@ export default function SidebarV2() {
       }
     }
     return {
-      activeThreads: sortThreadsForListV2(active, (thread) => {
-        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        if (wokeThreadKeys.has(threadKey)) return "woke";
-        if (thread.settledOverride === "active") return "unsettled";
-        return "default";
-      }),
+      activeThreads: sortThreadsForListV2(active, (thread) =>
+        threadListV2Priority(thread, {
+          wokeAt:
+            wokeAtByThreadKey.get(
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            ) ?? null,
+        }),
+      ),
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
           firstValidTimestampMs(left.snoozedUntil ?? null) -
           firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
-      settledThreads: sortSettledThreadsForSidebarV2(settled),
+      settledThreads: sortSettledThreadsForListV2(settled),
       snoozeNow: preciseNow,
     };
   }, [

@@ -649,7 +649,9 @@ describe("buildThreadListV2Items settled paging", () => {
           id: ThreadId.make(`settled-${index}`),
           title: `Settled ${index}`,
           settledOverride: "settled",
-          settledAt: NOW,
+          // Explicit settle stamps order the tail (shared resolver): most
+          // recently settled first.
+          settledAt: `2026-06-01T1${index}:00:00.000Z`,
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
           // A turn adopted the message (same requestedAt): without it the
           // thread reads as a queued turn start, which never settles.

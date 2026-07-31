@@ -21,6 +21,18 @@ const THREAD_LIST_V2_PRIORITY_RANK: Record<ThreadListV2Priority, number> = {
   default: 2,
 };
 
+/** Priority from server-backed state only: every client (and every device)
+    must derive the same order, so per-client data like lastVisitedAt cannot
+    feed it. A wake outranks the manual keep-active pin. */
+export function threadListV2Priority(
+  thread: { readonly settledOverride: "settled" | "active" | null },
+  options: { readonly wokeAt: string | null },
+): ThreadListV2Priority {
+  if (options.wokeAt !== null) return "woke";
+  if (thread.settledOverride === "active") return "unsettled";
+  return "default";
+}
+
 export function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
@@ -81,6 +93,60 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
         THREAD_LIST_V2_PRIORITY_RANK[getPriority(right)] ||
       (toSortableTimestamp(right.createdAt) ?? 0) - (toSortableTimestamp(left.createdAt) ?? 0) ||
       left.id.localeCompare(right.id),
+  );
+}
+
+export interface SettledSortInput {
+  readonly settledAt: string | null;
+  readonly latestUserMessageAt: string | null;
+  readonly latestTurn: {
+    readonly requestedAt: string;
+    readonly startedAt: string | null;
+    readonly completedAt: string | null;
+  } | null;
+  readonly updatedAt: string;
+}
+
+/** The timestamp a settled row sorts and labels by: settledAt when stamped
+    (explicit settles), otherwise last activity — the same candidates the
+    auto-settle window uses (user message plus all latestTurn stamps), so a
+    thread whose last activity was a turn completion doesn't sort by an
+    older message time. updatedAt is the final net. */
+export function resolveSettledTimestamp(thread: SettledSortInput): string | null {
+  if (thread.settledAt !== null && toSortableTimestamp(thread.settledAt) !== null) {
+    return thread.settledAt;
+  }
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = toSortableTimestamp(candidate);
+    if (parsed !== null && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  if (latest !== null) return latest;
+  return toSortableTimestamp(thread.updatedAt) !== null ? thread.updatedAt : null;
+}
+
+// Settled rows are history, so they order by when the work ENDED, not when
+// the thread was created or last touched.
+export function sortSettledThreadsForListV2<T extends SettledSortInput & { readonly id: string }>(
+  threads: readonly T[],
+): T[] {
+  const timestampMs = (thread: T) => {
+    const timestamp = resolveSettledTimestamp(thread);
+    return timestamp === null ? 0 : (toSortableTimestamp(timestamp) ?? 0);
+  };
+  // Hermes does not ship the ES2023 change-by-copy array methods.
+  return [...threads].sort(
+    (left, right) => timestampMs(right) - timestampMs(left) || left.id.localeCompare(right.id),
   );
 }
 

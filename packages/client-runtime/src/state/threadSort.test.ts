@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  sortSettledThreadsForListV2,
   sortThreads,
   sortThreadsForListV2,
+  threadListV2Priority,
   type ThreadListV2Priority,
   type ThreadSortInput,
 } from "./threadSort.ts";
@@ -111,5 +113,90 @@ describe("sortThreadsForListV2", () => {
     ];
 
     expect(sortThreadsForListV2(tied).map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("threadListV2Priority", () => {
+  it("ranks a wake above the manual keep-active pin", () => {
+    expect(
+      threadListV2Priority({ settledOverride: "active" }, { wokeAt: "2026-06-01T10:00:00.000Z" }),
+    ).toBe("woke");
+    expect(threadListV2Priority({ settledOverride: "active" }, { wokeAt: null })).toBe("unsettled");
+    expect(threadListV2Priority({ settledOverride: null }, { wokeAt: null })).toBe("default");
+  });
+});
+
+describe("sortSettledThreadsForListV2", () => {
+  const makeLatestTurn = (overrides?: { completedAt?: string | null }) => ({
+    requestedAt: "2026-03-09T10:00:00.000Z",
+    startedAt: "2026-03-09T10:00:00.000Z",
+    completedAt:
+      overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
+  });
+
+  const settled = (input: {
+    id: string;
+    settledAt?: string | null;
+    latestUserMessageAt?: string | null;
+    latestTurn?: ReturnType<typeof makeLatestTurn> | null;
+    updatedAt?: string;
+  }) => ({
+    id: input.id,
+    settledAt: input.settledAt ?? null,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+    latestTurn: input.latestTurn ?? null,
+    updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
+  });
+
+  it("orders by settle time, most recently settled first", () => {
+    const sorted = sortSettledThreadsForListV2([
+      settled({
+        id: "settled-first",
+        settledAt: "2026-03-09T10:00:00.000Z",
+        // Created/active later than the other thread: settle time must win.
+        latestUserMessageAt: "2026-03-09T09:59:00.000Z",
+      }),
+      settled({
+        id: "settled-last",
+        settledAt: "2026-03-09T12:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T08:00:00.000Z",
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["settled-last", "settled-first"]);
+  });
+
+  it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
+    const sorted = sortSettledThreadsForListV2([
+      settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
+      settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["auto-recent", "explicit", "auto-old"]);
+  });
+
+  it("counts a turn completion as activity for auto-settled threads", () => {
+    // The message came in before the other thread's, but its turn finished
+    // after: completion time is the real "work ended" moment.
+    const sorted = sortSettledThreadsForListV2([
+      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
+      settled({
+        id: "completed-later",
+        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+        latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
+  });
+
+  it("breaks timestamp ties by id so the order is stable", () => {
+    const sorted = sortSettledThreadsForListV2([
+      settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
 });
