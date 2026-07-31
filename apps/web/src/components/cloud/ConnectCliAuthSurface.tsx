@@ -1,9 +1,10 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
 import { encodeConnectAuthCode, readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
+  connectCliSignInRedirectUrl,
   readConnectCliAuthState,
   readConnectCliCallbackResult,
   rememberConnectCliAuthState,
@@ -54,6 +55,21 @@ export function ConnectCliAuthorizeSurface() {
   const signInOpened = useRef(false);
   const redirecting = useRef(false);
 
+  const openSignIn = useCallback(() => {
+    if (!request) {
+      return;
+    }
+    // Clerk redirects to the authorize endpoint itself once sign-in completes,
+    // so the callback's state check has to be armed before handing off.
+    rememberConnectCliAuthState(request.state);
+    clerk.openSignIn(
+      resolveClerkSignInProps(
+        connectCliSignInRedirectUrl(request, window.location.href),
+        isElectron,
+      ),
+    );
+  }, [clerk, request]);
+
   useEffect(() => {
     if (!request || !isLoaded || redirecting.current) {
       return;
@@ -61,7 +77,7 @@ export function ConnectCliAuthorizeSurface() {
     if (!isSignedIn) {
       if (!signInOpened.current) {
         signInOpened.current = true;
-        clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron));
+        openSignIn();
       }
       return;
     }
@@ -72,7 +88,7 @@ export function ConnectCliAuthorizeSurface() {
     redirecting.current = true;
     rememberConnectCliAuthState(request.state);
     window.location.assign(authorizeUrl);
-  }, [clerk, isLoaded, isSignedIn, request]);
+  }, [isLoaded, isSignedIn, openSignIn, request]);
 
   if (!request) {
     return (
@@ -95,12 +111,7 @@ export function ConnectCliAuthorizeSurface() {
       />
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
-          <Button
-            type="button"
-            onClick={() =>
-              clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron))
-            }
-          >
+          <Button type="button" onClick={openSignIn}>
             Sign in
           </Button>
         </div>
