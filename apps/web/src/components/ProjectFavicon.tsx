@@ -1,12 +1,15 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
+import {
+  getProjectFaviconCacheKey,
+  isProjectFaviconFallbackUrl,
+} from "@t3tools/shared/projectFavicon";
 import { FolderIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useState } from "react";
 import { useAssetUrl } from "../assets/assetUrls";
 import { cn } from "~/lib/utils";
 
-const loadedProjectFaviconSrcs = new Set<string>();
+const loadedProjectFaviconSrcs = new Map<string, string>();
 
 export function ProjectFavicon(input: {
   environmentId: EnvironmentId;
@@ -24,9 +27,12 @@ export function ProjectFavicon(input: {
     return <ProjectFaviconFallback className={input.className} icon={FallbackIcon} />;
   }
 
+  const cacheKey = getProjectFaviconCacheKey(input.environmentId, input.cwd, src);
+
   return (
     <ProjectFaviconImage
-      key={src}
+      key={cacheKey}
+      cacheKey={cacheKey}
       src={src}
       className={input.className}
       fallbackIcon={FallbackIcon}
@@ -45,37 +51,52 @@ function ProjectFaviconFallback({
 }
 
 function ProjectFaviconImage({
+  cacheKey,
   src,
   className,
   fallbackIcon: FallbackIcon,
 }: {
+  readonly cacheKey: string;
   readonly src: string;
   readonly className?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
 }) {
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
-    loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
+  const [displayedSrc, setDisplayedSrc] = useState<string | null>(
+    () => loadedProjectFaviconSrcs.get(cacheKey) ?? null,
   );
+  const isLoading = displayedSrc !== src;
+  const handleLoadError = (failedSrc: string) => {
+    if (loadedProjectFaviconSrcs.get(cacheKey) === failedSrc) {
+      loadedProjectFaviconSrcs.delete(cacheKey);
+    }
+    setDisplayedSrc((currentSrc) => (currentSrc === failedSrc ? null : currentSrc));
+  };
 
   return (
     <>
-      {status !== "loaded" ? (
+      {displayedSrc === null ? (
         <ProjectFaviconFallback className={className} icon={FallbackIcon} />
       ) : null}
-      <img
-        src={src}
-        alt=""
-        className={cn(
-          "size-3.5 shrink-0 rounded-sm object-contain",
-          status !== "loaded" && "hidden",
-          className,
-        )}
-        onLoad={() => {
-          loadedProjectFaviconSrcs.add(src);
-          setStatus("loaded");
-        }}
-        onError={() => setStatus("error")}
-      />
+      {displayedSrc ? (
+        <img
+          src={displayedSrc}
+          alt=""
+          className={cn("size-3.5 shrink-0 rounded-sm object-contain", className)}
+          onError={() => handleLoadError(displayedSrc)}
+        />
+      ) : null}
+      {isLoading ? (
+        <img
+          src={src}
+          alt=""
+          className="hidden"
+          onLoad={() => {
+            loadedProjectFaviconSrcs.set(cacheKey, src);
+            setDisplayedSrc(src);
+          }}
+          onError={() => handleLoadError(src)}
+        />
+      ) : null}
     </>
   );
 }

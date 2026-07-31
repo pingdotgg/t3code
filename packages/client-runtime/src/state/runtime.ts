@@ -253,6 +253,28 @@ export function createAtomCommandScheduler(): AtomCommandScheduler {
   };
 }
 
+/** Runs one effect inside an existing command scheduler lane. */
+export function scheduleAtomCommandEffect<W, A, E, R>(
+  registry: AtomRegistry.AtomRegistry,
+  scheduler: AtomCommandScheduler,
+  concurrency: AtomCommandConcurrency<W>,
+  input: W,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.gen(function* () {
+    const context = yield* Effect.context<R>();
+    const result = yield* Effect.promise((signal) =>
+      scheduler.schedule<W, A, E>(registry, concurrency, input, async () => {
+        const exit = await Effect.runPromiseExitWith(context)(effect, { signal });
+        return Exit.isSuccess(exit)
+          ? AsyncResult.success(exit.value)
+          : AsyncResult.failure(exit.cause);
+      }),
+    );
+    return result._tag === "Success" ? result.value : yield* Effect.failCause(result.cause);
+  });
+}
+
 export async function runAtomCommand<W, A, E>(
   registry: AtomRegistry.AtomRegistry,
   command: AtomCommand<W, A, E>,

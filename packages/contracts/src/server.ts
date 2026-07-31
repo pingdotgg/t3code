@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { ExecutionEnvironmentDescriptor, ServerSelfUpdateMethod } from "./environment.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
+  ForwardCompatibleArray,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -38,7 +39,9 @@ export const ServerConfigIssue = Schema.Union([
 ]);
 export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
-const ServerConfigIssues = Schema.Array(ServerConfigIssue);
+// Issue kinds grow over time; older clients must not fail the whole config
+// decode over a kind they cannot render.
+const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
 
 export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
 export type ServerProviderState = typeof ServerProviderState.Type;
@@ -417,7 +420,9 @@ export const ServerConfig = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
   providers: ServerProviders,
-  availableEditors: Schema.Array(EditorId),
+  // Editor ids grow over time; drop ones this build does not know rather than
+  // failing the whole config decode.
+  availableEditors: ForwardCompatibleArray(EditorId),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
@@ -591,6 +596,21 @@ export const ServerSelfUpdateResult = Schema.Struct({
   method: ServerSelfUpdateMethod,
 });
 export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;
+
+export const ServerSelfUpdateProgressStage = Schema.Literals(["downloading", "installing"]);
+export type ServerSelfUpdateProgressStage = typeof ServerSelfUpdateProgressStage.Type;
+
+export const ServerSelfUpdateProgressEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("progress"),
+    stage: ServerSelfUpdateProgressStage,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("complete"),
+    result: ServerSelfUpdateResult,
+  }),
+]);
+export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent.Type;
 
 export class ServerSelfUpdateError extends Schema.TaggedErrorClass<ServerSelfUpdateError>()(
   "ServerSelfUpdateError",
