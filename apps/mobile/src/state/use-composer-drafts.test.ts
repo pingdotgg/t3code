@@ -119,6 +119,36 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("drops the workspace selection when clearing a sent new-task draft", () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const draft: ComposerDraft = {
+      text: "send this",
+      attachments: [],
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      workspaceSelection: {
+        mode: "worktree",
+        branch: "main",
+        worktreePath: null,
+        startFromOrigin: false,
+      },
+    };
+
+    expect(
+      clearComposerDraftContentState({ [draftKey]: draft }, draftKey, {
+        clearWorkspaceSelection: true,
+      }),
+    ).toEqual({
+      [draftKey]: {
+        modelSelection: draft.modelSelection,
+        text: "",
+        attachments: [],
+      },
+    });
+  });
+
   it("reads the latest selector state synchronously for send", () => {
     const draftKey = "environment-1:thread-1";
     const selectedDraft: ComposerDraft = {
