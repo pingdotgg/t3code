@@ -13,7 +13,13 @@ import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } 
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { isInsightActivity } from "../insights";
 import { Schema } from "effect";
-import { type AppState, type EnvironmentState, selectThreadByRef, useStore } from "../store";
+import {
+  type AppState,
+  type EnvironmentState,
+  selectThreadByRef,
+  selectThreadExistsByRef,
+  useStore,
+} from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -458,14 +464,20 @@ export function deriveLockedProvider(input: {
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
 }
 
-export async function waitForStartedServerThread(
+/**
+ * Resolves once the thread is routable — i.e. present in the store. The thread
+ * route redirects to the index when its thread is missing, so navigation must
+ * not outrun the projection. Waiting for the thread to have *started* would be
+ * stricter than the route needs and delays navigation by a further turn
+ * projection round trip.
+ */
+export async function waitForRoutableServerThread(
   threadRef: ScopedThreadRef,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const getThread = () => selectThreadByRef(useStore.getState(), threadRef);
-  const thread = getThread();
+  const isRoutable = (state: AppState) => selectThreadExistsByRef(state, threadRef);
 
-  if (threadHasStarted(thread)) {
+  if (isRoutable(useStore.getState())) {
     return true;
   }
 
@@ -485,13 +497,13 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = useStore.subscribe((state) => {
-      if (!threadHasStarted(selectThreadByRef(state, threadRef))) {
+      if (!isRoutable(state)) {
         return;
       }
       finish(true);
     });
 
-    if (threadHasStarted(getThread())) {
+    if (isRoutable(useStore.getState())) {
       finish(true);
       return;
     }

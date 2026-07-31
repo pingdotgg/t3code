@@ -1523,10 +1523,47 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     });
   };
 
+  // The review path needs only `isRepo` and `branch`. `statusDetailsLocal` also
+  // computes numstat totals, the default ref, and remote presence — four extra
+  // subprocess spawns whose output the review capture discards.
+  const readReviewRepoContext = Effect.fn("readReviewRepoContext")(function* (cwd: string) {
+    const result = yield* executeGit(
+      "GitCore.resolveReviewChangesContext.branch",
+      cwd,
+      ["status", "--porcelain=2", "--branch"],
+      {
+        allowNonZeroExit: true,
+      },
+    ).pipe(Effect.catchIf(isMissingGitCwdError, () => Effect.succeed(null)));
+
+    if (result === null) {
+      return { isRepo: false, branch: null as string | null };
+    }
+    // Only a missing working directory means "not a repository". Other failures
+    // (unsafe ownership, permissions, corrupt index) must keep Git's own
+    // diagnostic instead of collapsing into a generic message.
+    if (result.code !== 0) {
+      return yield* createGitCommandError(
+        "GitCore.resolveReviewChangesContext.branch",
+        cwd,
+        ["status", "--porcelain=2", "--branch"],
+        result.stderr.trim() || "git status failed",
+      );
+    }
+    const headLine = result.stdout
+      .split(/\r?\n/g)
+      .find((line) => line.startsWith("# branch.head "));
+    const value = headLine?.slice("# branch.head ".length).trim() ?? "";
+    return {
+      isRepo: true,
+      branch: (value.length === 0 || value.startsWith("(") ? null : value) as string | null,
+    };
+  });
+
   const resolveReviewChangesContext: GitCoreShape["resolveReviewChangesContext"] = Effect.fn(
     "resolveReviewChangesContext",
   )(function* (input) {
-    const details = yield* statusDetailsLocal(input.cwd);
+    const details = yield* readReviewRepoContext(input.cwd);
     if (!details.isRepo) {
       return yield* createGitCommandError(
         "GitCore.resolveReviewChangesContext",
@@ -1605,10 +1642,15 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         );
       }
       const reference = String(input.pullRequestNumber);
-      const [pullRequest, trackedDiff] = yield* Effect.all([
-        gitHubCli.value.getPullRequest({ cwd: input.cwd, reference }),
-        gitHubCli.value.getPullRequestPatch({ cwd: input.cwd, reference }),
-      ]).pipe(
+      // `Effect.all` is sequential by default; these are two independent network
+      // round trips, so serializing them doubles the PR review's startup latency.
+      const [pullRequest, trackedDiff] = yield* Effect.all(
+        [
+          gitHubCli.value.getPullRequest({ cwd: input.cwd, reference }),
+          gitHubCli.value.getPullRequestPatch({ cwd: input.cwd, reference }),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
         Effect.mapError(
           (error) =>
             new GitCommandError({

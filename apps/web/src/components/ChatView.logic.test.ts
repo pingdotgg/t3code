@@ -29,7 +29,7 @@ import {
   resolveInterruptTurnId,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
-  waitForStartedServerThread,
+  waitForRoutableServerThread,
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -548,85 +548,63 @@ describe("createThreadPlanCatalogSelector", () => {
   });
 });
 
-describe("waitForStartedServerThread", () => {
-  it("resolves immediately when the thread is already started", async () => {
-    const threadId = ThreadId.make("thread-started");
-    setStoreThreads([
-      makeThread({
-        id: threadId,
-        latestTurn: {
-          turnId: TurnId.make("turn-started"),
-          state: "running",
-          requestedAt: "2026-03-29T00:00:01.000Z",
-          startedAt: "2026-03-29T00:00:01.000Z",
-          completedAt: null,
-        },
-      }),
-    ]);
+describe("waitForRoutableServerThread", () => {
+  it("resolves immediately when the thread is already in the store", async () => {
+    const threadId = ThreadId.make("thread-present");
+    setStoreThreads([makeThread({ id: threadId })]);
 
     await expect(
-      waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId)),
+      waitForRoutableServerThread(scopeThreadRef(localEnvironmentId, threadId)),
     ).resolves.toBe(true);
   });
 
-  it("waits for the thread to start via subscription updates", async () => {
+  it("waits for the thread to appear via subscription updates", async () => {
     const threadId = ThreadId.make("thread-wait");
+    setStoreThreads([]);
+
+    const promise = waitForRoutableServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
+
     setStoreThreads([makeThread({ id: threadId })]);
-
-    const promise = waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
-
-    setStoreThreads([
-      makeThread({
-        id: threadId,
-        latestTurn: {
-          turnId: TurnId.make("turn-started"),
-          state: "running",
-          requestedAt: "2026-03-29T00:00:01.000Z",
-          startedAt: "2026-03-29T00:00:01.000Z",
-          completedAt: null,
-        },
-      }),
-    ]);
 
     await expect(promise).resolves.toBe(true);
   });
 
-  it("handles the thread starting between the initial read and subscription setup", async () => {
+  it("does not wait for the thread's first turn to be projected", async () => {
+    const threadId = ThreadId.make("thread-no-turn");
+    setStoreThreads([makeThread({ id: threadId, latestTurn: null })]);
+
+    await expect(
+      waitForRoutableServerThread(scopeThreadRef(localEnvironmentId, threadId), 500),
+    ).resolves.toBe(true);
+  });
+
+  it("handles the thread appearing between the initial read and subscription setup", async () => {
     const threadId = ThreadId.make("thread-race");
-    setStoreThreads([makeThread({ id: threadId })]);
+    setStoreThreads([]);
 
     const originalSubscribe = useStore.subscribe.bind(useStore);
     let raced = false;
     vi.spyOn(useStore, "subscribe").mockImplementation((listener) => {
       if (!raced) {
         raced = true;
-        setStoreThreads([
-          makeThread({
-            id: threadId,
-            latestTurn: {
-              turnId: TurnId.make("turn-race"),
-              state: "running",
-              requestedAt: "2026-03-29T00:00:01.000Z",
-              startedAt: "2026-03-29T00:00:01.000Z",
-              completedAt: null,
-            },
-          }),
-        ]);
+        setStoreThreads([makeThread({ id: threadId })]);
       }
       return originalSubscribe(listener);
     });
 
     await expect(
-      waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500),
+      waitForRoutableServerThread(scopeThreadRef(localEnvironmentId, threadId), 500),
     ).resolves.toBe(true);
   });
 
-  it("returns false after the timeout when the thread never starts", async () => {
+  it("returns false after the timeout when the thread never appears", async () => {
     vi.useFakeTimers();
 
-    const threadId = ThreadId.make("thread-timeout");
-    setStoreThreads([makeThread({ id: threadId })]);
-    const promise = waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
+    setStoreThreads([]);
+    const promise = waitForRoutableServerThread(
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-timeout")),
+      500,
+    );
 
     await vi.advanceTimersByTimeAsync(500);
 

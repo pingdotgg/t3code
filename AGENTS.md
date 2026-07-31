@@ -55,6 +55,7 @@ Write only the small, concise amount of code needed to solve the problem; avoid 
 - Web store event handlers must not rebuild domain objects field by field: the live `thread.message-sent` path silently dropped a newly added message field that the snapshot path carried, so the UI was correct only after a reload. Spread the payload, and test the store-to-timeline seam rather than feeding hand-built objects straight into derivation.
 - Mount desktop browser hosts at authenticated app lifetime, not thread-route lifetime.
 - A user-requested workflow run must be reconciled inline before its RPC resolves; leaving worker-thread creation to the coordinator's event-stream pass makes the client poll for a thread that does not exist yet. Keep the periodic sweep idempotent but cheap — never re-dispatch a worker turn for a thread that already has activity, or every domain event costs an artifact read plus a command-queue hop per incomplete run and delays the next requested run.
+- `Effect.all` defaults to sequential execution: independent I/O — especially `gh`/network calls — must pass `{ concurrency: "unbounded" }` or the latencies add up silently. Gate a client's pre-navigation wait on exactly what the destination route requires (thread existence), never on a stricter signal like the first turn being projected, or navigation blocks on work the route never needed.
 
 ## Keep This File Updated
 

@@ -3,11 +3,12 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { Effect, FileSystem, Latch, Layer, PlatformError, Scope } from "effect";
 import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore, applyWindowsGitLongPathArgs } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
+import { GitHubCli } from "../Services/GitHubCli.ts";
 import { GitCommandError } from "@t3tools/contracts";
 import { type ProcessRunResult, runProcess } from "../../processRunner.ts";
 import { ServerConfig } from "../../config.ts";
@@ -840,9 +841,79 @@ it.layer(TestLayer)("git integration", (it) => {
         });
       }),
     );
-  });
 
-  // ── checkoutGitBranch ──
+    it.effect("fetches the pull request and its patch concurrently", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+
+        // Both fakes block until the other has started, so this test can only
+        // complete when the two `gh` round trips overlap. If the capture ever
+        // regresses to sequential, it deadlocks and fails on timeout.
+        const pullRequestStarted = yield* Latch.make();
+        const patchStarted = yield* Latch.make();
+
+        const gitHubCliStub = Layer.succeed(GitHubCli, {
+          getPullRequest: () =>
+            Effect.gen(function* () {
+              yield* pullRequestStarted.open;
+              yield* patchStarted.await;
+              return {
+                number: 87,
+                title: "Speed up review capture",
+                url: "https://github.com/acme/demo/pull/87",
+                baseRefName: "main",
+                headRefName: "feature/demo",
+                state: "open",
+              };
+            }),
+          getPullRequestPatch: () =>
+            Effect.gen(function* () {
+              yield* patchStarted.open;
+              yield* pullRequestStarted.await;
+              return "diff --git a/README.md b/README.md\n+changed\n";
+            }),
+        } as unknown as typeof GitHubCli.Service);
+
+        const result = yield* (yield* GitCore)
+          .resolveReviewChangesContext({
+            cwd: tmp,
+            scope: "pull-request",
+            pullRequestNumber: 87,
+          })
+          .pipe(Effect.provide(gitHubCliStub));
+
+        expect(result.scope).toBe("pull-request");
+        if (result.scope !== "pull-request") {
+          throw new Error(`expected pull-request review context, got ${result.scope}`);
+        }
+        expect(result.pullRequest.number).toBe(87);
+        expect(result.pullRequest.baseBranch).toBe("main");
+        expect(result.hasReviewableChanges).toBe(true);
+        // The pull-request scope reviews the patch, not the working tree.
+        expect(result.statusShort).toBe("");
+        expect(result.untrackedFiles).toEqual([]);
+      }),
+    );
+
+    it.effect("preserves git's diagnostic when reading repo context fails", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        // An unreadable index makes `git status` fail for a reason other than
+        // the directory not being a repository.
+        yield* writeTextFile(path.join(tmp, ".git", "index"), "corrupt");
+
+        const error = yield* (yield* GitCore)
+          .resolveReviewChangesContext({ cwd: tmp, scope: "uncommitted" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(GitCommandError);
+        expect(error.detail).not.toBe("Not a git repository.");
+        expect(error.detail.length).toBeGreaterThan(0);
+      }),
+    );
+  });
 
   describe("checkoutGitBranch", () => {
     it.effect("checks out an existing branch", () =>
