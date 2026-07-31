@@ -1503,6 +1503,9 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
+  const rightPanelIsOpen = rightPanelState.isOpen;
+  const rightPanelSurfaceCount = rightPanelState.surfaces.length;
+  const planSidebarAutoOpenDisabled = rightPanelState.planSidebarAutoOpenDisabled;
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
@@ -3827,10 +3830,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!autoOpenPlanSidebar) return;
     if (!activePlan) return;
     if (planSidebarOpen) return;
-    if (rightPanelState.planSidebarAutoOpenDisabled) return;
+    if (planSidebarAutoOpenDisabled) return;
     // A closed panel with remembered surfaces is an explicit user preference,
     // even when the Plan surface is no longer in the list.
-    if (rightPanelState.surfaces.length > 0 && !rightPanelState.isOpen) return;
+    if (rightPanelSurfaceCount > 0 && !rightPanelIsOpen) return;
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -3844,7 +3847,9 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     autoOpenPlanSidebar,
     planSidebarOpen,
-    rightPanelState,
+    planSidebarAutoOpenDisabled,
+    rightPanelIsOpen,
+    rightPanelSurfaceCount,
     sidebarProposedPlan?.turnId,
   ]);
 
