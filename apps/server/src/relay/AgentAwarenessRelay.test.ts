@@ -16,7 +16,7 @@ import type {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { CommandId, ProviderInstanceId } from "@t3tools/contracts";
+import { CommandId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { RELAY_ACTIVITY_PUBLISH_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
@@ -24,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
@@ -38,6 +39,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import {
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
@@ -95,6 +97,54 @@ function makeMemorySecretStore() {
     store,
     setString: (name: string, value: string) => store.set(name, encodeSecret(value)),
   };
+}
+
+function makeMutableProviderInstanceRegistry(input?: {
+  readonly liveDriver?: ProviderDriverKind;
+  readonly unavailableDriver?: ProviderDriverKind;
+}) {
+  return Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<void>();
+    let liveDriver = input?.liveDriver;
+    let unavailableDriver = input?.unavailableDriver;
+
+    const registry = {
+      getInstance: (instanceId: ProviderInstanceId) =>
+        Effect.sync(() =>
+          liveDriver === undefined
+            ? undefined
+            : ({
+                instanceId,
+                driverKind: liveDriver,
+              } as never),
+        ),
+      listInstances: Effect.succeed([]),
+      listUnavailable: Effect.sync(() =>
+        unavailableDriver === undefined
+          ? []
+          : [
+              {
+                instanceId: ProviderInstanceId.make("work"),
+                driver: unavailableDriver,
+              } as never,
+            ],
+      ),
+      streamChanges: Stream.fromPubSub(changes),
+      subscribeChanges: PubSub.subscribe(changes),
+    } satisfies ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+
+    return {
+      registry,
+      update: (next: {
+        readonly liveDriver?: ProviderDriverKind;
+        readonly unavailableDriver?: ProviderDriverKind;
+      }) =>
+        Effect.sync(() => {
+          liveDriver = next.liveDriver;
+          unavailableDriver = next.unavailableDriver;
+        }).pipe(Effect.andThen(PubSub.publish(changes, undefined)), Effect.asVoid),
+    };
+  });
 }
 
 describe.sequential("signRelayAgentActivityPublishProof", () => {
@@ -286,6 +336,67 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     });
   });
 
+  it("carries a resolved provider driver into pre-session activity", () => {
+    const environmentId = "env-1" as EnvironmentId;
+    const threadId = "thread-1" as ThreadId;
+    const projectId = "project-1" as ProjectId;
+    const thread = {
+      id: threadId,
+      projectId,
+      title: "Waiting for approval",
+      modelSelection: { instanceId: ProviderInstanceId.make("work"), model: "gpt-5.4" },
+      session: null,
+      latestTurn: null,
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      hasPendingApprovals: true,
+      hasPendingUserInput: false,
+    } as OrchestrationThreadShell;
+
+    expect(
+      AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot({
+        environmentId,
+        threadId,
+        thread: Option.some(thread),
+        project: Option.some({
+          id: projectId,
+          title: "T3 Code",
+        } as OrchestrationProjectShell),
+        providerDriver: ProviderDriverKind.make("cursor"),
+      }).state,
+    ).toMatchObject({
+      providerName: "cursor",
+      modelTitle: "gpt-5.4",
+    });
+  });
+
+  it.effect("resolves both unavailable and live provider registry entries", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const providerRegistry = yield* makeMutableProviderInstanceRegistry({
+          unavailableDriver: ProviderDriverKind.make("cursor"),
+        });
+        const instanceId = ProviderInstanceId.make("work");
+
+        expect(
+          yield* AgentAwarenessRelay.resolveAgentAwarenessProviderDriver({
+            providerInstances: providerRegistry.registry,
+            instanceId,
+          }),
+        ).toBe("cursor");
+
+        yield* providerRegistry.update({
+          liveDriver: ProviderDriverKind.make("codex"),
+        });
+        expect(
+          yield* AgentAwarenessRelay.resolveAgentAwarenessProviderDriver({
+            providerInstances: providerRegistry.registry,
+            instanceId,
+          }),
+        ).toBe("codex");
+      }),
+    ),
+  );
+
   it("selects only active shell snapshot threads for startup catch-up", () => {
     const now = "2026-05-25T00:00:00.000Z";
     const environmentId = "env-1" as EnvironmentId;
@@ -417,6 +528,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const events = yield* Queue.unbounded<OrchestrationEvent>();
         const threadShellRequested = yield* Deferred.make<void>();
         const secrets = makeMemorySecretStore();
+        const providerRegistry = yield* makeMutableProviderInstanceRegistry();
         const now = "2026-05-25T00:00:00.000Z";
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
@@ -507,6 +619,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies ExecutionEnvironmentDescriptor;
 
         const layer = Layer.mergeAll(
+          Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            providerRegistry.registry,
+          ),
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
@@ -552,7 +668,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ),
   );
 
-  it.effect("publishes agent activity to the relay transport URL, not the relay issuer", () =>
+  it.effect("serializes each thread while publishing unrelated threads concurrently", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const originalFetch = globalThis.fetch;
@@ -560,6 +676,19 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const runFork = Effect.runForkWith(context);
         const events = yield* Queue.unbounded<OrchestrationEvent>();
         const fetchSeen = yield* Deferred.make<URL>();
+        const providerRepublishSeen = yield* Deferred.make<void>();
+        const unrelatedPublishSeen = yield* Deferred.make<void>();
+        const publishedStates: string[] = [];
+        const completedStates: string[] = [];
+        let inFlightFetches = 0;
+        let maxInFlightFetches = 0;
+        let sameThreadOverlap = false;
+        const inFlightThreadIds = new Set<string>();
+        let releaseFirstPublish = () => {};
+        const firstPublishGate = new Promise<void>((resolve) => {
+          releaseFirstPublish = resolve;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFirstPublish));
         const userSpans: Array<string> = [];
         const productSpans: Array<string> = [];
         const collectingTracer = (spans: Array<string>) =>
@@ -575,9 +704,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             },
           });
         const secrets = makeMemorySecretStore();
+        const providerRegistry = yield* makeMutableProviderInstanceRegistry({
+          unavailableDriver: ProviderDriverKind.make("cursor"),
+        });
         const now = "2026-05-25T00:00:00.000Z";
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
+        const otherThreadId = "thread-2" as ThreadId;
         const environmentId = "env-1" as EnvironmentId;
 
         const project = {
@@ -595,7 +728,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           id: threadId,
           projectId,
           title: "Run remote agent",
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          modelSelection: { instanceId: ProviderInstanceId.make("work"), model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: null,
@@ -616,7 +749,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           session: {
             threadId,
             status: "running",
-            providerName: "Codex",
+            providerName: null,
             runtimeMode: "full-access",
             activeTurnId: "turn-1" as TurnId,
             lastError: null,
@@ -626,6 +759,20 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+        } satisfies OrchestrationThreadShell;
+        const otherThread = {
+          ...thread,
+          id: otherThreadId,
+          title: "Run unrelated agent",
+          latestTurn: {
+            ...thread.latestTurn,
+            turnId: "turn-2" as TurnId,
+          },
+          session: {
+            ...thread.session,
+            threadId: otherThreadId,
+            activeTurnId: "turn-2" as TurnId,
+          },
         } satisfies OrchestrationThreadShell;
 
         const descriptor = {
@@ -641,14 +788,58 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
-        globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+        globalThis.fetch = (async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ) => {
+          const request =
+            typeof input === "string" || input instanceof URL
+              ? null
+              : (input as unknown as Request);
+          const encodedBody = init?.body;
+          const payload = (
+            request
+              ? await request.clone().json()
+              : JSON.parse(
+                  encodedBody instanceof Uint8Array
+                    ? new TextDecoder().decode(encodedBody)
+                    : String(encodedBody),
+                )
+          ) as {
+            readonly state?: {
+              readonly providerName?: string;
+              readonly threadId?: string;
+            };
+          };
+          const publishedThreadId = payload.state?.threadId ?? "unknown";
+          const providerName = payload.state?.providerName;
+          const publishedState = `${publishedThreadId}:${providerName ?? "unknown"}`;
+          publishedStates.push(publishedState);
+          if (inFlightThreadIds.has(publishedThreadId)) {
+            sameThreadOverlap = true;
+          }
+          inFlightThreadIds.add(publishedThreadId);
+          inFlightFetches += 1;
+          maxInFlightFetches = Math.max(maxInFlightFetches, inFlightFetches);
           const url = new URL(
             typeof input === "string" || input instanceof URL
               ? input
               : (input as unknown as { readonly url: string }).url,
           );
           runFork(Deferred.succeed(fetchSeen, url));
-          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
+          if (publishedThreadId === otherThreadId && providerName === "codex") {
+            runFork(Deferred.succeed(unrelatedPublishSeen, undefined));
+          }
+          if (publishedThreadId === threadId && providerName === "cursor") {
+            await firstPublishGate;
+          }
+          completedStates.push(publishedState);
+          inFlightThreadIds.delete(publishedThreadId);
+          inFlightFetches -= 1;
+          if (publishedThreadId === threadId && providerName === "codex") {
+            runFork(Deferred.succeed(providerRepublishSeen, undefined));
+          }
+          return Response.json({ ok: true, deliveries: [] });
         }) as unknown as typeof fetch;
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -657,6 +848,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         );
 
         const layer = Layer.mergeAll(
+          Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            providerRegistry.registry,
+          ),
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
@@ -673,10 +868,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               Effect.succeed({
                 snapshotSequence: 1,
                 projects: [project],
-                threads: [thread],
+                threads: [thread, otherThread],
                 updatedAt: now,
               } satisfies OrchestrationShellSnapshot),
-            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+            getThreadShellById: (requestedThreadId: ThreadId) =>
+              Effect.succeed(
+                Option.some(requestedThreadId === otherThreadId ? otherThread : thread),
+              ),
             getProjectShellById: () => Effect.succeed(Option.some(project)),
           } as unknown as ProjectionSnapshotQueryShape),
         );
@@ -707,6 +905,29 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
           const url = yield* Deferred.await(fetchSeen).pipe(Effect.timeout("2 seconds"));
           expect(url.origin).toBe("https://transport.example.test");
+          expect(publishedStates).toEqual(["thread-1:cursor"]);
+
+          yield* providerRegistry.update({
+            liveDriver: ProviderDriverKind.make("codex"),
+          });
+          // Let the registry subscriber queue both active threads while the
+          // Cursor request is held open. The same-thread Codex update must
+          // wait, while the unrelated thread should use another worker slot.
+          for (let index = 0; index < 5; index++) {
+            yield* Effect.yieldNow;
+          }
+          expect(yield* Deferred.isDone(unrelatedPublishSeen)).toBe(true);
+          expect(publishedStates).toEqual(["thread-1:cursor", "thread-2:codex"]);
+          expect(publishedStates).not.toContain("thread-1:codex");
+          expect(inFlightFetches).toBe(1);
+
+          releaseFirstPublish();
+          yield* Deferred.await(providerRepublishSeen).pipe(Effect.timeout("2 seconds"));
+          expect(publishedStates).toEqual(["thread-1:cursor", "thread-2:codex", "thread-1:codex"]);
+          expect(completedStates).toEqual(["thread-2:codex", "thread-1:cursor", "thread-1:codex"]);
+          expect(maxInFlightFetches).toBe(2);
+          expect(sameThreadOverlap).toBe(false);
+
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");
         }).pipe(

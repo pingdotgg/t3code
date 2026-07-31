@@ -24,6 +24,11 @@ interface KeyedCoalescingWorkerState<K, V> {
 }
 
 export const makeKeyedCoalescingWorker = <K, V, E, R>(options: {
+  /**
+   * Maximum number of different keys processed concurrently. Work for the
+   * same key remains serialized. Defaults to one for existing callers.
+   */
+  readonly concurrency?: number;
   readonly merge: (current: V, next: V) => V;
   readonly process: (key: K, value: V) => Effect.Effect<void, E, R>;
 }): Effect.Effect<KeyedCoalescingWorker<K, V>, never, Scope.Scope | R> =>
@@ -75,7 +80,7 @@ export const makeKeyedCoalescingWorker = <K, V, E, R>(options: {
         ),
       );
 
-    yield* TxQueue.take(queue).pipe(
+    const runConsumer = TxQueue.take(queue).pipe(
       Effect.flatMap((key) =>
         TxRef.modify(stateRef, (state) => {
           const queuedKeys = new Set(state.queuedKeys);
@@ -105,7 +110,12 @@ export const makeKeyedCoalescingWorker = <K, V, E, R>(options: {
             ),
       ),
       Effect.forever,
-      Effect.forkScoped,
+    );
+    const concurrency = Math.max(1, Math.floor(options.concurrency ?? 1));
+    yield* Effect.forEach(
+      Array.from({ length: concurrency }),
+      () => Effect.forkScoped(runConsumer),
+      { discard: true },
     );
 
     const enqueue: KeyedCoalescingWorker<K, V>["enqueue"] = (key, value) =>

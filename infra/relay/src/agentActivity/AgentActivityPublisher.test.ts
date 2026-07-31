@@ -1,6 +1,8 @@
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import * as AgentActivityRows from "./AgentActivityRows.ts";
@@ -128,7 +130,184 @@ function makeApnsDeliveries(
   };
 }
 
+function makePublisherLayer(input: {
+  readonly rows?: Partial<AgentActivityRows.AgentActivityRows["Service"]>;
+  readonly links?: Partial<EnvironmentLinks.EnvironmentLinks["Service"]>;
+  readonly liveActivities?: Partial<LiveActivities.LiveActivities["Service"]>;
+  readonly apnsDeliveries?: Partial<ApnsDeliveries.ApnsDeliveries["Service"]>;
+}) {
+  return AgentActivityPublisher.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows(input.rows)),
+        Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks(input.links)),
+        Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities(input.liveActivities)),
+        Layer.succeed(ApnsDeliveries.ApnsDeliveries, makeApnsDeliveries(input.apnsDeliveries)),
+      ),
+    ),
+  );
+}
+
 describe("AgentActivityPublisher", () => {
+  it.effect("does not enqueue an older same-thread state after a newer publish", () =>
+    Effect.gen(function* () {
+      const firstUserLookupStarted = yield* Deferred.make<void>();
+      const releaseFirstUserLookup = yield* Deferred.make<void>();
+      const firstState: RelayAgentActivityState = {
+        ...state,
+        phase: "completed",
+        headline: "Done",
+        updatedAt: "1970-01-01T00:00:01.000Z",
+      };
+      const secondState: RelayAgentActivityState = {
+        ...state,
+        phase: "failed",
+        headline: "Failed",
+        updatedAt: "1970-01-01T00:00:02.000Z",
+      };
+      const currentStates = new Map<string, RelayAgentActivityState>();
+      const sentStates: Array<string> = [];
+      let firstUserLookup = true;
+
+      const program = Effect.gen(function* () {
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        const firstPublish = yield* publisher
+          .publish({
+            environmentId: "env",
+            environmentPublicKey: "environment-public-key",
+            threadId: firstState.threadId,
+            state: firstState,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstUserLookupStarted);
+
+        const secondPublish = yield* publisher
+          .publish({
+            environmentId: "env",
+            environmentPublicKey: "environment-public-key",
+            threadId: secondState.threadId,
+            state: secondState,
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseFirstUserLookup, undefined);
+        yield* Effect.all([Fiber.join(firstPublish), Fiber.join(secondPublish)], {
+          concurrency: 2,
+        });
+      }).pipe(
+        Effect.provide(
+          makePublisherLayer({
+            rows: {
+              upsert: ({ state: nextState }) =>
+                Effect.sync(() => currentStates.set(nextState.threadId, nextState)).pipe(
+                  Effect.asVoid,
+                ),
+              listForUser: () => Effect.succeed(Array.from(currentStates.values())),
+            },
+            links: {
+              listDeliveryUsersForEnvironment: () =>
+                Effect.gen(function* () {
+                  if (firstUserLookup) {
+                    firstUserLookup = false;
+                    yield* Deferred.succeed(firstUserLookupStarted, undefined);
+                    yield* Deferred.await(releaseFirstUserLookup);
+                  }
+                  return [
+                    {
+                      userId: "dev:julius",
+                      notificationsEnabled: true,
+                      liveActivitiesEnabled: true,
+                    },
+                  ];
+                }),
+            },
+            liveActivities: {
+              listTargets: () => Effect.succeed([target("device-1")]),
+            },
+            apnsDeliveries: {
+              sendForTarget: (input) =>
+                Effect.sync(() => {
+                  const delivered = input.aggregate?.activities[0];
+                  sentStates.push(`${delivered?.phase}:${delivered?.updatedAt}`);
+                  return null;
+                }),
+            },
+          }),
+        ),
+      );
+
+      yield* program;
+
+      expect(sentStates).toEqual([
+        `${firstState.phase}:${firstState.updatedAt}`,
+        `${secondState.phase}:${secondState.updatedAt}`,
+      ]);
+    }),
+  );
+
+  it.effect("retains aggregate delivery concurrency across different users", () =>
+    Effect.gen(function* () {
+      const bothUsersStarted = yield* Deferred.make<void>();
+      const releaseUsers = yield* Deferred.make<void>();
+      const startedUsers = new Set<string>();
+
+      const program = Effect.gen(function* () {
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        const publish = yield* publisher
+          .publish({
+            environmentId: "env",
+            environmentPublicKey: "environment-public-key",
+            threadId: state.threadId,
+            state,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(bothUsersStarted);
+        yield* Deferred.succeed(releaseUsers, undefined);
+        yield* Fiber.join(publish);
+      }).pipe(
+        Effect.provide(
+          makePublisherLayer({
+            rows: {
+              listForUser: ({ userId }) =>
+                Effect.gen(function* () {
+                  startedUsers.add(userId);
+                  if (startedUsers.size === 2) {
+                    yield* Deferred.succeed(bothUsersStarted, undefined);
+                  }
+                  yield* Deferred.await(releaseUsers);
+                  return [state];
+                }),
+            },
+            links: {
+              listDeliveryUsersForEnvironment: () =>
+                Effect.succeed([
+                  {
+                    userId: "user-a",
+                    notificationsEnabled: true,
+                    liveActivitiesEnabled: true,
+                  },
+                  {
+                    userId: "user-b",
+                    notificationsEnabled: true,
+                    liveActivitiesEnabled: true,
+                  },
+                ]),
+            },
+            liveActivities: {
+              listTargets: ({ userId }) =>
+                Effect.succeed([{ ...target(`device-${userId}`), user_id: userId }]),
+            },
+          }),
+        ),
+      );
+
+      yield* program;
+
+      expect(startedUsers).toEqual(new Set(["user-a", "user-b"]));
+    }),
+  );
+
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
       ...target("device-1"),
@@ -334,7 +513,7 @@ describe("AgentActivityPublisher", () => {
                       Effect.sync(() => {
                         upserts.push(input);
                       }),
-                    listForUser: () => Effect.succeed([]),
+                    listForUser: () => Effect.succeed([completedState]),
                   }),
                 ),
                 Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),

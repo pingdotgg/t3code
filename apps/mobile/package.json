@@ -39,6 +39,8 @@
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
+    "sync:provider-marks": "node scripts/sync-provider-marks.mjs",
+    "check:provider-marks": "node scripts/sync-provider-marks.mjs --check",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
   },

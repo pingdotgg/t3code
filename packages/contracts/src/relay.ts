@@ -100,6 +100,9 @@ export const RelayAgentActivityState = Schema.Struct({
   phase: RelayAgentAwarenessPhase,
   headline: TrimmedNonEmptyString,
   detail: Schema.optional(TrimmedNonEmptyString),
+  // Optional for compatibility with activity rows persisted before provider
+  // identity was included in the relay payload.
+  providerName: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
@@ -111,6 +114,7 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   threadId: ThreadId,
   projectTitle: TrimmedNonEmptyString,
   threadTitle: TrimmedNonEmptyString,
+  providerName: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
   status: TrimmedNonEmptyString,

@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
+  ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -22,6 +23,7 @@ export interface AgentAwarenessState {
   readonly phase: AgentAwarenessPhase;
   readonly headline: string;
   readonly detail?: string;
+  readonly providerName?: string;
   readonly modelTitle: string;
   readonly updatedAt: string;
   readonly deepLink: string;
@@ -29,6 +31,7 @@ export interface AgentAwarenessState {
 
 export interface ProjectThreadAwarenessInput {
   readonly environmentId: EnvironmentId;
+  readonly providerDriver?: ProviderDriverKind;
   readonly project: Pick<OrchestrationProjectShell, "title">;
   readonly thread: Pick<
     OrchestrationThreadShell,
@@ -60,6 +63,7 @@ export function projectThreadAwareness(
   }
 
   const detail = detailForPhase(phase, thread);
+  const providerName = thread.session?.providerName ?? input.providerDriver;
   return {
     environmentId,
     threadId: thread.id,
@@ -68,6 +72,10 @@ export function projectThreadAwareness(
     phase,
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
+    // A live session records the driver kind (for example `cursor` or
+    // `claudeAgent`). Before that session is materialized, the caller resolves
+    // the user-defined provider instance to its configured driver.
+    ...(providerName === undefined ? {} : { providerName }),
     modelTitle: thread.modelSelection.model,
     updatedAt: thread.updatedAt,
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),

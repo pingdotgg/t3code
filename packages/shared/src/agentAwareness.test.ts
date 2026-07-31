@@ -7,7 +7,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import { projectThreadAwareness } from "./agentAwareness.ts";
 
@@ -97,9 +97,27 @@ describe("projectThreadAwareness", () => {
       phase: "running",
       headline: "Agent is working",
       detail: "Codex is active.",
+      providerName: "Codex",
       modelTitle: "gpt-5.4",
       deepLink: "/threads/env-1/thread-1",
     });
+  });
+
+  it("uses the resolved provider driver before a session is materialized", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      providerDriver: ProviderDriverKind.make("cursor"),
+      project,
+      thread: thread({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("work"),
+          model: "gpt-5.4",
+        },
+        hasPendingApprovals: true,
+      }),
+    });
+
+    expect(state?.providerName).toBe("cursor");
   });
 
   it("projects completed turns as completed even when teardown settled them as interrupted", () => {

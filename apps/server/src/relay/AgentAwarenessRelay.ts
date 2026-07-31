@@ -3,6 +3,8 @@ import type {
   OrchestrationEvent,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -11,7 +13,7 @@ import {
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   normalizeRelayIssuer,
@@ -44,6 +46,7 @@ import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environme
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -234,6 +237,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationThreadShell>;
   readonly project: Option.Option<OrchestrationProjectShell>;
+  readonly providerDriver?: ProviderDriverKind;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -258,12 +262,32 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
     state: sanitizeRelayAgentActivityState(
       projectThreadAwareness({
         environmentId: input.environmentId,
+        ...(input.providerDriver === undefined ? {} : { providerDriver: input.providerDriver }),
         project: input.project.value,
         thread: input.thread.value,
       }),
     ),
     reason: "snapshot",
   };
+}
+
+export function resolveAgentAwarenessProviderDriver(input: {
+  readonly providerInstances: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+  readonly instanceId: ProviderInstanceId;
+}): Effect.Effect<ProviderDriverKind | undefined> {
+  return input.providerInstances.getInstance(input.instanceId).pipe(
+    Effect.flatMap((instance) => {
+      if (instance !== undefined) {
+        return Effect.succeed(instance.driverKind);
+      }
+      return input.providerInstances.listUnavailable.pipe(
+        Effect.map(
+          (providers) =>
+            providers.find((provider) => provider.instanceId === input.instanceId)?.driver,
+        ),
+      );
+    }),
+  );
 }
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
@@ -294,6 +318,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const snapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const crypto = yield* Crypto.Crypto;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const activeSnapshotPublishedRef = yield* Ref.make(false);
@@ -407,11 +432,18 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
       : Option.none<OrchestrationProjectShell>();
+    const providerDriver = Option.isSome(thread)
+      ? yield* resolveAgentAwarenessProviderDriver({
+          providerInstances,
+          instanceId: thread.value.modelSelection.instanceId,
+        })
+      : undefined;
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
+      ...(providerDriver === undefined ? {} : { providerDriver }),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -510,6 +542,17 @@ export const make = Effect.gen(function* () {
       withRelayClientTracing,
     );
 
+  // A key never has more than one active publish, so an older network request
+  // cannot finish after a newer update for the same thread. Different threads
+  // retain bounded concurrency so one slow relay request cannot block every
+  // approval/completion behind it.
+  const worker = yield* makeKeyedCoalescingWorker<ThreadId, true, never, never>({
+    concurrency: 4,
+    merge: () => true,
+    process: (threadId) => publishThread(threadId),
+  });
+  const enqueuePublish = (threadId: ThreadId) => worker.enqueue(threadId, true);
+
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
@@ -534,10 +577,10 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
       return true;
     }
-    yield* Effect.logInfo("publishing active agent activity snapshot", {
+    yield* Effect.logInfo("queueing active agent activity snapshot", {
       count: activeThreadIds.length,
     });
-    yield* Effect.forEach(activeThreadIds, publishThread, { concurrency: 4, discard: true });
+    yield* Effect.forEach(activeThreadIds, enqueuePublish, { discard: true });
     return true;
   });
 
@@ -559,12 +602,10 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  const worker = yield* makeDrainableWorker(publishThread);
-
   schedulePublishConfirm = (threadId) =>
     Effect.forkDetach(
       Effect.sleep("5 seconds").pipe(
-        Effect.andThen(worker.enqueue(threadId)),
+        Effect.andThen(enqueuePublish(threadId)),
         Effect.catchCause((cause) =>
           Effect.logWarning("deferred agent activity confirmation failed", {
             threadId,
@@ -599,6 +640,33 @@ export const make = Effect.gen(function* () {
           });
           break;
       }
+      // Acquire the subscription before forking its consumer so a provider
+      // hot reload cannot land between "fork scheduled" and "stream started".
+      const providerChanges = yield* providerInstances.subscribeChanges;
+      yield* Effect.forkScoped(
+        Stream.runForEach(Stream.fromSubscription(providerChanges), () =>
+          publishActiveThreadsUnsafe.pipe(
+            Effect.tap((published) =>
+              Effect.logDebug(
+                published
+                  ? "republished agent activity after provider registry change"
+                  : "agent activity republish skipped after provider registry change",
+              ),
+            ),
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return Effect.interrupt;
+              }
+              return Effect.logWarning(
+                "agent activity republish after provider registry change failed",
+                {
+                  cause: Cause.pretty(cause),
+                },
+              );
+            }),
+          ),
+        ),
+      );
       yield* Effect.forkScoped(
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
@@ -624,7 +692,7 @@ export const make = Effect.gen(function* () {
           return Effect.logDebug("agent activity publishing queued thread publish", {
             eventType: event.type,
             threadId,
-          }).pipe(Effect.andThen(worker.enqueue(threadId)));
+          }).pipe(Effect.andThen(enqueuePublish(threadId)));
         }),
       );
     },

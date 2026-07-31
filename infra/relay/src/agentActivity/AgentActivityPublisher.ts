@@ -9,6 +9,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   isExpiredAgentActivityState,
@@ -47,23 +49,105 @@ export class AgentActivityPublisher extends Context.Service<
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
+interface KeyedLockEntry {
+  readonly semaphore: Semaphore.Semaphore;
+  readonly users: number;
+}
+
+const makeKeyedLock = Effect.gen(function* () {
+  const entriesRef = yield* Ref.make<ReadonlyMap<string, KeyedLockEntry>>(new Map());
+  const entriesGuard = yield* Semaphore.make(1);
+
+  return <A, E, R>(key: string, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.acquireUseRelease(
+      entriesGuard.withPermit(
+        Effect.gen(function* () {
+          const entries = yield* Ref.get(entriesRef);
+          const existing = entries.get(key);
+          if (existing) {
+            yield* Ref.set(
+              entriesRef,
+              new Map(entries).set(key, {
+                semaphore: existing.semaphore,
+                users: existing.users + 1,
+              }),
+            );
+            return existing.semaphore;
+          }
+
+          const semaphore = yield* Semaphore.make(1);
+          yield* Ref.set(entriesRef, new Map(entries).set(key, { semaphore, users: 1 }));
+          return semaphore;
+        }),
+      ),
+      (semaphore) => semaphore.withPermit(effect),
+      (semaphore) =>
+        entriesGuard.withPermit(
+          Ref.update(entriesRef, (entries) => {
+            const existing = entries.get(key);
+            if (!existing || existing.semaphore !== semaphore) {
+              return entries;
+            }
+            const next = new Map(entries);
+            if (existing.users === 1) {
+              next.delete(key);
+            } else {
+              next.set(key, { semaphore, users: existing.users - 1 });
+            }
+            return next;
+          }),
+        ),
+    );
+});
+
 export const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const withDeliveryLock = yield* makeKeyedLock;
+  const withThreadPublishLock = yield* makeKeyedLock;
 
-  const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
+  const withDeliveryLocks = <A, E, R>(
+    userIds: ReadonlyArray<string>,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    [...new Set(userIds)]
+      .sort()
+      .reduceRight<Effect.Effect<A, E, R>>(
+        (locked, userId) => withDeliveryLock(userId, locked),
+        effect,
+      );
+
+  const persistState = (input: {
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+    readonly threadId: string;
+    readonly state: RelayAgentActivityState | null;
+  }) =>
+    input.state
+      ? rows.upsert({
+          environmentPublicKey: input.environmentPublicKey,
+          state: input.state,
+        })
+      : rows.remove({
+          environmentId: input.environmentId,
+          environmentPublicKey: input.environmentPublicKey,
+          threadId: input.threadId,
+        });
+
+  const publishForDeliveryUserUnsafe = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
-    readonly nowMs: number;
   }) {
+    const now = yield* DateTime.now;
+    const nowMs = now.epochMilliseconds;
     const activeStates = yield* rows.listForUser({ userId: input.deliveryUser.userId });
     const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
       ? makeAggregateState({
           activeStates,
-          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-          nowMs: input.nowMs,
+          terminalState: null,
+          nowMs,
         })
       : null;
     const notificationOnlyAggregate =
@@ -73,7 +157,7 @@ export const make = Effect.gen(function* () {
         ? makeAggregateState({
             activeStates: isTerminalPhase(input.state) ? [] : [input.state],
             terminalState: isTerminalPhase(input.state) ? input.state : null,
-            nowMs: input.nowMs,
+            nowMs,
           })
         : null;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
@@ -85,7 +169,7 @@ export const make = Effect.gen(function* () {
             apnsDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
-              nowMs: input.nowMs,
+              nowMs,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -109,28 +193,33 @@ export const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.deviceId,
         "relay.operation": "replayForLiveActivityRegistration",
       });
-      const { activeStates, targets } = yield* Effect.all(
-        {
-          activeStates: rows.listForUser({ userId: input.userId }),
-          targets: liveActivities.listTargets({ userId: input.userId }),
-        },
-        { concurrency: 2 },
+      return yield* withDeliveryLock(
+        input.userId,
+        Effect.gen(function* () {
+          const { activeStates, targets } = yield* Effect.all(
+            {
+              activeStates: rows.listForUser({ userId: input.userId }),
+              targets: liveActivities.listTargets({ userId: input.userId }),
+            },
+            { concurrency: 2 },
+          );
+          const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
+          if (target === null) {
+            return null;
+          }
+          const now = yield* DateTime.now;
+          const aggregate = makeAggregateState({
+            activeStates,
+            terminalState: null,
+            nowMs: now.epochMilliseconds,
+          });
+          return yield* apnsDeliveries.sendForTarget({
+            target,
+            aggregate,
+            nowMs: now.epochMilliseconds,
+          });
+        }),
       );
-      const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
-      if (target === null) {
-        return null;
-      }
-      const now = yield* DateTime.now;
-      const aggregate = makeAggregateState({
-        activeStates,
-        terminalState: null,
-        nowMs: now.epochMilliseconds,
-      });
-      return yield* apnsDeliveries.sendForTarget({
-        target,
-        aggregate,
-        nowMs: now.epochMilliseconds,
-      });
     }),
     publish: Effect.fn("relay.agent_activity_publisher.publish")(function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -138,45 +227,47 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
-      if (input.state) {
-        // Terminal states are persisted too (pruned by the cron after they
-        // age out) so a thread that finishes while other agents are active
-        // stays visible as Done/Failed in subsequent aggregates instead of
-        // silently vanishing from the Live Activity.
-        yield* rows.upsert({
-          environmentPublicKey: input.environmentPublicKey,
-          state: input.state,
-        });
-      } else {
-        yield* rows.remove({
-          environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
-          threadId: input.threadId,
-        });
-      }
 
-      const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
-        environmentId: input.environmentId,
-        environmentPublicKey: input.environmentPublicKey,
-      });
-      const now = yield* DateTime.now;
-      const deliveriesByUser = yield* Effect.forEach(
-        deliveryUsers,
-        (deliveryUser) =>
-          publishForDeliveryUser({
-            deliveryUser,
-            state: input.state,
-            nowMs: now.epochMilliseconds,
-          }),
-        { concurrency: 4 },
+      return yield* withThreadPublishLock(
+        `${input.environmentId}\u0000${input.threadId}`,
+        Effect.gen(function* () {
+          const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+            environmentId: input.environmentId,
+            environmentPublicKey: input.environmentPublicKey,
+          });
+          return yield* withDeliveryLocks(
+            deliveryUsers.map((deliveryUser) => deliveryUser.userId),
+            Effect.gen(function* () {
+              // Terminal states are persisted too (pruned by the cron after
+              // they age out) so a finished thread stays visible in later
+              // aggregates. Persistence is inside every affected user's lane,
+              // keeping the row snapshot and queue insertion atomic per user.
+              yield* persistState({
+                environmentId: input.environmentId,
+                environmentPublicKey: input.environmentPublicKey,
+                threadId: input.threadId,
+                state: input.state,
+              });
+              const deliveriesByUser = yield* Effect.forEach(
+                deliveryUsers,
+                (deliveryUser) =>
+                  publishForDeliveryUserUnsafe({
+                    deliveryUser,
+                    state: input.state,
+                  }),
+                { concurrency: 4 },
+              );
+              const deliveries = deliveriesByUser.flat();
+              return {
+                ok: true,
+                deliveries: deliveries.filter(
+                  (delivery): delivery is RelayDeliveryResult => delivery !== null,
+                ),
+              };
+            }),
+          );
+        }),
       );
-      const deliveries = deliveriesByUser.flat();
-      return {
-        ok: true,
-        deliveries: deliveries.filter(
-          (delivery): delivery is RelayDeliveryResult => delivery !== null,
-        ),
-      };
     }),
   });
 });
@@ -208,6 +299,7 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     threadId: state.threadId,
     projectTitle: state.projectTitle,
     threadTitle: state.threadTitle,
+    ...(state.providerName === undefined ? {} : { providerName: state.providerName }),
     modelTitle: state.modelTitle,
     phase: state.phase,
     status: statusForPhase(state.phase),
