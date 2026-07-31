@@ -750,6 +750,71 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("maps Copilot auto-mode resolution and managed-settings enforcement", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-sdk-session-events");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-auto-mode-resolved",
+        timestamp,
+        parentId: null,
+        type: "session.auto_mode_resolved",
+        data: {
+          chosenModel: "gpt-5.4",
+          reasoningBucket: "high",
+        },
+      } as SessionEvent);
+      config.onEvent({
+        id: "evt-copilot-managed-settings-enforced",
+        timestamp,
+        parentId: null,
+        type: "session.managed_settings_enforced",
+        ephemeral: true,
+        data: {
+          action: "bypass_permissions_blocked",
+          escalation: "allow_all",
+          failClosed: false,
+          message: "Your organization disabled bypass permissions.",
+          setting: "permissions.disableBypassPermissionsMode",
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const configured = runtimeEvents.find(
+        (event) => event.type === "session.configured" && event.payload.config.model === "gpt-5.4",
+      );
+      NodeAssert.equal(configured?.type, "session.configured");
+      const warning = runtimeEvents.find(
+        (event) =>
+          event.type === "runtime.warning" &&
+          event.payload.message === "Your organization disabled bypass permissions.",
+      );
+      NodeAssert.equal(warning?.type, "runtime.warning");
+      NodeAssert.equal((yield* adapter.listSessions()).at(0)?.model, "gpt-5.4");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("denies plan execution and emits the proposed plan for fresh sessions", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -1994,6 +2059,98 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not emit empty Copilot assistant messages around tool calls", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-empty-assistant-tool-call");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "search the repository",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-empty-message-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-turn-empty-message" },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-empty-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        data: {
+          turnId: "sdk-turn-empty-message",
+          messageId: "message-empty-before-tool",
+          content: "",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-empty-message-tool-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          turnId: "sdk-turn-empty-message",
+          toolCallId: "tool-search-code",
+          toolName: "Github-mcp-server-search_code",
+          arguments: { query: "CopilotAdapter" },
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      NodeAssert.equal(
+        runtimeEvents.some(
+          (event) =>
+            (event.type === "item.started" || event.type === "item.completed") &&
+            String(event.itemId) === "copilot-message-message-empty-before-tool",
+        ),
+        false,
+      );
+      const snapshot = (yield* adapter.readThread(threadId)).turns.find(
+        (entry) => entry.id === turn.turnId,
+      );
+      NodeAssert.ok(snapshot);
+      NodeAssert.equal(
+        snapshot.items.some(
+          (item) =>
+            typeof item === "object" &&
+            item !== null &&
+            "type" in item &&
+            item.type === "assistant_message" &&
+            "messageId" in item &&
+            item.messageId === "message-empty-before-tool",
+        ),
+        false,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("emits turn diff when a Copilot write permission is approved", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -2299,6 +2456,200 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           ["task-review-1", "failed"],
           ["task-shell-1", "completed"],
         ],
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("maps native Copilot subagent lifecycle and child turns", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-native-subagent-lifecycle");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "delegate the investigation",
+        attachments: [],
+      });
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+      emit({
+        id: "evt-native-subagent-root-turn",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-root-turn" },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-subagent-tool",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          turnId: "sdk-root-turn",
+          toolCallId: "spawn-native-agent",
+          toolName: "delegate_agent",
+          arguments: { prompt: "Inspect CopilotAdapter" },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-subagent-started",
+        timestamp,
+        parentId: null,
+        type: "subagent.started",
+        agentId: "native-agent-1",
+        data: {
+          toolCallId: "spawn-native-agent",
+          agentName: "explore",
+          agentDisplayName: "Explore",
+          agentDescription: "Inspect CopilotAdapter",
+          model: "gpt-5",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-subagent-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        agentId: "native-agent-1",
+        data: { turnId: "sdk-child-turn", model: "gpt-5" },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-subagent-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        agentId: "native-agent-1",
+        data: { turnId: "sdk-child-turn", model: "gpt-5" },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-subagent-completed",
+        timestamp,
+        parentId: null,
+        type: "subagent.completed",
+        agentId: "native-agent-1",
+        data: {
+          toolCallId: "spawn-native-agent",
+          agentName: "explore",
+          agentDisplayName: "Explore",
+          durationMs: 25,
+          totalTokens: 50,
+          totalToolCalls: 2,
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-failed-subagent-tool",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          turnId: "sdk-root-turn",
+          toolCallId: "spawn-failed-native-agent",
+          toolName: "delegate_agent",
+          arguments: { prompt: "Inspect a failing path" },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-failed-subagent-started",
+        timestamp,
+        parentId: null,
+        type: "subagent.started",
+        agentId: "native-agent-2",
+        data: {
+          toolCallId: "spawn-failed-native-agent",
+          agentName: "explore",
+          agentDisplayName: "Failed Explore",
+          agentDescription: "Inspect a failing path",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-native-subagent-failed",
+        timestamp,
+        parentId: null,
+        type: "subagent.failed",
+        agentId: "native-agent-2",
+        data: {
+          toolCallId: "spawn-failed-native-agent",
+          agentName: "explore",
+          agentDisplayName: "Failed Explore",
+          error: "Child provider failed",
+          durationMs: 10,
+        },
+      } as SessionEvent);
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        runtimeEvents.filter(
+          (event) =>
+            event.type === "task.completed" &&
+            (String(event.payload.taskId) === "native-agent-1" ||
+              String(event.payload.taskId) === "native-agent-2"),
+        ).length < 2;
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const taskStarted = runtimeEvents.find(
+        (event) =>
+          event.type === "task.started" && String(event.payload.taskId) === "native-agent-1",
+      );
+      NodeAssert.equal(taskStarted?.type, "task.started");
+      if (taskStarted?.type === "task.started") {
+        NodeAssert.equal(taskStarted.turnId, turn.turnId);
+        NodeAssert.equal(taskStarted.payload.description, "Inspect CopilotAdapter");
+      }
+      const childProgress = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { readonly type: "task.progress" }> =>
+          event.type === "task.progress" && String(event.payload.taskId) === "native-agent-1",
+      );
+      NodeAssert.deepStrictEqual(
+        childProgress.map((event) => event.payload.summary),
+        ["Subagent turn started", "Subagent turn completed"],
+      );
+      const taskCompleted = runtimeEvents.find(
+        (event) =>
+          event.type === "task.completed" && String(event.payload.taskId) === "native-agent-1",
+      );
+      NodeAssert.equal(taskCompleted?.type, "task.completed");
+      if (taskCompleted?.type === "task.completed") {
+        NodeAssert.equal(taskCompleted.payload.status, "completed");
+        NodeAssert.deepStrictEqual(taskCompleted.payload.usage, {
+          durationMs: 25,
+          totalTokens: 50,
+          totalToolCalls: 2,
+        });
+      }
+      const failedTask = runtimeEvents.find(
+        (event) =>
+          event.type === "task.completed" && String(event.payload.taskId) === "native-agent-2",
+      );
+      NodeAssert.equal(failedTask?.type, "task.completed");
+      if (failedTask?.type === "task.completed") {
+        NodeAssert.equal(failedTask.payload.status, "failed");
+        NodeAssert.equal(failedTask.payload.summary, "Child provider failed");
+      }
+      NodeAssert.equal(
+        runtimeEvents.some((event) => event.type === "turn.completed"),
+        false,
       );
 
       yield* adapter.stopSession(threadId);

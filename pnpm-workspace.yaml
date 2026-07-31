@@ -15,6 +15,7 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  koffi: true
   msgpackr-extract: true
   msw: false
   node-pty: true
@@ -74,6 +75,15 @@ minimumReleaseAgeExclude:
   - "@effect/vitest@4.0.0-beta.103"
   - alchemy@2.0.0-beta.65
   - effect@4.0.0-beta.103
+  - "@github/copilot-darwin-arm64@1.0.77"
+  - "@github/copilot-darwin-x64@1.0.77"
+  - "@github/copilot-linux-arm64@1.0.77"
+  - "@github/copilot-linux-x64@1.0.77"
+  - "@github/copilot-linuxmusl-arm64@1.0.77"
+  - "@github/copilot-linuxmusl-x64@1.0.77"
+  - "@github/copilot-win32-arm64@1.0.77"
+  - "@github/copilot-win32-x64@1.0.77"
+  - "@github/copilot@1.0.77"
 
 overrides:
   "@clerk/backend": "catalog:"

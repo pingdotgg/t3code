@@ -48,13 +48,13 @@ import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts"
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
-  ProviderAdapterProcessError,
-  ProviderAdapterRequestError,
-  ProviderAdapterSessionClosedError,
-  ProviderAdapterSessionNotFoundError,
-  ProviderAdapterValidationError,
-} from "../Errors.ts";
-import { type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
+  CopilotAdapterProcessError as ProviderAdapterProcessError,
+  CopilotAdapterRequestError as ProviderAdapterRequestError,
+  CopilotAdapterSessionClosedError as ProviderAdapterSessionClosedError,
+  CopilotAdapterSessionNotFoundError as ProviderAdapterSessionNotFoundError,
+  CopilotAdapterValidationError as ProviderAdapterValidationError,
+  type CopilotAdapterShape,
+} from "../Services/CopilotAdapter.ts";
 import { resolveCopilotMcpBearerAuth } from "../copilotMcpBearerAuth.ts";
 import { createCopilotClient, stopCopilotClient, trimOrUndefined } from "../copilotRuntime.ts";
 import { makeThreadLifecycleLock } from "../threadLifecycleLock.ts";
@@ -89,9 +89,9 @@ type SessionPermissionRequestedEvent = Extract<SessionEvent, { type: "permission
 type SessionStartedEvent = Extract<SessionEvent, { type: "session.start" }>;
 type SessionResumedEvent = Extract<SessionEvent, { type: "session.resume" }>;
 type SessionUserMessageEvent = Extract<SessionEvent, { type: "user.message" }>;
-type SessionUserInputRequestedEvent = Extract<SessionEvent, { type: "user_input.requested" }>;
 type SessionUserInputCompletedEvent = Extract<SessionEvent, { type: "user_input.completed" }>;
-type SessionPermissionRequest = SessionPermissionRequestedEvent["data"]["permissionRequest"];
+type SessionPermissionRequest = PermissionRequest;
+type SessionUserInputRequestedData = CopilotUserInputRequest & { readonly requestId: string };
 type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
 type SessionApproval = NonNullable<SessionApprovalDecision["approval"]>;
 type CopilotTaskList = Awaited<ReturnType<CopilotSession["rpc"]["tasks"]["list"]>>;
@@ -148,6 +148,7 @@ interface PendingPermissionBinding {
 
 interface PendingUserInputBinding {
   readonly requestId: string;
+  readonly turnId?: TurnId | undefined;
   readonly question: string;
   readonly choices: ReadonlyArray<string>;
   readonly allowFreeform: boolean;
@@ -202,10 +203,7 @@ interface CopilotSessionContext {
   >;
   readonly pendingPermissionBindings: Map<string, PendingPermissionBinding>;
   readonly pendingUserInputHandlersBySignature: Map<string, Array<PendingUserInputHandler>>;
-  readonly pendingUserInputEventsBySignature: Map<
-    string,
-    Array<SessionUserInputRequestedEvent["data"]>
-  >;
+  readonly pendingUserInputEventsBySignature: Map<string, Array<SessionUserInputRequestedData>>;
   readonly pendingUserInputBindings: Map<string, PendingUserInputBinding>;
   readonly pendingMcpOauthRequests: Map<string, PendingMcpOauthRequest>;
   readonly pendingMcpHeadersRefreshRequests: Map<string, string>;
@@ -529,7 +527,7 @@ function sessionApprovalDecisionFromPermissionRequest(
       if (!request.canOfferSessionApproval) {
         return undefined;
       }
-      const commandIdentifiers =
+      const commandIdentifiers: ReadonlyArray<string> =
         promptRequest?.kind === "commands"
           ? promptRequest.commandIdentifiers
           : request.commands.map((command) => command.identifier);
@@ -1742,6 +1740,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     readonly marksTurnCompletion?: boolean | undefined;
     readonly raw?: SessionEvent | undefined;
   }) => {
+    const previousText = input.context.emittedTextByItemId.get(input.itemId);
+    if (previousText === undefined && input.nextText.length === 0) {
+      return;
+    }
     if (!input.context.startedItemIds.has(input.itemId)) {
       input.context.startedItemIds.add(input.itemId);
       await emitAsync({
@@ -1759,7 +1761,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       });
     }
 
-    const previousText = input.context.emittedTextByItemId.get(input.itemId);
     const delta = deltaFromBufferedText(previousText, input.nextText);
     input.context.emittedTextByItemId.set(input.itemId, input.nextText);
     const assistantItemIds =
@@ -1893,6 +1894,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     return emit({
       ...createBaseEvent({
         threadId: context.threadId,
+        turnId: request.turnId,
         requestId,
         raw,
       }),
@@ -1912,6 +1914,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     emit({
       ...createBaseEvent({
         threadId: context.threadId,
+        turnId: binding.turnId,
         requestId: binding.requestId,
         raw,
       }),
@@ -1981,8 +1984,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const handler = pendingHandlers.shift()!;
         const eventData = pendingEvents.shift()!;
         const requestId = eventData.requestId.trim();
+        const turnId = resolveTurnIdForEvent(context, {
+          sdkTurnId: context.activeSdkTurnId,
+        });
         const binding: PendingUserInputBinding = {
           requestId,
+          ...(turnId ? { turnId } : {}),
           question: eventData.question.trim(),
           choices: eventData.choices?.map((choice) => choice.trim()).filter(Boolean) ?? [],
           allowFreeform: eventData.allowFreeform ?? true,
@@ -2502,6 +2509,21 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           activeTurnId: turnId,
         });
         await runWithContext(emitTurnStarted(context, turnId, event));
+        if (event.agentId !== undefined) {
+          await emitAsync({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId,
+              raw: event,
+            }),
+            type: "task.progress",
+            payload: {
+              taskId: RuntimeTaskId.make(event.agentId),
+              description: `Copilot subagent ${event.agentId}`,
+              summary: "Subagent turn started",
+            },
+          });
+        }
         await emitAsync({
           ...createBaseEvent({
             threadId: context.threadId,
@@ -2599,6 +2621,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           context.activeSdkTurnKey = undefined;
         }
         if (event.agentId !== undefined) {
+          await emitAsync({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId,
+              raw: event,
+            }),
+            type: "task.progress",
+            payload: {
+              taskId: RuntimeTaskId.make(event.agentId),
+              description: `Copilot subagent ${event.agentId}`,
+              summary: "Subagent turn completed",
+            },
+          });
           return;
         }
         context.turnEndEventsByTurnId.set(turnId, event);
@@ -2819,6 +2854,91 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         if (turnId) {
           markTurnContinuingWithTool(context, turnId);
         }
+        const agentId = trimOrUndefined(event.agentId);
+        if (!turnId || !agentId) {
+          return;
+        }
+        context.turnIdByProviderItemId.set(agentId, turnId);
+        await emitAsync({
+          ...createBaseEvent({
+            threadId: context.threadId,
+            turnId,
+            raw: event,
+          }),
+          type: "task.started",
+          payload: {
+            taskId: RuntimeTaskId.make(agentId),
+            description:
+              trimOrUndefined(event.data.agentDescription) ??
+              trimOrUndefined(event.data.agentDisplayName) ??
+              event.data.agentName,
+            taskType: event.data.agentName,
+          },
+        });
+        return;
+      }
+      case "subagent.completed": {
+        const agentId = trimOrUndefined(event.agentId);
+        const turnId =
+          context.turnIdByProviderItemId.get(event.data.toolCallId) ??
+          (agentId ? context.turnIdByProviderItemId.get(agentId) : undefined);
+        if (!turnId || !agentId) {
+          return;
+        }
+        await emitAsync({
+          ...createBaseEvent({
+            threadId: context.threadId,
+            turnId,
+            raw: event,
+          }),
+          type: "task.completed",
+          payload: {
+            taskId: RuntimeTaskId.make(agentId),
+            status: "completed",
+            summary: `${event.data.agentDisplayName} completed`,
+            usage: {
+              ...(event.data.durationMs === undefined ? {} : { durationMs: event.data.durationMs }),
+              ...(event.data.totalTokens === undefined
+                ? {}
+                : { totalTokens: event.data.totalTokens }),
+              ...(event.data.totalToolCalls === undefined
+                ? {}
+                : { totalToolCalls: event.data.totalToolCalls }),
+            },
+          },
+        });
+        return;
+      }
+      case "subagent.failed": {
+        const agentId = trimOrUndefined(event.agentId);
+        const turnId =
+          context.turnIdByProviderItemId.get(event.data.toolCallId) ??
+          (agentId ? context.turnIdByProviderItemId.get(agentId) : undefined);
+        if (!turnId || !agentId) {
+          return;
+        }
+        await emitAsync({
+          ...createBaseEvent({
+            threadId: context.threadId,
+            turnId,
+            raw: event,
+          }),
+          type: "task.completed",
+          payload: {
+            taskId: RuntimeTaskId.make(agentId),
+            status: "failed",
+            summary: trimOrUndefined(event.data.error) ?? `${event.data.agentDisplayName} failed`,
+            usage: {
+              ...(event.data.durationMs === undefined ? {} : { durationMs: event.data.durationMs }),
+              ...(event.data.totalTokens === undefined
+                ? {}
+                : { totalTokens: event.data.totalTokens }),
+              ...(event.data.totalToolCalls === undefined
+                ? {}
+                : { totalToolCalls: event.data.totalToolCalls }),
+            },
+          },
+        });
         return;
       }
       case "mcp.oauth_required": {
@@ -3001,6 +3121,49 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         await runWithContext(emitPlanSnapshot(context, event, event.data.planContent));
         return;
       }
+      case "session.auto_mode_resolved": {
+        const model = trimOrUndefined(event.data.chosenModel);
+        if (!model) {
+          return;
+        }
+        updateProviderSession(context, { model });
+        await emitAsync({
+          ...createBaseEvent({
+            threadId: context.threadId,
+            raw: event,
+          }),
+          type: "session.configured",
+          payload: {
+            config: {
+              model,
+              autoModeResolution: event.data,
+            },
+          },
+        });
+        return;
+      }
+      case "session.managed_settings_enforced": {
+        await emitAsync({
+          ...createBaseEvent({
+            threadId: context.threadId,
+            turnId: context.activeTurnId,
+            raw: event,
+          }),
+          type: "runtime.warning",
+          payload: {
+            message:
+              trimOrUndefined(event.data.message) ??
+              "GitHub Copilot blocked an action because of managed settings.",
+            detail: event.data,
+          },
+        });
+        return;
+      }
+      case "tool_search.activated":
+      case "session.managed_settings_resolved":
+      case "mcp.tools.list_changed":
+      case "mcp.resources.list_changed":
+      case "mcp.prompts.list_changed":
       case "exit_plan_mode.completed":
       default:
         return;

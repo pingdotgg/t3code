@@ -22,6 +22,8 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { makeCopilotAdapterV2 } from "../../orchestration-v2/Adapters/CopilotAdapterV2.ts";
 import { makeCopilotTextGeneration } from "../../textGeneration/CopilotTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -51,6 +53,7 @@ export type CopilotDriverEnv =
   | Path.Path
   | Context.Service.Identifier<typeof HostProcessPlatform>
   | ProviderEventLoggers
+  | IdAllocatorV2
   | ServerConfig
   | BackgroundPolicy.BackgroundPolicy
   | ServerSettingsService;
@@ -85,6 +88,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
       const eventLoggers = yield* ProviderEventLoggers;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const idAllocator = yield* IdAllocatorV2;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const effectiveConfig = { ...config, enabled } satisfies CopilotSettings;
       const baseDirectory = path.join(serverConfig.stateDir, "providers", "copilot", instanceId);
@@ -119,6 +123,11 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         baseDirectory,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
+      const orchestrationAdapter = makeCopilotAdapterV2({
+        instanceId,
+        legacyAdapter: adapter,
+        idAllocator,
       });
       const textGeneration = yield* makeCopilotTextGeneration(effectiveConfig, processEnv, {
         baseDirectory,
@@ -158,7 +167,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         accentColor,
         enabled,
         snapshot,
-        adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),
