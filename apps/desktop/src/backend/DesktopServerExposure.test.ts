@@ -68,6 +68,15 @@ function dieOnSpawnLayer() {
   );
 }
 
+function throwOnSpawnLayer() {
+  return Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => {
+      throw new Error("unexpected tailscale spawn");
+    }),
+  );
+}
+
 function makeEnvironmentLayer(baseDir: string, env: Record<string, string | undefined> = {}) {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -321,6 +330,25 @@ describe("DesktopServerExposure", () => {
           ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.90.1.2:4173/"],
         );
       }),
+    ),
+  );
+
+  it.effect("keeps core endpoints when tailscale resolution dies", () =>
+    withHarness(
+      { ...lanNetworkInterfaces, ...tailnetNetworkInterfaces },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+        );
+      }),
+      {},
+      throwOnSpawnLayer(),
     ),
   );
 

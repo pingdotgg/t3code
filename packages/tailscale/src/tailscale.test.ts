@@ -212,6 +212,26 @@ describe("tailscale", () => {
     });
   });
 
+  it.effect("converts tailscale status spawn defects to typed failures", () => {
+    const cause = new Error("spawn ENOTDIR");
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.die(cause)),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleCommandSpawnError);
+      assert.equal(error.executable, "tailscale");
+      assert.equal(error.subcommand, "status");
+      assert.equal(error.argumentCount, 2);
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message, "Failed to spawn tailscale status.");
+      assert.notInclude(error.message, cause.message);
+    });
+  });
+
   it.effect("keeps nonzero exit diagnostics structured", () => {
     const layer = mockSpawnerLayer(() => ({
       code: 7,
@@ -288,6 +308,29 @@ describe("tailscale", () => {
     });
 
     return ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("converts tailscale serve spawn defects to typed failures", () => {
+    const cause = new Error("spawn ENOTDIR");
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.die(cause)),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+
+      assert.instanceOf(error, TailscaleCommandSpawnError);
+      assert.equal(error.executable, "tailscale");
+      assert.equal(error.subcommand, "serve");
+      assert.equal(error.argumentCount, 4);
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message, "Failed to spawn tailscale serve.");
+      assert.notInclude(error.message, cause.message);
+    });
   });
 
   it.effect("retains tailscale serve exit diagnostics", () => {
