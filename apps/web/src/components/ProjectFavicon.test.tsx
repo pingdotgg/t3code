@@ -1,0 +1,128 @@
+import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { EnvironmentId } from "@t3tools/contracts";
+
+const testState = vi.hoisted(() => ({
+  faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
+}));
+
+const hooks = vi.hoisted(() => {
+  let cursor = 0;
+  let slots: unknown[] = [];
+  const nextIndex = () => cursor++;
+
+  return {
+    beginRender() {
+      cursor = 0;
+    },
+    reset() {
+      cursor = 0;
+      slots = [];
+    },
+    useMemoCache(size: number): unknown[] {
+      const index = nextIndex();
+      if (!slots[index]) {
+        slots[index] = Array.from({ length: size }, () => Symbol.for("react.memo_cache_sentinel"));
+      }
+      return slots[index] as unknown[];
+    },
+    useState<T>(initialValue: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
+      const index = nextIndex();
+      if (index >= slots.length) {
+        slots[index] =
+          typeof initialValue === "function" ? (initialValue as () => T)() : initialValue;
+      }
+      const setValue: Dispatch<SetStateAction<T>> = (nextValue) => {
+        const previous = slots[index] as T;
+        slots[index] =
+          typeof nextValue === "function" ? (nextValue as (value: T) => T)(previous) : nextValue;
+      };
+      return [slots[index] as T, setValue];
+    },
+  };
+});
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useState: hooks.useState,
+  };
+});
+
+vi.mock("react/compiler-runtime", () => ({ c: hooks.useMemoCache }));
+vi.mock("../assets/assetUrls", () => ({
+  useAssetUrl: () => testState.faviconUrl,
+}));
+
+import { ProjectFavicon } from "./ProjectFavicon";
+
+type ProjectFaviconImageProps = {
+  readonly cacheKey: string;
+  readonly src: string;
+  readonly className?: string | undefined;
+  readonly fallbackIcon: ComponentType<{ className?: string }>;
+};
+
+type ImageElement = ReactElement<{
+  readonly src: string;
+  readonly onLoad?: () => void;
+  readonly onError?: () => void;
+}>;
+
+type ProjectFaviconImageElement = ReactElement<{
+  readonly children: [ReactElement | null, ImageElement | null, ImageElement | null];
+}>;
+
+function resolveImageComponent(): {
+  readonly Component: (props: ProjectFaviconImageProps) => ProjectFaviconImageElement;
+  readonly props: ProjectFaviconImageProps;
+} {
+  hooks.beginRender();
+  const element = ProjectFavicon({
+    environmentId: "environment-test" as EnvironmentId,
+    cwd: "/workspace-test",
+  }) as ReactElement<ProjectFaviconImageProps>;
+  hooks.reset();
+
+  return {
+    Component: element.type as (props: ProjectFaviconImageProps) => ProjectFaviconImageElement,
+    props: element.props,
+  };
+}
+
+function renderImage(
+  Component: (props: ProjectFaviconImageProps) => ProjectFaviconImageElement,
+  props: ProjectFaviconImageProps,
+): ProjectFaviconImageElement {
+  hooks.beginRender();
+  return Component(props);
+}
+
+describe("ProjectFavicon", () => {
+  beforeEach(() => {
+    hooks.reset();
+  });
+
+  it("falls back when the displayed favicon fails without discarding a valid older image early", () => {
+    const { Component, props } = resolveImageComponent();
+    const initialLoadingImage = renderImage(Component, props).props.children[2];
+    initialLoadingImage?.props.onLoad?.();
+
+    const refreshedProps = {
+      ...props,
+      src: "https://environment.test/api/assets/token-b/v1-20-favicon.svg",
+    };
+    const refreshing = renderImage(Component, refreshedProps).props.children;
+    expect(refreshing[1]?.props.src).toBe(props.src);
+    refreshing[2]?.props.onError?.();
+
+    const afterRefreshError = renderImage(Component, refreshedProps).props.children;
+    expect(afterRefreshError[1]?.props.src).toBe(props.src);
+    afterRefreshError[1]?.props.onError?.();
+
+    const afterDisplayedError = renderImage(Component, refreshedProps).props.children;
+    expect(afterDisplayedError[0]).not.toBeNull();
+    expect(afterDisplayedError[1]).toBeNull();
+  });
+});

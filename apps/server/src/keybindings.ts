@@ -547,19 +547,24 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const nextConfig = [...customConfig, ...missingDefaults];
-      const cappedConfig =
-        nextConfig.length > MAX_KEYBINDINGS_COUNT
-          ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
-          : nextConfig;
-      if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
-        yield* Effect.logWarning("truncating keybindings config to max entries", {
+      // Startup backfill must never evict persisted user rules: append only
+      // the defaults that fit and skip the rest.
+      const availableSlots = Math.max(0, MAX_KEYBINDINGS_COUNT - customConfig.length);
+      const defaultsToAppend = missingDefaults.slice(0, availableSlots);
+      const skippedDefaults = missingDefaults.slice(availableSlots);
+      if (skippedDefaults.length > 0) {
+        yield* Effect.logWarning("skipping default keybinding backfill at max entries", {
           path: keybindingsConfigPath,
           maxEntries: MAX_KEYBINDINGS_COUNT,
+          commands: skippedDefaults.map((rule) => rule.command),
         });
       }
+      if (defaultsToAppend.length === 0) {
+        yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
+        return;
+      }
 
-      yield* writeConfigAtomically(cappedConfig);
+      yield* writeConfigAtomically([...customConfig, ...defaultsToAppend]);
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
     }),
   );

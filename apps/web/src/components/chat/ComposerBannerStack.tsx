@@ -24,7 +24,7 @@ const exitTransitionStyle = {
 
 export interface ComposerBannerStackItem {
   readonly id: string;
-  readonly variant: "error" | "info" | "success" | "warning";
+  readonly variant: "default" | "error" | "info" | "success" | "warning";
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
