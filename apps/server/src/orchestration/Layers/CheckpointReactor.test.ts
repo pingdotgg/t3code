@@ -143,12 +143,14 @@ async function waitForThread(
   readModel: () => Promise<{
     readonly threads: ReadonlyArray<{
       readonly id: ThreadId;
+      readonly branch: string | null;
       readonly latestTurn: { readonly turnId: string } | null;
       readonly checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>;
       readonly activities: ReadonlyArray<{ readonly kind: string }>;
     }>;
   }>,
   predicate: (thread: {
+    branch: string | null;
     latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
@@ -158,6 +160,7 @@ async function waitForThread(
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async (): Promise<{
     latestTurn: { turnId: string } | null;
+    branch: string | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }> => {
@@ -276,10 +279,13 @@ describe("CheckpointReactor", () => {
     readonly hasSession?: boolean;
     readonly seedFilesystemCheckpoints?: boolean;
     readonly projectWorkspaceRoot?: string;
+    readonly threadBranch?: string | null;
     readonly threadWorktreePath?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly fullGitStatusRefreshCalls?: Array<string>;
+    readonly hasPrimaryRemote?: boolean;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -310,17 +316,35 @@ describe("CheckpointReactor", () => {
       refreshLocalStatus: (cwd: string) =>
         Effect.sync(() => {
           options?.gitStatusRefreshCalls?.push(cwd);
+          const refName = runGit(cwd, ["branch", "--show-current"]).trim();
+          return refName.length > 0 ? refName : null;
         }).pipe(
-          Effect.as({
+          Effect.map((refName) => ({
+            isRepo: true,
+            hasPrimaryRemote: options?.hasPrimaryRemote ?? false,
+            isDefaultRef: true,
+            refName,
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          })),
+        ),
+      refreshStatus: (cwd: string) =>
+        Effect.sync(() => {
+          options?.fullGitStatusRefreshCalls?.push(cwd);
+          const refName = runGit(cwd, ["branch", "--show-current"]).trim();
+          return {
             isRepo: true,
             hasPrimaryRemote: false,
             isDefaultRef: true,
-            refName: "main",
+            refName: refName.length > 0 ? refName : null,
             hasWorkingTreeChanges: false,
             workingTree: { files: [], insertions: 0, deletions: 0 },
-          }),
-        ),
-      refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+            hasUpstream: false,
+            aheadCount: 0,
+            behindCount: 0,
+            pr: null,
+          };
+        }),
       streamStatus: () => Stream.empty,
     });
 
@@ -382,7 +406,7 @@ describe("CheckpointReactor", () => {
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
-        branch: null,
+        branch: options?.threadBranch ?? null,
         worktreePath: options?.threadWorktreePath ?? cwd,
         createdAt,
       }),
@@ -518,6 +542,65 @@ describe("CheckpointReactor", () => {
     expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
   });
 
+  it("updates the thread to the branch checked out by the completed agent turn", async () => {
+    const fullGitStatusRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      fullGitStatusRefreshCalls,
+      hasPrimaryRemote: true,
+      threadBranch: "feature/original",
+    });
+    runGit(harness.cwd, ["switch", "-c", "feature/agent-branch"]);
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-branch-sync"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-branch-sync"),
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.branch === "feature/agent-branch",
+    );
+    await harness.drain();
+
+    expect(thread.branch).toBe("feature/agent-branch");
+    expect(fullGitStatusRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("does not regress a generated thread branch to a stale temporary worktree branch", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-generated-branch-set"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/generated-branch",
+      }),
+    );
+    runGit(harness.cwd, ["switch", "-c", "t3code/deadbeef"]);
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-stale-temporary-branch"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-stale-temporary-branch"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+
+    expect(thread?.branch).toBe("t3code/generated-branch");
+  });
+
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -571,6 +654,7 @@ describe("CheckpointReactor", () => {
     const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.checkpoints).toHaveLength(0);
+    expect(midThread?.branch).toBeNull();
 
     harness.provider.emit({
       type: "turn.completed",

@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -526,24 +527,81 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const refreshLocalGitStatusFromTurnCompletion = Effect.fn(
-    "refreshLocalGitStatusFromTurnCompletion",
+  const refreshGitStatusAndSyncThreadBranchFromTurnCompletion = Effect.fn(
+    "refreshGitStatusAndSyncThreadBranchFromTurnCompletion",
   )(function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
     const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
     if (Option.isNone(sessionRuntime)) {
       return;
     }
 
-    yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
+    const status = yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
+      Effect.map(Option.some),
       Effect.catch((error) =>
         Effect.logWarning("failed to refresh local git status after turn completion", {
           threadId: event.threadId,
           turnId: event.turnId ?? null,
           cwd: sessionRuntime.value.cwd,
           detail: error.message,
-        }),
+        }).pipe(Effect.as(Option.none())),
       ),
     );
+    if (Option.isNone(status) || status.value.refName === null) {
+      return;
+    }
+
+    const thread = yield* resolveThreadDetail(event.threadId);
+    if (!thread) {
+      return;
+    }
+    const turnId = toTurnId(event.turnId);
+    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
+      return;
+    }
+
+    const refName = status.value.refName;
+    if (
+      refName === thread.branch ||
+      (thread.branch !== null &&
+        !isTemporaryWorktreeBranch(thread.branch) &&
+        isTemporaryWorktreeBranch(refName))
+    ) {
+      return;
+    }
+
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("turn-completion-branch-sync"),
+        threadId: event.threadId,
+        branch: refName,
+        expectedBranch: thread.branch,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to sync thread branch after turn completion", {
+            threadId: event.threadId,
+            turnId: event.turnId ?? null,
+            cwd: sessionRuntime.value.cwd,
+            refName,
+            detail: error.message,
+          }),
+        ),
+      );
+
+    if (status.value.hasPrimaryRemote) {
+      yield* vcsStatusBroadcaster.refreshStatus(sessionRuntime.value.cwd).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to refresh remote git status after thread branch sync", {
+            threadId: event.threadId,
+            turnId: event.turnId ?? null,
+            cwd: sessionRuntime.value.cwd,
+            refName,
+            detail: error.message,
+          }),
+        ),
+      );
+    }
   });
 
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fn(
@@ -790,7 +848,7 @@ const make = Effect.gen(function* () {
 
     if (event.type === "turn.completed") {
       const turnId = toTurnId(event.turnId);
-      yield* refreshLocalGitStatusFromTurnCompletion(event);
+      yield* refreshGitStatusAndSyncThreadBranchFromTurnCompletion(event);
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>
