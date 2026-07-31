@@ -208,6 +208,7 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     threadId: state.threadId,
     projectTitle: state.projectTitle,
     threadTitle: state.threadTitle,
+    ...(state.providerName === undefined ? {} : { providerName: state.providerName }),
     modelTitle: state.modelTitle,
     phase: state.phase,
     status: statusForPhase(state.phase),

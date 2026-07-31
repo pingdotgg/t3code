@@ -97,9 +97,26 @@ describe("projectThreadAwareness", () => {
       phase: "running",
       headline: "Agent is working",
       detail: "Codex is active.",
+      providerName: "Codex",
       modelTitle: "gpt-5.4",
       deepLink: "/threads/env-1/thread-1",
     });
+  });
+
+  it("falls back to the provider instance before a session is materialized", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("cursor_work"),
+          model: "gpt-5.4",
+        },
+        hasPendingApprovals: true,
+      }),
+    });
+
+    expect(state?.providerName).toBe("cursor_work");
   });
 
   it("projects completed turns as completed even when teardown settled them as interrupted", () => {

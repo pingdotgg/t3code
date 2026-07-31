@@ -22,6 +22,7 @@ export interface AgentAwarenessState {
   readonly phase: AgentAwarenessPhase;
   readonly headline: string;
   readonly detail?: string;
+  readonly providerName: string;
   readonly modelTitle: string;
   readonly updatedAt: string;
   readonly deepLink: string;
@@ -68,6 +69,11 @@ export function projectThreadAwareness(
     phase,
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
+    // A live session records the driver kind (for example `cursor` or
+    // `claudeAgent`). Before that session is materialized, retain the selected
+    // provider instance as the best available identity rather than guessing
+    // the provider from its model name.
+    providerName: thread.session?.providerName ?? thread.modelSelection.instanceId,
     modelTitle: thread.modelSelection.model,
     updatedAt: thread.updatedAt,
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),

@@ -44,6 +44,7 @@ function makeRow(overrides: Partial<AgentActivityRowProps>): AgentActivityRowPro
     threadId: "thread-1",
     projectTitle: "Project",
     threadTitle: "Thread",
+    providerName: "codex",
     modelTitle: "gpt-5.4",
     phase: "running",
     status: "Working",
@@ -318,11 +319,70 @@ describe("AgentActivity widget layout", () => {
       expect(banner).toContain(`Thread ${visible}`);
     }
     expect(banner).not.toContain("Thread 5");
-    expect(banner).toContain("+1 more");
+    expect(banner).toContain("+2 more");
     const expanded = JSON.stringify(layout.expandedBottom);
     expect(expanded).toContain("Thread 4");
     expect(expanded).not.toContain("Thread 5");
-    expect(expanded).toContain("+1 more");
+    expect(expanded).toContain("+2 more");
+    expect(JSON.stringify(layout.bannerSmall)).toContain("+5 more");
+  });
+
+  it("uses provider identity instead of inferring the icon from the model", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activeCount: 2,
+        activities: [
+          makeRow({ providerName: "cursor", modelTitle: "gpt-5.4" }),
+          makeRow({
+            threadId: "thread-2",
+            providerName: "claudeAgent",
+            modelTitle: "gpt-5.4",
+          }),
+        ],
+      },
+      environment as never,
+    );
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain('"assetName":"Cursor"');
+    expect(banner).toContain('"assetName":"Claude"');
+    expect(banner).not.toContain('"assetName":"Codex"');
+  });
+
+  it("keeps active work dominant while a recent failed row remains", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activeCount: 1,
+        activities: [
+          makeRow({
+            threadId: "failed",
+            threadTitle: "Recently failed",
+            phase: "failed",
+            status: "Failed",
+          }),
+          makeRow({
+            threadId: "active",
+            threadTitle: "Still working",
+            phase: "running",
+            status: "Working",
+          }),
+        ],
+      },
+      environment as never,
+    );
+
+    expect(JSON.stringify(layout.compactLeading)).toContain("#64d2ff");
+    expect(JSON.stringify(layout.compactLeading)).not.toContain("#ff453a");
+    expect(JSON.stringify(layout.compactTrailing)).toContain("Working");
+    expect(JSON.stringify(layout.compactTrailing)).not.toContain("Failed");
+    expect(JSON.stringify(layout.minimal)).not.toContain("xmark.octagon.fill");
+
+    const watch = JSON.stringify(layout.bannerSmall);
+    expect(watch).toContain("Agents active");
+    expect(watch).toContain("Still working");
+    expect(watch).not.toContain("Agent failed");
+    expect(watch).not.toContain("Recently failed");
   });
 
   it("names the project on every row so each one says where it is working", () => {

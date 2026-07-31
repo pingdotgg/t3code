@@ -34,6 +34,7 @@ export interface AgentActivityRowProps {
   readonly threadId: string;
   readonly projectTitle: string;
   readonly threadTitle: string;
+  readonly providerName?: string;
   readonly modelTitle: string;
   readonly phase: AgentActivityPhase;
   readonly status: string;
@@ -113,29 +114,39 @@ export function AgentActivity(
     (a, b) => phasePriority(a.phase) - phasePriority(b.phase),
   );
   const topRow = ordered[0];
+  // `activities` is capped by the relay, but `activeCount` is not. Include
+  // active rows omitted upstream as well as any terminal rows riding along.
+  const representedActiveCount = ordered.filter(
+    (row) => row.phase !== "completed" && row.phase !== "failed",
+  ).length;
+  const representedTerminalCount = ordered.length - representedActiveCount;
+  const totalRowCount =
+    Math.max(props.activeCount, representedActiveCount) + representedTerminalCount;
 
   const attentionRows = props.activities.filter(
     (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
   );
   const attentionRow = attentionRows[0];
   const failedRow = props.activities.find((row) => row.phase === "failed");
-  const heroRow = attentionRow ?? failedRow ?? topRow;
-  const tint = phaseTint(heroRow?.phase);
-  // Headline count leans on the accent when a human is actually blocked.
-  const headerTint = attentionRow
-    ? phaseTint(attentionRow.phase)
-    : failedRow
-      ? phaseTint(failedRow.phase)
-      : tint;
+  const activeRow = ordered.find((row) => row.phase !== "completed" && row.phase !== "failed");
 
   // With nothing active the aggregate only carries recently finished work, so
   // "0 active agents" (and a lone "0" in the expanded island) read as broken.
-  // Lead with the outcome instead. The outcome is derived here from the rows
-  // rather than taken from the server subtitle (which keys off the newest
-  // terminal row): every presentation — header text, tint, count slots,
-  // minimal glyph — must agree, and a failure anywhere should dominate a
-  // newer success.
+  // Lead with the outcome instead.
   const allDone = props.activeCount === 0;
+  // A recently failed row can remain in the aggregate while other work is
+  // active. It should stay visible in the list, but must not replace the
+  // compact/Watch status of the active work.
+  const heroRow = attentionRow ?? (allDone ? (failedRow ?? topRow) : activeRow);
+  const tint = phaseTint(heroRow?.phase);
+  // Headline count leans on the accent when a human is actually blocked.
+  const headerTint = attentionRow ? phaseTint(attentionRow.phase) : tint;
+
+  // The outcome is derived here from the rows rather than taken from the
+  // server subtitle (which keys off the newest terminal row): every
+  // presentation — header text, tint, count slots, minimal glyph — must agree,
+  // and a failure anywhere should dominate a newer success once all work has
+  // stopped.
   const doneLabel = failedRow ? "Failed" : "Done";
   const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
 
@@ -176,7 +187,7 @@ export function AgentActivity(
 
   // Any registered scheme variant routes back to this app; taps are delivered
   // to the widget's containing app, so the prod scheme is safe for all builds.
-  const deepLinkRow = attentionRow ?? topRow;
+  const deepLinkRow = heroRow;
   const deepLink =
     deepLinkRow && deepLinkRow.deepLink.startsWith("/") && !deepLinkRow.deepLink.startsWith("//")
       ? `t3code://${deepLinkRow.deepLink.slice(1)}`
@@ -238,14 +249,13 @@ export function AgentActivity(
     </Text>
   );
 
-  // A provider mark and brand tint head each card. The aggregate only carries
-  // the model name, so the brand is
-  // read off that the way the desktop app matches driver slugs: leading-token
-  // first, since custom instances prefix the driver (`codex_personal`).
+  // A provider mark and brand tint head each card. Provider identity comes
+  // from the orchestration session rather than the model title: Cursor and
+  // Claude can both run GPT-named models without becoming Codex.
   const brandFor = (
-    modelTitle: string,
+    providerName: string | undefined,
   ): { readonly asset: string; readonly tint: string; readonly label: string } => {
-    const raw = modelTitle.toLowerCase();
+    const raw = providerName?.toLowerCase() ?? "";
     // Tints match apps/web's provider icons; each mark is a template image, so
     // the container's foreground style is what colours it.
     if (raw.startsWith("claude") || raw.includes("anthropic") || raw.startsWith("opus")) {
@@ -307,7 +317,7 @@ export function AgentActivity(
         ),
       ]}
     >
-      {renderMark(brandFor(row.modelTitle).asset, 11, brandFor(row.modelTitle).tint)}
+      {renderMark(brandFor(row.providerName).asset, 11, brandFor(row.providerName).tint)}
       <Text
         modifiers={[
           font({ weight: "semibold", size: 12, design: "rounded" }),
@@ -351,7 +361,7 @@ export function AgentActivity(
     for (let index = 0; index < shown.length; index++) {
       nodes.push(renderCard(shown[index]!, `card-${index}`));
     }
-    const overflow = ordered.length - shown.length;
+    const overflow = totalRowCount - shown.length;
     if (overflow > 0) {
       nodes.push(
         <Text
@@ -436,13 +446,7 @@ export function AgentActivity(
   // banner. Reusing the full strip there made the phase label collapse to an
   // ellipsis between the logo and "1 needs attention", while the row repeated
   // the same phase and sacrificed most of the useful thread title.
-  const watchHeadline = attentionRow
-    ? "Needs attention"
-    : failedRow
-      ? "Agent failed"
-      : allDone
-        ? doneLabel
-        : "Agents active";
+  const watchHeadline = attentionRow ? "Needs attention" : allDone ? doneLabel : "Agents active";
   const renderWatchStrip = () => (
     <HStack key="watch-strip" spacing={6} alignment="center">
       {renderLogo(13, primaryForeground)}
@@ -478,7 +482,7 @@ export function AgentActivity(
         ),
       ]}
     >
-      {renderMark(brandFor(row.modelTitle).asset, 13, brandFor(row.modelTitle).tint)}
+      {renderMark(brandFor(row.providerName).asset, 13, brandFor(row.providerName).tint)}
       <VStack
         alignment="leading"
         spacing={1}
@@ -521,7 +525,7 @@ export function AgentActivity(
     </HStack>
   );
 
-  const watchOverflow = Math.max(0, ordered.length - 1);
+  const watchOverflow = Math.max(0, totalRowCount - (heroRow ? 1 : 0));
 
   return {
     banner: (
@@ -552,7 +556,7 @@ export function AgentActivity(
       >
         {[
           renderWatchStrip(),
-          ...(topRow ? [renderWatchCard(topRow)] : []),
+          ...(heroRow ? [renderWatchCard(heroRow)] : []),
           ...(watchOverflow > 0
             ? [
                 <Text
@@ -595,7 +599,7 @@ export function AgentActivity(
     // the wordmark does not. Show the blocking/outcome phase glyph, else the
     // mark (all-done shows the hero row's checkmark/cross).
     minimal:
-      (attentionRow || failedRow || allDone) && heroRow
+      (attentionRow || allDone) && heroRow
         ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase))
         : renderLogo(11, tint),
     expandedLeading: (
