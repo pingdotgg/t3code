@@ -87,6 +87,7 @@ export interface ShowcaseCapture {
 }
 
 interface IosCaptureCleanup {
+  readonly name: string;
   readonly udid: string;
   readonly startedByRunner: boolean;
   readonly createdByRunner: boolean;
@@ -778,17 +779,34 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
 
 async function setIosSimulatorOrientation(
   orientation: NonNullable<ShowcaseIosDevice["orientation"]>,
-  udid: string,
+  simulator: Pick<SimctlDevice, "name" | "udid">,
 ): Promise<void> {
-  await runCommand("open", ["-a", "Simulator", "--args", "-CurrentDeviceUDID", udid]);
+  await runCommand("open", ["-a", "Simulator", "--args", "-CurrentDeviceUDID", simulator.udid]);
   const menuItem = orientation === "landscape" ? "Landscape Right" : "Portrait";
   await runCommand("osascript", [
     "-e",
+    "on run argv",
+    "-e",
+    "set simulatorName to item 1 of argv",
+    "-e",
     'tell application "Simulator" to activate',
     "-e",
-    `tell application "System Events" to tell process "Simulator" to click menu item "${menuItem}" of menu "Orientation" of menu item "Orientation" of menu "Device" of menu bar item "Device" of menu bar 1`,
+    'tell application "System Events" to tell process "Simulator"',
+    "-e",
+    'set simulatorWindows to menu items of menu "Window" of menu bar item "Window" of menu bar 1 whose name starts with simulatorName',
+    "-e",
+    'if (count of simulatorWindows) is not 1 then error "Expected exactly one Simulator window for " & simulatorName',
+    "-e",
+    "click item 1 of simulatorWindows",
+    "-e",
+    `click menu item "${menuItem}" of menu "Orientation" of menu item "Orientation" of menu "Device" of menu bar item "Device" of menu bar 1`,
+    "-e",
+    "end tell",
     "-e",
     "delay 1",
+    "-e",
+    "end run",
+    simulator.name,
   ]);
 }
 
@@ -829,6 +847,7 @@ async function captureIos(
   const { simulator, createdByRunner } = await ensureIosSimulator(capture.device);
   const startedByRunner = simulator.state !== "Booted";
   registerCleanup({
+    name: simulator.name,
     udid: simulator.udid,
     startedByRunner,
     createdByRunner,
@@ -893,7 +912,7 @@ async function captureIos(
       firstScene,
     ]);
     if (capture.device.orientation === "landscape") {
-      await setIosSimulatorOrientation("landscape", simulator.udid);
+      await setIosSimulatorOrientation("landscape", simulator);
     }
   };
   await NodeFSP.rm(readyPath, { force: true });
@@ -1344,7 +1363,7 @@ async function main(): Promise<void> {
       }
       for (const cleanup of iosCleanups) {
         if (cleanup.restorePortrait) {
-          await setIosSimulatorOrientation("portrait", cleanup.udid).catch(() => undefined);
+          await setIosSimulatorOrientation("portrait", cleanup).catch(() => undefined);
         }
         if (cleanup.startedByRunner || cleanup.createdByRunner) {
           await runCommand("xcrun", ["simctl", "shutdown", cleanup.udid]).catch(() => undefined);
