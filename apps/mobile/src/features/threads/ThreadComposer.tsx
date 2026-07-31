@@ -82,6 +82,8 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  */
 export const COMPOSER_EXPANDED_CHROME = 174;
 
+export const COMPOSER_PENDING_CARD_MIN_CHROME = 160;
+
 export interface ThreadComposerProps {
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
