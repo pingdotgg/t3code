@@ -55,6 +55,7 @@ import {
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -474,7 +475,7 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection id="source-control" title="Server environment">
+    <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
       <Empty className="min-h-88">
         <EmptyMedia variant="icon">
           <GitPullRequestIcon />
@@ -553,7 +554,11 @@ export function SourceControlSettingsPanel() {
       ) : hasDiscoveryItems ? (
         <>
           {hasVersionControlSystems ? (
-            <SettingsSection id="source-control" title="Version Control" headerAction={scanButton}>
+            <SettingsSection
+              id={searchableSetting("source-control").id}
+              title="Version Control"
+              headerAction={scanButton}
+            >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
                   {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
@@ -564,7 +569,7 @@ export function SourceControlSettingsPanel() {
 
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
-              id={hasVersionControlSystems ? undefined : "source-control"}
+              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title="Source Control Providers"
               headerAction={hasVersionControlSystems ? null : scanButton}
             >

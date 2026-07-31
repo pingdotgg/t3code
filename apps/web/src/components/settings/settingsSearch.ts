@@ -15,6 +15,10 @@ export interface SettingsSearchItem {
   readonly targetId?: string;
 }
 
+/**
+ * Section labels in sidebar order. The sidebar nav and the search-result
+ * subtitles both render from this record, so each label exists once.
+ */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
@@ -26,7 +30,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
 };
 
-export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
+/**
+ * Every searchable setting, in result order. This catalog is the single
+ * source of truth for anchor ids and visible titles: panels render both via
+ * `searchableSetting`, so a retitle (or, later, a translation pass) happens
+ * here once instead of separately in the panel and the index.
+ */
+export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "theme",
     title: "Theme",
@@ -152,7 +162,26 @@ export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     title: "Archived threads",
     to: "/settings/archived",
   },
-];
+] as const satisfies ReadonlyArray<SettingsSearchItem>;
+
+export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
+
+const SEARCH_ITEMS_BY_ID = Object.fromEntries(
+  SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item]),
+) as Readonly<Record<SettingsSearchItemId, SettingsSearchItem>>;
+
+/**
+ * `id` and `title` props for the element a search item anchors to. Panels
+ * spread (or pick from) this instead of restating the strings, so the catalog
+ * and the rendered settings cannot drift apart.
+ */
+export function searchableSetting(id: SettingsSearchItemId): {
+  readonly id: string;
+  readonly title: string;
+} {
+  const { id: anchorId, title } = SEARCH_ITEMS_BY_ID[id];
+  return { id: anchorId, title };
+}
 
 function normalizeSearchText(value: string): string {
   return value

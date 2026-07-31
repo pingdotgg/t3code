@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { searchSettings, SETTINGS_SEARCH_ITEMS, type SettingsSearchItem } from "./settingsSearch";
+import {
+  searchableSetting,
+  searchSettings,
+  SETTINGS_SEARCH_ITEMS,
+  type SettingsSearchItem,
+} from "./settingsSearch";
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
@@ -57,6 +62,11 @@ describe("searchSettings", () => {
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("serves anchor props to panels from the catalog", () => {
+    expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
+    expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
   });
 
   it("routes appearance settings to their current section", () => {
