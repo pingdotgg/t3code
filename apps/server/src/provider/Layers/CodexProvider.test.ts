@@ -1,6 +1,53 @@
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+  refreshCodexSkillsAfterPluginSync,
+} from "./CodexProvider.ts";
+
+it.effect("waits for plugin inventory before force-reloading skills", () =>
+  Effect.gen(function* () {
+    const calls: Array<{ method: string; payload: unknown }> = [];
+    const skillsResponse = {
+      data: [{ cwd: "/tmp/project", errors: [], skills: [] }],
+    };
+    const client = {
+      request: (method: string, payload: unknown) => {
+        calls.push({ method, payload });
+        switch (method) {
+          case "plugin/installed":
+            return Effect.succeed({ marketplaces: [] });
+          case "skills/list":
+            return Effect.succeed(skillsResponse);
+          default:
+            return Effect.die(new Error(`Unexpected request: ${method}`));
+        }
+      },
+    } as unknown as Parameters<typeof refreshCodexSkillsAfterPluginSync>[0]["client"];
+
+    const response = yield* refreshCodexSkillsAfterPluginSync({
+      client,
+      cwd: "/tmp/project",
+    });
+
+    assert.strictEqual(response, skillsResponse);
+    assert.deepStrictEqual(calls, [
+      {
+        method: "plugin/installed",
+        payload: { cwds: ["/tmp/project"] },
+      },
+      {
+        method: "skills/list",
+        payload: {
+          cwds: ["/tmp/project"],
+          forceReload: true,
+        },
+      },
+    ]);
+  }),
+);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
