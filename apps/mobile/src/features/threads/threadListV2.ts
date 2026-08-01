@@ -33,10 +33,14 @@ export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooz
 export function resolveThreadListV2SettlementPreferences(input: {
   readonly autoSettleInactive?: boolean;
   readonly autoSettleOnChangeRequestCompletion?: boolean;
-}): {
-  readonly autoSettleAfterDays: number | null;
-  readonly autoSettleOnChangeRequestCompletion: boolean;
-} {
+  readonly preferencesLoaded: boolean;
+}) {
+  if (!input.preferencesLoaded) {
+    return {
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+    };
+  }
   return {
     autoSettleAfterDays:
       input.autoSettleInactive === false ? null : DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,

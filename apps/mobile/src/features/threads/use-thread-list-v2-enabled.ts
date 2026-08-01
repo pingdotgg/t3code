@@ -22,14 +22,10 @@ export function useThreadListV2Enabled(): boolean {
   });
 }
 
-export function useThreadListV2SettlementPreferences(): {
-  readonly autoSettleAfterDays: number | null;
-  readonly autoSettleOnChangeRequestCompletion: boolean;
-} {
+export function useThreadListV2SettlementPreferences() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const preferences = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value
-    : undefined;
+  const preferencesLoaded = AsyncResult.isSuccess(preferencesResult);
+  const preferences = preferencesLoaded ? preferencesResult.value : undefined;
   const autoSettleInactive = preferences?.threadListV2AutoSettleInactive;
   const autoSettleOnChangeRequestCompletion =
     preferences?.threadListV2AutoSettleOnChangeRequestCompletion;
@@ -38,7 +34,8 @@ export function useThreadListV2SettlementPreferences(): {
       resolveThreadListV2SettlementPreferences({
         autoSettleInactive,
         autoSettleOnChangeRequestCompletion,
+        preferencesLoaded,
       }),
-    [autoSettleInactive, autoSettleOnChangeRequestCompletion],
+    [autoSettleInactive, autoSettleOnChangeRequestCompletion, preferencesLoaded],
   );
 }

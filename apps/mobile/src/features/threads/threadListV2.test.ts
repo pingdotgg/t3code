@@ -124,9 +124,16 @@ describe("resolveThreadListV2Enabled", () => {
 
 describe("resolveThreadListV2SettlementPreferences", () => {
   it("defaults both automatic triggers on", () => {
-    expect(resolveThreadListV2SettlementPreferences({})).toEqual({
+    expect(resolveThreadListV2SettlementPreferences({ preferencesLoaded: true })).toEqual({
       autoSettleAfterDays: 3,
       autoSettleOnChangeRequestCompletion: true,
+    });
+  });
+
+  it("holds both automatic triggers off while preferences are loading", () => {
+    expect(resolveThreadListV2SettlementPreferences({ preferencesLoaded: false })).toEqual({
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
     });
   });
 
@@ -135,6 +142,7 @@ describe("resolveThreadListV2SettlementPreferences", () => {
       resolveThreadListV2SettlementPreferences({
         autoSettleInactive: false,
         autoSettleOnChangeRequestCompletion: false,
+        preferencesLoaded: true,
       }),
     ).toEqual({
       autoSettleAfterDays: null,

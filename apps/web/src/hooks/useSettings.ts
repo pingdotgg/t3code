@@ -223,6 +223,41 @@ export function useClientSettings<T = ClientSettings>(
   return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
 }
 
+export function resolveClientThreadSettlementPreferences(input: {
+  readonly autoSettleAfterDays: number | null;
+  readonly autoSettleOnChangeRequestCompletion: boolean;
+  readonly settingsHydrated: boolean;
+}) {
+  if (!input.settingsHydrated) {
+    return {
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+    };
+  }
+  return {
+    autoSettleAfterDays: input.autoSettleAfterDays,
+    autoSettleOnChangeRequestCompletion: input.autoSettleOnChangeRequestCompletion,
+  };
+}
+
+export function useClientThreadSettlementPreferences() {
+  const settingsHydrated = useClientSettingsHydrated();
+  const settings = useClientSettingsValue();
+  return useMemo(
+    () =>
+      resolveClientThreadSettlementPreferences({
+        autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
+        autoSettleOnChangeRequestCompletion: settings.sidebarAutoSettleOnChangeRequestCompletion,
+        settingsHydrated,
+      }),
+    [
+      settings.sidebarAutoSettleAfterDays,
+      settings.sidebarAutoSettleOnChangeRequestCompletion,
+      settingsHydrated,
+    ],
+  );
+}
+
 export function resolveEnvironmentIdentificationMode(input: {
   mode: EnvironmentIdentificationMode;
   settingsHydrated: boolean;
