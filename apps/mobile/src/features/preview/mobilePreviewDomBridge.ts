@@ -159,15 +159,27 @@ export function mobilePreviewDomCaptureScript(requestId: string): string {
     const requestId = ${encodedRequestId};
     try {
       const selectorFor = (element) => {
-        if (element.id) return "#" + CSS.escape(element.id);
+        const identifiesElement = (selector) => {
+          try {
+            const matches = document.querySelectorAll(selector);
+            return matches.length === 1 && matches[0] === element;
+          } catch {
+            return false;
+          }
+        };
+        if (element.id) {
+          const selector = "#" + CSS.escape(element.id);
+          if (identifiesElement(selector)) return selector;
+        }
         for (const attribute of ["data-testid", "name"]) {
           const value = element.getAttribute(attribute);
           if (value) {
-            return element.tagName.toLowerCase() + "[" + attribute + "=" + JSON.stringify(value) + "]";
+            const selector = element.tagName.toLowerCase() + "[" + attribute + "=" + JSON.stringify(value) + "]";
+            if (identifiesElement(selector)) return selector;
           }
         }
-        const buildParts = (current, parts = []) => {
-          if (!current || current.nodeType !== Node.ELEMENT_NODE || parts.length >= 8) {
+        const buildParts = (current, parts = [], maximumDepth = 8) => {
+          if (!current || current.nodeType !== Node.ELEMENT_NODE || parts.length >= maximumDepth) {
             return parts;
           }
           const parent = current.parentElement;
@@ -178,22 +190,32 @@ export function mobilePreviewDomCaptureScript(requestId: string): string {
           const part = siblings.length > 1
             ? base + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")"
             : base;
-          return buildParts(parent, [part, ...parts]);
+          return buildParts(parent, [part, ...parts], maximumDepth);
         };
-        return buildParts(element).join(" > ");
+        const compactSelector = buildParts(element).join(" > ");
+        if (identifiesElement(compactSelector)) return compactSelector;
+        const exactSelector = buildParts(element, [], Number.POSITIVE_INFINITY).join(" > ");
+        return identifiesElement(exactSelector) ? exactSelector : "";
       };
       const visible = (element) => {
-        const style = getComputedStyle(element);
         const rect = element.getBoundingClientRect();
-        return style.visibility !== "hidden"
-          && style.display !== "none"
-          && style.opacity !== "0"
-          && rect.width > 0
+        if (!(rect.width > 0
           && rect.height > 0
           && rect.right > 0
           && rect.bottom > 0
           && rect.left < window.innerWidth
-          && rect.top < window.innerHeight;
+          && rect.top < window.innerHeight)) return false;
+        for (let current = element; current; current = current.parentElement) {
+          const style = getComputedStyle(current);
+          if (
+            style.visibility === "hidden" ||
+            style.display === "none" ||
+            Number(style.opacity) <= 0
+          ) {
+            return false;
+          }
+        }
+        return true;
       };
       const elements = Array.from(document.querySelectorAll(
         "a[href],button,input,textarea,select,[role],[tabindex]"

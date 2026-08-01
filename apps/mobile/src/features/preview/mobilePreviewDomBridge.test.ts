@@ -143,6 +143,9 @@ describe("mobile preview DOM bridge", () => {
     expect(script).toContain("window.ReactNativeWebView?.postMessage");
     expect(script).toContain('kind: "t3.preview.capture-error"');
     expect(script).toContain(".slice(0, 200)");
+    expect(script).toContain("document.querySelectorAll(selector)");
+    expect(script).toContain("Number.POSITIVE_INFINITY");
+    expect(script).toContain("current = current.parentElement");
     expect(script.trimEnd().endsWith("true;")).toBe(true);
   });
 });

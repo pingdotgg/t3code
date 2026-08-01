@@ -22,10 +22,7 @@ export function resolveMobilePreviewGatewayUri(input: {
   readonly environmentHttpBaseUrl: string;
   readonly relativeUrl: string;
 }): string {
-  if (
-    !input.relativeUrl.startsWith(GATEWAY_BOOTSTRAP_PREFIX) ||
-    input.relativeUrl.startsWith("//")
-  ) {
+  if (!input.relativeUrl.startsWith("/") || input.relativeUrl.startsWith("//")) {
     throw new Error(INVALID_GATEWAY_ADDRESS);
   }
   let environmentUrl: URL;
@@ -39,6 +36,7 @@ export function resolveMobilePreviewGatewayUri(input: {
   if (
     (environmentUrl.protocol !== "http:" && environmentUrl.protocol !== "https:") ||
     gatewayUrl.origin !== environmentUrl.origin ||
+    !gatewayUrl.pathname.startsWith(GATEWAY_BOOTSTRAP_PREFIX) ||
     (gatewayUrl.protocol !== "http:" && gatewayUrl.protocol !== "https:")
   ) {
     throw new Error(INVALID_GATEWAY_ADDRESS);

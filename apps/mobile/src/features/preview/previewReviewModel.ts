@@ -198,10 +198,11 @@ export function previewSnapshotIsStale(
   snapshot: PreviewReviewSnapshot,
   event: PreviewEvent,
 ): boolean {
+  if (event.serverEpoch !== snapshot.serverEpoch) return true;
   return (
     event.threadId === snapshot.threadId &&
     event.tabId === snapshot.tabId &&
-    (event.serverEpoch !== snapshot.serverEpoch || event.revision > snapshot.previewRevision)
+    event.revision > snapshot.previewRevision
   );
 }
 

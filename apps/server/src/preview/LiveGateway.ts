@@ -81,12 +81,19 @@ const withoutSession = (state: LiveGatewayState, sessionId: AuthSessionId): Live
   leases: new Map([...state.leases].filter(([, lease]) => lease.sessionId !== sessionId)),
 });
 
-const withoutSessionTickets = (
+const withoutTargetTickets = (
   state: LiveGatewayState,
-  sessionId: AuthSessionId,
+  target: Pick<LiveGatewayGrant, "sessionId" | "threadId" | "tabId">,
 ): LiveGatewayState => ({
   ...state,
-  tickets: new Map([...state.tickets].filter(([, ticket]) => ticket.sessionId !== sessionId)),
+  tickets: new Map(
+    [...state.tickets].filter(
+      ([, ticket]) =>
+        ticket.sessionId !== target.sessionId ||
+        ticket.threadId !== target.threadId ||
+        ticket.tabId !== target.tabId,
+    ),
+  ),
 });
 
 const withoutTarget = (
@@ -244,7 +251,11 @@ export const make = Effect.gen(function* PreviewLiveGatewayMake() {
         input.sessionExpiresAt ?? now + LIVE_GATEWAY_BOOTSTRAP_TTL_MS,
       );
       yield* SynchronizedRef.modifyEffect(stateRef, (current) => {
-        const state = withoutSessionTickets(withoutExpired(current, now), input.sessionId);
+        const state = withoutTargetTickets(withoutExpired(current, now), {
+          sessionId: input.sessionId,
+          threadId: ThreadId.make(input.snapshot.threadId),
+          tabId: input.snapshot.tabId,
+        });
         const tickets = new Map(state.tickets);
         tickets.set(digest, {
           sessionId: input.sessionId,

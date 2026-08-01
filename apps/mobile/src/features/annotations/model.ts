@@ -382,7 +382,10 @@ export function hitTestMarkupObject(
       continue;
     }
     const points = stroke.points;
-    if (points.length === 1 && squaredDistance(point, points[0]!) <= tolerance * tolerance) {
+    if (
+      points.length === 1 &&
+      squaredDistance(point, points[0]!) <= (tolerance + stroke.width / 2) ** 2
+    ) {
       return { kind: "stroke", id: stroke.id };
     }
     for (let index = 1; index < points.length; index += 1) {
@@ -481,9 +484,13 @@ export function annotationExportSize(
   const edgeScale = maxEdge / Math.max(image.width, image.height);
   const pixelScale = Math.sqrt(maxPixels / (image.width * image.height));
   const scale = Math.min(1, edgeScale, pixelScale);
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  if (width * height <= maxPixels) return { width, height };
+  const adjustedScale = Math.sqrt(maxPixels / (image.width * image.height));
   return {
-    width: Math.max(1, Math.round(image.width * scale)),
-    height: Math.max(1, Math.round(image.height * scale)),
+    width: Math.max(1, Math.floor(image.width * adjustedScale)),
+    height: Math.max(1, Math.floor(image.height * adjustedScale)),
   };
 }
 

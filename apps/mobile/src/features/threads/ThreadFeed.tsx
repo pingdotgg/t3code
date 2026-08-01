@@ -1185,6 +1185,14 @@ const PreviewAnnotationCard = memo(function PreviewAnnotationCard(props: {
           +{hiddenCalloutCount} more callout{hiddenCalloutCount === 1 ? "" : "s"}
         </Text>
       ) : null}
+      {expanded
+        ? Array.from(new Set(props.annotation.styleChanges)).map((change) => (
+            <View key={`${props.annotation.id}:style:${change}`} className="flex-row gap-1.5">
+              <Text className="font-t3-bold text-xs text-white">Style</Text>
+              <Text className="min-w-0 flex-1 text-xs leading-snug text-white/90">{change}</Text>
+            </View>
+          ))
+        : null}
       <Text className="text-2xs text-white/65" numberOfLines={1}>
         {targetSummary}
       </Text>

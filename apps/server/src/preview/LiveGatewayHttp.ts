@@ -47,6 +47,7 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade",
 ] as const;
 const PRIVATE_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, "authorization", "dpop", "host"]);
+const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~\dA-Za-z]+$/u;
 
 const bootstrapResponseHeaders = {
   "cache-control": "no-store",
@@ -54,6 +55,15 @@ const bootstrapResponseHeaders = {
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
 } as const;
+
+function connectionHeaderNames(value: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => HTTP_HEADER_NAME_PATTERN.test(name)),
+  );
+}
 
 export function isLiveGatewayControlCookie(
   name: string,
@@ -102,9 +112,11 @@ export function liveGatewayUpstreamHeaders(input: {
   readonly environmentSessionCookieName: string;
 }): Headers.Headers {
   const forwarded: Record<string, string> = {};
+  const connectionSpecificHeaders = connectionHeaderNames(input.request.headers.connection);
   for (const [name, value] of Object.entries(input.request.headers)) {
     if (
       PRIVATE_REQUEST_HEADERS.has(name) ||
+      connectionSpecificHeaders.has(name) ||
       name === "cookie" ||
       name === "forwarded" ||
       name.startsWith("cf-") ||
@@ -167,8 +179,10 @@ export function liveGatewayResponseHeaders(input: {
   readonly requestUrl: URL;
   readonly upstreamOrigin: string;
 }): Headers.Headers {
+  const connectionSpecificHeaders = connectionHeaderNames(input.headers.connection);
   let headers = Headers.removeMany(input.headers, [
     ...HOP_BY_HOP_HEADERS,
+    ...connectionSpecificHeaders,
     "set-cookie",
     "content-encoding",
     "content-length",

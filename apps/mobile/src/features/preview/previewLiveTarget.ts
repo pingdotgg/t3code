@@ -12,7 +12,11 @@ export type MobilePreviewLiveTarget =
       readonly detail: string;
     };
 
-const normalizeHostname = (host: string): string => host.toLowerCase().replace(/^\[|\]$/g, "");
+const normalizeHostname = (host: string): string =>
+  host
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/u, "");
 
 const parseIpv4Address = (host: string): readonly number[] | null => {
   const parts = normalizeHostname(host).split(".").map(Number);

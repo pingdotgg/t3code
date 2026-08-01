@@ -255,8 +255,15 @@ export function ThreadPreviewPane(props: {
   useEffect(() => {
     createTabRequestIdRef.current += 1;
     navigateTabRequestIdRef.current += 1;
+    captureRequestIdRef.current += 1;
     gatewayRequestIdRef.current += 1;
     requestedGatewayRef.current = null;
+    setSnapshot(null);
+    setShowingDesktopSnapshot(false);
+    setMarkupVisible(false);
+    setMarkupModalSeed(null);
+    setCapturing(false);
+    setCapturingLocalMarkup(false);
     setGatewayTarget(null);
     setGatewayError(null);
     setGatewayOpening(false);
@@ -644,22 +651,27 @@ export function ThreadPreviewPane(props: {
       setCaptureError("Wait for Browser to finish loading.");
       return;
     }
+    const requestId = captureRequestIdRef.current + 1;
+    const tabId = selectedTabIdRef.current;
+    captureRequestIdRef.current = requestId;
     setCapturingLocalMarkup(true);
     try {
       const seed = await livePreview.captureForMarkup();
+      if (captureRequestIdRef.current !== requestId || selectedTabIdRef.current !== tabId) return;
       setMarkupModalSeed(seed);
       setMarkupVisible(true);
     } catch (cause) {
+      if (captureRequestIdRef.current !== requestId || selectedTabIdRef.current !== tabId) return;
       setCaptureError(cause instanceof Error ? cause.message : "Browser could not be captured.");
     } finally {
-      setCapturingLocalMarkup(false);
+      if (captureRequestIdRef.current === requestId && selectedTabIdRef.current === tabId) {
+        setCapturingLocalMarkup(false);
+      }
     }
   }, [desktopMarkupSeed.error, desktopMarkupSeed.value, showingDesktopSnapshot]);
 
   const handleMarkupDone = useCallback(
     async (attachment: DraftComposerImageAttachment) => {
-      setMarkupVisible(false);
-      setMarkupModalSeed(null);
       try {
         const result = await mergeComposerDraftContent(
           scopedThreadKey(props.environmentId, props.threadId),
@@ -669,6 +681,8 @@ export function ThreadPreviewPane(props: {
           setCaptureError("This message already has the maximum of 8 image attachments.");
           return;
         }
+        setMarkupVisible(false);
+        setMarkupModalSeed(null);
         setMarkupSeedGeneration((current) => current + 1);
         setCaptureError(null);
         setAttachmentNotice("Annotated snapshot added to your message.");

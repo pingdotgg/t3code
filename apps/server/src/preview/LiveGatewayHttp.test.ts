@@ -126,10 +126,12 @@ it("strips environment credentials while preserving application cookies and requ
       "cf-ray": "cloudflare-metadata",
       cookie: "raw-cookie-header",
       dpop: "environment-proof",
+      connection: "keep-alive, x-internal",
       host: "environment.example",
       origin: "https://environment.example",
       referer: "https://environment.example/app/page?q=1",
       "sec-websocket-key": "downstream-key",
+      "x-internal": "connection-specific",
       "x-forwarded-host": "environment.example",
     },
   });
@@ -146,6 +148,7 @@ it("strips environment credentials while preserving application cookies and requ
   expect(headers["cf-ray"]).toBeUndefined();
   expect(headers["x-forwarded-host"]).toBeUndefined();
   expect(headers["sec-websocket-key"]).toBeUndefined();
+  expect(headers["x-internal"]).toBeUndefined();
   expect(headers.cookie).toBe("app_session=application-value");
   expect(headers.host).toBe("127.0.0.1:5173");
   expect(headers.origin).toBe("http://127.0.0.1:5173");
@@ -159,8 +162,10 @@ it("rewrites loopback redirects and strips transport headers after fetch decompr
       "access-control-allow-origin": "http://127.0.0.1:5173",
       "content-encoding": "gzip",
       "content-length": "123",
+      connection: "keep-alive, x-private",
       location: "http://localhost:5173/next?q=1#fragment",
       "set-cookie": "secret=value",
+      "x-private": "connection-specific",
     }),
     requestUrl: new URL("https://environment.example/current"),
     upstreamOrigin: "http://127.0.0.1:5173",
@@ -171,6 +176,7 @@ it("rewrites loopback redirects and strips transport headers after fetch decompr
   expect(headers["content-encoding"]).toBeUndefined();
   expect(headers["content-length"]).toBeUndefined();
   expect(headers["set-cookie"]).toBeUndefined();
+  expect(headers["x-private"]).toBeUndefined();
 });
 
 it("prevents upstream cookies from replacing gateway or environment credentials", () => {

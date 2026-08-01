@@ -29,6 +29,19 @@ describe("resolveMobilePreviewLiveTarget", () => {
     });
   });
 
+  it("treats a DNS-root-qualified localhost as desktop loopback", () => {
+    expect(
+      resolveMobilePreviewLiveTarget({
+        previewUrl: "http://localhost.:5173/dashboard",
+        environmentHttpBaseUrl: "http://192.168.1.25:3773",
+      }),
+    ).toEqual({
+      kind: "available",
+      uri: "http://192.168.1.25:5173/dashboard",
+      resolution: "environment-private-network",
+    });
+  });
+
   it("maps desktop localhost onto a Tailscale host", () => {
     expect(
       resolveMobilePreviewLiveTarget({

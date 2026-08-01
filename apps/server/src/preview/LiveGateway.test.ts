@@ -122,6 +122,26 @@ it.layer(NodeServices.layer)("PreviewLiveGateway", (it) => {
     }),
   );
 
+  it.effect("keeps pending bootstraps for different tabs in the same session", () =>
+    Effect.gen(function* () {
+      const gateway = yield* make;
+      const first = yield* gateway.issue({
+        sessionId,
+        snapshot: snapshot("http://localhost:5173/first"),
+      });
+      const second = yield* gateway.issue({
+        sessionId,
+        snapshot: {
+          ...snapshot("http://localhost:5173/second"),
+          tabId: PreviewTabId.make("tab-live-gateway-2"),
+        },
+      });
+
+      expect(yield* gateway.consumeBootstrap(bootstrapToken(first.relativeUrl))).not.toBeNull();
+      expect(yield* gateway.consumeBootstrap(bootstrapToken(second.relativeUrl))).not.toBeNull();
+    }),
+  );
+
   it.effect("expires bootstraps and leases and supports explicit tab/session revocation", () =>
     Effect.gen(function* () {
       const gateway = yield* make;

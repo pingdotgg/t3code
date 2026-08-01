@@ -192,5 +192,13 @@ describe("preview review model", () => {
         revision: snapshot.previewRevision + 1,
       }),
     ).toBe(false);
+    expect(
+      previewSnapshotIsStale(snapshot, {
+        ...baseEvent,
+        threadId: ThreadId.make("thread-2"),
+        tabId: "tab-2",
+        serverEpoch: "server-epoch-2",
+      }),
+    ).toBe(true);
   });
 });

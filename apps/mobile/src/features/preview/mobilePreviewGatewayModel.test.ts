@@ -54,6 +54,7 @@ describe("mobile preview gateway model", () => {
       "https://attacker.example/bootstrap",
       "api/preview-gateway/bootstrap/ticket",
       "/api/not-the-preview-gateway/ticket",
+      "/api/preview-gateway/bootstrap/../other",
     ]) {
       expect(() =>
         resolveMobilePreviewGatewayUri({

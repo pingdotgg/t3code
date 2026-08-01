@@ -60,7 +60,7 @@ describe("annotation markup geometry", () => {
         { width: 4_000, height: 3_000 },
         { maxEdge: 10_000, maxPixels: 1_000_000 },
       ),
-    ).toEqual({ width: 1_155, height: 866 });
+    ).toEqual({ width: 1_154, height: 866 });
     expect(annotationExportSize({ width: 640, height: 480 })).toEqual({
       width: 640,
       height: 480,
@@ -183,6 +183,22 @@ describe("annotation markup document", () => {
       id: "point-1",
     });
     expect(eraseMarkupObjectAtPoint(document, { x: 0.3, y: 0.4 }).strokes).toEqual([]);
+  });
+
+  it("hit-tests a single-point stroke across its rendered width", () => {
+    const stroke = makeStroke({
+      id: "dot-1",
+      color: "#f00",
+      width: 0.1,
+      points: [{ x: 0.5, y: 0.5 }],
+    });
+    expect(stroke).not.toBeNull();
+    const document = addStroke(EMPTY_MARKUP_DOCUMENT, stroke!);
+
+    expect(hitTestMarkupObject(document, { x: 0.56, y: 0.5 }, 0.02)).toEqual({
+      kind: "stroke",
+      id: "dot-1",
+    });
   });
 
   it("supports undo, redo, delete, and clear without mutating snapshots", () => {

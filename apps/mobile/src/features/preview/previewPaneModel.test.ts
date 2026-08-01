@@ -190,6 +190,32 @@ describe("mobile preview pane state", () => {
     ).toBe("http://localhost:5173/old");
   });
 
+  it("reconciles epoch changes without letting an old event override the new list", () => {
+    const oldEpochEvent = navigatedEvent({
+      serverEpoch: "epoch-1",
+      revision: 99,
+    });
+    expect(
+      previewEventRequiresSessionRefresh({
+        event: oldEpochEvent,
+        threadId,
+        serverEpoch: "epoch-2",
+        revision: 1,
+      }),
+    ).toBe(true);
+    expect(
+      previewLiveUrlForSelection({
+        selectedTabId: "tab-1",
+        selectedSession: session,
+        snapshot: null,
+        latestEvent: oldEpochEvent,
+        threadId,
+        serverEpoch: "epoch-2",
+        revision: 1,
+      }),
+    ).toBe("http://localhost:5173/old");
+  });
+
   it("lets an optimistic navigation supersede the new tab's newer Idle event", () => {
     const optimistic = {
       ...session,

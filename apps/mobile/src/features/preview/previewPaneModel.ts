@@ -30,8 +30,7 @@ function eventIsNewerThanList(input: {
   return (
     input.serverEpoch === null ||
     input.revision === null ||
-    input.event.serverEpoch !== input.serverEpoch ||
-    input.event.revision > input.revision
+    (input.event.serverEpoch === input.serverEpoch && input.event.revision > input.revision)
   );
 }
 
@@ -85,8 +84,9 @@ export function previewEventRequiresSessionRefresh(input: {
   readonly revision: number | null;
 }): boolean {
   if (input.event.threadId !== input.threadId) return false;
+  if (input.serverEpoch !== null && input.event.serverEpoch !== input.serverEpoch) return true;
   if (!eventIsNewerThanList(input)) return false;
-  return input.event.serverEpoch !== input.serverEpoch || input.event.type !== "resized";
+  return input.event.type !== "resized";
 }
 
 export function previewLiveUrlForSelection(input: {
