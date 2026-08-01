@@ -39,6 +39,14 @@ export type RightPanelSurface =
     }
   | { id: "plan"; kind: "plan" };
 
+/** Pre-close shape of a terminal surface, captured to undo an optimistic close. */
+export interface TerminalSurfaceSnapshot {
+  surfaceId: `terminal:${string}`;
+  resourceId: string;
+  terminalIds: string[];
+  splitDirection?: "horizontal" | "vertical";
+}
+
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 7;
 
@@ -54,6 +62,11 @@ interface RightPanelStoreState {
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  restoreTerminal: (
+    ref: ScopedThreadRef,
+    snapshot: TerminalSurfaceSnapshot,
+    terminalId: string,
+  ) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -291,6 +304,49 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
             upsertSurface(current, terminalSurface(terminalId)),
           ),
+        })),
+      // Undo for an optimistic close the server rejected: put the terminal back
+      // into its original surface at its original pane position (clamped to the
+      // panes that still exist), or recreate the surface if it is gone. A plain
+      // openTerminal would strand a split member in a new standalone surface.
+      restoreTerminal: (ref, snapshot, terminalId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const existing = current.surfaces.find(
+              (surface) => surface.id === snapshot.surfaceId && surface.kind === "terminal",
+            );
+            if (!existing) {
+              return upsertSurface(current, {
+                id: snapshot.surfaceId,
+                kind: "terminal",
+                resourceId: snapshot.resourceId,
+                terminalIds: [terminalId],
+                activeTerminalId: terminalId,
+                ...(snapshot.splitDirection === "vertical"
+                  ? { splitDirection: "vertical" as const }
+                  : {}),
+              });
+            }
+            return {
+              ...current,
+              isOpen: true,
+              activeSurfaceId: snapshot.surfaceId,
+              surfaces: current.surfaces.map((surface) => {
+                if (surface.id !== snapshot.surfaceId || surface.kind !== "terminal") {
+                  return surface;
+                }
+                if (surface.terminalIds.includes(terminalId)) {
+                  return { ...surface, activeTerminalId: terminalId };
+                }
+                const insertAt = snapshot.terminalIds
+                  .filter((id) => id === terminalId || surface.terminalIds.includes(id))
+                  .indexOf(terminalId);
+                const terminalIds = [...surface.terminalIds];
+                terminalIds.splice(insertAt < 0 ? terminalIds.length : insertAt, 0, terminalId);
+                return { ...surface, terminalIds, activeTerminalId: terminalId };
+              }),
+            };
+          }),
         })),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
         set((state) => ({

@@ -18,6 +18,62 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("restores a failed split-pane close into its original surface position", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "terminal-1");
+    store.splitTerminal(refA, "terminal:terminal-1", "terminal-2", "vertical");
+    store.splitTerminal(refA, "terminal:terminal-1", "terminal-3", "vertical");
+    const snapshot = {
+      surfaceId: "terminal:terminal-1" as const,
+      resourceId: "terminal-1",
+      terminalIds: ["terminal-1", "terminal-2", "terminal-3"],
+      splitDirection: "vertical" as const,
+    };
+
+    store.closeTerminal(refA, "terminal:terminal-1", "terminal-2");
+    store.restoreTerminal(refA, snapshot, "terminal-2");
+
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    expect(surfaces).toEqual([
+      {
+        id: "terminal:terminal-1",
+        kind: "terminal",
+        resourceId: "terminal-1",
+        terminalIds: ["terminal-1", "terminal-2", "terminal-3"],
+        activeTerminalId: "terminal-2",
+        splitDirection: "vertical",
+      },
+    ]);
+  });
+
+  it("recreates the surface when a failed close removed its last terminal", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "terminal-1");
+    const snapshot = {
+      surfaceId: "terminal:terminal-1" as const,
+      resourceId: "terminal-1",
+      terminalIds: ["terminal-1"],
+    };
+
+    store.closeTerminal(refA, "terminal:terminal-1", "terminal-1");
+    store.restoreTerminal(refA, snapshot, "terminal-1");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([
+      {
+        id: "terminal:terminal-1",
+        kind: "terminal",
+        resourceId: "terminal-1",
+        terminalIds: ["terminal-1"],
+        activeTerminalId: "terminal-1",
+      },
+    ]);
+    expect(state.activeSurfaceId).toBe("terminal:terminal-1");
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({

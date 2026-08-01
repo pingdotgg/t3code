@@ -122,6 +122,7 @@ import {
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   type RightPanelSurface,
+  type TerminalSurfaceSnapshot,
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
@@ -201,6 +202,11 @@ import {
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
+import {
+  releaseTerminalOpen,
+  reservedTerminalOpenIds,
+  reserveTerminalOpen,
+} from "../lib/terminalOpenReservations";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
@@ -683,26 +689,15 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const pendingTerminalIds = useTerminalUiStateStore(
     (state) => state.pendingTerminalIdsByThreadKey[threadKey],
   );
-  // Suppressed ids stay reserved: a just-closed optimistic id may have an open
-  // request still in flight, and reusing it would let that request's failure
-  // handler tear down the wrong terminal.
   const allocatableTerminalIds = useMemo(
     () => [
       ...new Set([
         ...serverOrderedTerminalIds,
         ...terminalUiState.terminalIds,
         ...panelTerminalIds,
-        ...(suppressedTerminalIds ?? []),
-        ...(pendingTerminalIds ?? []),
       ]),
     ],
-    [
-      panelTerminalIds,
-      pendingTerminalIds,
-      serverOrderedTerminalIds,
-      suppressedTerminalIds,
-      terminalUiState.terminalIds,
-    ],
+    [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
@@ -773,23 +768,30 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [storeSetTerminalHeight, threadRef],
   );
 
-  // A rejected open leaves no server session behind, so the optimistic id must
-  // not linger: pending ids are deliberately immune to reconcile.
+  // A settled-but-not-successful open must not leave the optimistic id behind:
+  // pending ids are deliberately immune to reconcile. Interruption gets the
+  // same rollback — it is not confirmation either way, and if the session was
+  // created after all, reconcile re-adopts it from server metadata.
   const openTerminalSession = useCallback(
     (terminalId: string, sessionCwd: string) => {
+      reserveTerminalOpen(threadKey, terminalId);
       void (async () => {
-        const result = await openTerminal({
-          environmentId: threadRef.environmentId,
-          input: {
-            threadId,
-            terminalId,
-            cwd: sessionCwd,
-            ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-            env: runtimeEnv,
-          },
-        });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          storeAbandonPendingTerminal(threadRef, terminalId);
+        try {
+          const result = await openTerminal({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId,
+              terminalId,
+              cwd: sessionCwd,
+              ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
+              env: runtimeEnv,
+            },
+          });
+          if (result._tag === "Failure") {
+            storeAbandonPendingTerminal(threadRef, terminalId);
+          }
+        } finally {
+          releaseTerminalOpen(threadKey, terminalId);
         }
       })();
     },
@@ -799,6 +801,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       runtimeEnv,
       storeAbandonPendingTerminal,
       threadId,
+      threadKey,
       threadRef,
     ],
   );
@@ -807,7 +810,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     if (!cwd) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableTerminalIds);
+    const terminalId = nextTerminalId([
+      ...allocatableTerminalIds,
+      ...reservedTerminalOpenIds(threadKey),
+    ]);
     storeSplitTerminal(threadRef, terminalId);
     bumpFocusRequestId();
     openTerminalSession(terminalId, cwd);
@@ -817,13 +823,17 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     cwd,
     openTerminalSession,
     storeSplitTerminal,
+    threadKey,
     threadRef,
   ]);
   const splitTerminalVertical = useCallback(() => {
     if (!cwd) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableTerminalIds);
+    const terminalId = nextTerminalId([
+      ...allocatableTerminalIds,
+      ...reservedTerminalOpenIds(threadKey),
+    ]);
     storeSplitTerminalVertical(threadRef, terminalId);
     bumpFocusRequestId();
     openTerminalSession(terminalId, cwd);
@@ -833,6 +843,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     cwd,
     openTerminalSession,
     storeSplitTerminalVertical,
+    threadKey,
     threadRef,
   ]);
 
@@ -840,7 +851,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     if (!cwd) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableTerminalIds);
+    const terminalId = nextTerminalId([
+      ...allocatableTerminalIds,
+      ...reservedTerminalOpenIds(threadKey),
+    ]);
     storeNewTerminal(threadRef, terminalId);
     bumpFocusRequestId();
     openTerminalSession(terminalId, cwd);
@@ -850,6 +864,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     allocatableTerminalIds,
     openTerminalSession,
     storeNewTerminal,
+    threadKey,
     threadRef,
   ]);
 
@@ -878,11 +893,18 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
             deleteHistory: true,
           },
         });
-        if (closeResult._tag !== "Failure" || isAtomCommandInterrupted(closeResult)) return;
+        if (closeResult._tag !== "Failure") return;
+        if (isAtomCommandInterrupted(closeResult)) {
+          // Interruption is not confirmation. Roll back the suppression: if the
+          // server did close the session it vanishes from metadata and
+          // reconcile drops the id; if not, the terminal must resurface.
+          storeUnsuppressTerminal(threadRef, terminalId);
+          return;
+        }
         const exitResult = await fallbackExitWrite();
-        if (exitResult._tag !== "Failure" || isAtomCommandInterrupted(exitResult)) return;
-        // Neither path reached the session, so it is still running. Undo the
-        // optimistic suppression or reconcile would hide a live terminal.
+        if (exitResult._tag !== "Failure") return;
+        // Neither path confirmably reached the session. Undo the optimistic
+        // suppression or reconcile would hide a live terminal.
         storeUnsuppressTerminal(threadRef, terminalId);
       })();
 
@@ -1525,30 +1547,9 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [rightPanelState.surfaces],
   );
-  const activeSuppressedTerminalIds = useTerminalUiStateStore((state) =>
-    activeThreadKey === null ? undefined : state.suppressedTerminalIdsByThreadKey[activeThreadKey],
-  );
-  const activePendingTerminalIds = useTerminalUiStateStore((state) =>
-    activeThreadKey === null ? undefined : state.pendingTerminalIdsByThreadKey[activeThreadKey],
-  );
-  // Suppressed ids stay reserved: a just-closed optimistic id may have an open
-  // request still in flight, and reusing it would let that request's failure
-  // handler tear down the wrong terminal.
   const allocatableActiveTerminalIds = useMemo(
-    () => [
-      ...new Set([
-        ...activeKnownTerminalIds,
-        ...panelTerminalIds,
-        ...(activeSuppressedTerminalIds ?? []),
-        ...(activePendingTerminalIds ?? []),
-      ]),
-    ],
-    [
-      activeKnownTerminalIds,
-      activePendingTerminalIds,
-      activeSuppressedTerminalIds,
-      panelTerminalIds,
-    ],
+    () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
+    [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
@@ -2646,28 +2647,38 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, storeSetTerminalOpen],
   );
-  // A rejected open leaves no server session behind, so the optimistic id must
-  // not linger: pending ids are deliberately immune to reconcile.
+  // A settled-but-not-successful open must not leave the optimistic id behind:
+  // pending ids are deliberately immune to reconcile. Interruption gets the
+  // same rollback — it is not confirmation either way, and if the session was
+  // created after all, reconcile re-adopts it from server metadata.
   const openThreadTerminalSession = useCallback(
     (terminalId: string, sessionCwd: string, workspaceRoot: string) => {
       if (!activeThreadRef || !activeThreadId) return;
       const threadRef = activeThreadRef;
+      const threadKey = scopedThreadKey(threadRef);
+      reserveTerminalOpen(threadKey, terminalId);
       void (async () => {
-        const result = await openTerminal({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            terminalId,
-            cwd: sessionCwd,
-            ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-            env: projectScriptRuntimeEnv({
-              project: { cwd: workspaceRoot },
-              worktreePath: activeThreadWorktreePath,
-            }),
-          },
-        });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          storeAbandonPendingTerminal(threadRef, terminalId);
+        try {
+          const result = await openTerminal({
+            environmentId,
+            input: {
+              threadId: activeThreadId,
+              terminalId,
+              cwd: sessionCwd,
+              ...(activeThreadWorktreePath != null
+                ? { worktreePath: activeThreadWorktreePath }
+                : {}),
+              env: projectScriptRuntimeEnv({
+                project: { cwd: workspaceRoot },
+                worktreePath: activeThreadWorktreePath,
+              }),
+            },
+          });
+          if (result._tag === "Failure") {
+            storeAbandonPendingTerminal(threadRef, terminalId);
+          }
+        } finally {
+          releaseTerminalOpen(threadKey, terminalId);
         }
       })();
     },
@@ -2691,7 +2702,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!cwdForOpen) {
         return;
       }
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const terminalId = nextTerminalId([
+        ...allocatableActiveTerminalIds,
+        ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
+      ]);
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
       openThreadTerminalSession(terminalId, cwdForOpen, activeProject.workspaceRoot);
       return;
@@ -2718,7 +2732,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!cwdForOpen) {
         return;
       }
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const terminalId = nextTerminalId([
+        ...allocatableActiveTerminalIds,
+        ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
+      ]);
       if (direction === "vertical") {
         storeSplitTerminalVertical(activeThreadRef, terminalId);
       } else {
@@ -2747,7 +2764,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!cwdForOpen) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+    const terminalId = nextTerminalId([
+      ...allocatableActiveTerminalIds,
+      ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
+    ]);
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
     openThreadTerminalSession(terminalId, cwdForOpen, activeProject.workspaceRoot);
@@ -2779,11 +2799,18 @@ function ChatViewContent(props: ChatViewProps) {
             deleteHistory: true,
           },
         });
-        if (closeResult._tag !== "Failure" || isAtomCommandInterrupted(closeResult)) return;
+        if (closeResult._tag !== "Failure") return;
+        if (isAtomCommandInterrupted(closeResult)) {
+          // Interruption is not confirmation. Roll back the suppression: if the
+          // server did close the session it vanishes from metadata and
+          // reconcile drops the id; if not, the terminal must resurface.
+          storeUnsuppressTerminal(threadRef, terminalId);
+          return;
+        }
         const exitResult = await fallbackExitWrite();
-        if (exitResult._tag !== "Failure" || isAtomCommandInterrupted(exitResult)) return;
-        // Neither path reached the session, so it is still running. Undo the
-        // optimistic suppression or reconcile would hide a live terminal.
+        if (exitResult._tag !== "Failure") return;
+        // Neither path confirmably reached the session. Undo the optimistic
+        // suppression or reconcile would hide a live terminal.
         storeUnsuppressTerminal(threadRef, terminalId);
       })();
       storeCloseTerminal(activeThreadRef, terminalId);
@@ -2844,7 +2871,10 @@ function ChatViewContent(props: ChatViewProps) {
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
       const targetTerminalId = shouldCreateNewTerminal
-        ? nextTerminalId(allocatableActiveTerminalIds)
+        ? nextTerminalId([
+            ...allocatableActiveTerminalIds,
+            ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
+          ])
         : baseTerminalId;
       const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
         ? {
@@ -2866,18 +2896,27 @@ function ChatViewContent(props: ChatViewProps) {
 
       if (shouldCreateNewTerminal) {
         storeNewTerminal(activeThreadRef, targetTerminalId);
+        reserveTerminalOpen(scopedThreadKey(activeThreadRef), targetTerminalId);
       } else {
         storeSetActiveTerminal(activeThreadRef, targetTerminalId);
       }
 
-      const openResult = await openTerminal({ environmentId, input: openTerminalInput });
+      let openResult: Awaited<ReturnType<typeof openTerminal>>;
+      try {
+        openResult = await openTerminal({ environmentId, input: openTerminalInput });
+      } finally {
+        if (shouldCreateNewTerminal) {
+          releaseTerminalOpen(scopedThreadKey(activeThreadRef), targetTerminalId);
+        }
+      }
       if (openResult._tag === "Failure") {
+        if (shouldCreateNewTerminal) {
+          // No confirmed session behind the optimistic id (interrupted opens
+          // included) — abandoning is safe either way, since reconcile re-adopts
+          // a session that was created after all.
+          storeAbandonPendingTerminal(activeThreadRef, targetTerminalId);
+        }
         if (!isAtomCommandInterrupted(openResult)) {
-          if (shouldCreateNewTerminal) {
-            // Nothing was created, so the optimistic id must not survive
-            // reconcile as a phantom tab.
-            storeAbandonPendingTerminal(activeThreadRef, targetTerminalId);
-          }
           const error = squashAtomCommandFailure(openResult);
           setThreadError(
             activeThreadId,
@@ -3260,16 +3299,33 @@ function ChatViewContent(props: ChatViewProps) {
     (terminalId: string) => {
       if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
       const threadRef = activeThreadRef;
+      // Captured before the optimistic removal, so a failed close can put the
+      // terminal back into its original surface, position, and split direction.
+      const surfaceSnapshot: TerminalSurfaceSnapshot = {
+        surfaceId: activeRightPanelSurface.id,
+        resourceId: activeRightPanelSurface.resourceId,
+        terminalIds: [...activeRightPanelSurface.terminalIds],
+        ...(activeRightPanelSurface.splitDirection === "vertical"
+          ? { splitDirection: "vertical" as const }
+          : {}),
+      };
       void (async () => {
         const result = await closeTerminalMutation({
           environmentId: threadRef.environmentId,
           input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
         });
-        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+        if (result._tag !== "Failure") return;
+        if (isAtomCommandInterrupted(result)) {
+          // Unknown outcome: only roll back the suppression. If the session
+          // survived, drawer reconcile resurfaces it; restoring the panel
+          // surface here could pin a dead pane no reconcile pass would remove.
+          storeUnsuppressTerminal(threadRef, terminalId);
+          return;
+        }
         // The session survived the failed close. Put it back where it lived —
-        // the right panel — and roll back the drawer-store suppression, so it
-        // neither vanishes nor resurfaces in the wrong surface.
-        useRightPanelStore.getState().openTerminal(threadRef, terminalId);
+        // its original panel surface — and roll back the drawer-store
+        // suppression, so it neither vanishes nor resurfaces in the wrong place.
+        useRightPanelStore.getState().restoreTerminal(threadRef, surfaceSnapshot, terminalId);
         storeUnsuppressTerminal(threadRef, terminalId);
       })();
       storeCloseTerminal(activeThreadRef, terminalId);
