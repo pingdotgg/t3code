@@ -296,37 +296,49 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
     }
 
-    yield* fs
-      .makeDirectory(unitDir, { recursive: true })
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    yield* writeDurably(launcherPath, launcherSource);
-    yield* writeDurably(
-      statePath,
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
-      `${JSON.stringify(
-        {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: input.cliVersion,
-        } satisfies ServiceState,
-        null,
-        2,
-      )}\n`,
-    );
-    yield* writeDurably(unitPath, renderBootServiceUnit(plan));
+    yield* Effect.gen(function* () {
+      yield* fs
+        .makeDirectory(unitDir, { recursive: true })
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      yield* writeDurably(launcherPath, launcherSource);
+      yield* writeDurably(
+        statePath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
+        `${JSON.stringify(
+          {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: input.cliVersion,
+          } satisfies ServiceState,
+          null,
+          2,
+        )}\n`,
+      );
+      yield* writeDurably(unitPath, renderBootServiceUnit(plan));
 
-    yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
-    yield* runStep("enabling the service", "systemctl", [
-      "--user",
-      "enable",
-      BOOT_SERVICE_UNIT_FILE,
-    ]);
-    yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
-    // Start last. No administrative state write occurs after this succeeds.
-    yield* runStep("starting the service", "systemctl", [
-      "--user",
-      "restart",
-      BOOT_SERVICE_UNIT_FILE,
-    ]);
+      yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
+      yield* runStep("enabling the service", "systemctl", [
+        "--user",
+        "enable",
+        BOOT_SERVICE_UNIT_FILE,
+      ]);
+      yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
+      // Start last. No administrative state write occurs after this succeeds.
+      yield* runStep("starting the service", "systemctl", [
+        "--user",
+        "restart",
+        BOOT_SERVICE_UNIT_FILE,
+      ]);
+    }).pipe(
+      Effect.tapError(() =>
+        installed
+          ? runStep("restarting the service after a failed update", "systemctl", [
+              "--user",
+              "restart",
+              BOOT_SERVICE_UNIT_FILE,
+            ]).pipe(Effect.ignore)
+          : Effect.void,
+      ),
+    );
     return plan;
   }).pipe(Effect.withSpan("cloud.boot_service.install"));
 
