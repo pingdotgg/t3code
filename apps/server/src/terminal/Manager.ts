@@ -2706,6 +2706,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           { discard: true },
         );
 
+        // Close persisted-only terminals too (advertised by terminal.list but
+        // not live in memory) so every client that hydrated its tab strip from
+        // the list receives their `closed` events before any history deletion.
+        const liveTerminalIds = new Set(threadSessions.map((session) => session.terminalId));
+        const persistedTerminalIds = yield* listPersistedTerminalIds(input.threadId);
+        yield* Effect.forEach(
+          [...persistedTerminalIds].filter((terminalId) => !liveTerminalIds.has(terminalId)),
+          (terminalId) => closeSession(input.threadId, terminalId, false),
+          { discard: true },
+        );
+
         if (input.deleteHistory) {
           yield* deleteAllHistoryForThread(input.threadId);
         }
