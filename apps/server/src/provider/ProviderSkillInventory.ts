@@ -27,10 +27,6 @@ import { resolveThreadWorkspaceCwd } from "../checkpointing/Utils.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 
-/** Wrap a read-model failure in the RPC's typed inventory error. */
-const repositoryFailure = (reason: string) => (cause: unknown) =>
-  new ServerProviderSkillInventoryError({ reason, cause });
-
 /**
  * Resolve the inventory scope to the directory a provider session for that
  * scope would be started in.
@@ -46,9 +42,15 @@ const resolveInventoryCwd = Effect.fn("resolveInventoryCwd")(function* (
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
   if (scope.kind === "project") {
-    const project = yield* projectionSnapshotQuery
-      .getProjectShellById(scope.projectId)
-      .pipe(Effect.mapError(repositoryFailure("Failed to read the project read model.")));
+    const project = yield* projectionSnapshotQuery.getProjectShellById(scope.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerProviderSkillInventoryError({
+            reason: "Failed to read the project read model.",
+            cause,
+          }),
+      ),
+    );
     if (Option.isNone(project)) {
       return yield* new ServerProviderSkillInventoryError({
         reason: `Unknown project '${scope.projectId}'.`,
@@ -57,18 +59,30 @@ const resolveInventoryCwd = Effect.fn("resolveInventoryCwd")(function* (
     return project.value.workspaceRoot;
   }
 
-  const thread = yield* projectionSnapshotQuery
-    .getThreadShellById(scope.threadId)
-    .pipe(Effect.mapError(repositoryFailure("Failed to read the thread read model.")));
+  const thread = yield* projectionSnapshotQuery.getThreadShellById(scope.threadId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerProviderSkillInventoryError({
+          reason: "Failed to read the thread read model.",
+          cause,
+        }),
+    ),
+  );
   if (Option.isNone(thread)) {
     return yield* new ServerProviderSkillInventoryError({
       reason: `Unknown thread '${scope.threadId}'.`,
     });
   }
 
-  const project = yield* projectionSnapshotQuery
-    .getProjectShellById(thread.value.projectId)
-    .pipe(Effect.mapError(repositoryFailure("Failed to read the project read model.")));
+  const project = yield* projectionSnapshotQuery.getProjectShellById(thread.value.projectId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerProviderSkillInventoryError({
+          reason: "Failed to read the project read model.",
+          cause,
+        }),
+    ),
+  );
 
   const cwd = resolveThreadWorkspaceCwd({
     thread: thread.value,
