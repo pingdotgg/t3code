@@ -1260,6 +1260,23 @@ it.layer(
     }),
   );
 
+  it.effect("does not retry other shells when spawn-helper is not executable", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(
+        new Error(
+          'node-pty\'s spawn-helper at /pkg/spawn-helper is not executable, so every shell fails with "posix_spawnp failed". Fix it with: chmod +x "/pkg/spawn-helper"',
+          { cause: new Error("posix_spawnp failed.") },
+        ),
+      );
+
+      const snapshot = yield* manager.open(openInput());
+
+      assert.equal(snapshot.status, "error");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
   it.effect("prefers PowerShell over ComSpec for Windows terminals", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {

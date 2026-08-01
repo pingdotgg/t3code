@@ -77,11 +77,10 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   if (platform === "win32") return;
   if (didEnsureSpawnHelperExecutable) return;
 
+  // Resolution can fail transiently (and is folded into null), so leave the
+  // flag unset and let the next spawn rescan instead of giving up for good.
   const helperPath = yield* resolveNodePtySpawnHelperPath;
-  if (!helperPath) {
-    didEnsureSpawnHelperExecutable = true;
-    return;
-  }
+  if (!helperPath) return;
 
   // npm can extract the package without the exec bit on spawn-helper, which then
   // surfaces as "posix_spawnp failed" for every shell. Chmod unconditionally
