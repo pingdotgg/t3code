@@ -604,6 +604,7 @@ export const makeServerLayer = Layer.unwrap(
 
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
+      abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
       awaitAuxiliaryParked: Effect.all(
         [
           Deferred.await(runtimeStateParked),

@@ -290,10 +290,13 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-export const make = (options?: {
+interface StartupOptions {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
-}) =>
+  readonly abort?: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
+}
+
+export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     const keybindings = yield* Keybindings.Keybindings;
@@ -476,7 +479,10 @@ export const make = (options?: {
           });
           return Effect.logError("server runtime startup failed", {
             cause: startupExit.cause,
-          }).pipe(Effect.andThen(commandGate.failCommandReady(error)));
+          }).pipe(
+            Effect.andThen(commandGate.failCommandReady(error)),
+            Effect.andThen(options?.abort?.(error) ?? Effect.void),
+          );
         }),
       ),
     );
@@ -488,9 +494,7 @@ export const make = (options?: {
     } satisfies ServerRuntimeStartup["Service"];
   });
 
-export const layerWithOptions = (options?: {
-  readonly activate?: Effect.Effect<void>;
-  readonly awaitAuxiliaryParked?: Effect.Effect<void>;
-}) => Layer.effect(ServerRuntimeStartup, make(options));
+export const layerWithOptions = (options?: StartupOptions) =>
+  Layer.effect(ServerRuntimeStartup, make(options));
 
 export const layer = layerWithOptions();

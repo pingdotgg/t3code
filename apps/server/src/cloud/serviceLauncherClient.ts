@@ -23,6 +23,7 @@ export class ServiceLauncherClientError extends Schema.TaggedErrorClass<ServiceL
       "unmanaged",
       "send",
       "disconnect",
+      "timeout",
       "rejected",
     ]),
     reason: Schema.String,
@@ -180,7 +181,13 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
       }
 
       return Effect.sync(cleanup);
-    });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "30 seconds",
+        orElse: () =>
+          Effect.fail(fail("timeout", "The service launcher did not respond within 30 seconds.")),
+      }),
+    );
 
   const requestUpdate = (input: { readonly targetVersion: string }) =>
     exchange(
