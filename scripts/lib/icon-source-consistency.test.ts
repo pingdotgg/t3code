@@ -1,13 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests compare static icon source files directly.
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const REPOSITORY_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const REPOSITORY_ROOT = NodePath.join(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 const ICON_PROJECTS = ["dev", "nightly", "prod"].map((variant) =>
-  join(REPOSITORY_ROOT, "assets", variant, "app-icon.icon"),
+  NodePath.join(REPOSITORY_ROOT, "assets", variant, "app-icon.icon"),
 );
 
 interface IconLayer {
@@ -23,7 +27,9 @@ interface IconProject {
 }
 
 const readTextLayer = (projectPath: string) => {
-  const project = JSON.parse(readFileSync(join(projectPath, "icon.json"), "utf8")) as IconProject;
+  const project = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(projectPath, "icon.json"), "utf8"),
+  ) as IconProject;
   return project.groups
     ?.flatMap((group) => group.layers ?? [])
     .find((layer) => layer.name === "Text");
@@ -32,7 +38,7 @@ const readTextLayer = (projectPath: string) => {
 describe("icon sources", () => {
   it("keeps the visible T3 mark identical across all app variants", () => {
     const textSources = ICON_PROJECTS.map((projectPath) =>
-      readFileSync(join(projectPath, "Assets", "text.svg"), "utf8"),
+      NodeFS.readFileSync(NodePath.join(projectPath, "Assets", "text.svg"), "utf8"),
     );
 
     expect(new Set(textSources).size).toBe(1);
