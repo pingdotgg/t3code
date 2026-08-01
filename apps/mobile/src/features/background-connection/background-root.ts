@@ -57,7 +57,7 @@ export function createBackgroundConnectionRoot(
   let threadShellsRelease: (() => void) | null = null;
   let serverConfigsRelease: (() => void) | null = null;
   let retainedThreadRelease: (() => void) | null = null;
-  let clearingDeletedKey: string | null = null;
+  const clearingDeletedKeys = new Set<string>();
   const shellLeases = new Map<EnvironmentId, () => void>();
   const detailLeases = new Map<string, DetailLease>();
 
@@ -66,13 +66,17 @@ export function createBackgroundConnectionRoot(
       return;
     }
     const key = refKey(ref);
-    if (clearingDeletedKey === key) {
+    if (clearingDeletedKeys.has(key)) {
       return;
     }
-    clearingDeletedKey = key;
+    clearingDeletedKeys.add(key);
     void clearBackgroundConnectionRetainedThread().finally(() => {
-      if (clearingDeletedKey === key) {
-        clearingDeletedKey = null;
+      clearingDeletedKeys.delete(key);
+      // Saving publishes before its persistence operation is queued. If the
+      // same deleted ref was saved while this clear was pending, clear it once
+      // more now so the final persistence operation cannot restore it.
+      if (started && refsEqual(retainedThread, ref)) {
+        clearRetainedIfCurrent(ref);
       }
     });
   };
