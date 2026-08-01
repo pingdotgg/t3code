@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   migratePersistedTerminalUiStateStoreState,
+  reconcilableServerTerminalIds,
   selectThreadTerminalUiState,
   useTerminalUiStateStore,
 } from "./terminalUiStateStore";
@@ -12,6 +13,51 @@ import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
 const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
+
+describe("reconcilableServerTerminalIds", () => {
+  it("skips when the server list matches the client list", () => {
+    expect(reconcilableServerTerminalIds(["terminal-1"], ["terminal-1"], [])).toBeNull();
+    expect(
+      reconcilableServerTerminalIds(["terminal-2", "terminal-1"], ["terminal-1", "terminal-2"], []),
+    ).toBeNull();
+  });
+
+  it("skips while the server list lags a freshly opened terminal", () => {
+    expect(
+      reconcilableServerTerminalIds(["terminal-1"], ["terminal-1", "terminal-2"], []),
+    ).toBeNull();
+  });
+
+  it("ignores suppressed stale server sessions instead of dropping a fresh split", () => {
+    // A closed terminal the server still reports must not defeat the lag
+    // guard: reconciling here would remove the just-split terminal-2 and
+    // later re-add it as its own group.
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-stale"],
+        ["terminal-1", "terminal-2"],
+        ["terminal-stale"],
+      ),
+    ).toBeNull();
+  });
+
+  it("adopts server sessions the client does not know", () => {
+    expect(reconcilableServerTerminalIds(["terminal-1", "terminal-2"], ["terminal-1"], [])).toEqual(
+      ["terminal-1", "terminal-2"],
+    );
+    expect(reconcilableServerTerminalIds(["terminal-1"], [], [])).toEqual(["terminal-1"]);
+  });
+
+  it("filters suppressed ids out of an adopted server list", () => {
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-2", "terminal-stale"],
+        ["terminal-1"],
+        ["terminal-stale"],
+      ),
+    ).toEqual(["terminal-1", "terminal-2"]);
+  });
+});
 
 describe("terminalUiStateStore actions", () => {
   beforeEach(() => {

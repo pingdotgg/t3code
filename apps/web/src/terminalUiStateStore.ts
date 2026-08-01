@@ -489,6 +489,55 @@ export function selectThreadTerminalUiState(
   );
 }
 
+const EMPTY_SUPPRESSED_TERMINAL_IDS: readonly string[] = [];
+
+export function selectSuppressedThreadTerminalIds(
+  suppressedTerminalIdsByThreadKey: Record<string, string[]>,
+  threadRef: ScopedThreadRef | null | undefined,
+): readonly string[] {
+  if (!threadRef || threadRef.threadId.length === 0) {
+    return EMPTY_SUPPRESSED_TERMINAL_IDS;
+  }
+  return (
+    suppressedTerminalIdsByThreadKey[terminalThreadKey(threadRef)] ?? EMPTY_SUPPRESSED_TERMINAL_IDS
+  );
+}
+
+/**
+ * Decides whether a client surface should adopt the server's session list,
+ * returning the ids to reconcile with or null when reconciling would destroy
+ * local state the server merely has not caught up with yet.
+ *
+ * Suppressed ids are removed before comparing, matching what
+ * `reconcileTerminalIds` persists. Comparing raw ids instead would let one
+ * stale server session (a close the server has not processed) defeat the lag
+ * guard on every local change — dropping a freshly split terminal and later
+ * re-adding it as its own group.
+ */
+export function reconcilableServerTerminalIds(
+  serverTerminalIds: readonly string[],
+  clientTerminalIds: readonly string[],
+  suppressedTerminalIds: readonly string[],
+): string[] | null {
+  const suppressed = new Set(suppressedTerminalIds);
+  const visibleServerIds =
+    suppressed.size === 0
+      ? [...serverTerminalIds]
+      : serverTerminalIds.filter((terminalId) => !suppressed.has(terminalId));
+
+  // Server knows about the same sessions, or fewer sessions than the client
+  // with every server id still present locally. The latter is typical right
+  // after `terminal.open`: the known-session list lags the local store;
+  // reconciling would drop the new id and later re-add it as a separate group
+  // (no split layout).
+  const clientIdSet = new Set(clientTerminalIds);
+  const everyServerIdKnown = visibleServerIds.every((terminalId) => clientIdSet.has(terminalId));
+  if (everyServerIdKnown && visibleServerIds.length <= clientTerminalIds.length) {
+    return null;
+  }
+  return visibleServerIds;
+}
+
 function updateTerminalUiStateByThreadKey(
   terminalUiStateByThreadKey: Record<string, ThreadTerminalUiState>,
   threadRef: ScopedThreadRef,
