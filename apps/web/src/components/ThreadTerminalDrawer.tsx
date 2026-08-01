@@ -105,14 +105,16 @@ export function resolveDrawerResizeStartHeight(
  * asking for more room, so persisting the dragged value would quietly discard
  * the taller height they had already chosen — and they cannot see the
  * difference, because the squeeze caps what renders either way. Only a drag
- * that ends below its starting point is a request to shrink.
+ * that ends strictly below its starting point is a request to shrink — ending
+ * back where it started is no resize at all, and must not rewrite the stored
+ * height down to the squeezed one.
  */
 export function resolveDrawerResizeStoredHeight(input: {
   draggedHeight: number;
   dragStartHeight: number;
   storedHeight: number;
 }): number {
-  if (input.draggedHeight <= input.dragStartHeight) return input.draggedHeight;
+  if (input.draggedHeight < input.dragStartHeight) return input.draggedHeight;
   return Math.max(input.draggedHeight, input.storedHeight);
 }
 

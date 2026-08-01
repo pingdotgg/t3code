@@ -138,6 +138,18 @@ describe("resolveDrawerResizeStoredHeight", () => {
     ).toBe(600);
   });
 
+  it("keeps the stored height when a drag ends back where it started", () => {
+    // The drag re-anchors on the squeezed height, so a drag that returns to its
+    // starting point still reaches this function — with no net resize.
+    expect(
+      resolveDrawerResizeStoredHeight({
+        draggedHeight: 444,
+        dragStartHeight: 444,
+        storedHeight: 675,
+      }),
+    ).toBe(675);
+  });
+
   it("takes the dragged height when it already exceeds the stored one", () => {
     expect(
       resolveDrawerResizeStoredHeight({
