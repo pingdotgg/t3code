@@ -19,12 +19,57 @@ const mobileEndorsementRows = [
   tweets.filter((_, index) => index % 3 === 2),
 ];
 
-const codingAgents = [
-  { name: "Claude Code", icon: "/harnesses/claude-ai-icon.svg" },
-  { name: "Codex", icon: "/harnesses/openai_dark.svg" },
-  { name: "OpenCode", icon: "/harnesses/opencode-dark.svg" },
-  { name: "Cursor", icon: "/harnesses/cursor_light.svg" },
-  { name: "Grok Build", icon: "/harnesses/grok-dark.svg" },
+const heroConcepts = [
+  {
+    id: "1",
+    name: "Command",
+    kicker: "Five agents. One command surface.",
+    title: ["Run the whole", "coding floor."],
+    lede:
+      "Claude, Codex, Cursor, Grok, and OpenCode can work at once. T3 Code gives you one live inbox for every thread, approval, diff, and result.",
+    demoPath: "/sidebar-demo/demo.html#/demo-mac-studio/thread-composer",
+    proof: ["5 agents", "3 machines", "1 inbox"],
+  },
+  {
+    id: "2",
+    name: "Handoff",
+    kicker: "The thread does not live in your chair.",
+    title: ["Walk away.", "Keep shipping."],
+    lede:
+      "Start an agent on the machine with your repo. Approve it from the web, review it on your phone, and come back to the same running thread.",
+    demoPath: "/sidebar-demo/demo.html#/demo-build-server/thread-metrics",
+    proof: ["Desktop →", "Web →", "Phone"],
+  },
+  {
+    id: "3",
+    name: "Local",
+    kicker: "Your machine stays the source of truth.",
+    title: ["Your agents.", "Your hardware.", "Every screen."],
+    lede:
+      "No token resale and no repo upload. T3 Code connects the subscriptions and projects already on your machines to every client you use.",
+    demoPath: "/sidebar-demo/demo.html#/",
+    proof: ["Repos stay local", "Use your subscriptions", "Connect remotely"],
+  },
+  {
+    id: "4",
+    name: "Open",
+    kicker: "The control plane belongs to the people using it.",
+    title: ["Fork the", "control room."],
+    lede:
+      "The server, clients, protocols, and roadmap are open. Inspect the system, change the system, or run your own version of the system.",
+    demoPath: "/sidebar-demo/demo.html#/demo-mac-studio/thread-flaky",
+    proof: ["100% open source", "Self-hostable", "No black box"],
+  },
+  {
+    id: "5",
+    name: "Ship",
+    kicker: "The work does not end when the agent stops typing.",
+    title: ["Prompt to PR.", "Stay in flow."],
+    lede:
+      "Talk to the agent, inspect its diff, run the app, use the terminal, commit the work, and open the pull request without rebuilding your context in six tools.",
+    demoPath: "/sidebar-demo/demo.html#/demo-mac-studio/thread-composer",
+    proof: ["Prompt", "Diff", "Test", "Commit", "PR"],
+  },
 ] as const;
 
 const featureShowcases = showcaseSpec.sections.filter(({ id }) => id === "inbox");
@@ -96,6 +141,7 @@ const faqs = [
     class="hero hero--layout-2"
     id="hero"
     data-stage="latest"
+    data-hero-variant="1"
   >
     <div class="stage-sky" aria-hidden="true">
       <span class="stage-sky__ray stage-sky__ray--1"></span>
@@ -108,22 +154,28 @@ const faqs = [
     </div>
     <div class="container hero-inner">
       <div class="hero-copy">
-        <h1 class="hero-title display">Every Agent.<br />Everywhere.</h1>
-        <p class="hero-lede">
-          Claude Code, Codex, Cursor, Grok Build, and OpenCode—running with the
-          subscriptions already on your machine, controlled from desktop, web,
-          or phone.
-        </p>
-        <div class="hero-agent-list" aria-label="Supported coding agents">
-          {
-            codingAgents.map((agent) => (
-              <span class="hero-agent">
-                <img src={agent.icon} alt="" width="18" height="18" />
-                <span>{agent.name}</span>
-              </span>
-            ))
-          }
-        </div>
+        {
+          heroConcepts.map((concept, index) => (
+            <div
+              class="hero-concept"
+              data-hero-concept={concept.id}
+              hidden={index !== 0}
+            >
+              <p class="hero-concept-kicker">{concept.kicker}</p>
+              <h1 class="hero-title display">
+                {concept.title.map((line) => (
+                  <span>{line}</span>
+                ))}
+              </h1>
+              <p class="hero-lede">{concept.lede}</p>
+              <div class="hero-proof" aria-label={`${concept.name} concept highlights`}>
+                {concept.proof.map((item) => (
+                  <span>{item}</span>
+                ))}
+              </div>
+            </div>
+          ))
+        }
         <div class="hero-actions">
         <a
           id="download-btn"
@@ -249,6 +301,24 @@ const faqs = [
         />
         <span aria-hidden="true">App Store ↗</span>
       </a>
+    </div>
+
+    <div class="hero-lab" aria-label="Hero concept selector">
+      <span>Concept</span>
+      {
+        heroConcepts.map((concept, index) => (
+          <button
+            type="button"
+            data-hero-variant-button={concept.id}
+            data-demo-path={concept.demoPath}
+            aria-label={`Show concept ${concept.id}: ${concept.name}`}
+            aria-pressed={index === 0 ? "true" : "false"}
+            title={concept.name}
+          >
+            {concept.id}
+          </button>
+        ))
+      }
     </div>
   </section>
 
@@ -744,6 +814,62 @@ const faqs = [
     );
   }
 
+  type HeroVariant = "1" | "2" | "3" | "4" | "5";
+
+  function isHeroVariant(value: unknown): value is HeroVariant {
+    return value === "1" || value === "2" || value === "3" || value === "4" || value === "5";
+  }
+
+  function initHeroLab() {
+    const hero = document.getElementById("hero");
+    const demo = document.getElementById("hero-demo") as HTMLIFrameElement | null;
+    const buttons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("[data-hero-variant-button]"),
+    );
+    const concepts = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-hero-concept]"),
+    );
+    if (!hero || !demo || buttons.length === 0) return;
+
+    const applyHeroVariant = (variant: HeroVariant, updateUrl: boolean) => {
+      const activeButton = buttons.find(
+        (button) => button.dataset.heroVariantButton === variant,
+      );
+      if (!activeButton) return;
+
+      hero.dataset.heroVariant = variant;
+      document.documentElement.dataset.heroVariant = variant;
+      concepts.forEach((concept) => {
+        concept.hidden = concept.dataset.heroConcept !== variant;
+      });
+      buttons.forEach((button) => {
+        button.setAttribute(
+          "aria-pressed",
+          String(button.dataset.heroVariantButton === variant),
+        );
+      });
+
+      const demoPath = activeButton.dataset.demoPath;
+      if (demoPath && demo.getAttribute("src") !== demoPath) {
+        demo.setAttribute("src", demoPath);
+      }
+
+      if (!updateUrl) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("hero", variant);
+      history.replaceState(history.state, "", url);
+    };
+
+    const requestedVariant = new URLSearchParams(window.location.search).get("hero");
+    applyHeroVariant(isHeroVariant(requestedVariant) ? requestedVariant : "1", false);
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const variant = button.dataset.heroVariantButton;
+        if (isHeroVariant(variant)) applyHeroVariant(variant, true);
+      });
+    });
+  }
+
   function updateDownloadAction(
     button: HTMLAnchorElement | null,
     label: HTMLElement | null,
@@ -998,6 +1124,7 @@ const faqs = [
     });
   }
 
+  initHeroLab();
   initChannelPickers();
   document.addEventListener("t3-marketing-stage-change", (event) => {
     const stage = (event as CustomEvent<{ stage?: unknown }>).detail?.stage;
@@ -1221,6 +1348,17 @@ const faqs = [
     z-index: 1;
   }
 
+  .hero-concept-kicker {
+    margin: 0 0 14px;
+    color: var(--hero-concept-accent, #9b7cff);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
   .connect-kicker {
     margin: 0 0 12px;
     color: var(--accent);
@@ -1237,6 +1375,10 @@ const faqs = [
     text-wrap: balance;
   }
 
+  .hero-title span {
+    display: block;
+  }
+
   .hero-lede {
     max-width: 410px;
     margin: 0 0 22px;
@@ -1246,31 +1388,198 @@ const faqs = [
     text-wrap: pretty;
   }
 
-  .hero-agent-list {
+  .hero-proof {
     display: flex;
     flex-wrap: wrap;
     gap: 7px;
-    margin-bottom: 24px;
+    margin: 0 0 20px;
   }
 
-  .hero-agent {
+  .hero-proof span {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 7px 9px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: var(--fg);
-    font-size: 12px;
+    min-height: 27px;
+    padding: 6px 9px;
+    border: 1px solid color-mix(in srgb, var(--hero-concept-accent, #9b7cff) 32%, transparent);
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--hero-concept-accent, #9b7cff) 72%, white);
+    font-family: var(--font-mono);
+    font-size: 10px;
     font-weight: 500;
     line-height: 1;
-    background: rgba(255, 255, 255, 0.035);
+    background: color-mix(in srgb, var(--hero-concept-accent, #9b7cff) 8%, transparent);
   }
 
-  .hero-agent img {
-    width: 16px;
-    height: 16px;
-    object-fit: contain;
+  .hero-proof span::before {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--hero-concept-accent, #9b7cff);
+    box-shadow: 0 0 12px var(--hero-concept-accent, #9b7cff);
+    content: "";
+  }
+
+  .hero[data-hero-variant="2"] {
+    --hero-concept-accent: #53d8fb;
+  }
+
+  .hero[data-hero-variant="2"] .hero-inner {
+    grid-template-columns: minmax(360px, 430px) minmax(0, 1fr);
+  }
+
+  .hero[data-hero-variant="2"] .hero-title {
+    font-size: clamp(52px, 5.1vw, 76px);
+    letter-spacing: -0.055em;
+  }
+
+  .hero[data-hero-variant="2"] .hero-demo-frame {
+    border-color: rgba(83, 216, 251, 0.24);
+    box-shadow:
+      0 34px 90px -34px rgba(15, 166, 210, 0.34),
+      0 28px 64px -28px rgba(0, 0, 0, 0.75);
+    transform: perspective(1400px) rotateY(-2deg) rotateX(1deg);
+  }
+
+  .hero[data-hero-variant="3"] {
+    --hero-concept-accent: #ffbd5b;
+  }
+
+  .hero[data-hero-variant="3"] .hero-title {
+    font-family: var(--font-mono);
+    font-size: clamp(40px, 4vw, 58px);
+    font-weight: 500;
+    letter-spacing: -0.06em;
+  }
+
+  .hero[data-hero-variant="3"] .hero-title span::before {
+    margin-right: 0.3em;
+    color: var(--hero-concept-accent);
+    content: ">";
+  }
+
+  .hero[data-hero-variant="3"] .hero-demo-frame {
+    border-color: rgba(255, 189, 91, 0.22);
+    border-radius: 4px;
+    box-shadow: 14px 14px 0 rgba(255, 189, 91, 0.08);
+  }
+
+  .hero[data-hero-variant="4"] {
+    --hero-concept-accent: #ff6647;
+    background-image:
+      linear-gradient(rgba(255, 102, 71, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 102, 71, 0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .hero[data-hero-variant="4"] .hero-title {
+    font-size: clamp(58px, 5.5vw, 82px);
+    font-style: italic;
+    letter-spacing: -0.07em;
+  }
+
+  .hero[data-hero-variant="4"] .hero-proof span {
+    border-radius: 3px;
+  }
+
+  .hero[data-hero-variant="4"] .hero-demo-frame {
+    border: 1px dashed rgba(255, 102, 71, 0.45);
+    border-radius: 0;
+    box-shadow: -12px 12px 0 rgba(255, 102, 71, 0.09);
+  }
+
+  .hero[data-hero-variant="5"] {
+    --hero-concept-accent: #b8f35a;
+  }
+
+  .hero[data-hero-variant="5"] .hero-title {
+    font-size: clamp(54px, 5vw, 74px);
+    letter-spacing: -0.065em;
+  }
+
+  .hero[data-hero-variant="5"] .hero-proof {
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .hero[data-hero-variant="5"] .hero-proof span {
+    padding-inline: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  .hero[data-hero-variant="5"] .hero-proof span:not(:last-child)::after {
+    margin-left: 7px;
+    color: rgba(255, 255, 255, 0.28);
+    content: "→";
+  }
+
+  .hero[data-hero-variant="5"] .hero-demo-frame {
+    border-color: rgba(184, 243, 90, 0.24);
+    box-shadow:
+      0 0 0 1px rgba(184, 243, 90, 0.05),
+      0 28px 80px -26px rgba(117, 182, 20, 0.24);
+  }
+
+  .hero[data-hero-variant="1"] {
+    --hero-concept-accent: #a98cff;
+  }
+
+  .hero-lab {
+    position: absolute;
+    top: 88px;
+    right: 20px;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 8px;
+    background: rgba(8, 8, 10, 0.7);
+    backdrop-filter: blur(12px);
+    opacity: 0.48;
+    transition: opacity 0.18s ease;
+  }
+
+  .hero-lab:hover,
+  .hero-lab:focus-within {
+    opacity: 1;
+  }
+
+  .hero-lab > span {
+    padding: 0 5px;
+    color: rgba(255, 255, 255, 0.38);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .hero-lab button {
+    display: grid;
+    width: 25px;
+    height: 25px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    color: rgba(255, 255, 255, 0.45);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: transparent;
+    cursor: pointer;
+    place-items: center;
+  }
+
+  .hero-lab button:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .hero-lab button[aria-pressed="true"] {
+    color: #09090a;
+    background: var(--hero-concept-accent, #a98cff);
   }
 
   .hero-actions {
@@ -2770,9 +3079,20 @@ const faqs = [
       width: min(80vw, 320px);
       text-shadow: 0 2px 24px #000, 0 1px 8px #000;
     }
+    .hero-concept-kicker {
+      max-width: 280px;
+      margin-bottom: 9px;
+      font-size: 9px;
+    }
     .hero-title {
       margin-bottom: 12px;
       font-size: clamp(38px, 11vw, 48px);
+    }
+    .hero[data-hero-variant] .hero-title {
+      font-size: clamp(36px, 10.5vw, 47px);
+    }
+    .hero[data-hero-variant="3"] .hero-title {
+      font-size: clamp(29px, 8vw, 38px);
     }
     .hero-lede {
       max-width: 285px;
@@ -2781,26 +3101,29 @@ const faqs = [
       font-size: 13px;
       line-height: 1.45;
     }
-    .hero-agent-list {
-      max-width: 275px;
+    .hero-proof {
+      max-width: 285px;
       gap: 5px;
-      margin-bottom: 18px;
-      text-shadow: none;
+      margin-bottom: 15px;
     }
-    .hero-agent {
-      gap: 5px;
+    .hero-proof span {
+      min-height: 23px;
       padding: 5px 7px;
-      font-size: 10px;
-      background: rgba(8, 8, 9, 0.7);
-      backdrop-filter: blur(10px);
+      font-size: 8px;
     }
-    .hero-agent img {
-      width: 13px;
-      height: 13px;
+    .hero[data-hero-variant="5"] .hero-proof {
+      flex-wrap: wrap;
     }
     .hero--layout-2 .hero-actions {
       width: 205px;
       text-shadow: none;
+    }
+    .hero-lab {
+      top: auto;
+      right: 12px;
+      bottom: 12px;
+      transform: scale(0.92);
+      transform-origin: right bottom;
     }
     .hero-mobile-showcase {
       position: absolute;
