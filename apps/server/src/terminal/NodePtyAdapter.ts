@@ -71,6 +71,19 @@ const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
   return null;
 }).pipe(Effect.orElseSucceed(() => null));
 
+/**
+ * Whether the helper carries any exec bit, or `null` when the mode cannot be
+ * read — some packaged modes hide fs metadata, and "unknown" means different
+ * things to the repair path (try anyway) and the diagnosis path (do not blame).
+ */
+const readSpawnHelperExecutable = Effect.fn(function* (helperPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.stat(helperPath).pipe(
+    Effect.map((info) => (info.mode & 0o111) !== 0),
+    Effect.orElseSucceed(() => null),
+  );
+});
+
 const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
@@ -82,9 +95,15 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   const helperPath = yield* resolveNodePtySpawnHelperPath;
   if (!helperPath) return;
 
-  // npm can extract the package without the exec bit on spawn-helper, which then
-  // surfaces as "posix_spawnp failed" for every shell. Chmod unconditionally
-  // instead of stat-then-chmod: in packaged mode some fs metadata can be missing.
+  // Nothing to repair. Skipping the chmod also keeps a read-only package store
+  // (where spawning works fine) from failing and re-logging on every spawn.
+  if ((yield* readSpawnHelperExecutable(helperPath)) === true) {
+    didEnsureSpawnHelperExecutable = true;
+    return;
+  }
+
+  // npm can extract the package without the exec bit on spawn-helper, which
+  // then surfaces as "posix_spawnp failed" for every shell.
   const chmodResult = yield* Effect.result(fs.chmod(helperPath, 0o755));
   if (chmodResult._tag === "Success") {
     didEnsureSpawnHelperExecutable = true;
@@ -98,9 +117,6 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
     remedy: `chmod +x "${helperPath}"`,
   });
 });
-
-export const spawnHelperNotExecutableMessage = (helperPath: string): string =>
-  `node-pty's spawn-helper at ${helperPath} is not executable, so every shell fails with "posix_spawnp failed". Fix it with: chmod +x "${helperPath}"`;
 
 const causeMentionsPosixSpawnFailure = (cause: unknown): boolean => {
   let current: unknown = cause;
@@ -123,10 +139,9 @@ const causeMentionsPosixSpawnFailure = (cause: unknown): boolean => {
 };
 
 /**
- * Wraps a spawn failure with an actionable message when the real culprit is a
- * non-executable spawn-helper. Without this, the shell-candidate fallback in the
- * terminal manager retries every shell and reports the failure as if no working
- * shell existed on the machine.
+ * Diagnoses a spawn failure whose real culprit is a non-executable spawn-helper.
+ * Without this, the shell-candidate fallback in the terminal manager retries
+ * every shell and reports the failure as if no working shell existed.
  */
 export const describeSpawnFailure = (input: {
   cause: unknown;
@@ -137,7 +152,10 @@ export const describeSpawnFailure = (input: {
   if (input.platform === "win32") return input.cause;
   if (!causeMentionsPosixSpawnFailure(input.cause)) return input.cause;
   if (input.helperPath === null || input.helperIsExecutable) return input.cause;
-  return new Error(spawnHelperNotExecutableMessage(input.helperPath), { cause: input.cause });
+  return new PtyAdapter.SpawnHelperNotExecutableError({
+    helperPath: input.helperPath,
+    cause: input.cause,
+  });
 };
 
 class NodePtyProcess implements PtyAdapter.PtyProcess {
@@ -199,18 +217,9 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
         architecture,
         cause,
       }),
-  }).pipe(
-    // The defect below can be swallowed by headless startup logging, which used
-    // to make `npx t3` exit cleanly with no output on a broken install. Write
-    // the diagnosis straight to stderr and force a failing exit code first.
-    Effect.tapError((error) =>
-      Effect.sync(() => {
-        process.exitCode = 1;
-        process.stderr.write(`${error.diagnostic}\n`);
-      }),
-    ),
-    Effect.orDie,
-  );
+    // Rendering the diagnostic and choosing an exit code is the CLI
+    // entrypoint's job — see `reportStartupDefect` in cli/server.ts.
+  }).pipe(Effect.orDie);
 
   const ensureSpawnHelperExecutable = ensureNodePtySpawnHelperExecutable().pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -225,11 +234,10 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
     Effect.provideService(HostProcessArchitecture, architecture),
   );
   const spawnHelperIsExecutable = (helperPath: string) =>
-    fs.stat(helperPath).pipe(
-      Effect.map((info) => (info.mode & 0o111) !== 0),
-      // When metadata is unavailable (packaged mode) assume the helper is fine
-      // rather than pointing users at a chmod that may not help.
-      Effect.orElseSucceed(() => true),
+    readSpawnHelperExecutable(helperPath).pipe(
+      // Unknown metadata must not point users at a chmod that may not help.
+      Effect.map((isExecutable) => isExecutable !== false),
+      Effect.provideService(FileSystem.FileSystem, fs),
     );
 
   return PtyAdapter.PtyAdapter.of({

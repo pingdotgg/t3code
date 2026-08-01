@@ -565,6 +565,12 @@ function resolveShellCandidates(
 }
 
 function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
+  // A non-executable node-pty spawn-helper fails identically for every shell;
+  // retrying candidates would only bury the actionable error under fallbacks.
+  if (PtyAdapter.hasSpawnHelperNotExecutableCause(error)) {
+    return false;
+  }
+
   const queue: unknown[] = [error];
   const seen = new Set<unknown>();
   const messages: string[] = [];
@@ -601,11 +607,6 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
   }
 
   const message = messages.join(" ").toLowerCase();
-  // A non-executable node-pty spawn-helper fails identically for every shell;
-  // retrying candidates would only bury the actionable error under fallbacks.
-  if (message.includes("spawn-helper") && message.includes("not executable")) {
-    return false;
-  }
   return (
     message.includes("posix_spawnp failed") ||
     message.includes("enoent") ||

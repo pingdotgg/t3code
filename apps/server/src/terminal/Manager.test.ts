@@ -1264,10 +1264,10 @@ it.layer(
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       ptyAdapter.spawnFailures.push(
-        new Error(
-          'node-pty\'s spawn-helper at /pkg/spawn-helper is not executable, so every shell fails with "posix_spawnp failed". Fix it with: chmod +x "/pkg/spawn-helper"',
-          { cause: new Error("posix_spawnp failed.") },
-        ),
+        new PtyAdapter.SpawnHelperNotExecutableError({
+          helperPath: "/pkg/spawn-helper",
+          cause: new Error("posix_spawnp failed."),
+        }),
       );
 
       const snapshot = yield* manager.open(openInput());

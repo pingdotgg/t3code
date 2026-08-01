@@ -62,34 +62,24 @@ it.effect("spawns through the public adapter with the provided host references",
 it.effect("reports native module load failures as structured startup defects", () =>
   Effect.gen(function* () {
     const cause = new Error("native binding could not be loaded");
-    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const previousExitCode = process.exitCode;
+    const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
 
-    try {
-      const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
-
-      assert.isTrue(Exit.isFailure(exit));
-      if (Exit.isFailure(exit)) {
-        assert.isTrue(Cause.hasDies(exit.cause));
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, NodePtyAdapter.NodePtyModuleLoadError);
-        assert.deepInclude(error, {
-          _tag: "NodePtyModuleLoadError",
-          platform: "win32",
-          architecture: "x64",
-        });
-        assert.equal(error.message, "Failed to load node-pty for win32-x64.");
-      }
-
-      // A broken install must never exit cleanly with no output.
-      assert.equal(process.exitCode, 1);
-      const written = stderrWrite.mock.calls.map((call) => String(call[0])).join("");
-      assert.include(written, "Failed to load node-pty for win32-x64.");
-      assert.include(written, "native binding could not be loaded");
-      assert.include(written, "reinstall t3");
-    } finally {
-      stderrWrite.mockRestore();
-      process.exitCode = previousExitCode;
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.isTrue(Cause.hasDies(exit.cause));
+      const error = Cause.squash(exit.cause);
+      assert.instanceOf(error, NodePtyAdapter.NodePtyModuleLoadError);
+      assert.deepInclude(error, {
+        _tag: "NodePtyModuleLoadError",
+        platform: "win32",
+        architecture: "x64",
+      });
+      assert.equal(error.message, "Failed to load node-pty for win32-x64.");
+      // The CLI entrypoint renders this; a broken install must never exit
+      // cleanly with no output.
+      assert.include(error.diagnostic, "Failed to load node-pty for win32-x64.");
+      assert.include(error.diagnostic, "native binding could not be loaded");
+      assert.include(error.diagnostic, "reinstall t3");
     }
   }).pipe(
     Effect.provide(
@@ -121,11 +111,19 @@ it("explains posix_spawnp failures caused by a non-executable spawn-helper", () 
     helperPath: "/pkg/node-pty/build/Release/spawn-helper",
     helperIsExecutable: false,
   });
-  assert.instanceOf(described, Error);
-  const error = described as Error;
-  assert.include(error.message, "spawn-helper");
+  assert.instanceOf(described, PtyAdapter.SpawnHelperNotExecutableError);
+  const error = described as PtyAdapter.SpawnHelperNotExecutableError;
+  assert.equal(error.helperPath, "/pkg/node-pty/build/Release/spawn-helper");
   assert.include(error.message, 'chmod +x "/pkg/node-pty/build/Release/spawn-helper"');
   assert.equal(error.cause, cause);
+  // The terminal manager keys its retry decision off the tag, not the wording.
+  assert.isTrue(PtyAdapter.hasSpawnHelperNotExecutableCause(error));
+  assert.isTrue(
+    PtyAdapter.hasSpawnHelperNotExecutableCause(
+      new PtyAdapter.PtySpawnError({ adapter: "node-pty", shell: "/bin/zsh", cause: error }),
+    ),
+  );
+  assert.isFalse(PtyAdapter.hasSpawnHelperNotExecutableCause(cause));
 });
 
 it("keeps posix_spawnp failures as-is when the helper is executable or missing", () => {
