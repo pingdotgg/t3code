@@ -56,9 +56,20 @@ export function activateCloudRelayAccount(
   void refreshBackgroundManagedRelayAuth();
 }
 
-export function releaseCloudRelayUiAccount(): void {
+export function releaseCloudRelayUiAccount(
+  options: { readonly refreshAfter?: Promise<void> | null } = {},
+): void {
   releaseAgentAwarenessRelayTokenProvider();
   managedRelaySessionOwnership.releaseOwner("ui");
+  const refreshBackground = () => {
+    void refreshBackgroundManagedRelayAuth();
+  };
+  const refreshAfter = options.refreshAfter ?? null;
+  if (refreshAfter === null) {
+    refreshBackground();
+    return;
+  }
+  void refreshAfter.then(refreshBackground, refreshBackground);
 }
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
@@ -183,7 +194,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       // Unmounting is not a sign-out: the user is usually still signed in, so
       // detach the provider without ending lock-screen activities or wiping the
       // persisted registration (a remount reuses both).
-      releaseCloudRelayUiAccount();
+      releaseCloudRelayUiAccount({ refreshAfter: accountTransitionRef.current });
     },
     [],
   );

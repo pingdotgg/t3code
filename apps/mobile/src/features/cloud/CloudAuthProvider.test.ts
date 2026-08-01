@@ -89,12 +89,32 @@ describe("CloudAuthProvider relay account isolation", () => {
       readClerkToken: async () => "background-token",
     });
     activateCloudRelayAccount("account-1", async () => "ui-token");
+    vi.mocked(refreshBackgroundManagedRelayAuth).mockClear();
 
     releaseCloudRelayUiAccount();
 
     expect(appAtomRegistry.get(managedRelaySessionAtom)?.accountId).toBe("account-1");
-    releaseBackground();
+    expect(refreshBackgroundManagedRelayAuth).toHaveBeenCalledOnce();
+    expect(releaseBackground).not.toBeNull();
+    releaseBackground?.();
     expect(appAtomRegistry.get(managedRelaySessionAtom)).toBeNull();
+  });
+
+  it("waits for account cleanup before refreshing background ownership", async () => {
+    activateCloudRelayAccount("account-1", async () => "ui-token");
+    vi.mocked(refreshBackgroundManagedRelayAuth).mockClear();
+    const cleanup = deferred();
+
+    releaseCloudRelayUiAccount({ refreshAfter: cleanup.promise });
+
+    expect(appAtomRegistry.get(managedRelaySessionAtom)).toBeNull();
+    expect(refreshBackgroundManagedRelayAuth).not.toHaveBeenCalled();
+
+    cleanup.resolve();
+    await cleanup.promise;
+    await Promise.resolve();
+
+    expect(refreshBackgroundManagedRelayAuth).toHaveBeenCalledOnce();
   });
 
   it("defers the background refresh for an account switch until cleanup resolves", async () => {

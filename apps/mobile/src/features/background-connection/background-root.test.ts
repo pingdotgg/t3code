@@ -3,6 +3,14 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import { AsyncResult, type AtomRegistry } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 const atoms = vi.hoisted(() => ({
   catalog: { name: "catalog" },
   serverConfigs: { name: "server-configs" },
@@ -22,15 +30,17 @@ const retained = vi.hoisted(() => {
     releaseCount: 0,
   };
   const listeners = new Set<() => void>();
+  const publish = (thread: ScopedThreadRef | null) => {
+    state.snapshot = { loaded: true, thread };
+    for (const listener of listeners) {
+      listener();
+    }
+  };
   return {
     state,
     listeners,
-    clear: vi.fn(async () => {
-      state.snapshot = { loaded: true, thread: null };
-      for (const listener of listeners) {
-        listener();
-      }
-    }),
+    publish,
+    clear: vi.fn(async () => publish(null)),
     ensureLoaded: vi.fn(async () => state.snapshot.thread),
   };
 });
@@ -186,7 +196,8 @@ beforeEach(() => {
   retained.state.subscribeCount = 0;
   retained.state.releaseCount = 0;
   retained.listeners.clear();
-  retained.clear.mockClear();
+  retained.clear.mockReset();
+  retained.clear.mockImplementation(async () => retained.publish(null));
   retained.ensureLoaded.mockClear();
   atoms.shellStates.clear();
   atoms.detailStates.clear();
@@ -265,6 +276,36 @@ describe("background connection root", () => {
     expect(retained.state.snapshot.thread).toBeNull();
     expect(harness.subscribeCount(`detail:${detailKey}`)).toBe(1);
     expect(harness.subscribeReleaseCount(`detail:${detailKey}`)).toBe(1);
+    root.stop();
+  });
+
+  it("re-clears a deleted ref saved while its first clear is pending", async () => {
+    const firstClear = deferred();
+    let clearCount = 0;
+    retained.clear.mockImplementation(() => {
+      retained.publish(null);
+      clearCount += 1;
+      return clearCount === 1 ? firstClear.promise : Promise.resolve();
+    });
+    const detailKey = `${environmentId}:${threadId}`;
+    const harness = createRegistry({
+      catalog: { isReady: true, entries: new Map([[environmentId, {}]]) },
+      deletedThreadKeys: new Set([detailKey]),
+    });
+    const root = createBackgroundConnectionRoot(harness.registry);
+
+    root.start();
+    expect(retained.clear).toHaveBeenCalledOnce();
+
+    retained.publish(retainedThread);
+    expect(retained.clear).toHaveBeenCalledOnce();
+
+    firstClear.resolve();
+    await firstClear.promise;
+    await Promise.resolve();
+
+    expect(retained.clear).toHaveBeenCalledTimes(2);
+    expect(retained.state.snapshot.thread).toBeNull();
     root.stop();
   });
 });

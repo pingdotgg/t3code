@@ -83,6 +83,9 @@ export async function bootstrapBackgroundManagedRelayAuth(
       accountId: session.user.id,
       readClerkToken: () => session.getToken(dependencies.resolveTokenOptions()),
     });
+    if (release === null) {
+      return { state: { status: "superseded" } };
+    }
     return {
       state: { status: "active", accountId: session.user.id },
       release,
