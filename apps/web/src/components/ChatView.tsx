@@ -139,6 +139,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { MessageSurface } from "./chat/MessageSurface";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -2386,6 +2387,16 @@ function ChatViewContent(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const activeSurfaceMessage = useMemo(() => {
+    if (activeRightPanelSurface?.kind !== "message") return null;
+    const entry = timelineEntries.find(
+      (candidate) =>
+        candidate.kind === "message" &&
+        candidate.message.id === activeRightPanelSurface.messageId &&
+        candidate.message.role !== "system",
+    );
+    return entry?.kind === "message" ? entry.message : null;
+  }, [activeRightPanelSurface, timelineEntries]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -5702,6 +5713,13 @@ function ChatViewContent(props: ChatViewProps) {
         workspaceRoot={activeWorkspaceRoot}
         timestampFormat={timestampFormat}
         mode="embedded"
+      />
+    ) : activeRightPanelSurface?.kind === "message" ? (
+      <MessageSurface
+        message={activeSurfaceMessage}
+        threadRef={activeThreadRef}
+        cwd={gitCwd ?? undefined}
+        skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&

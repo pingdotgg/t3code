@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -139,6 +139,24 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "files",
       surfaces: [{ id: "files", kind: "files" }],
+    });
+  });
+
+  it("stores message surfaces by id", () => {
+    const firstMessageId = MessageId.make("message-1");
+    const secondMessageId = MessageId.make("message-2");
+
+    useRightPanelStore.getState().openMessage(refA, firstMessageId);
+    useRightPanelStore.getState().openMessage(refA, firstMessageId);
+    useRightPanelStore.getState().openMessage(refA, secondMessageId);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "message:message-2",
+      surfaces: [
+        { id: "message:message-1", kind: "message", messageId: firstMessageId },
+        { id: "message:message-2", kind: "message", messageId: secondMessageId },
+      ],
     });
   });
 

@@ -64,6 +64,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { OpenMessageSurfaceButton } from "./OpenMessageSurfaceButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -97,6 +98,7 @@ import {
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 
@@ -133,6 +135,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenMessageSurface: (messageId: MessageId) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
 }
@@ -223,6 +226,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  const threadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
+  const onOpenMessageSurface = useCallback(
+    (messageId: MessageId) => {
+      if (!threadRef) return;
+      useRightPanelStore.getState().openMessage(threadRef, messageId);
+    },
+    [threadRef],
+  );
 
   const onToggleTurnFold = useCallback((turnId: TurnId) => {
     setExpandedTurnIds((existing) => {
@@ -419,7 +430,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => ({
       timestampFormat,
       routeThreadKey,
-      threadRef: parseScopedThreadKey(routeThreadKey),
+      threadRef,
       markdownCwd,
       resolvedTheme,
       workspaceRoot,
@@ -428,12 +439,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenMessageSurface,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
     [
       timestampFormat,
       routeThreadKey,
+      threadRef,
       markdownCwd,
       resolvedTheme,
       workspaceRoot,
@@ -442,6 +455,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenMessageSurface,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -961,7 +975,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+              <MessageActions messageId={row.message.id} text={displayedUserMessage.copyText} />
             )}
           </div>
         </div>
@@ -1037,7 +1051,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         />
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
-            <AssistantCopyButton row={row} />
+            <AssistantMessageActions row={row} />
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
@@ -1057,7 +1071,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 }
 
-function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function AssistantMessageActions({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const assistantCopyState = resolveAssistantMessageCopyState({
     text: row.message.text ?? null,
     showCopyButton: row.showAssistantCopyButton,
@@ -1068,7 +1082,18 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return <MessageActions messageId={row.message.id} text={assistantCopyState.text ?? ""} />;
+}
+
+function MessageActions({ messageId, text }: { messageId: MessageId; text: string }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <div className="flex items-center gap-0.5">
+      <MessageCopyButton text={text} variant="ghost" />
+      <OpenMessageSurfaceButton onClick={() => ctx.onOpenMessageSurface(messageId)} />
+    </div>
+  );
 }
 
 function ProposedPlanTimelineRow({
