@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({
   acquireRoot: vi.fn(() => vi.fn()),
   acquireOutbox: vi.fn(() => vi.fn()),
+  acquireNotifications: vi.fn(() => vi.fn()),
   relayStop: vi.fn(),
   setRuntimeReady: vi.fn(),
   acknowledgeStop: vi.fn(),
@@ -31,6 +32,9 @@ vi.mock("../../native/backgroundConnection", () => ({
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../../state/use-thread-outbox-drain", () => ({
   acquireThreadOutboxDrain: mocks.acquireOutbox,
+}));
+vi.mock("../agent-notifications/thread-notification-service", () => ({
+  acquireThreadNotificationService: mocks.acquireNotifications,
 }));
 vi.mock("./background-root", () => ({
   acquireBackgroundConnectionRoot: mocks.acquireRoot,
@@ -61,6 +65,7 @@ it("shares one runtime across duplicate native task starts and cleans it up once
   await vi.waitFor(() => {
     expect(mocks.acquireRoot).toHaveBeenCalledOnce();
     expect(mocks.acquireOutbox).toHaveBeenCalledOnce();
+    expect(mocks.acquireNotifications).toHaveBeenCalledOnce();
     expect(mocks.setRuntimeReady).toHaveBeenCalledWith(true);
   });
 
@@ -69,6 +74,7 @@ it("shares one runtime across duplicate native task starts and cleans it up once
 
   expect(mocks.acquireRoot.mock.results[0]?.value).toHaveBeenCalledOnce();
   expect(mocks.acquireOutbox.mock.results[0]?.value).toHaveBeenCalledOnce();
+  expect(mocks.acquireNotifications.mock.results[0]?.value).toHaveBeenCalledOnce();
   expect(mocks.relayStop).toHaveBeenCalledOnce();
   expect(mocks.removeStopListener).toHaveBeenCalledOnce();
   expect(mocks.setRuntimeReady).toHaveBeenLastCalledWith(false);
@@ -83,6 +89,7 @@ it("cleans up a task that finishes loading after the feature was disabled", asyn
 
   expect(mocks.acquireRoot).not.toHaveBeenCalled();
   expect(mocks.acquireOutbox).not.toHaveBeenCalled();
+  expect(mocks.acquireNotifications).not.toHaveBeenCalled();
   expect(mocks.setRuntimeReady).not.toHaveBeenCalledWith(true);
   expect(mocks.relayStop).not.toHaveBeenCalled();
   expect(mocks.removeStopListener).toHaveBeenCalledOnce();
@@ -99,6 +106,7 @@ it("marks direct connections ready and stops promptly while relay auth is loadin
   await vi.waitFor(() => {
     expect(mocks.acquireRoot).toHaveBeenCalledOnce();
     expect(mocks.acquireOutbox).toHaveBeenCalledOnce();
+    expect(mocks.acquireNotifications).toHaveBeenCalledOnce();
     expect(mocks.setRuntimeReady).toHaveBeenCalledWith(true);
   });
 
@@ -108,6 +116,7 @@ it("marks direct connections ready and stops promptly while relay auth is loadin
   expect(mocks.setRuntimeReady).toHaveBeenCalledWith(true);
   expect(mocks.acquireRoot.mock.results[0]?.value).toHaveBeenCalledOnce();
   expect(mocks.acquireOutbox.mock.results[0]?.value).toHaveBeenCalledOnce();
+  expect(mocks.acquireNotifications.mock.results[0]?.value).toHaveBeenCalledOnce();
   expect(mocks.relayStop).toHaveBeenCalledOnce();
   expect(mocks.acknowledgeStop).toHaveBeenCalledOnce();
 

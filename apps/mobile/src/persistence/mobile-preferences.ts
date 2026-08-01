@@ -21,6 +21,8 @@ export interface Preferences {
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
+  readonly androidAgentNotificationsEnabled?: boolean;
+  readonly androidAgentNotificationEventIds?: readonly string[];
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -88,6 +90,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
     themeMode?: MobileThemeMode;
+    androidAgentNotificationsEnabled?: boolean;
+    androidAgentNotificationEventIds?: readonly string[];
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -129,6 +133,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     parsed.themeMode === "dark"
   ) {
     preferences.themeMode = parsed.themeMode;
+  }
+  if (typeof parsed.androidAgentNotificationsEnabled === "boolean") {
+    preferences.androidAgentNotificationsEnabled = parsed.androidAgentNotificationsEnabled;
+  }
+  if (Array.isArray(parsed.androidAgentNotificationEventIds)) {
+    preferences.androidAgentNotificationEventIds = parsed.androidAgentNotificationEventIds
+      .filter((eventId): eventId is string => typeof eventId === "string" && eventId.length > 0)
+      .slice(-512);
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {

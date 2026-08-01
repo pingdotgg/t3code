@@ -7,6 +7,7 @@ import {
 } from "../../native/backgroundConnection";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { acquireThreadOutboxDrain } from "../../state/use-thread-outbox-drain";
+import { acquireThreadNotificationService } from "../agent-notifications/thread-notification-service";
 import { acquireBackgroundConnectionRoot } from "./background-root";
 
 let activeTask: Promise<void> | null = null;
@@ -43,6 +44,7 @@ async function runTask(): Promise<void> {
   let relayAuth: ReturnType<typeof startBackgroundManagedRelayAuth> | null = null;
   let releaseRoot: (() => void) | null = null;
   let releaseOutbox: (() => void) | null = null;
+  let releaseNotifications: (() => void) | null = null;
 
   try {
     if (hasStopBeenRequested) {
@@ -51,6 +53,7 @@ async function runTask(): Promise<void> {
     relayAuth = startBackgroundManagedRelayAuth();
     releaseRoot = acquireBackgroundConnectionRoot(appAtomRegistry);
     releaseOutbox = acquireThreadOutboxDrain(appAtomRegistry);
+    releaseNotifications = acquireThreadNotificationService(appAtomRegistry);
     // Relay authentication owns its own retry loop. Direct/Tailscale
     // connections and the shared outbox are fully operational once these
     // leases are mounted, even if Clerk is slow or temporarily unavailable.
@@ -61,6 +64,7 @@ async function runTask(): Promise<void> {
     // Normal completion lets native release React Native's wake lock and use
     // its bounded exponential restart ladder for bootstrap defects.
   } finally {
+    bestEffortCleanup("agent notifications", releaseNotifications);
     bestEffortCleanup("outbox", releaseOutbox);
     bestEffortCleanup("root", releaseRoot);
     bestEffortCleanup("relay authentication", () => relayAuth?.stop());

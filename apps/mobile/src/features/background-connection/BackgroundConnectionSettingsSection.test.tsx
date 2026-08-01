@@ -14,6 +14,26 @@ const reactNative = vi.hoisted(() => ({
   removeAppStateListener: vi.fn(),
 }));
 
+const preferences = vi.hoisted(() => ({ save: vi.fn() }));
+const agentNotifications = vi.hoisted(() => ({
+  getPermission: vi.fn(async () => ({ type: "granted" as const })),
+  requestPermission: vi.fn(async () => ({ type: "granted" as const })),
+}));
+
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => ({
+    _tag: "Success",
+    value: { androidAgentNotificationsEnabled: false },
+    waiting: false,
+    timestamp: 0,
+  }),
+  useAtomSet: () => preferences.save,
+}));
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useEffect: (setup: () => void | (() => void)) => {
@@ -31,6 +51,7 @@ vi.mock("react-native", () => ({
     addEventListener: vi.fn(() => ({ remove: reactNative.removeAppStateListener })),
   },
   Platform: { OS: "android" },
+  Linking: { openSettings: vi.fn() },
   Pressable: "Pressable",
   View: "View",
 }));
@@ -49,6 +70,10 @@ vi.mock("../../native/backgroundConnection", () => ({
   getBackgroundConnectionStatus: () => native.status,
   requestBackgroundConnectionBatteryOptimizationExemption: native.requestExemption,
   setBackgroundConnectionEnabled: native.setEnabled,
+}));
+vi.mock("../agent-notifications/android-thread-notifications", () => ({
+  getAndroidAgentNotificationPermission: agentNotifications.getPermission,
+  requestAndroidAgentNotificationPermission: agentNotifications.requestPermission,
 }));
 
 import { BackgroundConnectionSettingsSection } from "./BackgroundConnectionSettingsSection";
@@ -70,6 +95,12 @@ function renderSwitch(): ElementNode {
   const root = BackgroundConnectionSettingsSection();
   const section = children(root)[0];
   return children(section)[0] as ElementNode;
+}
+
+function renderNotificationSwitch(): ElementNode {
+  const root = BackgroundConnectionSettingsSection();
+  const section = children(root)[0];
+  return children(section)[1] as ElementNode;
 }
 
 function status(overrides: Partial<BackgroundConnectionStatus> = {}): BackgroundConnectionStatus {
@@ -138,5 +169,16 @@ describe("BackgroundConnectionSettingsSection", () => {
     await vi.waitFor(() => expect(native.setEnabled).toHaveBeenCalledWith(false));
     expect(reactNative.alert).not.toHaveBeenCalled();
     expect(native.requestExemption).not.toHaveBeenCalled();
+    expect(preferences.save).toHaveBeenCalledWith({ androidAgentNotificationsEnabled: false });
+  });
+
+  it("enables notification permission and the required background runtime together", async () => {
+    renderNotificationSwitch().props?.onValueChange?.(true);
+
+    await vi.waitFor(() => {
+      expect(agentNotifications.requestPermission).toHaveBeenCalledOnce();
+      expect(preferences.save).toHaveBeenCalledWith({ androidAgentNotificationsEnabled: true });
+      expect(native.setEnabled).toHaveBeenCalledWith(true);
+    });
   });
 });
