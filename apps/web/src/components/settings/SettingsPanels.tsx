@@ -53,6 +53,7 @@ import {
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
+  isDesktopUpdatePreparing,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -462,8 +463,9 @@ function AboutVersionSection() {
     downloading: "Downloading…",
     "up-to-date": "Up to Date",
   };
-  const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
+  const buttonLabel = isDesktopUpdatePreparing(updateState)
+    ? "Preparing…"
+    : (actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates");
   const description =
     action === "download" || action === "install"
       ? "Update available."

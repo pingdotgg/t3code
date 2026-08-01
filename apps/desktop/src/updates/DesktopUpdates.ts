@@ -9,6 +9,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,6 +28,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopUpdateRelaunch from "./DesktopUpdateRelaunch.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -122,6 +124,17 @@ export class DesktopUpdaterReportedError extends Schema.TaggedErrorClass<Desktop
 ) {
   override get message(): string {
     return `Desktop updater ${this.operation} operation reported an error.`;
+  }
+}
+
+export class DesktopUpdateNativePreparationError extends Schema.TaggedErrorClass<DesktopUpdateNativePreparationError>()(
+  "DesktopUpdateNativePreparationError",
+  {
+    stage: Schema.Literals(["resolve-version"]),
+  },
+) {
+  override get message(): string {
+    return "Native macOS update preparation completed without an update version.";
   }
 }
 
@@ -253,6 +266,15 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const provideRelaunchMarkerServices = <A, E>(
+    effect: Effect.Effect<A, E, FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment>,
+  ) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
+  const markUpdateRelaunch = provideRelaunchMarkerServices(DesktopUpdateRelaunch.mark);
+  const clearUpdateRelaunch = provideRelaunchMarkerServices(DesktopUpdateRelaunch.clear);
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const updateCheckInFlightRef = yield* Ref.make(false);
@@ -260,6 +282,12 @@ export const make = Effect.gen(function* () {
   const updateInstallInFlightRef = yield* Ref.make(false);
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  const nativePreparationDeferredRef = yield* Ref.make<
+    Option.Option<
+      Deferred.Deferred<void, DesktopUpdaterReportedError | DesktopUpdateNativePreparationError>
+    >
+  >(Option.none());
+  const nativePreparationVersionRef = yield* Ref.make<Option.Option<string>>(Option.none());
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
@@ -398,6 +426,21 @@ export const make = Effect.gen(function* () {
     }
 
     yield* Ref.set(updateDownloadInFlightRef, true);
+    const nativePreparationDeferred =
+      environment.platform === "darwin"
+        ? Option.some(
+            yield* Deferred.make<
+              void,
+              DesktopUpdaterReportedError | DesktopUpdateNativePreparationError
+            >(),
+          )
+        : Option.none<
+            Deferred.Deferred<
+              void,
+              DesktopUpdaterReportedError | DesktopUpdateNativePreparationError
+            >
+          >();
+    yield* Ref.set(nativePreparationDeferredRef, nativePreparationDeferred);
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
@@ -405,6 +448,9 @@ export const make = Effect.gen(function* () {
       );
       yield* logUpdaterInfo("downloading update");
       yield* electronUpdater.downloadUpdate;
+      if (Option.isSome(nativePreparationDeferred)) {
+        yield* Deferred.await(nativePreparationDeferred.value);
+      }
       return { accepted: true, completed: true };
     }).pipe(
       Effect.catchTags({
@@ -420,6 +466,22 @@ export const make = Effect.gen(function* () {
             return { accepted: true, completed: false };
           },
         ),
+        DesktopUpdaterReportedError: Effect.fn("desktop.updates.handleNativePreparationFailure")(
+          function* (error) {
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
+            );
+            return { accepted: true, completed: false };
+          },
+        ),
+        DesktopUpdateNativePreparationError: Effect.fn(
+          "desktop.updates.handleNativePreparationInvariantFailure",
+        )(function* (error) {
+          yield* updateState((current) =>
+            reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
+          );
+          return { accepted: true, completed: false };
+        }),
       }),
       Effect.onInterrupt(() =>
         updateState((current) => (current.status === "downloading" ? state : current)).pipe(
@@ -442,12 +504,25 @@ export const make = Effect.gen(function* () {
           return { accepted: true, completed: false };
         });
       }),
-      Effect.ensuring(Ref.set(updateDownloadInFlightRef, false)),
+      Effect.ensuring(
+        Effect.all(
+          [
+            Ref.set(updateDownloadInFlightRef, false),
+            Ref.set(nativePreparationDeferredRef, Option.none()),
+            Ref.set(nativePreparationVersionRef, Option.none()),
+          ],
+          { discard: true },
+        ),
+      ),
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
   const resetInstallAction = Effect.all(
-    [Ref.set(updateInstallInFlightRef, false), Ref.set(desktopState.quitting, false)],
+    [
+      Ref.set(updateInstallInFlightRef, false),
+      Ref.set(desktopState.quitting, false),
+      clearUpdateRelaunch.pipe(Effect.ignore),
+    ],
     { discard: true },
   );
 
@@ -465,6 +540,17 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(updateInstallInFlightRef, true);
 
     return yield* Effect.gen(function* () {
+      yield* updateState((current) => ({
+        ...current,
+        message: "Preparing update… T3 Code will restart automatically.",
+      }));
+      yield* markUpdateRelaunch.pipe(
+        Effect.catch(() =>
+          logUpdaterWarning(
+            "could not persist the update relaunch marker; continuing with installation",
+          ),
+        ),
+      );
       // Stop every backend in the pool, not just the primary. With
       // parallel WSL + Windows backends, leaving the WSL instance up
       // means quitAndInstall's app.quit() exits before the pool's
@@ -478,7 +564,12 @@ export const make = Effect.gen(function* () {
         (instance) => instance.stop({ timeout: Duration.seconds(5) }),
         { concurrency: "unbounded" },
       );
-      yield* electronWindow.destroyAll;
+      // NSIS needs all BrowserWindows gone before it can replace the Windows
+      // executable. Squirrel.Mac and AppImage own their normal quit lifecycle,
+      // so keep the preparing UI visible until those updaters take over.
+      if (environment.platform === "win32") {
+        yield* electronWindow.destroyAll;
+      }
       yield* electronUpdater.quitAndInstall({
         isSilent: true,
         isForceRunAfter: true,
@@ -615,8 +706,7 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (yield* Ref.get(updateInstallInFlightRef)) {
-      yield* Ref.set(updateInstallInFlightRef, false);
-      yield* Ref.set(desktopState.quitting, false);
+      yield* resetInstallAction;
       yield* updateState((current) =>
         reduceDesktopUpdateStateOnInstallFailure(current, error.message),
       );
@@ -625,6 +715,11 @@ export const make = Effect.gen(function* () {
         operation: error.operation,
       });
       return;
+    }
+
+    const nativePreparationDeferred = yield* Ref.get(nativePreparationDeferredRef);
+    if (Option.isSome(nativePreparationDeferred)) {
+      yield* Deferred.fail(nativePreparationDeferred.value, error);
     }
 
     if (!(yield* Ref.get(updateCheckInFlightRef)) && !(yield* Ref.get(updateDownloadInFlightRef))) {
@@ -655,6 +750,14 @@ export const make = Effect.gen(function* () {
         Effect.fn("desktop.updates.applyDownloadProgress")(function* (progress) {
           const state = yield* Ref.get(updateStateRef);
           const percent = Math.floor(progress.percent);
+          const downloadInFlight = yield* Ref.get(updateDownloadInFlightRef);
+          if (!downloadInFlight || state.status === "downloaded") {
+            return;
+          }
+          const nativePreparationVersion = yield* Ref.get(nativePreparationVersionRef);
+          if (Option.isSome(nativePreparationVersion)) {
+            return;
+          }
           if (shouldBroadcastDownloadProgress(state, progress.percent) || state.message !== null) {
             yield* setState(reduceDesktopUpdateStateOnDownloadProgress(state, progress.percent));
           }
@@ -685,6 +788,37 @@ export const make = Effect.gen(function* () {
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
+          if (environment.platform === "darwin") {
+            yield* Ref.set(nativePreparationVersionRef, Option.some(info.version));
+            const transitionedToPreparing = yield* Ref.modify(updateStateRef, (current) => {
+              if (current.status === "downloaded") {
+                return [false, current] as const;
+              }
+              return [
+                true,
+                {
+                  ...current,
+                  status: "downloading",
+                  downloadPercent: 100,
+                  message: "Preparing update…",
+                  errorContext: null,
+                  canRetry: false,
+                },
+              ] as const;
+            });
+            if (!transitionedToPreparing) {
+              yield* Ref.set(nativePreparationVersionRef, Option.none());
+              yield* logUpdaterInfo("ignoring duplicate macOS download completion event", {
+                version: info.version,
+              });
+              return;
+            }
+            yield* emitState;
+            yield* logUpdaterInfo("download complete; preparing native macOS update", {
+              version: info.version,
+            });
+            return;
+          }
           const state = yield* Ref.get(updateStateRef);
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
@@ -702,6 +836,49 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  const handleNativeUpdateDownloaded = Effect.fn("desktop.updates.handleNativeUpdateDownloaded")(
+    function* () {
+      const downloadInFlight = yield* Ref.get(updateDownloadInFlightRef);
+      const nativePreparationDeferred = yield* Ref.get(nativePreparationDeferredRef);
+      if (!downloadInFlight || Option.isNone(nativePreparationDeferred)) {
+        yield* logUpdaterInfo("ignoring native macOS update readiness outside active download");
+        return;
+      }
+      if (yield* Deferred.isDone(nativePreparationDeferred.value)) {
+        yield* logUpdaterInfo("ignoring duplicate native macOS update readiness");
+        return;
+      }
+      const state = yield* Ref.get(updateStateRef);
+      const pendingVersion = yield* Ref.get(nativePreparationVersionRef);
+      const version = Option.getOrUndefined(pendingVersion) ?? state.availableVersion;
+      if (version === null) {
+        const error = new DesktopUpdateNativePreparationError({
+          stage: "resolve-version",
+        });
+        yield* Deferred.fail(nativePreparationDeferred.value, error);
+        yield* logUpdaterWarning(
+          "native macOS update became ready without an available update version",
+        );
+        return;
+      }
+      const transitionedToDownloaded = yield* Ref.modify(updateStateRef, (current) => {
+        if (current.errorContext === "download") {
+          return [false, current] as const;
+        }
+        return [true, reduceDesktopUpdateStateOnDownloadComplete(current, version)] as const;
+      });
+      if (!transitionedToDownloaded) {
+        yield* logUpdaterInfo("ignoring native macOS update readiness after download failure", {
+          version,
+        });
+        return;
+      }
+      yield* emitState;
+      yield* Deferred.succeed(nativePreparationDeferred.value, undefined);
+      yield* logUpdaterInfo("native macOS update prepared", { version });
+    },
+  );
 
   return DesktopUpdates.of({
     getState: Ref.get(updateStateRef),
@@ -732,7 +909,11 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(updaterConfiguredRef, true);
 
       yield* electronUpdater.setAutoDownload(false);
-      yield* electronUpdater.setAutoInstallOnAppQuit(false);
+      // On macOS this starts Squirrel's expensive unzip/signature preparation
+      // as part of the explicit download action. The Restart action is not
+      // exposed until Electron's native updater confirms the staged app is
+      // ready. Windows and Linux retain their existing install-on-click flow.
+      yield* electronUpdater.setAutoInstallOnAppQuit(environment.platform === "darwin");
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -766,6 +947,11 @@ export const make = Effect.gen(function* () {
       yield* electronUpdater.on("update-downloaded", (info: unknown) => {
         runEffect(handleUpdateDownloaded(info));
       });
+      if (environment.platform === "darwin") {
+        yield* electronUpdater.onNativeUpdateDownloaded(() => {
+          runEffect(handleNativeUpdateDownloaded());
+        });
+      }
 
       yield* startUpdatePollers;
     }).pipe(Effect.withSpan("desktop.updates.configure")),

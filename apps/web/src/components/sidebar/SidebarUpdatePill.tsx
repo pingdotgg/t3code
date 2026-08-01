@@ -9,6 +9,7 @@ import {
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
+  isDesktopUpdatePreparing,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
@@ -166,7 +167,12 @@ export function SidebarUpdatePill() {
                   className="update-main relative flex h-full flex-1 items-center gap-2 px-2 enabled:cursor-pointer"
                   onClick={handleAction}
                 >
-                  {action === "install" ? (
+                  {isDesktopUpdatePreparing(state) ? (
+                    <>
+                      <RotateCwIcon className="size-3.5 animate-spin" />
+                      <span>Preparing update…</span>
+                    </>
+                  ) : action === "install" ? (
                     <>
                       <RotateCwIcon className="size-3.5" />
                       <span>Restart to update</span>

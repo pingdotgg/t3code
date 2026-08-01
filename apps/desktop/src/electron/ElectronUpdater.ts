@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import { autoUpdater as nativeAutoUpdater } from "electron";
 import { autoUpdater } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
@@ -77,6 +78,9 @@ export class ElectronUpdater extends Context.Service<
     readonly on: <Args extends ReadonlyArray<unknown>>(
       eventName: string,
       listener: (...args: Args) => void,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly onNativeUpdateDownloaded: (
+      listener: () => void,
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
@@ -167,6 +171,16 @@ export const make = ElectronUpdater.of({
         }),
     ).pipe(Effect.asVoid);
   },
+  onNativeUpdateDownloaded: (listener) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        nativeAutoUpdater.on("update-downloaded", listener);
+      }),
+      () =>
+        Effect.sync(() => {
+          nativeAutoUpdater.removeListener("update-downloaded", listener);
+        }),
+    ).pipe(Effect.asVoid),
 });
 
 export const layer = Layer.succeed(ElectronUpdater, make);

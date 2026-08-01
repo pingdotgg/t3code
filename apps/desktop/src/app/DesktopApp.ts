@@ -24,6 +24,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import * as DesktopUpdateRelaunch from "../updates/DesktopUpdateRelaunch.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
@@ -203,7 +204,7 @@ const bootstrap = Effect.gen(function* () {
     // app feels responsive instead of presenting no window until WSL is ready.
     // (Dual mode opens fast off the Windows primary, so no splash there.)
     if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
-      yield* desktopWindow.showConnectingSplash;
+      yield* desktopWindow.showConnectingSplash("wsl");
     }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
@@ -224,6 +225,7 @@ const startup = Effect.gen(function* () {
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const updates = yield* DesktopUpdates.DesktopUpdates;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
   yield* shellEnvironment.installIntoProcess;
@@ -248,6 +250,14 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* updates.configure;
+  const isUpdateRelaunch = yield* DesktopUpdateRelaunch.consume.pipe(
+    Effect.catch(() =>
+      logStartupError("could not consume the update relaunch marker").pipe(Effect.as(false)),
+    ),
+  );
+  if (isUpdateRelaunch) {
+    yield* desktopWindow.showConnectingSplash("update-relaunch");
+  }
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 

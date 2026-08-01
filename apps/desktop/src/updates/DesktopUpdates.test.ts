@@ -20,13 +20,16 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopUpdateRelaunch from "./DesktopUpdateRelaunch.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
 interface UpdatesHarnessOptions {
+  readonly platform?: NodeJS.Platform;
   readonly checkForUpdates?: Effect.Effect<
     void,
     ElectronUpdater.ElectronUpdaterCheckForUpdatesError
   >;
+  readonly downloadUpdate?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterDownloadUpdateError>;
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly stopBackend?: Effect.Effect<void>;
@@ -36,12 +39,18 @@ interface UpdatesHarnessOptions {
 const flushCallbacks = Effect.yieldNow;
 
 function makeHarness(options: UpdatesHarnessOptions = {}) {
+  const platform = options.platform ?? "win32";
+  const platformEnv = platform === "linux" ? { APPIMAGE: "/tmp/T3-Code.AppImage" } : {};
   let checkCount = 0;
+  let destroyAllCount = 0;
+  let quitAndInstallCount = 0;
   let allowDowngrade = false;
   let fullChangelog = false;
+  const autoInstallOnAppQuitValues: boolean[] = [];
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
+  const stateWaiters = new Set<(state: DesktopUpdateState) => void>();
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -66,7 +75,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         feedUrls.push(options);
       }),
     setAutoDownload: () => Effect.void,
-    setAutoInstallOnAppQuit: () => Effect.void,
+    setAutoInstallOnAppQuit: (value) =>
+      Effect.sync(() => {
+        autoInstallOnAppQuitValues.push(value);
+      }),
     setChannel: () => Effect.void,
     setAllowPrerelease: () => Effect.void,
     allowDowngrade: Effect.sync(() => allowDowngrade),
@@ -82,8 +94,11 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
-    downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    downloadUpdate: options.downloadUpdate ?? Effect.void,
+    quitAndInstall: () =>
+      Effect.sync(() => {
+        quitAndInstallCount += 1;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -92,6 +107,16 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         () =>
           Effect.sync(() => {
             removeListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
+          }),
+      ).pipe(Effect.asVoid),
+    onNativeUpdateDownloaded: (listener) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          addListener("native-update-downloaded", listener);
+        }),
+        () =>
+          Effect.sync(() => {
+            removeListener("native-update-downloaded", listener);
           }),
       ).pipe(Effect.asVoid),
   } satisfies ElectronUpdater.ElectronUpdater["Service"]);
@@ -106,9 +131,15 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     reveal: () => Effect.void,
     sendAll: (_channel, state) =>
       Effect.sync(() => {
-        sentStates.push(state as DesktopUpdateState);
+        const updateState = state as DesktopUpdateState;
+        sentStates.push(updateState);
+        for (const waiter of stateWaiters) {
+          waiter(updateState);
+        }
       }),
-    destroyAll: Effect.void,
+    destroyAll: Effect.sync(() => {
+      destroyAllCount += 1;
+    }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
@@ -132,7 +163,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
-    platform: "darwin",
+    platform,
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -147,6 +178,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
           T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
           T3CODE_DESKTOP_MOCK_UPDATES: "true",
           T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+          ...platformEnv,
           ...options.env,
         }),
       ),
@@ -181,6 +213,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
         T3CODE_DESKTOP_MOCK_UPDATES: "true",
         T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+        ...platformEnv,
         ...options.env,
       }),
     ),
@@ -190,7 +223,25 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   return {
     layer,
+    autoInstallOnAppQuitValues: () => autoInstallOnAppQuitValues,
+    awaitState: (predicate: (state: DesktopUpdateState) => boolean) =>
+      Effect.promise(() => {
+        if (sentStates.some(predicate)) {
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+          const waiter = (state: DesktopUpdateState) => {
+            if (!predicate(state)) {
+              return;
+            }
+            stateWaiters.delete(waiter);
+            resolve();
+          };
+          stateWaiters.add(waiter);
+        });
+      }),
     checkCount: () => checkCount,
+    destroyAllCount: () => destroyAllCount,
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>
@@ -198,6 +249,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         (total, eventListeners) => total + eventListeners.size,
         0,
       ),
+    quitAndInstallCount: () => quitAndInstallCount,
     sentStates,
     emit: (eventName: string, payload?: unknown) => {
       for (const listener of listeners.get(eventName) ?? []) {
@@ -225,6 +277,9 @@ describe("DesktopUpdates", () => {
       operation: "download",
       cause,
     });
+    const nativePreparationError = new DesktopUpdates.DesktopUpdateNativePreparationError({
+      stage: "resolve-version",
+    });
     const unexpectedActionError = new DesktopUpdates.DesktopUpdateUnexpectedActionError({
       action: "install",
       cause,
@@ -239,6 +294,12 @@ describe("DesktopUpdates", () => {
     assert.strictEqual(reportedError.cause, cause);
     assert.equal(reportedError.operation, "download");
     assert.equal(reportedError.message, "Desktop updater download operation reported an error.");
+    assert.equal(nativePreparationError.stage, "resolve-version");
+    assert.equal(
+      nativePreparationError.message,
+      "Native macOS update preparation completed without an update version.",
+    );
+    assert.notProperty(nativePreparationError, "cause");
     assert.strictEqual(unexpectedActionError.cause, cause);
     assert.equal(unexpectedActionError.action, "install");
     assert.equal(
@@ -273,6 +334,243 @@ describe("DesktopUpdates", () => {
       assert.equal(harness.listenerCount(), 0);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("enables native pre-staging only on macOS", () =>
+    Effect.gen(function* () {
+      for (const [platform, expected] of [
+        ["darwin", true],
+        ["win32", false],
+        ["linux", false],
+      ] as const) {
+        const harness = makeHarness({ platform });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            assert.deepEqual(harness.autoInstallOnAppQuitValues(), [expected]);
+            assert.equal(harness.listenerCount(), platform === "darwin" ? 7 : 6);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }
+    }),
+  );
+
+  it.effect("withholds the macOS restart action until native staging is complete", () => {
+    const harness = makeHarness({ platform: "darwin" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const downloadFiber = yield* updates.download.pipe(Effect.forkScoped);
+        yield* flushCallbacks;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const preparingState = yield* updates.getState;
+        assert.equal(preparingState.status, "downloading");
+        assert.equal(preparingState.downloadPercent, 100);
+        assert.equal(preparingState.message, "Preparing update…");
+        assert.isUndefined(downloadFiber.pollUnsafe());
+
+        harness.emit("download-progress", { percent: 100 });
+        yield* flushCallbacks;
+        const stateAfterLateProgress = yield* updates.getState;
+        assert.equal(stateAfterLateProgress.status, "downloading");
+        assert.equal(stateAfterLateProgress.message, "Preparing update…");
+
+        harness.emit("native-update-downloaded");
+        const result = yield* Fiber.join(downloadFiber);
+        assert.isTrue(result.accepted);
+        assert.isTrue(result.completed);
+
+        const readyState = yield* updates.getState;
+        assert.equal(readyState.status, "downloaded");
+        assert.equal(readyState.downloadedVersion, "1.2.4");
+        assert.isNull(readyState.message);
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        const stateAfterDuplicateCompletion = yield* updates.getState;
+        assert.equal(stateAfterDuplicateCompletion.status, "downloaded");
+        assert.equal(stateAfterDuplicateCompletion.downloadedVersion, "1.2.4");
+        assert.isNull(stateAfterDuplicateCompletion.message);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps the macOS update ready when completion callbacks race", () => {
+    const harness = makeHarness({ platform: "darwin" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const downloadFiber = yield* updates.download.pipe(Effect.forkScoped);
+        yield* flushCallbacks;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        harness.emit("native-update-downloaded");
+
+        const result = yield* Fiber.join(downloadFiber);
+        assert.isTrue(result.accepted);
+        assert.isTrue(result.completed);
+        yield* flushCallbacks;
+
+        const readyState = yield* updates.getState;
+        assert.equal(readyState.status, "downloaded");
+        assert.equal(readyState.downloadedVersion, "1.2.4");
+        assert.isNull(readyState.message);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("restores download progress after a stray no-update event", () => {
+    const harness = makeHarness({ platform: "darwin" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const downloadFiber = yield* updates.download.pipe(Effect.forkScoped);
+        yield* flushCallbacks;
+        harness.emit("update-not-available");
+        yield* flushCallbacks;
+
+        const noUpdateState = yield* updates.getState;
+        assert.equal(noUpdateState.status, "up-to-date");
+        assert.isNull(noUpdateState.downloadPercent);
+
+        harness.emit("download-progress", { percent: 42 });
+        yield* flushCallbacks;
+
+        const downloadingState = yield* updates.getState;
+        assert.equal(downloadingState.status, "downloading");
+        assert.equal(downloadingState.downloadPercent, 42);
+        assert.isNull(downloadingState.message);
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        harness.emit("native-update-downloaded");
+        const result = yield* Fiber.join(downloadFiber);
+        assert.isTrue(result.accepted);
+        assert.isTrue(result.completed);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect(
+    "fails macOS native preparation instead of hanging when no version is available",
+    () => {
+      const harness = makeHarness({ platform: "darwin" });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const downloadFiber = yield* updates.download.pipe(Effect.forkScoped);
+          yield* flushCallbacks;
+          harness.emit("update-not-available");
+          yield* flushCallbacks;
+          harness.emit("native-update-downloaded");
+
+          const result = yield* Fiber.join(downloadFiber);
+          assert.isTrue(result.accepted);
+          assert.isFalse(result.completed);
+          assert.equal(result.state.status, "error");
+          assert.equal(result.state.errorContext, "download");
+          assert.equal(
+            result.state.message,
+            "Native macOS update preparation completed without an update version.",
+          );
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
+
+  it.effect("ignores native readiness after a macOS download failure", () => {
+    const downloadError = new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+      channel: null,
+      cause: new Error("simulated download failure"),
+    });
+    const harness = makeHarness({
+      platform: "darwin",
+      downloadUpdate: Effect.fail(downloadError),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        const failedState = yield* updates.getState;
+        assert.equal(failedState.errorContext, "download");
+        assert.isTrue(failedState.canRetry);
+
+        harness.emit("native-update-downloaded");
+        yield* flushCallbacks;
+
+        assert.deepEqual(yield* updates.getState, failedState);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("only force-destroys windows for the Windows installer", () =>
+    Effect.gen(function* () {
+      for (const platform of ["darwin", "win32", "linux"] as const) {
+        const harness = makeHarness({ platform });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-available", { version: "1.2.4" });
+            yield* flushCallbacks;
+
+            if (platform === "darwin") {
+              const downloadFiber = yield* updates.download.pipe(Effect.forkScoped);
+              yield* flushCallbacks;
+              harness.emit("update-downloaded", { version: "1.2.4" });
+              yield* flushCallbacks;
+              harness.emit("native-update-downloaded");
+              const downloadResult = yield* Fiber.join(downloadFiber);
+              assert.isTrue(downloadResult.completed);
+            } else {
+              const downloadResult = yield* updates.download;
+              assert.isTrue(downloadResult.completed);
+              harness.emit("update-downloaded", { version: "1.2.4" });
+            }
+            yield* flushCallbacks;
+
+            const result = yield* updates.install;
+            assert.isTrue(result.accepted);
+            assert.equal(
+              result.state.message,
+              "Preparing update… T3 Code will restart automatically.",
+            );
+            assert.equal(harness.quitAndInstallCount(), 1);
+            assert.equal(harness.destroyAllCount(), platform === "win32" ? 1 : 0);
+            yield* DesktopUpdateRelaunch.clear;
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }
+    }),
+  );
 
   it.effect("updates and broadcasts state from updater events", () => {
     const harness = makeHarness();
@@ -505,6 +803,35 @@ describe("DesktopUpdates", () => {
 
         const changedState = yield* updates.setChannel("nightly");
         assert.equal(changedState.channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("clears the relaunch marker after an updater-reported install failure", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const installResult = yield* updates.install;
+        assert.isTrue(installResult.accepted);
+        assert.isTrue(yield* DesktopUpdateRelaunch.consume);
+        yield* DesktopUpdateRelaunch.mark;
+
+        harness.emit("error", new Error("native installer failed"));
+        yield* harness.awaitState((state) => state.errorContext === "install");
+
+        const failedState = yield* updates.getState;
+        assert.equal(failedState.status, "downloaded");
+        assert.equal(failedState.errorContext, "install");
+        assert.equal(failedState.message, "Desktop updater install operation reported an error.");
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.isFalse(yield* DesktopUpdateRelaunch.consume);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

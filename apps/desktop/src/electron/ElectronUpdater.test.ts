@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { autoUpdaterMock } = vi.hoisted(() => ({
+const { autoUpdaterMock, nativeAutoUpdaterMock } = vi.hoisted(() => ({
   autoUpdaterMock: {
     allowDowngrade: false,
     allowPrerelease: false,
@@ -18,6 +18,14 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
   },
+  nativeAutoUpdaterMock: {
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  },
+}));
+
+vi.mock("electron", () => ({
+  autoUpdater: nativeAutoUpdaterMock,
 }));
 
 vi.mock("electron-updater", () => ({
@@ -43,6 +51,8 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
     autoUpdaterMock.setFeedURL.mockClear();
+    nativeAutoUpdaterMock.on.mockClear();
+    nativeAutoUpdaterMock.removeListener.mockClear();
   });
 
   it.effect("scopes updater event listeners", () =>
@@ -58,6 +68,24 @@ describe("ElectronUpdater", () => {
 
       assert.deepEqual(autoUpdaterMock.on.mock.calls, [["update-available", listener]]);
       assert.deepEqual(autoUpdaterMock.removeListener.mock.calls, [["update-available", listener]]);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("scopes native macOS readiness listeners", () =>
+    Effect.gen(function* () {
+      const listener = vi.fn();
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updater = yield* ElectronUpdater.ElectronUpdater;
+          yield* updater.onNativeUpdateDownloaded(listener);
+        }),
+      );
+
+      assert.deepEqual(nativeAutoUpdaterMock.on.mock.calls, [["update-downloaded", listener]]);
+      assert.deepEqual(nativeAutoUpdaterMock.removeListener.mock.calls, [
+        ["update-downloaded", listener],
+      ]);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 

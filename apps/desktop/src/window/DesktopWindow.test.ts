@@ -86,7 +86,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -995,6 +995,52 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("shows startup copy for the active splash reason", () =>
+    Effect.gen(function* () {
+      for (const [reason, expectedMessage] of [
+        ["wsl", "Connecting to WSL…"],
+        ["update-relaunch", "Starting T3 Code…"],
+      ] as const) {
+        const splash = makeFakeBrowserWindow();
+        const scenario = yield* makeSplashScenario([splash.window]);
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.showConnectingSplash(reason);
+        }).pipe(Effect.provide(scenario.layer));
+
+        const splashUrl = splash.loadURL.mock.calls[0]?.[0];
+        assert.isDefined(splashUrl);
+        assert.include(
+          decodeURIComponent(splashUrl),
+          `<div class="label">${expectedMessage}</div>`,
+        );
+      }
+    }),
+  );
+
+  it.effect("updates an existing relaunch splash for WSL cold boot", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash("update-relaunch");
+        yield* desktopWindow.showConnectingSplash("wsl");
+      }).pipe(Effect.provide(scenario.layer));
+
+      assert.equal(yield* Ref.get(scenario.createCalls), 1);
+      assert.equal(splash.loadURL.mock.calls.length, 2);
+      const updatedSplashUrl = splash.loadURL.mock.calls.at(-1)?.[0];
+      assert.isDefined(updatedSplashUrl);
+      assert.include(
+        decodeURIComponent(updatedSplashUrl),
+        '<div class="label">Connecting to WSL…</div>',
+      );
+    }),
+  );
+
   it.effect(
     "retries opening the real main on activate when a failed post-readiness open left only the splash",
     () =>
@@ -1009,7 +1055,7 @@ describe("DesktopWindow", () => {
           const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
           // 1. WSL-only boot shows the connecting splash.
-          yield* desktopWindow.showConnectingSplash;
+          yield* desktopWindow.showConnectingSplash("wsl");
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
 
           // 2. Backend reports ready, but opening the real main fails. The pool
@@ -1045,7 +1091,7 @@ describe("DesktopWindow", () => {
         yield* Effect.gen(function* () {
           const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-          yield* desktopWindow.showConnectingSplash;
+          yield* desktopWindow.showConnectingSplash("wsl");
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
 
           // Taskbar/dock activation during cold boot must bring the splash back
@@ -1066,7 +1112,7 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.showConnectingSplash("wsl");
         yield* desktopWindow.dispatchMenuAction("open-settings");
 
         assert.equal(yield* Ref.get(scenario.createCalls), 1);
@@ -1085,7 +1131,7 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.showConnectingSplash("wsl");
         const readyExit = yield* Effect.exit(
           desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
         );

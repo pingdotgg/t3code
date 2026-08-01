@@ -9,6 +9,8 @@ import {
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
+  isDesktopUpdatePreparing,
+  isDesktopUpdatePreparingToInstall,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
@@ -105,6 +107,45 @@ describe("desktop update button state", () => {
     expect(shouldShowDesktopUpdateButton(state)).toBe(true);
     expect(isDesktopUpdateButtonDisabled(state)).toBe(true);
     expect(getDesktopUpdateButtonTooltip(state)).toContain("42%");
+  });
+
+  it("disables restart and reports preparation while the updater is taking over", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "downloaded",
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+      message: "Preparing update… T3 Code will restart automatically.",
+    };
+    expect(isDesktopUpdatePreparingToInstall(state)).toBe(true);
+    expect(isDesktopUpdateButtonDisabled(state)).toBe(true);
+    expect(getDesktopUpdateButtonTooltip(state)).toBe(state.message);
+  });
+
+  it("reports native staging as preparation instead of a stuck 100% download", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "downloading",
+      availableVersion: "1.1.0",
+      downloadPercent: 100,
+      message: "Preparing update…",
+    };
+    expect(isDesktopUpdatePreparing(state)).toBe(true);
+    expect(getDesktopUpdateButtonTooltip(state)).toBe("Preparing update…");
+  });
+
+  it("keeps failed installs retryable", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "downloaded",
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+      message: "Install failed.",
+      errorContext: "install",
+      canRetry: true,
+    };
+    expect(isDesktopUpdatePreparingToInstall(state)).toBe(false);
+    expect(isDesktopUpdateButtonDisabled(state)).toBe(false);
   });
 });
 

@@ -52,8 +52,20 @@ export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | nul
   return state?.hostArch === "arm64" && state.appArch === "x64";
 }
 
+export function isDesktopUpdatePreparing(state: DesktopUpdateState | null): boolean {
+  return (
+    (state?.status === "downloading" || state?.status === "downloaded") &&
+    state.errorContext === null &&
+    typeof state.message === "string"
+  );
+}
+
+export function isDesktopUpdatePreparingToInstall(state: DesktopUpdateState | null): boolean {
+  return state?.status === "downloaded" && isDesktopUpdatePreparing(state);
+}
+
 export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null): boolean {
-  return state?.status === "downloading";
+  return state?.status === "downloading" || isDesktopUpdatePreparingToInstall(state);
 }
 
 export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
@@ -76,11 +88,17 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
   if (state.status === "downloading") {
+    if (isDesktopUpdatePreparing(state)) {
+      return state.message ?? "Preparing update…";
+    }
     const progress =
       typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
     return `Downloading update${progress}`;
   }
   if (state.status === "downloaded") {
+    if (isDesktopUpdatePreparingToInstall(state)) {
+      return state.message ?? "Preparing update…";
+    }
     return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
   }
   if (state.status === "error") {
