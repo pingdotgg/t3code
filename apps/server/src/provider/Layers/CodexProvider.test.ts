@@ -1,6 +1,26 @@
 import { assert, it } from "@effect/vitest";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+  parseCodexModelListResponse,
+} from "./CodexProvider.ts";
+
+const catalogModel = (
+  overrides: Partial<CodexSchema.V2ModelListResponse__Model> &
+    Pick<CodexSchema.V2ModelListResponse__Model, "model">,
+): CodexSchema.V2ModelListResponse__Model => ({
+  additionalSpeedTiers: [],
+  defaultReasoningEffort: "medium",
+  description: "Test model",
+  displayName: overrides.model,
+  hidden: false,
+  id: overrides.model,
+  isDefault: false,
+  supportedReasoningEfforts: [],
+  ...overrides,
+});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -134,6 +154,53 @@ it("keeps Codex's own default when no preferred model is available", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("keeps selectable models from the catalog", () => {
+  const models = parseCodexModelListResponse({
+    data: [
+      catalogModel({ model: "gpt-5.6-sol", displayName: "gpt-5.6-sol", isDefault: true }),
+      catalogModel({ model: "gpt-5.6-luna", displayName: "gpt-5.6-luna" }),
+    ],
+  });
+
+  assert.deepStrictEqual(
+    models.map((model) => ({ slug: model.slug, name: model.name, isDefault: model.isDefault })),
+    [
+      { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isDefault: true },
+      { slug: "gpt-5.6-luna", name: "GPT-5.6-Luna", isDefault: undefined },
+    ],
+  );
+});
+
+it("drops catalog models the app server marks as hidden", () => {
+  const models = parseCodexModelListResponse({
+    data: [
+      catalogModel({ model: "gpt-5.6-sol" }),
+      catalogModel({ model: "gpt-5.6-internal", hidden: true }),
+    ],
+  });
+
+  assert.deepStrictEqual(
+    models.map((model) => model.slug),
+    ["gpt-5.6-sol"],
+  );
+});
+
+it("drops non-interactive Codex models even when they are not marked hidden", () => {
+  // codex-cli 0.145.0 reports codex-auto-review with hidden: false and the
+  // display name of another model, so it appears as a duplicate picker row.
+  const models = parseCodexModelListResponse({
+    data: [
+      catalogModel({ model: "codex-auto-review", displayName: "gpt-5.6-luna" }),
+      catalogModel({ model: "gpt-5.6-luna", displayName: "gpt-5.6-luna" }),
+    ],
+  });
+
+  assert.deepStrictEqual(
+    models.map((model) => ({ slug: model.slug, name: model.name })),
+    [{ slug: "gpt-5.6-luna", name: "GPT-5.6-Luna" }],
+  );
 });
 
 it("ignores custom models that shadow a preferred slug", () => {

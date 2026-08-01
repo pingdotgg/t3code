@@ -182,10 +182,24 @@ const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string =>
     .replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 };
 
-function parseCodexModelListResponse(
+// Codex models that exist for internal Codex machinery rather than interactive
+// use, and that `model/list` does not mark as hidden. As of codex-cli 0.145.0
+// `codex-auto-review` (the automatic approval-review model) is returned with
+// `hidden: false` and the display name of another catalog entry
+// ("GPT-5.6-Luna"), so it renders as a duplicate picker row. Selecting it
+// produces a session where every tool call fails locally with "unsupported
+// custom tool call" and every follow-up turn is rejected by the API.
+const NON_INTERACTIVE_CODEX_MODEL_SLUGS = new Set(["codex-auto-review"]);
+
+function isSelectableCodexModel(model: CodexSchema.V2ModelListResponse__Model): boolean {
+  return !model.hidden && !NON_INTERACTIVE_CODEX_MODEL_SLUGS.has(model.model);
+}
+
+/** @internal */
+export function parseCodexModelListResponse(
   response: CodexSchema.V2ModelListResponse,
 ): ReadonlyArray<ServerProviderModel> {
-  return response.data.map((model) => ({
+  return response.data.filter(isSelectableCodexModel).map((model) => ({
     slug: model.model,
     name: toDisplayName(model),
     isCustom: false,
