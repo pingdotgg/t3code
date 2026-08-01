@@ -378,10 +378,10 @@ export class GhosttyTerminalSurface {
   private selectionMoved = false;
   private composing = false;
   private focused = false;
-  private resizeNotified = false;
-  private requestedCols = 0;
-  private requestedRows = 0;
-  private resizeSeq = 0;
+  private resizeRequestedOnce = false;
+  private desiredCols = 0;
+  private desiredRows = 0;
+  private resizeRequestActive = false;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
@@ -597,30 +597,22 @@ export class GhosttyTerminalSurface {
     // each such redraw orphans the previous prompt as a stranded fragment that
     // survives above the shell's edit region. A native terminal gets this for
     // free because VT resize and SIGWINCH are synchronous; here the PTY lives
-    // across an RPC, so request the resize first and apply the grid change only
-    // once the request settles: the acknowledgement arrives on the same socket
-    // after all old-width output, so bytes keep being interpreted at the width
-    // they were generated for. The first successful fit must request even when
-    // the measured grid equals the 1x1 construction sentinel, because onResize
-    // is the only PTY resize channel.
+    // across an RPC, so resizes are single-flight: request one size, apply it
+    // to the grid when the request settles, then request the newest
+    // measurement if it moved on. The emulator therefore steps through every
+    // width the PTY entered, in the same order — discarding a superseded
+    // acknowledgement instead would skip a width the shell already redrew for.
+    // The first successful fit must request even when the measured grid equals
+    // the 1x1 construction sentinel, because onResize is the only PTY resize
+    // channel.
     if (
-      grid.cols !== this.requestedCols ||
-      grid.rows !== this.requestedRows ||
-      !this.resizeNotified
+      grid.cols !== this.desiredCols ||
+      grid.rows !== this.desiredRows ||
+      !this.resizeRequestedOnce
     ) {
-      this.resizeNotified = true;
-      this.requestedCols = grid.cols;
-      this.requestedRows = grid.rows;
-      const seq = ++this.resizeSeq;
-      const apply = () => this.applyGridSize(seq, grid.cols, grid.rows);
-      const acknowledgement = this.options.onResize(grid.cols, grid.rows);
-      if (acknowledgement && typeof acknowledgement.then === "function") {
-        // Applied even when the request fails: a stuck grid is worse than a
-        // transient width mismatch, and the next fit re-requests anyway.
-        void acknowledgement.then(apply, apply);
-      } else {
-        apply();
-      }
+      this.desiredCols = grid.cols;
+      this.desiredRows = grid.rows;
+      this.requestResize();
     }
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
@@ -629,9 +621,31 @@ export class GhosttyTerminalSurface {
     return true;
   }
 
-  /** Applies a granted grid size, ignoring superseded acknowledgements. */
-  private applyGridSize(seq: number, cols: number, rows: number): void {
-    if (this.disposed || seq !== this.resizeSeq) return;
+  private requestResize(): void {
+    if (this.disposed || this.resizeRequestActive) return;
+    this.resizeRequestActive = true;
+    this.resizeRequestedOnce = true;
+    const cols = this.desiredCols;
+    const rows = this.desiredRows;
+    const settle = () => {
+      if (this.disposed) return;
+      this.resizeRequestActive = false;
+      // Applied even when the request fails: a stuck grid is worse than a
+      // transient width mismatch, and the next fit re-requests anyway.
+      this.applyGridSize(cols, rows);
+      if (this.desiredCols !== cols || this.desiredRows !== rows) {
+        this.requestResize();
+      }
+    };
+    const acknowledgement = this.options.onResize(cols, rows);
+    if (acknowledgement && typeof acknowledgement.then === "function") {
+      void acknowledgement.then(settle, settle);
+    } else {
+      settle();
+    }
+  }
+
+  private applyGridSize(cols: number, rows: number): void {
     if (cols === this.cols && rows === this.rows) return;
     this.cols = cols;
     this.rows = rows;
