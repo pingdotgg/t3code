@@ -17,6 +17,22 @@ describe("clip", () => {
     expect(clip("hello", 0)).toBe("");
     expect(clip("hello", -3)).toBe("");
   });
+
+  it("Given wide (CJK) text, when clipped, then truncates by display width, not code units", () => {
+    // 8 CJK chars = 16 display columns; 10 columns leaves room for 4 chars + ellipsis.
+    const result = clip("你好世界你好世界", 10);
+    expect(result).toBe("你好世界…");
+    expect(Bun.stringWidth(result)).toBeLessThanOrEqual(10);
+  });
+
+  it("Given emoji text, when clipped, then never splits a surrogate pair", () => {
+    const result = clip("😀😀😀😀😀", 6);
+    expect(result.endsWith("…")).toBe(true);
+    expect(result).not.toContain("�");
+    for (const character of result.slice(0, -1)) {
+      expect(character).toBe("😀");
+    }
+  });
 });
 
 describe("padClip", () => {
