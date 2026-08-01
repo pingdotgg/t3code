@@ -83,6 +83,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { DiffStateQuery } from "./diffState/Services/DiffStateQuery.ts";
 import { ServerConfig } from "./config.ts";
+import { loadAuthAccessSnapshot } from "./auth/authAccessSnapshot.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { GitManager } from "./git/Services/GitManager.ts";
@@ -239,12 +240,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         gitStatusBroadcaster,
         projectSetupScriptRunner,
       });
-
-      const loadAuthAccessSnapshot = () =>
-        Effect.all({
-          pairingLinks: serverAuth.listPairingLinks().pipe(Effect.orDie),
-          clientSessions: serverAuth.listClientSessions(currentSessionId).pipe(Effect.orDie),
-        });
 
       const enrichProjectEvent = (
         event: OrchestrationEvent,
@@ -2110,7 +2105,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeAuthAccess,
             Effect.gen(function* () {
-              const initialSnapshot = yield* loadAuthAccessSnapshot();
+              const initialSnapshot = yield* loadAuthAccessSnapshot(serverAuth, currentSessionId);
               const revisionRef = yield* Ref.make(1);
               const accessChanges: Stream.Stream<
                 BootstrapCredentialChange | SessionCredentialChange
