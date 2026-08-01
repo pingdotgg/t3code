@@ -38,8 +38,9 @@ export function validateProjectThreadCreation(input: {
   readonly environmentMode: "local" | "worktree";
   readonly branch: string | null;
   readonly initialMessageText: string;
+  readonly initialAttachmentCount: number;
 }): ProjectThreadCreationValidationError | null {
-  if (input.initialMessageText.trim().length === 0) {
+  if (input.initialMessageText.trim().length === 0 && input.initialAttachmentCount === 0) {
     return new ProjectThreadTaskRequiredError({
       environmentId: input.environmentId,
       projectId: input.projectId,

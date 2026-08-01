@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import {
   CommandId,
   MessageId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type EnvironmentId,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -15,6 +16,7 @@ import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
+  appendComposerImageAnnotationPrompts,
   convertPastedImagesToAttachments,
   pasteComposerClipboard,
   pickComposerImages,
@@ -32,6 +34,7 @@ import {
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   removeComposerDraftAttachment,
+  replaceComposerDraftAttachment,
   setComposerDraftText,
   updateComposerDraftSettings,
   useComposerDraft,
@@ -144,6 +147,13 @@ export function useThreadComposerState() {
     const text = draft.text.trim();
     const attachments = draft.attachments;
     if (text.length === 0 && attachments.length === 0) {
+      return null;
+    }
+    const deliveryText = appendComposerImageAnnotationPrompts(text, attachments);
+    if (deliveryText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      setPendingConnectionError(
+        "This message is too long after adding image annotation comments. Shorten the message or its callouts and try again.",
+      );
       return null;
     }
 
@@ -269,6 +279,18 @@ export function useThreadComposerState() {
     [selectedThreadShell],
   );
 
+  const onReplaceDraftImage = useCallback(
+    (attachment: DraftComposerImageAttachment) => {
+      if (!selectedThreadShell) {
+        return;
+      }
+
+      const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+      replaceComposerDraftAttachment(threadKey, attachment);
+    },
+    [selectedThreadShell],
+  );
+
   const onUpdateModelSelection = useCallback(
     (value: ModelSelection) => {
       if (!selectedThreadKey) {
@@ -314,6 +336,7 @@ export function useThreadComposerState() {
     onPasteIntoDraft,
     onNativePasteImages,
     onRemoveDraftImage,
+    onReplaceDraftImage,
     onSendMessage,
     onUpdateModelSelection,
     onUpdateRuntimeMode,

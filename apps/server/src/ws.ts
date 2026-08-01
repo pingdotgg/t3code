@@ -55,6 +55,12 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  PreviewAutomationClientId,
+  PreviewAutomationReviewSnapshot,
+  type PreviewTabId,
+  PreviewSessionLookupError,
+  type PreviewReviewSnapshotInput,
+  PreviewReviewSnapshotMalformedError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -87,6 +93,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PreviewLiveGateway from "./preview/LiveGateway.ts";
+import { compactPreviewReviewSnapshot } from "./preview/ReviewSnapshot.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -121,9 +129,15 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const decodePreviewAutomationReviewSnapshot = Schema.decodeUnknownEffect(
+  PreviewAutomationReviewSnapshot,
+);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+const bytesToHex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
@@ -348,6 +362,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  previewLiveGateway: PreviewLiveGateway.PreviewLiveGateway["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -412,6 +427,84 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
+      const previewReviewRequesterId = PreviewAutomationClientId.make(
+        `review-${bytesToHex(
+          yield* crypto
+            .digest("SHA-256", new TextEncoder().encode(currentSessionId))
+            .pipe(Effect.orDie),
+        )}`,
+      );
+      const previewReviewAssignmentId = Effect.fn("ws.previewReviewSnapshot.assignmentId")(
+        function* (threadId: PreviewReviewSnapshotInput["threadId"]) {
+          const digest = yield* crypto
+            .digest("SHA-256", new TextEncoder().encode(`${currentSessionId}\n${threadId}`))
+            .pipe(Effect.orDie);
+          return `review-${bytesToHex(digest)}`;
+        },
+      );
+      const capturePreviewReviewSnapshot = Effect.fn("ws.previewReviewSnapshot.capture")(function* (
+        input: PreviewReviewSnapshotInput,
+      ) {
+        const previewState = yield* previewManager.list({ threadId: input.threadId });
+        if (!previewState.sessions.some((session) => session.tabId === input.tabId)) {
+          return yield* new PreviewSessionLookupError({
+            threadId: input.threadId,
+            tabId: input.tabId,
+          });
+        }
+        const [snapshotId, assignmentId] = yield* Effect.all(
+          [crypto.randomUUIDv4.pipe(Effect.orDie), previewReviewAssignmentId(input.threadId)],
+          { concurrency: 2 },
+        );
+        const rawSnapshot = yield* previewAutomationBroker.invoke<unknown>({
+          scope: {
+            environmentId: yield* serverEnvironment.getEnvironmentId,
+            threadId: input.threadId,
+            assignmentId,
+            requesterId: previewReviewRequesterId,
+          },
+          operation: "snapshot",
+          input: { mode: "review" },
+          tabId: input.tabId,
+        });
+        const snapshot = yield* decodePreviewAutomationReviewSnapshot(rawSnapshot).pipe(
+          Effect.mapError(
+            () =>
+              new PreviewReviewSnapshotMalformedError({
+                threadId: input.threadId,
+                tabId: input.tabId,
+              }),
+          ),
+        );
+        const capturedAt = yield* nowIso;
+        return yield* compactPreviewReviewSnapshot({
+          request: input,
+          snapshot,
+          snapshotId,
+          capturedAt,
+          previewState,
+        });
+      });
+      const openPreviewLiveGateway = Effect.fn("ws.previewOpenLiveGateway")(function* (input: {
+        readonly threadId: ThreadId;
+        readonly tabId: PreviewTabId;
+      }) {
+        const previewState = yield* previewManager.list({ threadId: input.threadId });
+        const snapshot = previewState.sessions.find((session) => session.tabId === input.tabId);
+        if (!snapshot) {
+          return yield* new PreviewSessionLookupError({
+            threadId: input.threadId,
+            tabId: input.tabId,
+          });
+        }
+        return yield* previewLiveGateway.issue({
+          sessionId: currentSessionId,
+          ...(currentSession.expiresAt === undefined
+            ? {}
+            : { sessionExpiresAt: currentSession.expiresAt.epochMilliseconds }),
+          snapshot,
+        });
+      });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1928,15 +2021,27 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "preview",
           }),
         [WS_METHODS.previewClose]: (input) =>
-          observeRpcEffect(WS_METHODS.previewClose, previewManager.close(input), {
-            "rpc.aggregate": "preview",
-          }),
+          observeRpcEffect(
+            WS_METHODS.previewClose,
+            Effect.andThen(previewManager.close(input), previewLiveGateway.revokeTab(input)),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
         [WS_METHODS.previewList]: (input) =>
           observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
             "rpc.aggregate": "preview",
           }),
         [WS_METHODS.previewReportStatus]: (input) =>
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewReviewSnapshot]: (input) =>
+          observeRpcEffect(WS_METHODS.previewReviewSnapshot, capturePreviewReviewSnapshot(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewOpenLiveGateway]: (input) =>
+          observeRpcEffect(WS_METHODS.previewOpenLiveGateway, openPreviewLiveGateway(input), {
             "rpc.aggregate": "preview",
           }),
         [WS_METHODS.previewAutomationConnect]: (input) =>
@@ -2105,68 +2210,71 @@ const makeWsRpcLayer = (
     }),
   );
 
-export const websocketRpcRouteLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-    const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
-    return HttpRouter.add(
-      "GET",
-      "/ws",
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const sessions = yield* SessionStore.SessionStore;
-        const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("internal_error", error),
-          ),
-        );
-        const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
-          disableTracing: true,
-        }).pipe(
-          Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
-              Layer.provideMerge(RpcSerialization.layerJson),
-              Layer.provide(ProviderMaintenanceRunner.layer),
-              Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
-              Layer.provide(
-                SourceControlDiscovery.layer.pipe(
-                  Layer.provide(
-                    SourceControlProviderRegistry.layer.pipe(
-                      Layer.provide(
-                        Layer.mergeAll(
-                          AzureDevOpsCli.layer,
-                          BitbucketApi.layer,
-                          GitHubCli.layer,
-                          GitLabCli.layer,
+export const makeWebsocketRpcRouteLayer = (
+  previewLiveGateway: PreviewLiveGateway.PreviewLiveGateway["Service"],
+) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      return HttpRouter.add(
+        "GET",
+        "/ws",
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const sessions = yield* SessionStore.SessionStore;
+          const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+            Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+              failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+            ),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("internal_error", error),
+            ),
+          );
+          const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+            disableTracing: true,
+          }).pipe(
+            Effect.provide(
+              makeWsRpcLayer(session, previewAutomationBroker, previewLiveGateway).pipe(
+                Layer.provideMerge(RpcSerialization.layerJson),
+                Layer.provide(ProviderMaintenanceRunner.layer),
+                Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+                Layer.provide(
+                  SourceControlDiscovery.layer.pipe(
+                    Layer.provide(
+                      SourceControlProviderRegistry.layer.pipe(
+                        Layer.provide(
+                          Layer.mergeAll(
+                            AzureDevOpsCli.layer,
+                            BitbucketApi.layer,
+                            GitHubCli.layer,
+                            GitLabCli.layer,
+                          ),
+                        ),
+                        Layer.provideMerge(GitVcsDriver.layer),
+                        Layer.provide(
+                          VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
                         ),
                       ),
-                      Layer.provideMerge(GitVcsDriver.layer),
-                      Layer.provide(
-                        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
-                      ),
                     ),
+                    Layer.provide(VcsProcess.layer),
                   ),
-                  Layer.provide(VcsProcess.layer),
                 ),
               ),
             ),
-          ),
-        );
-        return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
-        );
-      }).pipe(
-        Effect.catchTags({
-          EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-          EnvironmentInternalError: HttpServerRespondable.toResponse,
-        }),
-      ),
-    );
-  }),
-);
+          );
+          return yield* Effect.acquireUseRelease(
+            sessions.markConnected(session.sessionId),
+            () => rpcWebSocketHttpEffect,
+            () => sessions.markDisconnected(session.sessionId),
+          );
+        }).pipe(
+          Effect.catchTags({
+            EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+            EnvironmentInternalError: HttpServerRespondable.toResponse,
+          }),
+        ),
+      );
+    }),
+  );

@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -567,6 +568,36 @@ describe("thread outbox", () => {
     expect(isQueuedThreadCreationSendable({ ...creationMessage, modelSelection: undefined })).toBe(
       false,
     );
+    expect(
+      isQueuedThreadCreationSendable({
+        ...creationMessage,
+        text: "",
+        attachments: [
+          {
+            id: "attachment-1",
+            type: "image",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,YWJj",
+            previewUri: "file:///tmp/screenshot.png",
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      isQueuedThreadCreationSendable({
+        ...creationMessage,
+        text: "",
+        attachments: [],
+      }),
+    ).toBe(false);
+    expect(
+      isQueuedThreadCreationSendable({
+        ...creationMessage,
+        text: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1),
+      }),
+    ).toBe(false);
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
   });
 

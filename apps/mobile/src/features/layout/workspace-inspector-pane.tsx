@@ -6,7 +6,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib/layout";
+import type { WorkspacePaneLayout } from "../../lib/layout";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 
@@ -31,6 +31,7 @@ export function WorkspaceInspectorPane(props: {
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
   readonly renderInspector?: () => ReactNode;
+  readonly resizable?: boolean;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }) {
   const { panes, setAuxiliaryPaneWidth } = props;
@@ -38,6 +39,7 @@ export function WorkspaceInspectorPane(props: {
   const inspectorSupported = props.renderInspector !== undefined && inspectorWidth !== null;
   const inspectorVisible =
     inspectorSupported && panes.auxiliaryPaneVisible && (props.active ?? true);
+  const resizable = props.resizable ?? true;
   const resizeStartWidth = useRef(0);
   const [resizing, setResizing] = useState(false);
 
@@ -102,14 +104,9 @@ export function WorkspaceInspectorPane(props: {
   }, [inspectorWidth]);
   const resizeBy = useCallback(
     (delta: number) => {
-      setAuxiliaryPaneWidth(
-        constrainAuxiliaryPaneWidth({
-          preferredWidth: resizeStartWidth.current + delta,
-          availableWidth: panes.contentPaneWidth,
-        }),
-      );
+      setAuxiliaryPaneWidth(resizeStartWidth.current + delta);
     },
-    [panes.contentPaneWidth, setAuxiliaryPaneWidth],
+    [setAuxiliaryPaneWidth],
   );
   const endResize = useCallback(() => {
     setResizing(false);
@@ -117,7 +114,7 @@ export function WorkspaceInspectorPane(props: {
 
   return (
     <>
-      {inspectorVisible ? (
+      {inspectorVisible && resizable ? (
         <WorkspacePaneDivider
           accessibilityLabel="Resize detail pane"
           currentWidth={inspectorWidth ?? 0}

@@ -11,6 +11,10 @@
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
     },
+    "./annotations": {
+      "types": "./src/annotations/index.ts",
+      "default": "./src/annotations/index.ts"
+    },
     "./environment": {
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
@@ -504,6 +504,15 @@ export const PreviewAutomationElement = Schema.Struct({
 });
 export type PreviewAutomationElement = typeof PreviewAutomationElement.Type;
 
+export const PreviewAutomationSnapshotViewport = Schema.Struct({
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+  scrollX: Schema.Finite,
+  scrollY: Schema.Finite,
+  devicePixelRatio: Schema.Finite.check(Schema.isGreaterThan(0)),
+});
+export type PreviewAutomationSnapshotViewport = typeof PreviewAutomationSnapshotViewport.Type;
+
 export const PreviewAutomationConsoleEntry = Schema.Struct({
   level: Schema.String,
   text: Schema.String,
@@ -536,6 +545,12 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,
+  /** Missing for desktop hosts predating human review snapshots. */
+  viewport: Schema.optional(PreviewAutomationSnapshotViewport),
+  /** Host-provided identifier for the exact rendered page frame, when available. */
+  pageRevision: Schema.optional(TrimmedNonEmptyString),
+  /** Host capture time, when available. */
+  capturedAt: Schema.optional(Schema.String),
   visibleText: Schema.String,
   interactiveElements: Schema.Array(PreviewAutomationElement),
   accessibilityTree: Schema.Unknown,
@@ -547,9 +562,127 @@ export const PreviewAutomationSnapshot = Schema.Struct({
     data: Schema.String,
     width: Schema.Int,
     height: Schema.Int,
+    /** Encoded-image pixels per viewport CSS pixel. Missing on legacy hosts. */
+    scale: Schema.optional(Schema.Finite.check(Schema.isGreaterThan(0))),
   }),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
+
+/**
+ * The human review capture path deliberately decodes only fields that can be
+ * shown or attached. Schema.Struct accepts the extra diagnostics returned by
+ * legacy hosts, so mixed-version desktop/server pairs remain compatible.
+ */
+export const PreviewAutomationReviewSnapshot = Schema.Struct({
+  url: PreviewAutomationSnapshot.fields.url,
+  title: PreviewAutomationSnapshot.fields.title,
+  loading: PreviewAutomationSnapshot.fields.loading,
+  viewport: PreviewAutomationSnapshot.fields.viewport,
+  pageRevision: PreviewAutomationSnapshot.fields.pageRevision,
+  capturedAt: PreviewAutomationSnapshot.fields.capturedAt,
+  interactiveElements: PreviewAutomationSnapshot.fields.interactiveElements,
+  screenshot: PreviewAutomationSnapshot.fields.screenshot,
+});
+export type PreviewAutomationReviewSnapshot = typeof PreviewAutomationReviewSnapshot.Type;
+
+export const PREVIEW_REVIEW_SNAPSHOT_MAX_ELEMENTS = 200;
+export const PREVIEW_REVIEW_SNAPSHOT_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const PREVIEW_REVIEW_SNAPSHOT_MAX_BASE64_CHARS =
+  Math.ceil(PREVIEW_REVIEW_SNAPSHOT_MAX_IMAGE_BYTES / 3) * 4;
+export const PREVIEW_REVIEW_SNAPSHOT_MAX_PAGE_REVISION_LENGTH = 128;
+
+const PreviewReviewSnapshotBoundedString = (maximumLength: number) =>
+  Schema.String.check(Schema.isMaxLength(maximumLength));
+const PreviewReviewSnapshotNonNegativeFinite = Schema.Finite.check(
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
+export const PreviewReviewSnapshotInput = Schema.Struct({
+  version: Schema.Literal(1),
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+});
+export type PreviewReviewSnapshotInput = typeof PreviewReviewSnapshotInput.Type;
+
+export const PreviewReviewSnapshotRectV1 = Schema.Struct({
+  x: PreviewReviewSnapshotNonNegativeFinite,
+  y: PreviewReviewSnapshotNonNegativeFinite,
+  width: PreviewReviewSnapshotNonNegativeFinite,
+  height: PreviewReviewSnapshotNonNegativeFinite,
+});
+export type PreviewReviewSnapshotRectV1 = typeof PreviewReviewSnapshotRectV1.Type;
+
+export const PreviewReviewSnapshotElementV1 = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  tag: PreviewReviewSnapshotBoundedString(64),
+  role: Schema.NullOr(PreviewReviewSnapshotBoundedString(128)),
+  name: PreviewReviewSnapshotBoundedString(1_024),
+  selector: PreviewReviewSnapshotBoundedString(2_048),
+  rect: PreviewReviewSnapshotRectV1,
+});
+export type PreviewReviewSnapshotElementV1 = typeof PreviewReviewSnapshotElementV1.Type;
+
+export const PreviewReviewSnapshotViewportV1 = PreviewAutomationSnapshotViewport;
+export type PreviewReviewSnapshotViewportV1 = typeof PreviewReviewSnapshotViewportV1.Type;
+
+export const PreviewReviewSnapshotScreenshotV1 = Schema.Struct({
+  mimeType: Schema.Literal("image/png"),
+  data: Schema.String.check(Schema.isMaxLength(PREVIEW_REVIEW_SNAPSHOT_MAX_BASE64_CHARS)),
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+  scale: Schema.Finite.check(Schema.isGreaterThan(0)),
+});
+export type PreviewReviewSnapshotScreenshotV1 = typeof PreviewReviewSnapshotScreenshotV1.Type;
+
+export const PreviewReviewSnapshotV1 = Schema.Struct({
+  version: Schema.Literal(1),
+  snapshotId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  pageRevision: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PREVIEW_REVIEW_SNAPSHOT_MAX_PAGE_REVISION_LENGTH),
+  ),
+  serverEpoch: TrimmedNonEmptyString,
+  previewRevision: NonNegativeInt,
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  capturedAt: Schema.String,
+  url: PreviewReviewSnapshotBoundedString(2_048),
+  title: PreviewReviewSnapshotBoundedString(512),
+  loading: Schema.Boolean,
+  viewport: PreviewReviewSnapshotViewportV1,
+  screenshot: PreviewReviewSnapshotScreenshotV1,
+  elements: Schema.Array(PreviewReviewSnapshotElementV1).check(
+    Schema.isMaxLength(PREVIEW_REVIEW_SNAPSHOT_MAX_ELEMENTS),
+  ),
+});
+export type PreviewReviewSnapshotV1 = typeof PreviewReviewSnapshotV1.Type;
+
+export const PreviewReviewSnapshot = PreviewReviewSnapshotV1;
+export type PreviewReviewSnapshot = typeof PreviewReviewSnapshot.Type;
+
+export class PreviewReviewSnapshotTooLargeError extends Schema.TaggedErrorClass<PreviewReviewSnapshotTooLargeError>()(
+  "PreviewReviewSnapshotTooLargeError",
+  {
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    maximumBytes: Schema.Int.check(Schema.isGreaterThan(0)),
+  },
+) {
+  override get message(): string {
+    return `Preview snapshot image exceeds the ${this.maximumBytes}-byte review limit.`;
+  }
+}
+
+export class PreviewReviewSnapshotMalformedError extends Schema.TaggedErrorClass<PreviewReviewSnapshotMalformedError>()(
+  "PreviewReviewSnapshotMalformedError",
+  {
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+  },
+) {
+  override get message(): string {
+    return "The desktop preview host returned an invalid review snapshot.";
+  }
+}
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
@@ -655,8 +788,9 @@ const PreviewAutomationScopeErrorFields = {
   operation: PreviewAutomationOperation,
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  providerSessionId: TrimmedNonEmptyString,
-  providerInstanceId: ProviderInstanceId,
+  providerSessionId: Schema.optional(TrimmedNonEmptyString),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  requesterId: Schema.optional(PreviewAutomationClientId),
 };
 
 const PreviewAutomationRequestErrorFields = {

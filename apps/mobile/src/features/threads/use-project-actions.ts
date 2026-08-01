@@ -50,6 +50,7 @@ export function useCreateProjectThread() {
         environmentMode: input.envMode,
         branch: input.branch,
         initialMessageText,
+        initialAttachmentCount: input.initialAttachments.length,
       });
       if (validationError !== null) {
         setPendingConnectionError(validationError.message);

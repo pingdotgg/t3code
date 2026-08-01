@@ -2,6 +2,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { ParsedPreviewAnnotation } from "@t3tools/client-runtime/annotations";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -43,7 +44,6 @@ import {
   View,
 } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
-import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   FadeIn,
@@ -64,11 +64,9 @@ import {
 } from "../../native/SelectableMarkdownText";
 
 import { AppText as Text } from "../../components/AppText";
+import { FullscreenImageViewer } from "../../components/FullscreenImageViewer";
 import { CopyTextButton } from "../../components/CopyTextButton";
-import {
-  parseReviewCommentMessageSegments,
-  type ReviewInlineComment,
-} from "../review/reviewCommentSelection";
+import type { ReviewInlineComment } from "../review/reviewCommentSelection";
 import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import {
@@ -104,6 +102,10 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  deriveThreadUserMessagePresentation,
+  type ThreadUserMessagePresentation,
+} from "./threadUserMessagePresentation";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -885,7 +887,6 @@ function renderFeedEntry(
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
-    const hasReviewCommentContext = message.text.includes("<review_comment");
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
@@ -897,6 +898,7 @@ function renderFeedEntry(
       !message.streaming;
 
     if (isUser) {
+      const presentation = deriveThreadUserMessagePresentation(message.text);
       const enterAnimated = isFreshTimestamp(message.createdAt);
       return (
         <Animated.View
@@ -908,12 +910,12 @@ function renderFeedEntry(
             style={{
               backgroundColor: userBubbleColor,
               maxWidth: props.userBubbleMaxWidth,
-              ...(hasReviewCommentContext ? { width: props.reviewCommentBubbleWidth } : null),
+              ...(presentation.hasReviewComment ? { width: props.reviewCommentBubbleWidth } : null),
             }}
           >
             {message.text.trim().length > 0 ? (
               <UserMessageContent
-                text={message.text}
+                presentation={presentation}
                 markdownStyles={styles}
                 reviewCommentColors={props.reviewCommentColors}
                 skills={props.skills}
@@ -936,10 +938,10 @@ function renderFeedEntry(
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
-            {message.text.trim().length > 0 ? (
+            {presentation.copyText.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
-                text={message.text}
+                text={presentation.copyText}
                 tintColor={iconSubtleColor}
                 buttonSize={28}
                 iconSize={13}
@@ -1049,19 +1051,18 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
 });
 
 function UserMessageContent(props: {
-  readonly text: string;
+  readonly presentation: ThreadUserMessagePresentation;
   readonly markdownStyles: MarkdownStyleSet;
   readonly reviewCommentColors: ReviewCommentColors;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onLinkPress: (href: string) => void;
 }) {
-  const segments = parseReviewCommentMessageSegments(props.text);
-  const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
-  if (!hasReviewComment) {
+  const { annotations, hasReviewComment, reviewSegments, visibleText } = props.presentation;
+  if (!hasReviewComment && annotations.length === 0) {
     if (hasNativeSelectableMarkdownText()) {
       return (
         <SelectableMarkdownText
-          markdown={props.text}
+          markdown={visibleText}
           skills={props.skills}
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
@@ -1076,14 +1077,17 @@ function UserMessageContent(props: {
         styles={props.markdownStyles.styles}
         theme={props.markdownStyles.theme}
       >
-        {props.text}
+        {visibleText}
       </Markdown>
     );
   }
 
   return (
     <View className="w-full gap-2">
-      {segments.map((segment) => {
+      {annotations.map((annotation) => (
+        <PreviewAnnotationCard key={annotation.id} annotation={annotation} />
+      ))}
+      {reviewSegments.map((segment) => {
         if (segment.kind === "review-comment") {
           return (
             <ReviewCommentCard
@@ -1123,6 +1127,84 @@ function UserMessageContent(props: {
     </View>
   );
 }
+
+const PreviewAnnotationCard = memo(function PreviewAnnotationCard(props: {
+  readonly annotation: ParsedPreviewAnnotation;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleCallouts = expanded
+    ? props.annotation.callouts
+    : props.annotation.callouts.slice(0, 3);
+  const hiddenCalloutCount = props.annotation.calloutCount - visibleCallouts.length;
+  const hasDetails =
+    props.annotation.callouts.length > 0 ||
+    props.annotation.comment.length > 0 ||
+    props.annotation.styleChanges.length > 0;
+  const targetSummary =
+    props.annotation.targetSummary ||
+    (props.annotation.calloutCount > 0
+      ? `${props.annotation.calloutCount} numbered callout${
+          props.annotation.calloutCount === 1 ? "" : "s"
+        }`
+      : props.annotation.title);
+
+  return (
+    <View className="gap-1.5 rounded-[14px] border border-white/20 bg-white/10 px-3 py-2.5">
+      <View className="flex-row items-center gap-1.5">
+        <SymbolView
+          name="text.bubble"
+          size={13}
+          tintColor="rgba(255,255,255,0.88)"
+          type="monochrome"
+        />
+        <Text className="min-w-0 flex-1 text-xs font-t3-bold text-white" numberOfLines={1}>
+          {props.annotation.title}
+        </Text>
+      </View>
+      {props.annotation.comment ? (
+        <Text
+          className="text-xs leading-snug text-white/90"
+          numberOfLines={expanded ? undefined : 2}
+        >
+          {props.annotation.comment}
+        </Text>
+      ) : null}
+      {visibleCallouts.map((callout) => (
+        <View key={`${props.annotation.id}:${callout.number}`} className="flex-row gap-1.5">
+          <Text className="font-t3-bold text-xs text-white">#{callout.number}</Text>
+          <Text
+            className="min-w-0 flex-1 text-xs leading-snug text-white/90"
+            numberOfLines={expanded ? undefined : 2}
+          >
+            {callout.comment || callout.anchorSummary}
+          </Text>
+        </View>
+      ))}
+      {hiddenCalloutCount > 0 ? (
+        <Text className="text-2xs text-white/65">
+          +{hiddenCalloutCount} more callout{hiddenCalloutCount === 1 ? "" : "s"}
+        </Text>
+      ) : null}
+      <Text className="text-2xs text-white/65" numberOfLines={1}>
+        {targetSummary}
+      </Text>
+      {hasDetails ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            expanded ? "Collapse annotation details" : "Show all annotation details"
+          }
+          onPress={() => setExpanded((current) => !current)}
+          className="min-h-8 self-start justify-center"
+        >
+          <Text className="text-2xs font-t3-bold text-white/85">
+            {expanded ? "Show less" : "Show all details"}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+});
 
 const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly comment: ReviewInlineComment;
@@ -1916,22 +1998,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         ) : null}
       </View>
 
-      <ImageViewing
-        images={
+      <FullscreenImageViewer
+        source={
           expandedImage
-            ? [
-                {
-                  uri: expandedImage.uri,
-                  headers: expandedImage.headers,
-                },
-              ]
-            : []
+            ? {
+                uri: expandedImage.uri,
+                headers: expandedImage.headers,
+              }
+            : null
         }
-        imageIndex={0}
         visible={expandedImage !== null}
         onRequestClose={() => setExpandedImage(null)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
       />
     </>
   );

@@ -22,6 +22,7 @@ import type {
   PreviewAutomationNetworkEntry,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotViewport,
   PreviewAutomationStatus,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
@@ -97,7 +98,12 @@ const ZOOM_EPSILON = 0.001;
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
+const MAX_INTERACTIVE_ELEMENT_NAME_LENGTH = 512;
+const MAX_INTERACTIVE_ELEMENT_ROLE_LENGTH = 128;
+const MAX_INTERACTIVE_ELEMENT_SELECTOR_LENGTH = 2_048;
+const MAX_INTERACTIVE_ELEMENT_TAG_LENGTH = 64;
 const MAX_SCREENSHOT_WIDTH = 1280;
+const MAX_REVIEW_SCREENSHOT_PIXELS = 2_000_000;
 const RECORDING_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const RECORDING_JPEG_QUALITY = 80;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
@@ -202,6 +208,99 @@ interface CdpEvaluationResult {
     readonly text?: string;
     readonly exception?: { readonly description?: string };
   };
+}
+
+type PreviewAutomationSnapshotElement = PreviewAutomationSnapshot["interactiveElements"][number];
+export type PreviewAutomationSnapshotMode = "full" | "review";
+
+const compactSemanticText = (value: string, maximumLength: number): string =>
+  value.replace(/\s+/g, " ").trim().slice(0, maximumLength);
+
+export function previewAutomationSnapshotResizeWidth(
+  size: Readonly<{ width: number; height: number }>,
+  mode: PreviewAutomationSnapshotMode,
+): number | null {
+  if (
+    !Number.isFinite(size.width) ||
+    size.width <= 0 ||
+    !Number.isFinite(size.height) ||
+    size.height <= 0
+  ) {
+    return null;
+  }
+
+  const widthScale = MAX_SCREENSHOT_WIDTH / size.width;
+  const pixelScale =
+    mode === "review" ? Math.sqrt(MAX_REVIEW_SCREENSHOT_PIXELS / (size.width * size.height)) : 1;
+  const scale = Math.min(1, widthScale, pixelScale);
+  return scale < 1 ? Math.max(1, Math.floor(size.width * scale)) : null;
+}
+
+/**
+ * Keeps snapshot semantics in the same coordinate space as the captured
+ * viewport. Page scripts are not a trust boundary, so apply the clipping and
+ * payload limits again in the main process even though the injected collector
+ * performs the same viewport filtering before crossing CDP.
+ */
+export function compactPreviewAutomationElements(
+  elements: ReadonlyArray<PreviewAutomationSnapshotElement>,
+  viewport: Pick<PreviewAutomationSnapshotViewport, "width" | "height">,
+): ReadonlyArray<PreviewAutomationSnapshotElement> {
+  if (
+    !Number.isFinite(viewport.width) ||
+    viewport.width <= 0 ||
+    !Number.isFinite(viewport.height) ||
+    viewport.height <= 0
+  ) {
+    return [];
+  }
+
+  const compacted: PreviewAutomationSnapshotElement[] = [];
+  for (const element of elements) {
+    if (compacted.length >= MAX_INTERACTIVE_ELEMENTS) break;
+    if (
+      !Number.isFinite(element.x) ||
+      !Number.isFinite(element.y) ||
+      !Number.isFinite(element.width) ||
+      !Number.isFinite(element.height) ||
+      element.width <= 0 ||
+      element.height <= 0
+    ) {
+      continue;
+    }
+
+    const left = Math.max(0, element.x);
+    const top = Math.max(0, element.y);
+    const right = Math.min(viewport.width, element.x + element.width);
+    const bottom = Math.min(viewport.height, element.y + element.height);
+    if (right <= left || bottom <= top) continue;
+
+    const selector = element.selector.trim();
+    const tag = compactSemanticText(element.tag, MAX_INTERACTIVE_ELEMENT_TAG_LENGTH).toLowerCase();
+    if (
+      selector.length === 0 ||
+      selector.length > MAX_INTERACTIVE_ELEMENT_SELECTOR_LENGTH ||
+      tag.length === 0
+    ) {
+      continue;
+    }
+
+    const role =
+      element.role === null
+        ? null
+        : compactSemanticText(element.role, MAX_INTERACTIVE_ELEMENT_ROLE_LENGTH) || null;
+    compacted.push({
+      tag,
+      role,
+      name: compactSemanticText(element.name, MAX_INTERACTIVE_ELEMENT_NAME_LENGTH),
+      selector,
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    });
+  }
+  return compacted;
 }
 
 export const PreviewAutomationSelectorKind = Schema.Literals([
@@ -2601,16 +2700,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const captureAutomationSnapshot = Effect.fn("PreviewManager.captureAutomationSnapshot")(
-    function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
-      yield* Effect.all([send("Runtime.enable"), send("Accessibility.enable")], {
-        concurrency: 2,
-        discard: true,
-      });
+    function* (
+      tabId: string,
+      wc: Electron.WebContents,
+      send: SendCommand,
+      mode: PreviewAutomationSnapshotMode,
+    ) {
+      yield* Effect.all(
+        mode === "review"
+          ? [send("Runtime.enable")]
+          : [send("Runtime.enable"), send("Accessibility.enable")],
+        {
+          concurrency: 2,
+          discard: true,
+        },
+      );
       const page = yield* evaluateWithDebugger<{
         url: string;
         title: string;
         loading: boolean;
         visibleText: string;
+        viewport: PreviewAutomationSnapshotViewport;
         interactiveElements: PreviewAutomationSnapshot["interactiveElements"];
       }>(
         tabId,
@@ -2641,64 +2751,102 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const visible = (element) => {
             const style = getComputedStyle(element);
             const rect = element.getBoundingClientRect();
-            return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+            return style.visibility !== "hidden"
+              && style.display !== "none"
+              && style.opacity !== "0"
+              && rect.width > 0
+              && rect.height > 0
+              && rect.right > 0
+              && rect.bottom > 0
+              && rect.left < window.innerWidth
+              && rect.top < window.innerHeight;
           };
           const elements = Array.from(document.querySelectorAll(
             "a[href],button,input,textarea,select,[role],[tabindex]"
-          )).filter(visible).slice(0, ${MAX_INTERACTIVE_ELEMENTS}).map((element) => {
+          )).filter(visible).map((element) => {
             const rect = element.getBoundingClientRect();
+            const selector = selectorFor(element);
+            if (!selector || selector.length > ${MAX_INTERACTIVE_ELEMENT_SELECTOR_LENGTH}) {
+              return null;
+            }
+            const rawName = element.getAttribute("aria-label")
+              || element.innerText
+              || element.getAttribute("name")
+              || "";
             return {
               tag: element.tagName.toLowerCase(),
               role: element.getAttribute("role"),
-              name: element.getAttribute("aria-label") || element.innerText || element.getAttribute("name") || "",
-              selector: selectorFor(element),
+              name: String(rawName).replace(/\\s+/g, " ").trim().slice(0, ${MAX_INTERACTIVE_ELEMENT_NAME_LENGTH}),
+              selector,
               x: rect.x,
               y: rect.y,
               width: rect.width,
               height: rect.height
             };
-          });
+          }).filter((element) => element !== null).slice(0, ${MAX_INTERACTIVE_ELEMENTS});
           return {
             url: location.href,
             title: document.title,
             loading: document.readyState !== "complete",
-            visibleText: (document.body?.innerText || "").slice(0, ${MAX_VISIBLE_TEXT_LENGTH}),
+            visibleText: ${
+              mode === "review"
+                ? '""'
+                : `(document.body?.innerText || "").slice(0, ${MAX_VISIBLE_TEXT_LENGTH})`
+            },
+            viewport: {
+              width: Math.max(1, window.innerWidth),
+              height: Math.max(1, window.innerHeight),
+              scrollX: Number.isFinite(window.scrollX) ? window.scrollX : 0,
+              scrollY: Number.isFinite(window.scrollY) ? window.scrollY : 0,
+              devicePixelRatio: Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+                ? window.devicePixelRatio
+                : 1
+            },
             interactiveElements: elements
           };
         })()`,
         true,
       );
-      const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
-        send("Accessibility.getFullAXTree"),
-        attemptPromise(
-          {
-            operation: "automationSnapshot.capturePage",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage(),
-        ),
-        Ref.get(diagnosticsRef),
-        Ref.get(actionTimelineRef),
-      ]);
+      const capturePage = attemptPromise(
+        {
+          operation: "automationSnapshot.capturePage",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => wc.capturePage(),
+      );
+      const [accessibility, sourceImage, diagnostics, timelines] =
+        mode === "review"
+          ? ([null, yield* capturePage, null, null] as const)
+          : yield* Effect.all([
+              send("Accessibility.getFullAXTree"),
+              capturePage,
+              Ref.get(diagnosticsRef),
+              Ref.get(actionTimelineRef),
+            ]);
       const sourceSize = sourceImage.getSize();
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage;
+      const resizeWidth = previewAutomationSnapshotResizeWidth(sourceSize, mode);
+      const image = resizeWidth === null ? sourceImage : sourceImage.resize({ width: resizeWidth });
       const size = image.getSize();
-      const browserDiagnostics = diagnostics.get(wc.id);
+      const browserDiagnostics = diagnostics?.get(wc.id);
+      const interactiveElements = compactPreviewAutomationElements(
+        page.interactiveElements,
+        page.viewport,
+      );
       return {
         ...page,
+        visibleText: mode === "review" ? "" : page.visibleText,
+        interactiveElements,
         accessibilityTree: accessibility,
         consoleEntries: [...(browserDiagnostics?.consoleEntries ?? [])],
         networkEntries: [...(browserDiagnostics?.networkEntries ?? [])],
-        actionTimeline: [...(timelines.get(tabId) ?? [])],
+        actionTimeline: [...(timelines?.get(tabId) ?? [])],
         screenshot: {
           mimeType: "image/png" as const,
           data: image.toPNG().toString("base64"),
           width: size.width,
           height: size.height,
+          scale: size.width / page.viewport.width,
         },
       };
     },
@@ -2706,10 +2854,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const automationSnapshot = Effect.fn("PreviewManager.automationSnapshot")(function* (
     tabId: string,
+    mode: PreviewAutomationSnapshotMode = "full",
   ) {
     const wc = yield* requireWebContents(tabId);
     return yield* withControlSession(tabId, wc, "snapshot", (send) =>
-      captureAutomationSnapshot(tabId, wc, send),
+      captureAutomationSnapshot(tabId, wc, send, mode),
     );
   });
 
@@ -3607,6 +3756,7 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<PreviewAutomationStatus, PreviewManagerError>;
     readonly automationSnapshot: (
       tabId: string,
+      mode?: PreviewAutomationSnapshotMode,
     ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
     readonly automationClick: (
       tabId: string,

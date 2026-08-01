@@ -24,6 +24,9 @@ export const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
+const PREVIEW_PANE_MIN_VIEWPORT_WIDTH = 820;
+const PREVIEW_PANE_MIN_WIDTH = 320;
+const PREVIEW_PANE_MIN_CHAT_WIDTH = 360;
 const STABLE_FORM_SHEET_MAX_HEIGHT = 720;
 const STABLE_FORM_SHEET_VERTICAL_MARGIN = 64;
 const STABLE_FORM_SHEET_MIN_DETENT = 0.62;
@@ -52,7 +55,12 @@ export interface FileInspectorPaneLayout {
   readonly width: number | null;
 }
 
-export type WorkspaceAuxiliaryPaneRole = "supplementary" | "inspector";
+export interface PreviewPaneLayout {
+  readonly supported: boolean;
+  readonly width: number | null;
+}
+
+export type WorkspaceAuxiliaryPaneRole = "supplementary" | "inspector" | "preview";
 
 export function deriveLayout(input: { readonly width: number; readonly height: number }): Layout {
   const { width, height } = input;
@@ -86,6 +94,7 @@ export function deriveWorkspacePaneLayout(input: {
   readonly auxiliaryPanePreferredVisible: boolean;
   readonly auxiliaryPaneRole?: WorkspaceAuxiliaryPaneRole;
   readonly auxiliaryPanePreferredWidth?: number;
+  readonly auxiliaryPaneFullscreen?: boolean;
 }): WorkspacePaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
   const auxiliaryPaneRole = input.auxiliaryPaneRole ?? "supplementary";
@@ -121,6 +130,30 @@ export function deriveWorkspacePaneLayout(input: {
       supportsAuxiliaryPane: fileInspector.supported,
       auxiliaryPaneVisible,
       auxiliaryPaneWidth: fileInspector.width,
+    };
+  }
+
+  if (auxiliaryPaneRole === "preview") {
+    const previewPane = derivePreviewPaneLayout({
+      layout: input.layout,
+      viewportWidth,
+      preferredWidth: input.auxiliaryPanePreferredWidth,
+    });
+    const auxiliaryPaneVisible = previewPane.supported && input.auxiliaryPanePreferredVisible;
+    const primarySidebarSuppressedByAuxiliary =
+      preferredPrimarySidebarVisible && auxiliaryPaneVisible;
+    const primarySidebarVisible =
+      preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
+    const primarySidebarWidth = primarySidebarVisible ? (input.layout.listPaneWidth ?? 0) : 0;
+
+    return {
+      primarySidebarVisible,
+      primarySidebarSuppressedByAuxiliary,
+      contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
+      supportsAuxiliaryPane: previewPane.supported,
+      auxiliaryPaneVisible,
+      auxiliaryPaneWidth:
+        auxiliaryPaneVisible && input.auxiliaryPaneFullscreen ? viewportWidth : previewPane.width,
     };
   }
 
@@ -180,6 +213,25 @@ export function deriveFileInspectorPaneLayout(input: {
   };
 }
 
+export function derivePreviewPaneLayout(input: {
+  readonly layout: Layout;
+  readonly viewportWidth: number;
+  readonly preferredWidth?: number;
+}): PreviewPaneLayout {
+  const viewportWidth = Number.isFinite(input.viewportWidth) ? Math.max(0, input.viewportWidth) : 0;
+  const supported = input.layout.usesSplitView && viewportWidth >= PREVIEW_PANE_MIN_VIEWPORT_WIDTH;
+
+  return {
+    supported,
+    width: supported
+      ? constrainPreviewPaneWidth({
+          preferredWidth: input.preferredWidth ?? viewportWidth / 2,
+          availableWidth: viewportWidth,
+        })
+      : null,
+  };
+}
+
 /** Keep a user-selected sidebar width useful as a window is resized. */
 export function constrainPrimarySidebarWidth(
   preferredWidth: number,
@@ -215,6 +267,21 @@ export function constrainAuxiliaryPaneWidth(input: {
     Math.min(AUXILIARY_PANE_MAX_WIDTH, availableWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
   );
   return clamp(Math.round(safePreferredWidth), AUXILIARY_PANE_MIN_WIDTH, maxWidth);
+}
+
+/** Keep preview and chat useful while allowing a true half-width review split. */
+export function constrainPreviewPaneWidth(input: {
+  readonly preferredWidth: number;
+  readonly availableWidth: number;
+}): number {
+  const safePreferredWidth = Number.isFinite(input.preferredWidth)
+    ? input.preferredWidth
+    : PREVIEW_PANE_MIN_WIDTH;
+  const availableWidth = Number.isFinite(input.availableWidth)
+    ? Math.max(0, input.availableWidth)
+    : 0;
+  const maxWidth = Math.max(PREVIEW_PANE_MIN_WIDTH, availableWidth - PREVIEW_PANE_MIN_CHAT_WIDTH);
+  return clamp(Math.round(safePreferredWidth), PREVIEW_PANE_MIN_WIDTH, maxWidth);
 }
 
 export function deriveCenteredContentHorizontalPadding(input: {

@@ -25,7 +25,6 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
-import ImageViewing from "react-native-image-viewing";
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -39,6 +38,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { FullscreenImageViewer } from "../../components/FullscreenImageViewer";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
@@ -108,6 +108,7 @@ export interface ThreadComposerProps {
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
+  readonly onReplaceDraftImage: (image: DraftComposerImageAttachment) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
@@ -775,6 +776,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               <ComposerAttachmentStrip
                 attachments={props.draftAttachments}
                 onRemove={props.onRemoveDraftImage}
+                onReplace={props.onReplaceDraftImage}
                 onPressImage={onPressImage}
               />
             </Animated.View>
@@ -922,13 +924,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
       </Animated.View>
 
-      <ImageViewing
-        images={previewImageUri ? [{ uri: previewImageUri }] : []}
-        imageIndex={0}
+      <FullscreenImageViewer
+        source={previewImageUri ? { uri: previewImageUri } : null}
         visible={previewImageUri !== null}
         onRequestClose={closePreview}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
       />
     </Animated.View>
   );

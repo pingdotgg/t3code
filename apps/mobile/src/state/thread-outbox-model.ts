@@ -6,6 +6,7 @@ import {
   IsoDateTime,
   MessageId,
   ModelSelection,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -18,6 +19,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
+import { appendComposerImageAnnotationPrompts } from "../lib/composerImageAnnotations";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 
@@ -180,7 +182,12 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
   if (!message.creation) {
     return false;
   }
-  if (message.text.trim().length === 0 || message.modelSelection === undefined) {
+  const deliveryText = appendComposerImageAnnotationPrompts(message.text, message.attachments);
+  if (
+    (deliveryText.trim().length === 0 && message.attachments.length === 0) ||
+    deliveryText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS ||
+    message.modelSelection === undefined
+  ) {
     return false;
   }
   return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);

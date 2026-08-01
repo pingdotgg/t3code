@@ -1,10 +1,10 @@
 /**
  * Preview - Schemas for the in-app browser preview surface.
  *
- * The preview is desktop-only (Chromium <webview>); the server tracks per-thread
- * tab metadata so it survives client reconnects and multi-window. The desktop
- * renderer mediates: it owns the actual <webview> and reports navigation back to
- * the server via these RPCs, the server fans events to all subscribers.
+ * The server tracks per-thread preview tab metadata so it survives client
+ * reconnects and multi-window. Desktop owns the canonical Chromium <webview>
+ * and reports navigation through these RPCs; mobile can render the recorded URL
+ * in its own WebView or request a short-lived Connect gateway for loopback tabs.
  *
  * @module Preview
  */
@@ -198,6 +198,49 @@ export const PreviewListResult = Schema.Struct({
   revision: NonNegativeInt,
 });
 export type PreviewListResult = typeof PreviewListResult.Type;
+
+export const PreviewLiveGatewayOpenInput = Schema.Struct({
+  version: Schema.Literal(1),
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+});
+export type PreviewLiveGatewayOpenInput = typeof PreviewLiveGatewayOpenInput.Type;
+
+/**
+ * A short-lived, same-environment URL that hands an isolated browser view to
+ * the live-preview gateway. The bootstrap token is deliberately returned as a
+ * relative URL so clients resolve it against the already-authenticated
+ * environment endpoint instead of trusting another origin.
+ */
+export const PreviewLiveGatewayOpenResult = Schema.Struct({
+  version: Schema.Literal(1),
+  relativeUrl: Schema.String.check(Schema.isPattern(/^\/api\/preview-gateway\/bootstrap\//u)),
+  expiresAt: Schema.Number.check(Schema.isGreaterThan(0)),
+});
+export type PreviewLiveGatewayOpenResult = typeof PreviewLiveGatewayOpenResult.Type;
+
+export const PreviewLiveGatewayUnavailableReason = Schema.Literals([
+  "preview_idle",
+  "runtime_unsupported",
+  "session_expired",
+  "target_invalid",
+  "target_not_loopback",
+  "target_protocol_unsupported",
+]);
+export type PreviewLiveGatewayUnavailableReason = typeof PreviewLiveGatewayUnavailableReason.Type;
+
+export class PreviewLiveGatewayUnavailableError extends Schema.TaggedErrorClass<PreviewLiveGatewayUnavailableError>()(
+  "PreviewLiveGatewayUnavailableError",
+  {
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    reason: PreviewLiveGatewayUnavailableReason,
+  },
+) {
+  override get message(): string {
+    return `Live preview gateway is unavailable (${this.reason}): thread=${this.threadId}, tab=${this.tabId}`;
+  }
+}
 
 const PreviewEventBaseSchema = Schema.Struct({
   threadId: TrimmedNonEmptyString,

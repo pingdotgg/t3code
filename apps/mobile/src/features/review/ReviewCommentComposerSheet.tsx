@@ -279,6 +279,13 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         imageSize={60}
                         onPressImage={setPreviewImageUri}
                         removeButtonPlacement="gutter"
+                        onReplace={(replacement) => {
+                          setAttachments((current) =>
+                            current.map((image) =>
+                              image.id === replacement.id ? replacement : image,
+                            ),
+                          );
+                        }}
                         onRemove={(imageId) => {
                           setAttachments((current) =>
                             current.filter((image) => image.id !== imageId),

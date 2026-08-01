@@ -92,7 +92,7 @@ import {
   type ParsedElementContextEntry,
 } from "~/lib/elementContext";
 import {
-  extractTrailingPreviewAnnotation,
+  extractTrailingPreviewAnnotations,
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
@@ -113,6 +113,10 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import {
+  deriveUserMessagePreviewAnnotationCardContent,
+  deriveUserMessagePreviewAnnotationCopyText,
+} from "./userMessagePreviewAnnotation";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -869,17 +873,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const userImages = row.message.attachments ?? [];
-  const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+  const outerPreviewAnnotationState = extractTrailingPreviewAnnotations(row.message.text);
+  const displayedUserMessage = deriveDisplayedUserMessageState(
+    outerPreviewAnnotationState.promptText,
+  );
   const terminalContexts = displayedUserMessage.contexts;
-  const previewAnnotations: ParsedPreviewAnnotation[] = [];
-  let visibleText = displayedUserMessage.visibleText;
-  while (true) {
-    const extracted = extractTrailingPreviewAnnotation(visibleText);
-    if (!extracted.annotation) break;
-    previewAnnotations.unshift(extracted.annotation);
-    visibleText = extracted.promptText;
-  }
-  const elementContextState = extractTrailingElementContexts(visibleText);
+  const innerPreviewAnnotationState = extractTrailingPreviewAnnotations(
+    displayedUserMessage.visibleText,
+  );
+  const previewAnnotations: ParsedPreviewAnnotation[] = [
+    ...innerPreviewAnnotationState.annotations,
+    ...outerPreviewAnnotationState.annotations,
+  ];
+  const elementContextState = extractTrailingElementContexts(
+    innerPreviewAnnotationState.promptText,
+  );
   const elementContexts = [
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
@@ -887,6 +895,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const copyText = deriveUserMessagePreviewAnnotationCopyText({
+    visibleText: elementContextState.promptText,
+    annotations: previewAnnotations,
+    fallbackCopyText: displayedUserMessage.copyText,
+  });
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -960,9 +973,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
-            )}
+            {copyText && <MessageCopyButton text={copyText} variant="ghost" />}
           </div>
         </div>
       </div>
@@ -1348,8 +1359,17 @@ function UserMessagePreviewAnnotationCard(props: {
   image: NonNullable<TimelineMessage["attachments"]>[number] | null;
 }) {
   const ctx = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(false);
+  const { callouts, hiddenCalloutCount, canExpand } = deriveUserMessagePreviewAnnotationCardContent(
+    props.annotation,
+    expanded,
+  );
+  const expandLabel =
+    hiddenCalloutCount > 0
+      ? `Show all ${props.annotation.calloutCount} callouts`
+      : "Show full annotation";
   return (
-    <div className="mb-2 flex max-w-full items-center overflow-hidden rounded-lg border border-border/70 bg-background/70">
+    <div className="mb-2 flex max-w-full items-start overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {props.image?.previewUrl ? (
         <button
           type="button"
@@ -1368,16 +1388,50 @@ function UserMessagePreviewAnnotationCard(props: {
           />
         </button>
       ) : null}
-      <div className="min-w-0 px-2.5 py-2">
+      <div className="min-w-0 flex-1 px-2.5 py-2">
         {props.annotation.comment ? (
-          <div className="max-w-80 truncate text-xs font-medium text-foreground/90">
+          <div
+            className={cn(
+              "text-xs font-medium text-foreground/90",
+              expanded ? "whitespace-pre-wrap break-words" : "max-w-80 truncate",
+            )}
+          >
             {props.annotation.comment}
+          </div>
+        ) : null}
+        {callouts.length > 0 ? (
+          <ol className={cn("space-y-1", props.annotation.comment && "mt-1.5")}>
+            {callouts.map((callout) => (
+              <li
+                key={`${props.annotation.id}:${callout.number}`}
+                className="flex min-w-0 items-start gap-1.5 text-xs text-foreground/90"
+                data-preview-annotation-callout={callout.number}
+              >
+                <span className="shrink-0 font-medium" aria-hidden="true">
+                  #{callout.number}
+                </span>
+                <span className="sr-only">Callout {callout.number}: </span>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1",
+                    expanded ? "whitespace-pre-wrap break-words" : "truncate",
+                  )}
+                >
+                  {callout.comment || callout.anchorSummary}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        {hiddenCalloutCount > 0 ? (
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            +{hiddenCalloutCount} more callout{hiddenCalloutCount === 1 ? "" : "s"}
           </div>
         ) : null}
         <div
           className={cn(
             "flex items-center gap-2 text-[10px] text-muted-foreground",
-            props.annotation.comment && "mt-1",
+            (props.annotation.comment || callouts.length > 0 || hiddenCalloutCount > 0) && "mt-1",
           )}
         >
           {props.annotation.targetSummary ? (
@@ -1390,6 +1444,22 @@ function UserMessagePreviewAnnotationCard(props: {
             </span>
           ) : null}
         </div>
+        {canExpand ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            aria-expanded={expanded}
+            data-scroll-anchor-ignore
+            onClick={() => setExpanded((value) => !value)}
+            className="-ml-1 mt-1 h-5 rounded-md px-1 text-[10px] text-muted-foreground/80 hover:bg-muted/55 hover:text-foreground/85"
+          >
+            {expanded ? "Show less" : expandLabel}
+            <ChevronDownIcon
+              className={cn("size-3 transition-transform", expanded && "rotate-180")}
+            />
+          </Button>
+        ) : null}
       </div>
     </div>
   );

@@ -8,16 +8,45 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
+import {
+  appendComposerImageAnnotationPrompts,
+  toUploadChatImageAttachments,
+  type DraftComposerImageAttachment,
+} from "./composerImages";
 
-export function deriveThreadTitleFromPrompt(value: string): string {
+function compactThreadTitle(value: string): string {
+  const compact = value.trim().replace(/\s+/g, " ");
+  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
+}
+
+export function deriveThreadTitleFromPrompt(
+  value: string,
+  attachments: ReadonlyArray<DraftComposerImageAttachment> = [],
+): string {
   const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return "New thread";
+  if (trimmed.length > 0) {
+    return compactThreadTitle(trimmed);
   }
 
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
+  for (const attachment of attachments) {
+    for (const callout of attachment.markup?.annotation.callouts ?? []) {
+      if (callout.comment.trim().length > 0) {
+        return compactThreadTitle(callout.comment);
+      }
+    }
+    const legacyComment = attachment.markup?.annotation.comment.trim() ?? "";
+    if (legacyComment.length > 0) {
+      return compactThreadTitle(legacyComment);
+    }
+  }
+
+  const firstAttachment = attachments[0];
+  if (firstAttachment) {
+    return compactThreadTitle(
+      `Review ${firstAttachment.markup?.original.name || firstAttachment.name || "attached image"}`,
+    );
+  }
+  return "New thread";
 }
 
 export interface ProjectThreadStartTurnSpec {
@@ -46,7 +75,8 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleFromPrompt(spec.text);
+  const title = deriveThreadTitleFromPrompt(spec.text, spec.attachments);
+  const deliveryText = appendComposerImageAnnotationPrompts(spec.text, spec.attachments);
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
@@ -54,7 +84,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     message: {
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
-      text: spec.text,
+      text: deliveryText,
       attachments: toUploadChatImageAttachments(spec.attachments),
     },
     modelSelection: spec.modelSelection,

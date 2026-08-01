@@ -67,6 +67,7 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
 type HeaderItem = Record<string, unknown>;
 type HeaderItems = HeaderItem[];
 type ThreadGitHeaderActionItems = {
+  readonly preview: HeaderItem;
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
@@ -101,6 +102,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
   readonly showDirectFileControl?: boolean;
+  readonly onOpenPreview: () => void;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
@@ -251,6 +253,16 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
   return useMemo(
     () => ({
+      preview: {
+        accessibilityLabel: "Open browser",
+        icon: { name: "globe", type: "sfSymbol" },
+        identifier: "thread-right-preview",
+        label: "Browser",
+        onPress: props.onOpenPreview,
+        sharesBackground: true,
+        type: "button",
+        variant: "plain",
+      },
       terminal: {
         accessibilityLabel: "Open terminal",
         disabled: !props.canOpenTerminal,
@@ -382,6 +394,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       props.canOpenTerminal,
       props.gitStatus,
       props.onOpenNewTerminal,
+      props.onOpenPreview,
       props.onOpenTerminal,
       props.onRunProjectScript,
       props.projectScripts,
@@ -393,7 +406,13 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.preview,
+        actionItems.git,
+        actionItems.files,
+        actionItems.terminal,
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -401,7 +420,13 @@ export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): Hea
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.preview,
+        actionItems.files,
+        actionItems.git,
+        actionItems.terminal,
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -421,6 +446,14 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           accessibilityLabel={props.auxiliaryPaneControl.accessibilityLabel}
           icon="sidebar.right"
           onPress={props.auxiliaryPaneControl.onPress}
+          separateBackground
+        />
+      ) : null}
+      {showActionControls ? (
+        <NativeHeaderToolbar.Button
+          accessibilityLabel="Open browser"
+          icon="globe"
+          onPress={props.onOpenPreview}
           separateBackground
         />
       ) : null}

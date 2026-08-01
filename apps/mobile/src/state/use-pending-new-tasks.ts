@@ -26,7 +26,7 @@ export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
       tasks.push({
         message,
         creation: message.creation,
-        title: deriveThreadTitleFromPrompt(message.text),
+        title: deriveThreadTitleFromPrompt(message.text, message.attachments),
       });
     }
     tasks.sort((left, right) => right.message.createdAt.localeCompare(left.message.createdAt));

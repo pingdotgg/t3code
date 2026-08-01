@@ -22,6 +22,7 @@ import {
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
+  PreviewTabId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -92,6 +93,8 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import { LIVE_GATEWAY_COOKIE_NAME, LIVE_GATEWAY_HTTP_COOKIE_NAME } from "./preview/LiveGateway.ts";
+import { LIVE_GATEWAY_EXPIRED_STATUS, liveGatewayCookieName } from "./preview/LiveGatewayHttp.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -364,6 +367,7 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    previewManager?: Partial<PreviewManager.PreviewManager["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -692,6 +696,7 @@ const buildAppUnderTest = (options?: {
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),
             ),
+            ...options?.layers?.previewManager,
           }),
           Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),
@@ -4321,6 +4326,308 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("bootstraps and proxies a live preview after its issuing socket disconnects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const upstreamRequests: Array<{
+          readonly cookie: string;
+          readonly host: string;
+          readonly origin: string;
+          readonly url: string;
+        }> = [];
+        const upstreamWebSocketRequests: Array<{
+          readonly cookie: string;
+          readonly origin: string;
+          readonly protocol: string;
+        }> = [];
+        const upstream = yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const NodeHttp = await import("node:http");
+            return await new Promise<{
+              readonly close: () => Promise<void>;
+              readonly origin: string;
+            }>((resolve, reject) => {
+              const server = NodeHttp.createServer((request, response) => {
+                upstreamRequests.push({
+                  cookie: request.headers.cookie ?? "",
+                  host: request.headers.host ?? "",
+                  origin: request.headers.origin ?? "",
+                  url: request.url ?? "",
+                });
+                response.setHeader("set-cookie", [
+                  "app_session=server; Domain=127.0.0.1; Path=/",
+                  "t3_session=upstream-attack; Path=/",
+                  `${LIVE_GATEWAY_COOKIE_NAME}=upstream-attack; Secure; Path=/`,
+                  `${LIVE_GATEWAY_HTTP_COOKIE_NAME}=upstream-http-attack; Path=/`,
+                ]);
+                if (request.url?.startsWith("/upstream-auth")) {
+                  response.statusCode = 401;
+                  response.end("app-auth-required");
+                  return;
+                }
+                response.statusCode = 200;
+                response.end(`proxied:${request.url}`);
+              });
+              const webSocketServer = new NodeSocket.NodeWS.WebSocketServer({
+                noServer: true,
+                handleProtocols: (protocols) => (protocols.has("vite-hmr") ? "vite-hmr" : false),
+              });
+              webSocketServer.on("connection", (webSocket, request) => {
+                upstreamWebSocketRequests.push({
+                  cookie: request.headers.cookie ?? "",
+                  origin: request.headers.origin ?? "",
+                  protocol: webSocket.protocol,
+                });
+                webSocket.on("message", (data, isBinary) => {
+                  webSocket.send(data, { binary: isBinary });
+                });
+              });
+              server.on("upgrade", (request, socket, head) => {
+                webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+                  webSocketServer.emit("connection", webSocket, request);
+                });
+              });
+              server.on("error", reject);
+              server.listen(0, "127.0.0.1", () => {
+                const address = server.address();
+                if (!address || typeof address === "string") {
+                  reject(new Error("Expected TCP live-preview test address"));
+                  return;
+                }
+                resolve({
+                  origin: `http://127.0.0.1:${address.port}`,
+                  close: () =>
+                    new Promise<void>((resolveClose, rejectClose) => {
+                      for (const webSocket of webSocketServer.clients) {
+                        webSocket.terminate();
+                      }
+                      server.closeAllConnections();
+                      server.close((error) => {
+                        if (error) {
+                          rejectClose(error);
+                          return;
+                        }
+                        resolveClose();
+                      });
+                    }),
+                });
+              });
+            });
+          }),
+          (server) => Effect.promise(server.close),
+        );
+        const tabId = PreviewTabId.make("preview-live-gateway-tab");
+        yield* buildAppUnderTest({
+          layers: {
+            previewManager: {
+              list: () =>
+                Effect.succeed({
+                  sessions: [
+                    {
+                      threadId: defaultThreadId,
+                      tabId,
+                      navStatus: {
+                        _tag: "Success",
+                        url: `${upstream.origin}/app/start?hello=1#view`,
+                        title: "Live preview",
+                      },
+                      canGoBack: false,
+                      canGoForward: false,
+                      updatedAt: "2026-07-30T12:00:00.000Z",
+                    },
+                  ],
+                  serverEpoch: "preview-server-1",
+                  revision: 1,
+                }),
+            },
+          },
+        });
+
+        const sessionCookie = yield* getAuthenticatedSessionCookieHeader();
+        const bareWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+        const wsUrl = appendSessionCookieToWsUrl(bareWsUrl, sessionCookie);
+        const issued = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.previewOpenLiveGateway]({
+              version: 1,
+              threadId: defaultThreadId,
+              tabId,
+            }),
+          ),
+        );
+
+        // The RPC scope has ended here. Its disconnect must not revoke a lease
+        // owned by the longer-lived authenticated session.
+        const bootstrap = yield* fetchEffect(issued.relativeUrl, { redirect: "manual" });
+        assert.equal(bootstrap.status, 302);
+        assert.equal(bootstrap.headers.location, "/app/start?hello=1#view");
+        const setCookie = bootstrap.headers["set-cookie"] ?? "";
+        const gatewayCookieName = liveGatewayCookieName(
+          new URL(yield* getHttpServerUrl(issued.relativeUrl)),
+        );
+        const gatewayCookieValue = new RegExp(`${gatewayCookieName}=([^;]+)`, "u").exec(
+          setCookie,
+        )?.[1];
+        assert.isDefined(gatewayCookieValue);
+        const gatewayCookie = `${gatewayCookieName}=${gatewayCookieValue}`;
+
+        const proxied = yield* fetchEffect("/asset?x=1", {
+          headers: {
+            cookie: [
+              gatewayCookie,
+              sessionCookie,
+              "t3_session_legacy=secret",
+              "app_session=client",
+            ].join("; "),
+            origin: "https://environment.example",
+          },
+        });
+        assert.equal(proxied.status, 200);
+        assert.equal(yield* proxied.text, "proxied:/asset?x=1");
+        assert.equal(upstreamRequests[0]?.url, "/asset?x=1");
+        assert.equal(upstreamRequests[0]?.origin, upstream.origin);
+        assert.equal(upstreamRequests[0]?.host, new URL(upstream.origin).host);
+        assert.equal(upstreamRequests[0]?.cookie, "app_session=client");
+
+        const upstreamCookies = proxied.headers["set-cookie"] ?? "";
+        assert.include(upstreamCookies, "app_session=server");
+        assert.notInclude(upstreamCookies.toLowerCase(), "domain=");
+        assert.notInclude(upstreamCookies, "t3_session");
+        assert.notInclude(upstreamCookies, LIVE_GATEWAY_COOKIE_NAME);
+        assert.notInclude(upstreamCookies, LIVE_GATEWAY_HTTP_COOKIE_NAME);
+
+        const appAuth = yield* fetchEffect("/upstream-auth", {
+          headers: { cookie: gatewayCookie },
+        });
+        assert.equal(appAuth.status, 401);
+        assert.equal(yield* appAuth.text, "app-auth-required");
+
+        const gatewaySocketUrl = new URL(yield* getHttpServerUrl("/hmr"));
+        gatewaySocketUrl.protocol = "ws:";
+        const echoedFramesReady = yield* Deferred.make<
+          | {
+              readonly _tag: "Success";
+              readonly frames: ReadonlyArray<{
+                readonly binary: boolean;
+                readonly value: string;
+              }>;
+            }
+          | { readonly _tag: "Failure"; readonly cause: unknown }
+        >();
+        const gatewaySocketClosed = yield* Deferred.make<{
+          readonly code: number;
+          readonly reason: string;
+        }>();
+        const gatewayWebSocket = yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            const webSocket = new NodeSocket.NodeWS.WebSocket(gatewaySocketUrl, ["vite-hmr"], {
+              headers: {
+                cookie: [
+                  gatewayCookie,
+                  sessionCookie,
+                  "t3_session_legacy=secret",
+                  "app_session=client",
+                ].join("; "),
+                origin: "https://environment.example",
+              },
+            });
+            const frames: Array<{ readonly binary: boolean; readonly value: string }> = [];
+            webSocket.on("open", () => {
+              webSocket.send("first");
+              webSocket.send(new Uint8Array([1, 2, 3]));
+              webSocket.send("third");
+            });
+            webSocket.on("message", (data, isBinary) => {
+              frames.push({
+                binary: isBinary,
+                value: isBinary
+                  ? Buffer.from(data as ArrayBuffer).toString("hex")
+                  : data.toString(),
+              });
+              if (frames.length === 3) {
+                Deferred.doneUnsafe(echoedFramesReady, Effect.succeed({ _tag: "Success", frames }));
+              }
+            });
+            webSocket.on("close", (code, reason) => {
+              Deferred.doneUnsafe(
+                gatewaySocketClosed,
+                Effect.succeed({
+                  code,
+                  reason: reason.toString(),
+                }),
+              );
+              if (frames.length < 3) {
+                Deferred.doneUnsafe(
+                  echoedFramesReady,
+                  Effect.succeed({
+                    _tag: "Failure",
+                    cause: new Error(`Gateway websocket closed after ${frames.length} frames`),
+                  }),
+                );
+              }
+            });
+            webSocket.on("error", (error) => {
+              Deferred.doneUnsafe(
+                echoedFramesReady,
+                Effect.succeed({ _tag: "Failure", cause: error }),
+              );
+            });
+            return webSocket;
+          }),
+          (webSocket) =>
+            Effect.sync(() => {
+              if (
+                webSocket.readyState === webSocket.CONNECTING ||
+                webSocket.readyState === webSocket.OPEN
+              ) {
+                webSocket.terminate();
+              }
+            }),
+        );
+        const echoedFramesResult = yield* Deferred.await(echoedFramesReady);
+        if (echoedFramesResult._tag === "Failure") {
+          return yield* Effect.die(echoedFramesResult.cause);
+        }
+        const echoedFrames = echoedFramesResult.frames;
+        assert.equal(gatewayWebSocket.protocol, "vite-hmr");
+        assert.deepEqual(echoedFrames, [
+          { binary: false, value: "first" },
+          { binary: true, value: "010203" },
+          { binary: false, value: "third" },
+        ]);
+        assert.deepEqual(upstreamWebSocketRequests, [
+          {
+            cookie: "app_session=client",
+            origin: upstream.origin,
+            protocol: "vite-hmr",
+          },
+        ]);
+
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.previewClose]({
+              threadId: defaultThreadId,
+              tabId,
+            }),
+          ),
+        );
+        assert.deepEqual(yield* Deferred.await(gatewaySocketClosed), {
+          code: 1_008,
+          reason: "Live preview lease expired or was revoked",
+        });
+        const revokedLease = yield* fetchEffect("/asset-after-close", {
+          headers: { cookie: gatewayCookie },
+        });
+        assert.equal(revokedLease.status, LIVE_GATEWAY_EXPIRED_STATUS);
+
+        const replayedBootstrap = yield* fetchEffect(issued.relativeUrl, {
+          redirect: "manual",
+        });
+        assert.equal(replayedBootstrap.status, LIVE_GATEWAY_EXPIRED_STATUS);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("shares one preview automation broker across websocket sessions", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -4357,6 +4664,137 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(replacementEvent.type, "connected");
         assert.notEqual(replacementEvent.connectionId, firstConnectionId);
         assert.isTrue(Option.isSome(firstStreamClosed));
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes a compact review snapshot across websocket sessions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tabId = PreviewTabId.make("preview-review-tab");
+        yield* buildAppUnderTest({
+          layers: {
+            previewManager: {
+              list: () =>
+                Effect.succeed({
+                  sessions: [
+                    {
+                      threadId: defaultThreadId,
+                      tabId,
+                      navStatus: { _tag: "Idle" },
+                      canGoBack: false,
+                      canGoForward: false,
+                      updatedAt: "2026-07-30T12:00:00.000Z",
+                    },
+                  ],
+                  serverEpoch: "preview-server-1",
+                  revision: 7,
+                }),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const hostConnected = yield* Deferred.make<void>();
+        const missingTabId = PreviewTabId.make("missing-preview-review-tab");
+        let requestCount = 0;
+        let respondedAt = 0;
+        const host = {
+          clientId: "review-preview-host",
+          environmentId: testEnvironmentDescriptor.environmentId,
+        } as const;
+
+        yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(
+            Stream.runForEach((event) => {
+              if (event.type === "connected") {
+                return Deferred.succeed(hostConnected, undefined);
+              }
+              requestCount += 1;
+              assert.deepEqual(event.request.input, { mode: "review" });
+              return Effect.gen(function* () {
+                respondedAt = yield* Clock.currentTimeMillis;
+                yield* client[WS_METHODS.previewAutomationRespond]({
+                  clientId: host.clientId,
+                  connectionId: event.connectionId,
+                  requestId: event.request.requestId,
+                  ok: true,
+                  result: {
+                    url: "http://localhost:5173",
+                    title: "Review",
+                    loading: false,
+                    visibleText: "Send",
+                    interactiveElements: [
+                      {
+                        tag: "button",
+                        role: "button",
+                        name: "Send",
+                        selector: "#send",
+                        x: 10,
+                        y: 20,
+                        width: 80,
+                        height: 32,
+                      },
+                    ],
+                    accessibilityTree: {},
+                    consoleEntries: [],
+                    networkEntries: [],
+                    actionTimeline: [],
+                    screenshot: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAyAAAAJY",
+                      width: 800,
+                      height: 600,
+                    },
+                  },
+                });
+              });
+            }),
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(hostConnected);
+
+        const result = yield* withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const missing = yield* client[WS_METHODS.previewReviewSnapshot]({
+              version: 1,
+              threadId: defaultThreadId,
+              tabId: missingTabId,
+            }).pipe(Effect.flip);
+            assert.equal(missing._tag, "PreviewSessionLookupError");
+
+            return yield* client[WS_METHODS.previewReviewSnapshot]({
+              version: 1,
+              threadId: defaultThreadId,
+              tabId,
+            });
+          }),
+        );
+
+        assert.equal(requestCount, 1);
+        assert.equal(result.version, 1);
+        assert.equal(result.threadId, defaultThreadId);
+        assert.equal(result.tabId, tabId);
+        assert.equal(result.pageRevision, result.snapshotId);
+        assert.equal(result.previewRevision, 7);
+        assert.isAtLeast(Date.parse(result.capturedAt), respondedAt);
+        assert.deepEqual(result.viewport, {
+          width: 800,
+          height: 600,
+          scrollX: 0,
+          scrollY: 0,
+          devicePixelRatio: 1,
+        });
+        assert.deepEqual(result.elements, [
+          {
+            id: "element-1",
+            tag: "button",
+            role: "button",
+            name: "Send",
+            selector: "#send",
+            rect: { x: 10, y: 20, width: 80, height: 32 },
+          },
+        ]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

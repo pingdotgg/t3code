@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, View } from "react-native";
-import ImageViewing from "react-native-image-viewing";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
+import { FullscreenImageViewer } from "../../components/FullscreenImageViewer";
 import { workspaceFileImageAtom } from "./workspace-file-image-cache";
 
 function ResolvedWorkspaceFileImagePreview(props: {
@@ -18,7 +18,6 @@ function ResolvedWorkspaceFileImagePreview(props: {
     () => ({ uri: props.uri, cache: "force-cache" as const }),
     [props.uri],
   );
-  const fullScreenImages = useMemo(() => [imageSource], [imageSource]);
 
   return (
     <View className="relative flex-1 bg-subtle">
@@ -47,13 +46,10 @@ function ResolvedWorkspaceFileImagePreview(props: {
         </View>
       ) : null}
 
-      <ImageViewing
-        images={fullScreenImages}
-        imageIndex={0}
+      <FullscreenImageViewer
+        source={imageSource}
         visible={fullScreenVisible}
         onRequestClose={() => setFullScreenVisible(false)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
       />
     </View>
   );

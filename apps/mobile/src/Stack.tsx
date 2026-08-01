@@ -26,6 +26,7 @@ import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayo
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
+import { ThreadPreviewRouteScreen } from "./features/preview/ThreadPreviewRouteScreen";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
@@ -421,6 +422,11 @@ export const RootStack = createNativeStackNavigator({
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
         sheetGrabberVisible: Platform.OS !== "android",
       },
+    }),
+    ThreadPreview: createNativeStackScreen({
+      screen: ThreadPreviewRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/preview`,
+      options: SOLID_HEADER_OPTIONS,
     }),
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,

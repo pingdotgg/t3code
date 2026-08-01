@@ -67,6 +67,97 @@ function isPoint(value: unknown): boolean {
   );
 }
 
+function isNormalizedNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function isNormalizedPoint(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const point = value as Record<string, unknown>;
+  return isNormalizedNumber(point["x"]) && isNormalizedNumber(point["y"]);
+}
+
+function isNormalizedRect(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const rect = value as Record<string, unknown>;
+  if (
+    !isNormalizedNumber(rect["x"]) ||
+    !isNormalizedNumber(rect["y"]) ||
+    !isNormalizedNumber(rect["width"]) ||
+    !isNormalizedNumber(rect["height"]) ||
+    rect["width"] <= 0 ||
+    rect["height"] <= 0
+  ) {
+    return false;
+  }
+  return rect["x"] + rect["width"] <= 1 && rect["y"] + rect["height"] <= 1;
+}
+
+function isPreviewAnnotationSource(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const source = value as Record<string, unknown>;
+  if (source["kind"] === "image") {
+    return isStringOrNull(source["name"]);
+  }
+  if (source["kind"] === "preview") {
+    return typeof source["url"] === "string" && isStringOrNull(source["title"]);
+  }
+  return false;
+}
+
+function isPreviewAnnotationCallout(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const callout = value as Record<string, unknown>;
+  if (
+    typeof callout["id"] !== "string" ||
+    typeof callout["number"] !== "number" ||
+    !Number.isInteger(callout["number"]) ||
+    callout["number"] < 1 ||
+    typeof callout["comment"] !== "string"
+  ) {
+    return false;
+  }
+
+  const anchorValue = callout["anchor"];
+  if (typeof anchorValue !== "object" || anchorValue === null) return false;
+  const anchor = anchorValue as Record<string, unknown>;
+  if (anchor["kind"] === "point") {
+    return isNormalizedPoint(anchor["point"]);
+  }
+  if (anchor["kind"] === "region") {
+    return isNormalizedRect(anchor["rect"]);
+  }
+  if (anchor["kind"] === "element") {
+    return typeof anchor["targetId"] === "string" && isNormalizedRect(anchor["rect"]);
+  }
+  return false;
+}
+
+function isPreviewAnnotationEditableStroke(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const stroke = value as Record<string, unknown>;
+  return (
+    typeof stroke["id"] === "string" &&
+    typeof stroke["color"] === "string" &&
+    isNormalizedNumber(stroke["width"]) &&
+    stroke["width"] > 0 &&
+    Array.isArray(stroke["points"]) &&
+    stroke["points"].every(isNormalizedPoint) &&
+    isNormalizedRect(stroke["bounds"])
+  );
+}
+
+function isPreviewAnnotationEditable(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const editable = value as Record<string, unknown>;
+  return (
+    editable["version"] === 1 &&
+    editable["coordinateSpace"] === "normalized" &&
+    Array.isArray(editable["strokes"]) &&
+    editable["strokes"].every(isPreviewAnnotationEditableStroke)
+  );
+}
+
 export function isPreviewAnnotationPayload(value: unknown): value is PreviewAnnotationPayload {
   if (typeof value !== "object" || value === null) return false;
   const annotation = value as Record<string, unknown>;
@@ -75,7 +166,27 @@ export function isPreviewAnnotationPayload(value: unknown): value is PreviewAnno
   if (!isStringOrNull(annotation["pageTitle"])) return false;
   if (typeof annotation["comment"] !== "string") return false;
   if (typeof annotation["createdAt"] !== "string") return false;
+  // The guest submits structure only. The trusted main process captures and
+  // attaches the screenshot after this boundary.
   if (annotation["screenshot"] !== null) return false;
+  if (annotation["schemaVersion"] !== undefined && annotation["schemaVersion"] !== 1) return false;
+  if (annotation["source"] !== undefined && !isPreviewAnnotationSource(annotation["source"])) {
+    return false;
+  }
+  if (
+    annotation["callouts"] !== undefined &&
+    (!Array.isArray(annotation["callouts"]) ||
+      !annotation["callouts"].every(isPreviewAnnotationCallout))
+  ) {
+    return false;
+  }
+  if (
+    annotation["editable"] !== undefined &&
+    annotation["editable"] !== null &&
+    !isPreviewAnnotationEditable(annotation["editable"])
+  ) {
+    return false;
+  }
 
   const elements = annotation["elements"];
   if (!Array.isArray(elements)) return false;

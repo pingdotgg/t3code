@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  PreviewAutomationClientId,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
@@ -454,6 +455,107 @@ it.effect("rejects calls when no connected host exists", () =>
       providerInstanceId: scope.providerInstanceId,
     });
   }),
+);
+
+it.effect("routes authenticated client review flows without provider-shaped identity", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const clientScope: PreviewAutomationBroker.PreviewAutomationClientInvokeScope = {
+        environmentId: scope.environmentId,
+        threadId: scope.threadId,
+        assignmentId: "review-assignment-1",
+        requesterId: PreviewAutomationClientId.make("review-requester-1"),
+      };
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "review",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(
+        yield* broker.invoke<string>({
+          scope: clientScope,
+          operation: "snapshot",
+          input: {},
+        }),
+      ).toBe("review");
+
+      const unavailable = yield* broker
+        .invoke<string>({
+          scope: { ...clientScope, environmentId: EnvironmentId.make("environment-missing") },
+          operation: "snapshot",
+          input: {},
+        })
+        .pipe(Effect.flip);
+      expect(unavailable).toMatchObject({
+        requesterId: "review-requester-1",
+      });
+      expect(unavailable).not.toHaveProperty("providerSessionId");
+      expect(unavailable).not.toHaveProperty("providerInstanceId");
+    }),
+  ),
+);
+
+it.effect("namespaces provider and authenticated-client host assignments", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const sharedAssignmentId = "shared-assignment";
+      const firstRequests = requestsFrom(yield* broker.connect(makeHost({ clientId: "client-1" })));
+      yield* Stream.runForEach(firstRequests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "client-1",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(
+        yield* broker.invoke<string>({
+          scope: { ...scope, providerSessionId: sharedAssignmentId },
+          operation: "snapshot",
+          input: {},
+        }),
+      ).toBe("client-1");
+
+      const secondRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "client-2" })),
+      );
+      yield* Stream.runForEach(secondRequests, (request) =>
+        broker.respond({
+          clientId: "client-2",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "client-2",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(
+        yield* broker.invoke<string>({
+          scope: {
+            environmentId: scope.environmentId,
+            threadId: scope.threadId,
+            assignmentId: sharedAssignmentId,
+            requesterId: PreviewAutomationClientId.make("review-requester-1"),
+          },
+          operation: "snapshot",
+          input: {},
+        }),
+      ).toBe("client-2");
+    }),
+  ),
 );
 
 it.effect("does not create host state from focus updates without a live stream", () =>

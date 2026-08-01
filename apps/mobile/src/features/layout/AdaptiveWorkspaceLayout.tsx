@@ -28,9 +28,13 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import {
   deriveFileInspectorPaneLayout,
   deriveLayout,
+  derivePreviewPaneLayout,
   deriveWorkspacePaneLayout,
+  constrainAuxiliaryPaneWidth,
+  constrainPreviewPaneWidth,
   type FileInspectorPaneLayout,
   type Layout,
+  type PreviewPaneLayout,
   type WorkspaceAuxiliaryPaneRole,
   type WorkspacePaneLayout,
 } from "../../lib/layout";
@@ -50,6 +54,8 @@ interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
   readonly panes: WorkspacePaneLayout;
   readonly fileInspector: FileInspectorPaneLayout;
+  readonly previewPane: PreviewPaneLayout;
+  readonly previewPaneFullscreen: boolean;
   readonly primarySidebarSearchQuery: string;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
   /**
@@ -66,6 +72,7 @@ interface AdaptiveWorkspaceContextValue {
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
+  readonly setPreviewPaneFullscreen: (fullscreen: boolean) => void;
 }
 
 const compactLayout = deriveLayout({ width: 0, height: 0 });
@@ -79,10 +86,16 @@ const compactFileInspector = deriveFileInspectorPaneLayout({
   layout: compactLayout,
   viewportWidth: 0,
 });
+const compactPreviewPane = derivePreviewPaneLayout({
+  layout: compactLayout,
+  viewportWidth: 0,
+});
 const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   layout: compactLayout,
   panes: compactPanes,
   fileInspector: compactFileInspector,
+  previewPane: compactPreviewPane,
+  previewPaneFullscreen: false,
   primarySidebarSearchQuery: "",
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
@@ -91,6 +104,7 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
+  setPreviewPaneFullscreen: () => undefined,
 });
 
 export function useAdaptiveWorkspaceLayout(): AdaptiveWorkspaceContextValue {
@@ -225,6 +239,9 @@ function AdaptiveWorkspaceLayoutContent(
   const [fileInspectorPreferredWidth, setFileInspectorPreferredWidth] = useState<number | null>(
     null,
   );
+  const [previewPanePreferredVisible, setPreviewPanePreferredVisible] = useState(true);
+  const [previewPanePreferredWidth, setPreviewPanePreferredWidth] = useState<number | null>(null);
+  const [previewPaneFullscreen, setPreviewPaneFullscreen] = useState(false);
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
@@ -253,16 +270,29 @@ function AdaptiveWorkspaceLayoutContent(
       width,
     ],
   );
+  const previewPane = useMemo(
+    () =>
+      derivePreviewPaneLayout({
+        layout,
+        viewportWidth: width,
+        preferredWidth: previewPanePreferredWidth ?? undefined,
+      }),
+    [layout, previewPanePreferredWidth, width],
+  );
   const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
     focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
   const auxiliaryPanePreferredVisible =
     auxiliaryPaneRole === "inspector"
       ? fileInspectorPreferredVisible
-      : supplementaryPanePreferredVisible;
+      : auxiliaryPaneRole === "preview"
+        ? previewPanePreferredVisible
+        : supplementaryPanePreferredVisible;
   const auxiliaryPanePreferredWidth =
     auxiliaryPaneRole === "inspector"
       ? fileInspectorPreferredWidth
-      : supplementaryPanePreferredWidth;
+      : auxiliaryPaneRole === "preview"
+        ? previewPanePreferredWidth
+        : supplementaryPanePreferredWidth;
   const panes = useMemo(
     () =>
       deriveWorkspacePaneLayout({
@@ -272,11 +302,13 @@ function AdaptiveWorkspaceLayoutContent(
         auxiliaryPanePreferredVisible,
         auxiliaryPaneRole,
         auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
+        auxiliaryPaneFullscreen: auxiliaryPaneRole === "preview" && previewPaneFullscreen,
       }),
     [
       auxiliaryPanePreferredVisible,
       auxiliaryPaneRole,
       auxiliaryPanePreferredWidth,
+      previewPaneFullscreen,
       layout,
       primarySidebarPreferredVisible,
       width,
@@ -326,6 +358,9 @@ function AdaptiveWorkspaceLayoutContent(
     const owner = Symbol(role);
     activeRoleOwner.current = owner;
     setFocusedAuxiliaryPaneRole(role);
+    if (role !== "preview") {
+      setPreviewPaneFullscreen(false);
+    }
 
     return () => {
       if (activeRoleOwner.current !== owner) {
@@ -333,22 +368,33 @@ function AdaptiveWorkspaceLayoutContent(
       }
       activeRoleOwner.current = null;
       setFocusedAuxiliaryPaneRole(null);
+      setPreviewPaneFullscreen(false);
     };
   }, []);
   const togglePrimarySidebar = useCallback(() => {
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
-      setFileInspectorPreferredVisible(false);
+      if (auxiliaryPaneRole === "preview") {
+        setPreviewPanePreferredVisible(false);
+        setPreviewPaneFullscreen(false);
+      } else {
+        setFileInspectorPreferredVisible(false);
+      }
       setPrimarySidebarPreferredVisible(true);
       return;
     }
     setPrimarySidebarPreferredVisible((current) => !current);
-  }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible]);
+  }, [auxiliaryPaneRole, panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible]);
   const revealPrimarySidebar = useCallback(() => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
-      setFileInspectorPreferredVisible(false);
+      if (auxiliaryPaneRole === "preview") {
+        setPreviewPanePreferredVisible(false);
+        setPreviewPaneFullscreen(false);
+      } else {
+        setFileInspectorPreferredVisible(false);
+      }
     }
     setPrimarySidebarPreferredVisible(true);
-  }, [panes.primarySidebarSuppressedByAuxiliary]);
+  }, [auxiliaryPaneRole, panes.primarySidebarSuppressedByAuxiliary]);
   const handleToggleSidebarCommand = useCallback(() => {
     togglePrimarySidebar();
     return true;
@@ -358,6 +404,11 @@ function AdaptiveWorkspaceLayoutContent(
     if (role === "inspector") {
       setFocusedAuxiliaryPaneRole("inspector");
       setFileInspectorPreferredVisible(true);
+      return;
+    }
+    if (role === "preview") {
+      setFocusedAuxiliaryPaneRole("preview");
+      setPreviewPanePreferredVisible(true);
       return;
     }
     setFocusedAuxiliaryPaneRole("supplementary");
@@ -381,23 +432,49 @@ function AdaptiveWorkspaceLayoutContent(
       setFileInspectorPreferredVisible((current) => !current);
       return;
     }
+    if (auxiliaryPaneRole === "preview") {
+      setPreviewPanePreferredVisible((current) => !current);
+      setPreviewPaneFullscreen(false);
+      return;
+    }
     setSupplementaryPanePreferredVisible((current) => !current);
   }, [auxiliaryPaneRole]);
   const setAuxiliaryPaneWidth = useCallback(
     (nextWidth: number) => {
       if (auxiliaryPaneRole === "inspector") {
-        setFileInspectorPreferredWidth(nextWidth);
+        setFileInspectorPreferredWidth(
+          constrainAuxiliaryPaneWidth({
+            preferredWidth: nextWidth,
+            availableWidth: panes.contentPaneWidth,
+          }),
+        );
         return;
       }
-      setSupplementaryPanePreferredWidth(nextWidth);
+      if (auxiliaryPaneRole === "preview") {
+        setPreviewPanePreferredWidth(
+          constrainPreviewPaneWidth({
+            preferredWidth: nextWidth,
+            availableWidth: panes.contentPaneWidth,
+          }),
+        );
+        return;
+      }
+      setSupplementaryPanePreferredWidth(
+        constrainAuxiliaryPaneWidth({
+          preferredWidth: nextWidth,
+          availableWidth: panes.contentPaneWidth,
+        }),
+      );
     },
-    [auxiliaryPaneRole],
+    [auxiliaryPaneRole, panes.contentPaneWidth],
   );
   const contextValue = useMemo(
     () => ({
       layout,
       panes,
       fileInspector,
+      previewPane,
+      previewPaneFullscreen,
       primarySidebarSearchQuery,
       activateAuxiliaryPaneRole,
       registerWorkspaceInspector,
@@ -406,6 +483,7 @@ function AdaptiveWorkspaceLayoutContent(
       toggleAuxiliaryPane,
       togglePrimarySidebar,
       setAuxiliaryPaneWidth,
+      setPreviewPaneFullscreen,
     }),
     [
       activateAuxiliaryPaneRole,
@@ -413,10 +491,13 @@ function AdaptiveWorkspaceLayoutContent(
       layout,
       panes,
       primarySidebarSearchQuery,
+      previewPane,
+      previewPaneFullscreen,
       registerWorkspaceInspector,
       showAuxiliaryPane,
       setPrimarySidebarSearchQuery,
       setAuxiliaryPaneWidth,
+      setPreviewPaneFullscreen,
       toggleAuxiliaryPane,
       togglePrimarySidebar,
     ],
@@ -544,6 +625,7 @@ function AdaptiveWorkspaceLayoutContent(
             active={workspaceInspector?.active ?? false}
             panes={panes}
             renderInspector={workspaceInspector?.render}
+            resizable={auxiliaryPaneRole !== "preview" || !previewPaneFullscreen}
             setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}
             onClosed={handleWorkspaceInspectorClosed}
           />

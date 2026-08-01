@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -27,7 +27,11 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import {
+  appendComposerImageAnnotationPrompts,
+  convertPastedImagesToAttachments,
+  pickComposerImages,
+} from "../../lib/composerImages";
 import {
   applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
@@ -47,7 +51,10 @@ import { resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
-import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import {
+  setPendingConnectionError,
+  useRemoteConnectionStatus,
+} from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
@@ -815,13 +822,24 @@ export function NewTaskDraftScreen(props: {
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = draft.interactionMode ?? flow.interactionMode;
     const initialMessageText = draft.text.trim();
+    const initialAttachments = draft.attachments;
 
     if (
       !modelSelection ||
-      initialMessageText.length === 0 ||
+      (initialMessageText.length === 0 && initialAttachments.length === 0) ||
       flow.submitting ||
       (workspaceMode === "worktree" && !selectedBranchName)
     ) {
+      return;
+    }
+    const deliveryText = appendComposerImageAnnotationPrompts(
+      initialMessageText,
+      initialAttachments,
+    );
+    if (deliveryText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      setPendingConnectionError(
+        "This message is too long after adding image annotation comments. Shorten the message or its callouts and try again.",
+      );
       return;
     }
 
@@ -873,7 +891,7 @@ export function NewTaskDraftScreen(props: {
     // -only Activity start. If creation fails, the token registration's replay
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
-      threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
+      threadTitle: deriveThreadTitleFromPrompt(initialMessageText, initialAttachments),
       projectTitle: selectedProject.title,
     });
     const result = await createProjectThread({
@@ -886,7 +904,7 @@ export function NewTaskDraftScreen(props: {
       runtimeMode,
       interactionMode,
       initialMessageText,
-      initialAttachments: draft.attachments,
+      initialAttachments,
       ...(editingPendingTask
         ? {
             turnMetadata: {
@@ -952,7 +970,7 @@ export function NewTaskDraftScreen(props: {
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
-    flow.prompt.trim().length > 0 &&
+    (flow.prompt.trim().length > 0 || flow.attachments.length > 0) &&
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
@@ -1111,6 +1129,17 @@ export function NewTaskDraftScreen(props: {
                     onRemove={
                       isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
                     }
+                    onReplace={
+                      isIncomingShareTransferPending
+                        ? undefined
+                        : (replacement) => {
+                            flow.replaceAttachments(
+                              flow.attachments.map((image) =>
+                                image.id === replacement.id ? replacement : image,
+                              ),
+                            );
+                          }
+                    }
                   />
                 </View>
               ) : null}
@@ -1155,6 +1184,17 @@ export function NewTaskDraftScreen(props: {
               <ComposerAttachmentStrip
                 attachments={flow.attachments}
                 onRemove={isIncomingShareTransferPending ? () => undefined : flow.removeAttachment}
+                onReplace={
+                  isIncomingShareTransferPending
+                    ? undefined
+                    : (replacement) => {
+                        flow.replaceAttachments(
+                          flow.attachments.map((image) =>
+                            image.id === replacement.id ? replacement : image,
+                          ),
+                        );
+                      }
+                }
                 imageSize={88}
                 imageBorderRadius={20}
               />
