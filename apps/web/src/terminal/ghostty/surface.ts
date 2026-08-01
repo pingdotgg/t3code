@@ -351,7 +351,6 @@ export class GhosttyTerminalSurface {
   private scrollbarPointerId: number | null = null;
   private scrollbarPointerOffset = 0;
   private disposed = false;
-  private resizeNotifyTimer: number | null = null;
   private originY = CONTENT_PADDING;
   private mountHeight = 0;
   private selectionEnd: { x: number; y: number } | null = null;
@@ -604,27 +603,19 @@ export class GhosttyTerminalSurface {
   }
 
   /**
-   * The local grid reflows on every step, so the PTY hears the start of a
-   * resize immediately and the settled size once the burst ends.
+   * The PTY must track every grid change, like a native terminal's SIGWINCH.
    *
-   * Trailing-only notification let the shell keep its old width across the
-   * whole drag: the grid rewrapped the already-printed prompt while the shell
-   * redrew at the end, stranding the rewrapped fragments above the live prompt.
-   * That is only visible when a line wraps, which is why narrow panes with long
-   * prompts showed it. Intermediate steps stay coalesced so the shell does not
-   * reprint per frame, which reads as jitter.
+   * Debouncing let the grid and the shell disagree on width for the length of
+   * a drag: the shell's redraw sequences were computed for one width but
+   * interpreted at another, so its cursor-up arithmetic missed and each redraw
+   * orphaned the previous prompt as a stranded fragment — permanently, once it
+   * scrolled out of the shell's edit region. Per-step notification keeps the
+   * widths in lockstep; `fit()` already coalesces to one call per changed grid
+   * size, so a drag produces at most one notify per crossed cell boundary.
    */
   private notifyResize(): void {
     this.resizeNotified = true;
-    if (this.resizeNotifyTimer === null) {
-      this.options.onResize(this.cols, this.rows);
-    } else {
-      window.clearTimeout(this.resizeNotifyTimer);
-    }
-    this.resizeNotifyTimer = window.setTimeout(() => {
-      this.resizeNotifyTimer = null;
-      if (!this.disposed) this.options.onResize(this.cols, this.rows);
-    }, 150);
+    this.options.onResize(this.cols, this.rows);
   }
 
   focus(): void {
@@ -696,13 +687,6 @@ export class GhosttyTerminalSurface {
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
-    if (this.resizeNotifyTimer !== null) {
-      window.clearTimeout(this.resizeNotifyTimer);
-      this.resizeNotifyTimer = null;
-      // Flush the settled dimensions so the PTY keeps the final size even when
-      // the surface unmounts inside the debounce window.
-      this.options.onResize(this.cols, this.rows);
-    }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
