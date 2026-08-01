@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
   schedule:
-    - cron: "0 */3 * * *"
+    - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
       channel:
