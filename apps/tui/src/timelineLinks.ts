@@ -77,6 +77,12 @@ function linkifyLine(line: string): string {
   return result;
 }
 
+// Streaming re-renders linkify every visible message per websocket delta while
+// only one message's text actually changes; memoize by input so unchanged
+// messages skip the full regex scan. LRU-bounded.
+const LINKIFY_CACHE_MAX_ENTRIES = 512;
+const linkifyCache = new Map<string, string>();
+
 /**
  * Turn bare HTTP(S) text into explicit Markdown autolinks so OpenTUI emits OSC 8
  * hyperlinks in the conversation timeline, just as the xterm-backed drawer does.
@@ -84,7 +90,22 @@ function linkifyLine(line: string): string {
  */
 export function linkifyTimelineUrls(markdown: string): string {
   if (markdown.length === 0 || markdown.length > TIMELINE_LINK_SCAN_MAX_CHARS) return markdown;
+  const cached = linkifyCache.get(markdown);
+  if (cached !== undefined) {
+    linkifyCache.delete(markdown);
+    linkifyCache.set(markdown, cached);
+    return cached;
+  }
+  const result = linkifyTimelineUrlsUncached(markdown);
+  if (linkifyCache.size >= LINKIFY_CACHE_MAX_ENTRIES) {
+    const oldest = linkifyCache.keys().next().value;
+    if (oldest !== undefined) linkifyCache.delete(oldest);
+  }
+  linkifyCache.set(markdown, result);
+  return result;
+}
 
+function linkifyTimelineUrlsUncached(markdown: string): string {
   let fence: { readonly marker: "`" | "~"; readonly length: number } | null = null;
   return markdown
     .split("\n")

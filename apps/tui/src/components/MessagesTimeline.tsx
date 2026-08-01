@@ -671,9 +671,15 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   // Match the web timeline and composer: both share a centered max-w-3xl
   // content column instead of stretching prose across an ultrawide workspace.
   const timelineWidth = Math.min(CHAT_CONTENT_MAX_WIDTH, contentWidth);
+  // Depend on the exact slices each derivation reads, not the whole `detail`
+  // object (replaced per streamed delta), so unrelated deltas skip the work.
+  const activities = detail?.activities;
+  const messages = detail?.messages;
+  const latestTurn = detail?.latestTurn;
+  const checkpoints = detail?.checkpoints;
   const contextWindow = React.useMemo(
-    () => (detail ? deriveContextWindow(detail.activities) : null),
-    [detail],
+    () => (activities ? deriveContextWindow(activities) : null),
+    [activities],
   );
   const headerHeight = 1;
   const metaHeight = contextWindow ? 1 : 0;
@@ -685,8 +691,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
 
   const timeline = React.useMemo(
     () =>
-      detail ? deriveTimelineEntries(detail.messages, detail.activities, detail.latestTurn) : [],
-    [detail],
+      messages && activities ? deriveTimelineEntries(messages, activities, latestTurn ?? null) : [],
+    [messages, activities, latestTurn],
   );
   React.useLayoutEffect(() => {
     const box = scrollRef.current;
@@ -694,10 +700,10 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   }, [detail?.id, scrollRef, timeline, width]);
   const checkpointByMessage = React.useMemo(
     () =>
-      detail
-        ? changedFilesByMessage(detail.checkpoints)
+      checkpoints
+        ? changedFilesByMessage(checkpoints)
         : new Map<string, OrchestrationCheckpointSummary>(),
-    [detail],
+    [checkpoints],
   );
   const proposedPlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
