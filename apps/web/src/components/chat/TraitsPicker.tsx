@@ -14,7 +14,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
@@ -31,7 +31,10 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { toastManager } from "../ui/toast";
 import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./ComposerControl";
+
+type LockedOptionWarningToastId = ReturnType<typeof toastManager.add>;
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -205,6 +208,60 @@ export function shouldRenderTraitsControls(input: {
   return getTraitsSectionVisibility(input).hasAnyControls;
 }
 
+export const LOCKED_PROVIDER_OPTION_TOAST = {
+  type: "warning" as const,
+  title: "Start a new chat to change options",
+  description: "This provider applies these options when a conversation starts.",
+};
+
+export type ProviderOptionChangeResolution =
+  | { action: "ignore" }
+  | { action: "warn"; toast: typeof LOCKED_PROVIDER_OPTION_TOAST }
+  | { action: "apply"; nextDescriptors: ReadonlyArray<ProviderOptionDescriptor> };
+
+/**
+ * Pure select/boolean change resolver for session-bound provider options.
+ * Radios stay clickable; callers toast on warn and apply only the returned
+ * nextDescriptors on apply. Same-value clicks are silent.
+ */
+export function resolveProviderOptionChange(input: {
+  readonly descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly descriptorId: string;
+  readonly nextValue: string | boolean;
+  readonly optionChangeBlocked: boolean;
+  /** Effective UI value when it differs from the descriptor (e.g. ultrathink). */
+  readonly currentValue?: string | boolean;
+}): ProviderOptionChangeResolution {
+  const descriptor = input.descriptors.find((candidate) => candidate.id === input.descriptorId);
+  if (!descriptor) {
+    return { action: "ignore" };
+  }
+
+  const currentValue =
+    input.currentValue !== undefined
+      ? input.currentValue
+      : descriptor.type === "boolean"
+        ? (descriptor.currentValue ?? false)
+        : getProviderOptionCurrentValue(descriptor);
+
+  if (currentValue === input.nextValue) {
+    return { action: "ignore" };
+  }
+
+  if (input.optionChangeBlocked) {
+    return { action: "warn", toast: LOCKED_PROVIDER_OPTION_TOAST };
+  }
+
+  return {
+    action: "apply",
+    nextDescriptors: replaceDescriptorCurrentValue(
+      input.descriptors,
+      input.descriptorId,
+      input.nextValue,
+    ),
+  };
+}
+
 export interface TraitsMenuContentProps {
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
@@ -214,6 +271,8 @@ export interface TraitsMenuContentProps {
   onPromptChange: (prompt: string) => void;
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
+  /** Started-thread lock: clicking a session-bound option warns instead of applying. */
+  optionChangeBlocked?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
 }
@@ -227,8 +286,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  optionChangeBlocked,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
+  const optionsLocked = optionChangeBlocked === true;
+  const lockedOptionWarningToastIdRef = useRef<LockedOptionWarningToastId | null>(null);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
@@ -268,11 +330,34 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
   };
 
+  const showLockedOptionWarning = (toast: typeof LOCKED_PROVIDER_OPTION_TOAST) => {
+    if (lockedOptionWarningToastIdRef.current !== null) {
+      toastManager.close(lockedOptionWarningToastIdRef.current);
+    }
+    lockedOptionWarningToastIdRef.current = toastManager.add(toast);
+  };
+
   const handleSelectChange = (
     descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
     value: string,
   ) => {
     if (!value) return;
+    const effectiveCurrent =
+      ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
+        ? "ultrathink"
+        : (getDescriptorStringValue(descriptor) ?? "");
+    const resolution = resolveProviderOptionChange({
+      descriptors,
+      descriptorId: descriptor.id,
+      nextValue: value,
+      optionChangeBlocked: optionsLocked,
+      currentValue: effectiveCurrent,
+    });
+    if (resolution.action === "ignore") return;
+    if (resolution.action === "warn") {
+      showLockedOptionWarning(resolution.toast);
+      return;
+    }
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
         prompt.trim().length === 0
@@ -286,7 +371,25 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
       onPromptChange(stripped);
     }
-    updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+    updateDescriptors(resolution.nextDescriptors);
+  };
+
+  const handleBooleanChange = (
+    descriptor: Extract<ProviderOptionDescriptor, { type: "boolean" }>,
+    value: string,
+  ) => {
+    const resolution = resolveProviderOptionChange({
+      descriptors,
+      descriptorId: descriptor.id,
+      nextValue: value === "on",
+      optionChangeBlocked: optionsLocked,
+    });
+    if (resolution.action === "ignore") return;
+    if (resolution.action === "warn") {
+      showLockedOptionWarning(resolution.toast);
+      return;
+    }
+    updateDescriptors(resolution.nextDescriptors);
   };
 
   if (!hasAnyControls) {
@@ -355,11 +458,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               </div>
               <MenuRadioGroup
                 value={selectedValue}
-                onValueChange={(value) => {
-                  updateDescriptors(
-                    replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
-                  );
-                }}
+                onValueChange={(value) => handleBooleanChange(descriptor, value)}
               >
                 {(["on", "off"] as const).map((value) => (
                   <MenuRadioItem key={value} value={value} hideIndicator>
@@ -441,6 +540,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  optionChangeBlocked,
   triggerVariant,
   triggerClassName,
   ...persistence
@@ -533,6 +633,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
+          {...(optionChangeBlocked !== undefined ? { optionChangeBlocked } : {})}
           {...persistence}
         />
       </MenuPopup>

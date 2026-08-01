@@ -32,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -49,6 +50,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { resolveGrokSpawnOptionValue } from "../../provider/acp/GrokAcpSupport.ts";
 import {
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
@@ -78,6 +80,8 @@ import {
   acpProjectedCommandExitCode,
   acpTurnStartShouldPreserveContinuation,
   makeAcpAdapterV2,
+  resolveAcpConfigureSessionPrior,
+  resolveEffectiveAcpSelection,
   type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
@@ -1368,6 +1372,747 @@ describe("AcpAdapterV2", () => {
       assert.include(String(error.cause), "missing-option");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
+
+  it.effect("excludes flavor spawn options from session config validation and apply", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const runtimeSelections: Array<ModelSelection | undefined> = [];
+      const mockRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          spawnOptionIds: ["reasoningEffort"],
+          makeRuntime: (input) => {
+            runtimeSelections.push(input.modelSelection);
+            return mockRuntime(input);
+          },
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const threadId = ThreadId.make("thread-acp-spawn-option");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = {
+        instanceId,
+        model: "default",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-spawn-option"),
+        modelSelection,
+        runtimePolicy,
+      });
+
+      assert.equal(runtime.providerSession.status, "ready");
+      assert.deepEqual(runtimeSelections, [modelSelection]);
+
+      // Non-spawn option ids stay subject to advertised-id validation.
+      const mixedAdapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          spawnOptionIds: ["reasoningEffort"],
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const mixedError = yield* mixedAdapter
+        .openSession({
+          threadId: ThreadId.make("thread-acp-spawn-option:mixed"),
+          providerSessionId: ProviderSessionId.make("provider-session-acp-spawn-option-mixed"),
+          modelSelection: {
+            instanceId,
+            model: "default",
+            options: [
+              { id: "reasoningEffort", value: "low" },
+              { id: "missing-option", value: "high" },
+            ],
+          },
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      assert.equal(mixedError._tag, "ProviderAdapterOpenSessionError");
+      assert.include(String(mixedError.cause), "missing-option");
+      assert.notInclude(String(mixedError.cause), "reasoningEffort");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it("preserves process-bound spawn values in the effective selection", () => {
+    const instanceId = ProviderInstanceId.make("acp-test");
+    const prior: ModelSelection = {
+      instanceId,
+      model: "default",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "model", value: "default" },
+      ],
+    };
+    const requested: ModelSelection = {
+      instanceId,
+      model: "default",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "model", value: "composer-2" },
+      ],
+    };
+
+    assert.deepEqual(
+      resolveEffectiveAcpSelection({
+        requested,
+        priorSelection: prior,
+        spawnOptionIds: ["reasoningEffort"],
+      }),
+      {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "model", value: "composer-2" },
+          { id: "reasoningEffort", value: "low" },
+        ],
+      },
+    );
+
+    const grokLow: ModelSelection = {
+      instanceId,
+      model: "grok-4.5",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    };
+    const processSpawnOptionValues = new Map<string, string | boolean | undefined>([
+      ["reasoningEffort", resolveGrokSpawnOptionValue(grokLow, "reasoningEffort")],
+    ]);
+    const switchedToBuild = resolveEffectiveAcpSelection({
+      requested: {
+        instanceId,
+        model: "grok-build",
+      },
+      priorSelection: grokLow,
+      spawnOptionIds: ["reasoningEffort"],
+      resolveSpawnOptionValue: resolveGrokSpawnOptionValue,
+      processSpawnOptionValues,
+    });
+    assert.deepEqual(switchedToBuild, {
+      instanceId,
+      model: "grok-build",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    });
+    assert.deepEqual(
+      resolveEffectiveAcpSelection({
+        requested: {
+          instanceId,
+          model: "grok-4.5",
+        },
+        priorSelection: switchedToBuild,
+        spawnOptionIds: ["reasoningEffort"],
+        resolveSpawnOptionValue: resolveGrokSpawnOptionValue,
+        processSpawnOptionValues,
+      }),
+      {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    );
+
+    assert.deepEqual(
+      resolveEffectiveAcpSelection({
+        requested: {
+          instanceId,
+          model: "grok-4.5",
+        },
+        priorSelection: null,
+        spawnOptionIds: ["reasoningEffort"],
+        resolveSpawnOptionValue: resolveGrokSpawnOptionValue,
+      }),
+      {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+    );
+
+    assert.deepEqual(
+      resolveEffectiveAcpSelection({
+        requested,
+        priorSelection: null,
+        spawnOptionIds: ["reasoningEffort"],
+      }),
+      {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "model", value: "composer-2" },
+          { id: "reasoningEffort", value: "high" },
+        ],
+      },
+    );
+
+    assert.deepEqual(
+      resolveEffectiveAcpSelection({
+        requested,
+        priorSelection: {
+          instanceId,
+          model: "default",
+          options: [{ id: "model", value: "default" }],
+        },
+        spawnOptionIds: ["reasoningEffort"],
+      }),
+      {
+        instanceId,
+        model: "default",
+        options: [{ id: "model", value: "composer-2" }],
+      },
+    );
+  });
+
+  it("uses spawn-time selection as configure prior when activeSelection is null", () => {
+    // Snapshot load and fork clear activeSelection while the process still
+    // holds spawn-bound options. The next-turn path must not pass null prior.
+    const instanceId = ProviderInstanceId.make("acp-test");
+    const spawnTime: ModelSelection = {
+      instanceId,
+      model: "default",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    };
+    const active: ModelSelection = {
+      instanceId,
+      model: "default",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "model", value: "composer-2" },
+      ],
+    };
+
+    assert.deepEqual(
+      resolveAcpConfigureSessionPrior({
+        activeSelection: null,
+        spawnTimeSelection: spawnTime,
+      }),
+      spawnTime,
+    );
+    assert.deepEqual(
+      resolveAcpConfigureSessionPrior({
+        activeSelection: active,
+        spawnTimeSelection: spawnTime,
+      }),
+      active,
+    );
+    // Combined with effective selection: null active + spawn prior pins effort.
+    assert.deepEqual(
+      resolveEffectiveAcpSelection({
+        requested: {
+          instanceId,
+          model: "default",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "model", value: "composer-2" },
+          ],
+        },
+        priorSelection: resolveAcpConfigureSessionPrior({
+          activeSelection: null,
+          spawnTimeSelection: spawnTime,
+        }),
+        spawnOptionIds: ["reasoningEffort"],
+      }),
+      {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "model", value: "composer-2" },
+          { id: "reasoningEffort", value: "low" },
+        ],
+      },
+    );
+  });
+
+  it.live("keeps applied spawn-bound selection after a same-session stale request", () => {
+    const configOptionCalls: Array<{ readonly id: string; readonly value: string | boolean }> = [];
+    const runtimeSelections: Array<ModelSelection | undefined> = [];
+    const sessionModelCalls: string[] = [];
+    const warningMessages: string[] = [];
+    const captureLogger = Logger.make(({ logLevel, message }) => {
+      if (logLevel !== "Warn") {
+        return;
+      }
+      const text = Array.isArray(message) ? message.map(String).join(" ") : String(message);
+      warningMessages.push(text);
+    });
+    const spawnBoundWarning = (message: string) =>
+      message.includes("spawn-bound option cannot change on an active session");
+    const reasoningEffortOf = (selection: ModelSelection | undefined) =>
+      selection?.options?.find((option) => option.id === "reasoningEffort")?.value;
+
+    return Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const baseMakeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          setConfigOption: (id, value) =>
+            Effect.sync(() => {
+              configOptionCalls.push({ id, value });
+            }).pipe(Effect.andThen(runtime.setConfigOption(id, value))),
+          setSessionModel: (model) =>
+            Effect.sync(() => {
+              sessionModelCalls.push(model);
+            }).pipe(Effect.andThen(runtime.setSessionModel(model))),
+        }),
+      });
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          spawnOptionIds: ["reasoningEffort"],
+          resolveSpawnOptionValue: resolveGrokSpawnOptionValue,
+          makeRuntime: (runtimeInput) => {
+            runtimeSelections.push(runtimeInput.modelSelection);
+            return baseMakeRuntime(runtimeInput);
+          },
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const threadId = ThreadId.make("thread-acp-spawn-option-bookkeeping");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const lowSelection = {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "model", value: "default" },
+        ],
+      } as const satisfies ModelSelection;
+      const highSelection = {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "model", value: "composer-2" },
+        ],
+      } as const satisfies ModelSelection;
+      const lowAgainSelection = {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "model", value: "composer-2" },
+        ],
+      } as const satisfies ModelSelection;
+      const buildSelection = {
+        instanceId,
+        model: "grok-build",
+      } as const satisfies ModelSelection;
+      const grok45Selection = {
+        instanceId,
+        model: "grok-4.5",
+      } as const satisfies ModelSelection;
+      const grok45HighSelection = {
+        instanceId,
+        model: "grok-4.5",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "model", value: "composer-2" },
+        ],
+      } as const satisfies ModelSelection;
+
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-spawn-option-bookkeeping"),
+        modelSelection: lowSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: lowSelection,
+        runtimePolicy,
+      });
+
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: highSelection,
+          now,
+          ordinal: 1,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(warningMessages.some(spawnBoundWarning));
+      assert.deepEqual(
+        configOptionCalls.filter((call) => call.id === "model"),
+        [{ id: "model", value: "composer-2" }],
+      );
+      assert.isFalse(configOptionCalls.some((call) => call.id === "reasoningEffort"));
+
+      // Effective state remains Low. The same stale High request normalizes to
+      // the already configured state, so it does not reconfigure or warn again.
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: highSelection,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isFalse(warningMessages.some(spawnBoundWarning));
+      assert.deepEqual(configOptionCalls, []);
+
+      warningMessages.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: lowAgainSelection,
+          now: yield* DateTime.now,
+          ordinal: 3,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isFalse(warningMessages.some(spawnBoundWarning));
+
+      // A pure model switch keeps the process-bound effort, even when the
+      // selected model does not expose that option. There is no explicit
+      // effort change to warn about.
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      sessionModelCalls.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: buildSelection,
+          now: yield* DateTime.now,
+          ordinal: 4,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isFalse(warningMessages.some(spawnBoundWarning));
+      assert.isFalse(configOptionCalls.some((call) => call.id === "reasoningEffort"));
+
+      // Returning to Grok 4.5 without an effort reuses the Low value fixed at
+      // process spawn. It changes the ACP model, but does not configure an effort.
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      sessionModelCalls.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: grok45Selection,
+          now: yield* DateTime.now,
+          ordinal: 5,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isFalse(warningMessages.some(spawnBoundWarning));
+      assert.deepEqual(configOptionCalls, []);
+      assert.deepEqual(sessionModelCalls, ["grok-4.5"]);
+      assert.lengthOf(runtimeSelections, 1);
+      assert.equal(reasoningEffortOf(runtimeSelections[0]), "low");
+
+      // An explicit High request is normalized to the process's Low value.
+      // The mutable model setting still applies, but the runtime does not respawn
+      // or mutate the process-bound option.
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: grok45HighSelection,
+          now: yield* DateTime.now,
+          ordinal: 6,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(warningMessages.some(spawnBoundWarning));
+      assert.deepEqual(
+        configOptionCalls.filter((call) => call.id === "model"),
+        [{ id: "model", value: "composer-2" }],
+      );
+      assert.isFalse(configOptionCalls.some((call) => call.id === "reasoningEffort"));
+      assert.lengthOf(runtimeSelections, 1);
+      assert.equal(reasoningEffortOf(runtimeSelections[0]), "low");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(testLayer, Logger.layer([captureLogger], { mergeWithExisting: false })),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.live("preserves spawn-bound selection across user Stop runtime restart", () => {
+    const configOptionCalls: Array<{ readonly id: string; readonly value: string | boolean }> = [];
+    const warningMessages: string[] = [];
+    const runtimeSelections: Array<ModelSelection | undefined> = [];
+    const captureLogger = Logger.make(({ logLevel, message }) => {
+      if (logLevel !== "Warn") {
+        return;
+      }
+      const text = Array.isArray(message) ? message.map(String).join(" ") : String(message);
+      warningMessages.push(text);
+    });
+    const spawnBoundWarning = (message: string) =>
+      message.includes("spawn-bound option cannot change on an active session");
+    const reasoningEffortOf = (selection: ModelSelection | undefined) =>
+      selection?.options?.find((option) => option.id === "reasoningEffort")?.value;
+
+    return Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const baseMakeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          setConfigOption: (id, value) =>
+            Effect.sync(() => {
+              configOptionCalls.push({ id, value });
+            }).pipe(Effect.andThen(runtime.setConfigOption(id, value))),
+        }),
+      });
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          spawnOptionIds: ["reasoningEffort"],
+          resolveSpawnOptionValue: resolveGrokSpawnOptionValue,
+          // Same restart path as "restarts the ACP child process before the
+          // next prompt after interrupt": user Stop sets runtimeRestartRequired
+          // and the following turn reactivates after respawn.
+          restartRuntimeAfterInterrupt: true,
+          makeRuntime: (input) => {
+            runtimeSelections.push(input.modelSelection);
+            return baseMakeRuntime(input);
+          },
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const threadId = ThreadId.make("thread-acp-spawn-option-stop-restart");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const lowSelection = {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "model", value: "default" },
+        ],
+      } as const satisfies ModelSelection;
+      const highSelection = {
+        instanceId,
+        model: "default",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "model", value: "composer-2" },
+        ],
+      } as const satisfies ModelSelection;
+
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-spawn-option-stop-restart"),
+        modelSelection: lowSelection,
+        runtimePolicy,
+      });
+      assert.lengthOf(runtimeSelections, 1);
+      assert.equal(reasoningEffortOf(runtimeSelections[0]), "low");
+
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: lowSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: lowSelection,
+          now,
+          ordinal: 1,
+        }),
+      );
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
+      const firstProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: `${providerThread.nativeThreadRef?.nativeId}:turn:1`,
+      });
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: firstProviderTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/cancel",
+        ),
+        Stream.runHead,
+      );
+      // Drain the interrupted turn so later terminals belong to post-restart work.
+      yield* runtime.events.pipe(
+        Stream.filter(
+          (event) => event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId,
+        ),
+        Stream.runHead,
+      );
+
+      // After Stop, activeSelection is cleared. The next turn reactivates and
+      // must treat spawn-time Low as prior, so a stale High still warns and
+      // mutable config options still apply.
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: highSelection,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(warningMessages.some(spawnBoundWarning));
+      assert.deepEqual(
+        configOptionCalls.filter((call) => call.id === "model"),
+        [{ id: "model", value: "composer-2" }],
+      );
+      assert.isFalse(configOptionCalls.some((call) => call.id === "reasoningEffort"));
+      // Both the initial openSession spawn and the post-Stop restart receive Low.
+      assert.isAtLeast(runtimeSelections.length, 2);
+      assert.equal(reasoningEffortOf(runtimeSelections[0]), "low");
+      assert.equal(reasoningEffortOf(runtimeSelections[1]), "low");
+
+      // Effective bookkeeping retains spawn-time Low. Another stale High
+      // normalizes to the already configured state without repeated work.
+      warningMessages.length = 0;
+      configOptionCalls.length = 0;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: highSelection,
+          now: yield* DateTime.now,
+          ordinal: 3,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isFalse(warningMessages.some(spawnBoundWarning));
+      assert.deepEqual(configOptionCalls, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(testLayer, Logger.layer([captureLogger], { mergeWithExisting: false })),
+      ),
+      Effect.scoped,
+    );
+  });
 
   it.effect("reconfigures a loaded ACP session from its own active setup metadata", () =>
     Effect.gen(function* () {

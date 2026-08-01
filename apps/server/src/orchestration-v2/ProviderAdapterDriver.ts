@@ -1,4 +1,5 @@
 import {
+  type ModelCapabilities,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceEnvironment,
@@ -30,6 +31,9 @@ export interface ProviderAdapterDriverCreateInput<Config> {
   readonly environment: ProviderInstanceEnvironment;
   readonly enabled: boolean;
   readonly config: Config;
+  readonly getModelCapabilities?: (
+    model: string,
+  ) => Effect.Effect<ModelCapabilities | null | undefined>;
 }
 
 export interface ProviderAdapterDriver<Config, R = never> {

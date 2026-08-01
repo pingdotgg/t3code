@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   Pressable,
@@ -53,7 +54,12 @@ import {
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelMenuActions, buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelMenuActions,
+  buildModelOptions,
+  groupByProvider,
+  isSameInstanceSessionBoundChangeBlocked,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
@@ -62,10 +68,10 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
+  resolveProviderOptionMenuChange,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
@@ -114,6 +120,13 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  /**
+   * Session-bound lock for the started provider instance, derived once in
+   * composer state from the projection-first runtime. Same-instance model and
+   * option changes are rejected; cross-provider handoff stays allowed.
+   */
+  readonly optionChangeBlocked?: boolean;
+  readonly optionChangeBlockedInstanceId?: string | null;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
 }
@@ -600,6 +613,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [currentModelOption?.capabilities, currentModelSelection.options],
   );
+  const providerOptionsLocked = isSameInstanceSessionBoundChangeBlocked({
+    optionChangeBlocked: props.optionChangeBlocked === true,
+    committedInstanceId: props.optionChangeBlockedInstanceId ?? "",
+    requestedInstanceId: currentModelSelection.instanceId,
+  });
   const configurationLabel = useMemo(
     () => providerOptionsConfigurationLabel(providerOptionDescriptors),
     [providerOptionDescriptors],
@@ -671,11 +689,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }
 
   function handleOptionsMenuAction(event: string) {
-    const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
-    if (providerOptions) {
+    // Session-bound options stay tappable; the pure resolver ignores the
+    // current value, warns on locked alternates, and only returns an update
+    // payload when the change may apply.
+    const decision = resolveProviderOptionMenuChange(providerOptionDescriptors, event, {
+      optionsLocked: providerOptionsLocked,
+    });
+    if (decision) {
+      if (decision.action === "ignore") {
+        return;
+      }
+      if (decision.action === "warn") {
+        Alert.alert(decision.title, decision.description);
+        return;
+      }
       props.onUpdateModelSelection({
         ...currentModelSelection,
-        options: providerOptions,
+        options: decision.options,
       });
       return;
     }

@@ -29,7 +29,13 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  GROK_FALLBACK_REASONING_EFFORTS_BY_MODEL,
+  GROK_REASONING_EFFORT_OPTION_ID,
+  isValidGrokReasoningEffortToken,
+  makeGrokAcpRuntime,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -98,7 +104,162 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+interface GrokReasoningEffortMenuEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly isDefault: boolean;
+}
+
+interface GrokReasoningEffortMenu {
+  readonly entries: ReadonlyArray<GrokReasoningEffortMenuEntry>;
+  readonly currentValue: string | undefined;
+}
+
+/**
+ * Same list-item shape as the other providers' reasoning menus. Map lookup so
+ * an advertised id such as `constructor` cannot resolve Object.prototype and
+ * produce a non-string label.
+ */
+const GROK_REASONING_EFFORT_LABELS = new Map<string, string>([
+  ["none", "None"],
+  ["minimal", "Minimal"],
+  ["low", "Low"],
+  ["medium", "Medium"],
+  ["high", "High"],
+  ["xhigh", "Extra High"],
+  ["max", "Max"],
+]);
+
+/**
+ * Grok's menu labels read "High Effort" / "Low Effort"; the other providers'
+ * reasoning menus list bare levels under the same "Reasoning" header, so
+ * prefer the canonical label and otherwise drop a trailing "Effort" word.
+ */
+function grokReasoningEffortLabel(id: string, rawLabel: string): string {
+  const canonical = GROK_REASONING_EFFORT_LABELS.get(id);
+  if (canonical !== undefined) {
+    return canonical;
+  }
+  return rawLabel.replace(/\s+effort$/i, "").trim() || rawLabel || id;
+}
+
+/** Known menus used when ACP omits effort metadata for a supported model. */
+const GROK_FALLBACK_REASONING_EFFORT_MENUS = new Map<string, GrokReasoningEffortMenu>(
+  Array.from(GROK_FALLBACK_REASONING_EFFORTS_BY_MODEL, ([model, fallback]) => [
+    model,
+    {
+      entries: fallback.values.map((id) => ({
+        id,
+        label: grokReasoningEffortLabel(id, id),
+        isDefault: id === fallback.defaultValue,
+      })),
+      currentValue: fallback.defaultValue,
+    },
+  ]),
+);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Grok advertises reasoning effort on ACP model `_meta` (verified against
+ * grok 0.2.117):
+ *
+ * ```json
+ * {
+ *   "supportsReasoningEffort": true,
+ *   "reasoningEffort": "high",
+ *   "reasoningEfforts": [
+ *     { "id": "high", "value": "high", "label": "High Effort",
+ *       "description": "...", "default": true }
+ *   ]
+ * }
+ * ```
+ *
+ * Returns `undefined` when `_meta` carries no effort information at all (the
+ * fallback catalog may apply), and `null` when the agent explicitly reports no
+ * usable menu (`supportsReasoningEffort: false`, or an advertised menu with no
+ * valid entries), which suppresses the fallback.
+ */
+export function grokReasoningEffortMenuFromAcpMeta(
+  meta: unknown,
+): GrokReasoningEffortMenu | null | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  if (meta["supportsReasoningEffort"] === false) {
+    return null;
+  }
+  const rawEfforts = meta["reasoningEfforts"];
+  if (!Array.isArray(rawEfforts)) {
+    return rawEfforts === undefined ? undefined : null;
+  }
+  const seen = new Set<string>();
+  const entries: Array<GrokReasoningEffortMenuEntry> = [];
+  for (const rawEntry of rawEfforts) {
+    if (!isRecord(rawEntry)) continue;
+    // The flag value is what the spawn consumes; prefer it over the menu id.
+    // Reject tokens the spawn guard would later drop so discovery and spawn
+    // stay aligned without a fixed known-level catalog.
+    const rawValue = typeof rawEntry["value"] === "string" ? rawEntry["value"].trim() : "";
+    const rawId = typeof rawEntry["id"] === "string" ? rawEntry["id"].trim() : "";
+    const hasValidValue = isValidGrokReasoningEffortToken(rawValue);
+    const hasValidId = isValidGrokReasoningEffortToken(rawId);
+    if (!hasValidValue && !hasValidId) continue;
+    const id = hasValidValue ? rawValue : rawId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const label = typeof rawEntry["label"] === "string" ? rawEntry["label"].trim() : "";
+    const description =
+      typeof rawEntry["description"] === "string" ? rawEntry["description"].trim() : "";
+    entries.push({
+      id,
+      label: grokReasoningEffortLabel(id, label || id),
+      ...(description ? { description } : {}),
+      isDefault: rawEntry["default"] === true || rawEntry["isDefault"] === true,
+    });
+  }
+  if (entries.length === 0) {
+    return null;
+  }
+  const rawCurrent = meta["reasoningEffort"];
+  const current =
+    typeof rawCurrent === "string" && entries.some((entry) => entry.id === rawCurrent.trim())
+      ? rawCurrent.trim()
+      : undefined;
+  return {
+    entries,
+    currentValue: current ?? entries.find((entry) => entry.isDefault)?.id,
+  };
+}
+
+export function grokModelCapabilitiesFromReasoningEffortMenu(
+  menu: GrokReasoningEffortMenu | null | undefined,
+): ModelCapabilities {
+  if (!menu || menu.entries.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: GROK_REASONING_EFFORT_OPTION_ID,
+        label: "Reasoning",
+        type: "select",
+        options: menu.entries.map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          ...(entry.description ? { description: entry.description } : {}),
+          ...(entry.isDefault ? { isDefault: true } : {}),
+        })),
+        ...(menu.currentValue ? { currentValue: menu.currentValue } : {}),
+      },
+    ],
+  });
+}
+
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
@@ -112,11 +273,15 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         return undefined;
       }
       seen.add(slug);
+      const parsedMenu = grokReasoningEffortMenuFromAcpMeta(model._meta);
+      // null is an explicit "no usable menu" signal and must not fall back.
+      const effortMenu =
+        parsedMenu === undefined ? GROK_FALLBACK_REASONING_EFFORT_MENUS.get(slug) : parsedMenu;
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: grokModelCapabilitiesFromReasoningEffortMenu(effortMenu),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);

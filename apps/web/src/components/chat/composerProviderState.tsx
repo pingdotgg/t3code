@@ -44,6 +44,7 @@ type TraitsRenderInput = {
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  optionChangeBlocked?: boolean;
   prompt: string;
   onPromptChange: (prompt: string) => void;
 };
@@ -92,6 +93,7 @@ function renderTraitsControl(
     model,
     models,
     modelOptions,
+    optionChangeBlocked,
     prompt,
     onPromptChange,
   } = input;
@@ -111,6 +113,7 @@ function renderTraitsControl(
       {...(draftId ? { draftId } : {})}
       model={model}
       modelOptions={modelOptions}
+      {...(optionChangeBlocked !== undefined ? { optionChangeBlocked } : {})}
       prompt={prompt}
       onPromptChange={onPromptChange}
     />
