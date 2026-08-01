@@ -1752,7 +1752,6 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
-  padding-left: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {

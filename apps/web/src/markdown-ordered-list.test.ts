@@ -25,6 +25,12 @@ describe("orderedListMarkerExtraDigits", () => {
     expect(orderedListMarkerExtraDigits(101, 1)).toBe(1);
   });
 
+  it("sizes negative-start lists from their widest marker including the sign", () => {
+    expect(orderedListMarkerExtraDigits(-1000, 1001)).toBe(3);
+    expect(orderedListMarkerExtraDigits(-5, 3)).toBe(0);
+    expect(orderedListMarkerExtraDigits(-15, 3)).toBe(1);
+  });
+
   it("tolerates empty and streaming-partial lists", () => {
     expect(orderedListMarkerExtraDigits(undefined, 0)).toBe(0);
     expect(orderedListMarkerExtraDigits(100, 0)).toBe(1);
