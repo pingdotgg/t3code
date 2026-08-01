@@ -382,4 +382,4 @@ export const makeLive = Effect.gen(function* PreviewLiveGatewayMakeLive() {
   return gateway;
 });
 
-export const liveLayer = Layer.effect(PreviewLiveGateway, makeLive);
+export const layer = Layer.effect(PreviewLiveGateway, makeLive);

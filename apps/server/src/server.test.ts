@@ -93,11 +93,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
-import {
-  LIVE_GATEWAY_COOKIE_NAME,
-  LIVE_GATEWAY_HTTP_COOKIE_NAME,
-  liveLayer as previewLiveGatewayLayer,
-} from "./preview/LiveGateway.ts";
+import * as PreviewLiveGateway from "./preview/LiveGateway.ts";
 import { LIVE_GATEWAY_EXPIRED_STATUS, liveGatewayCookieName } from "./preview/LiveGatewayHttp.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
@@ -564,7 +560,7 @@ const buildAppUnderTest = (options?: {
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
-          previewLiveGatewayLayer,
+          PreviewLiveGateway.layer,
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],
@@ -4364,8 +4360,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 response.setHeader("set-cookie", [
                   "app_session=server; Domain=127.0.0.1; Path=/",
                   "t3_session=upstream-attack; Path=/",
-                  `${LIVE_GATEWAY_COOKIE_NAME}=upstream-attack; Secure; Path=/`,
-                  `${LIVE_GATEWAY_HTTP_COOKIE_NAME}=upstream-http-attack; Path=/`,
+                  `${PreviewLiveGateway.LIVE_GATEWAY_COOKIE_NAME}=upstream-attack; Secure; Path=/`,
+                  `${PreviewLiveGateway.LIVE_GATEWAY_HTTP_COOKIE_NAME}=upstream-http-attack; Path=/`,
                 ]);
                 if (request.url?.startsWith("/upstream-auth")) {
                   response.statusCode = 401;
@@ -4500,8 +4496,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.include(upstreamCookies, "app_session=server");
         assert.notInclude(upstreamCookies.toLowerCase(), "domain=");
         assert.notInclude(upstreamCookies, "t3_session");
-        assert.notInclude(upstreamCookies, LIVE_GATEWAY_COOKIE_NAME);
-        assert.notInclude(upstreamCookies, LIVE_GATEWAY_HTTP_COOKIE_NAME);
+        assert.notInclude(upstreamCookies, PreviewLiveGateway.LIVE_GATEWAY_COOKIE_NAME);
+        assert.notInclude(upstreamCookies, PreviewLiveGateway.LIVE_GATEWAY_HTTP_COOKIE_NAME);
 
         const appAuth = yield* fetchEffect("/upstream-auth", {
           headers: { cookie: gatewayCookie },
