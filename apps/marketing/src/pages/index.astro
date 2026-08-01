@@ -19,7 +19,15 @@ const mobileEndorsementRows = [
   tweets.filter((_, index) => index % 3 === 2),
 ];
 
-const featureShowcases = showcaseSpec.sections;
+const codingAgents = [
+  { name: "Claude Code", icon: "/harnesses/claude-ai-icon.svg" },
+  { name: "Codex", icon: "/harnesses/openai_dark.svg" },
+  { name: "OpenCode", icon: "/harnesses/opencode-dark.svg" },
+  { name: "Cursor", icon: "/harnesses/cursor_light.svg" },
+  { name: "Grok Build", icon: "/harnesses/grok-dark.svg" },
+] as const;
+
+const featureShowcases = showcaseSpec.sections.filter(({ id }) => id === "inbox");
 const showcaseRender = showcaseSpec.render;
 const mobileShowcaseScenes = [
   "threads",
@@ -100,9 +108,23 @@ const faqs = [
     </div>
     <div class="container hero-inner">
       <div class="hero-copy">
-        <h1 class="hero-title display">Your Agents,<br />Everywhere</h1>
-
-
+        <p class="hero-kicker">Bring your own agents</p>
+        <h1 class="hero-title display">Every Agent.<br />Everywhere.</h1>
+        <p class="hero-lede">
+          Claude Code, Codex, Cursor, Grok Build, and OpenCode—running with the
+          subscriptions already on your machine, controlled from desktop, web,
+          or phone.
+        </p>
+        <div class="hero-agent-list" aria-label="Supported coding agents">
+          {
+            codingAgents.map((agent) => (
+              <span class="hero-agent">
+                <img src={agent.icon} alt="" width="18" height="18" />
+                <span>{agent.name}</span>
+              </span>
+            ))
+          }
+        </div>
         <div class="hero-actions">
         <a
           id="download-btn"
@@ -231,40 +253,76 @@ const faqs = [
     </div>
   </section>
 
-  <!-- ── What T3 Code is ──────────────────────────────────────── -->
-  <section id="harnesses" class="sec-harness">
+  <!-- ── Setup and remote control ─────────────────────────────── -->
+  <section id="connect" class="sec-connect">
     <div class="container">
-      <div class="harness-intro">
-        <div class="section-head">
-          <h2>Use the agents you already pay for.</h2>
-          <p>
-            T3 Code is free and open source. Connect your existing coding agent
-            subscriptions and control them all from one place.
-          </p>
+      <div class="connect-heading">
+        <p class="connect-kicker">From installed to in control</p>
+        <h2>Start local. Pick up anywhere.</h2>
+        <p>
+          Your agents stay on the machine with your code. T3 Code gives every
+          screen one fast way back in.
+        </p>
+      </div>
+
+      <div class="connect-grid">
+        <ol class="connect-steps">
+          <li>
+            <span class="connect-step-number">1</span>
+            <div>
+              <h3>Use your provider login.</h3>
+              <p>Authenticate Claude Code, Codex, or another CLI you already use.</p>
+            </div>
+          </li>
+          <li>
+            <span class="connect-step-number">2</span>
+            <div>
+              <h3>Launch T3 Code.</h3>
+              <p>One command starts the local server and opens the web app.</p>
+            </div>
+          </li>
+          <li>
+            <span class="connect-step-number">3</span>
+            <div>
+              <h3>Pair any screen.</h3>
+              <p>A one-time QR code connects desktop, web, iPhone, iPad, or Android.</p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="tile open-term connect-term" aria-label="T3 Code setup terminal example">
+          <div class="open-term-body">
+            <div>
+              <span class="terminal-user">maria@mac-studio</span>
+              <span class="terminal-path">~</span>
+              <span class="prompt">%</span>npx t3@latest
+            </div>
+            <div class="dim">T3 Code is ready.</div>
+            <div>
+              Local app: <span class="accent">http://localhost:3773</span>
+            </div>
+            <div class="terminal-spacer" aria-hidden="true"></div>
+            <div>
+              <span class="terminal-user">maria@mac-studio</span>
+              <span class="terminal-path">~</span>
+              <span class="prompt">%</span>npx t3 pair
+            </div>
+            <div class="dim">Pairing link and QR code ready.</div>
+            <div class="cursor">
+              <span class="terminal-user">maria@mac-studio</span>
+              <span class="terminal-path">~</span>
+              <span class="prompt">%</span><span class="caret"></span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="harness-grid" aria-label="Supported coding agents">
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/claude-ai-icon.svg" alt="" /></div>
-          <div class="harness-name">Claude Code</div>
-        </div>
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/openai_dark.svg" alt="" /></div>
-          <div class="harness-name">Codex</div>
-        </div>
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/opencode-dark.svg" alt="" /></div>
-          <div class="harness-name">OpenCode</div>
-        </div>
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/cursor_light.svg" alt="" /></div>
-          <div class="harness-name">Cursor</div>
-        </div>
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/grok-dark.svg" alt="" /></div>
-          <div class="harness-name">Grok</div>
-        </div>
+      <div class="connect-surfaces" aria-label="T3 Code clients">
+        <strong>Control the same threads from</strong>
+        <span>Desktop</span>
+        <span>Web</span>
+        <span>iPhone + iPad</span>
+        <span>Android</span>
       </div>
     </div>
   </section>
@@ -411,48 +469,6 @@ const faqs = [
       </section>
     ))
   }
-
-  <!-- ── T3 Connect + recent features ─────────────────────────── -->
-  <section id="connect" class="sec-connect">
-    <div class="container git-inner connect-inner">
-      <div class="git-copy">
-        <div class="section-head" style="margin-bottom:0">
-          <h2>Connect any machine.</h2>
-          <p>Link it once. Its agents and threads are available from anywhere.</p>
-        </div>
-      </div>
-
-      <div class="git-visual">
-        <div class="tile open-term connect-term">
-          <div class="open-term-body">
-            <div>
-              <span class="terminal-user">maria@mac-studio</span>
-              <span class="terminal-path">~</span>
-              <span class="prompt">%</span>t3 connect link
-            </div>
-            <div class="dim">T3 Connect</div>
-            <div class="dim">✓ Relay client ready · cloudflared 2026.5.2</div>
-            <div class="dim">✓ Authorized as maria</div>
-            <div class="terminal-spacer" aria-hidden="true"></div>
-            <div>
-              <span class="terminal-user">maria@mac-studio</span>
-              <span class="terminal-path">~</span>
-              <span class="prompt">%</span>t3 serve
-            </div>
-            <div class="dim">T3 Code server is ready.</div>
-            <div class="dim">
-              Connection string: <span class="accent">http://localhost:3773</span>
-            </div>
-            <div class="cursor">
-              <span class="terminal-user">maria@mac-studio</span>
-              <span class="terminal-path">~</span>
-              <span class="prompt">%</span><span class="caret"></span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
 
   <!-- ── Open source ───────────────────────────────────────────── -->
   <section id="open" class="sec-open">
@@ -1206,10 +1222,57 @@ const faqs = [
     z-index: 1;
   }
 
+  .hero-kicker,
+  .connect-kicker {
+    margin: 0 0 12px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
   .hero-title {
-    font-size: clamp(38px, 4.2vw, 64px);
-    margin: 0 0 18px;
+    margin: 0 0 16px;
+    font-size: clamp(46px, 4.5vw, 68px);
     text-wrap: balance;
+  }
+
+  .hero-lede {
+    max-width: 410px;
+    margin: 0 0 22px;
+    color: var(--fg-muted);
+    font-size: 17px;
+    line-height: 1.5;
+    text-wrap: pretty;
+  }
+
+  .hero-agent-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-bottom: 24px;
+  }
+
+  .hero-agent {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    background: rgba(255, 255, 255, 0.035);
+  }
+
+  .hero-agent img {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
   }
 
   .hero-actions {
@@ -1461,8 +1524,8 @@ const faqs = [
   /* 2: split stage, the original composition with more room for the app. */
   .hero--layout-2 .hero-inner {
     display: grid;
-    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
-    gap: 36px;
+    grid-template-columns: minmax(340px, 390px) minmax(0, 1fr);
+    gap: 44px;
     align-items: center;
     max-width: 1240px;
   }
@@ -1475,7 +1538,7 @@ const faqs = [
   }
 
   .hero--layout-2 .hero-copy {
-    max-width: 280px;
+    max-width: 390px;
   }
 
   .hero--layout-2 .hero-preview {
@@ -1596,79 +1659,121 @@ const faqs = [
     transform: translateY(0);
   }
 
-  /* ── Harnesses ─────────────────────────────────────────── */
-
-  /* ── Mobile ────────────────────────────────────────────── */
-  .sec-harness {
+  /* ── Setup and remote control ──────────────────────────── */
+  .sec-connect {
     border-top: 0;
-    padding: 72px 0;
+    padding: 88px 0;
   }
 
-  .sec-endorsements {
-    border-top: 0;
-  }
-
-  .harness-intro {
-    margin-bottom: 38px;
-  }
-
-  .harness-intro .section-head {
-    margin-bottom: 0;
-    max-width: none;
-  }
-
-  .harness-intro .section-head h2 {
-    font-size: clamp(36px, 4.4vw, 52px);
-  }
-
-  .harness-intro .section-head p {
-    max-width: none;
-    font-size: 20px;
-    white-space: nowrap;
-  }
-
-  @media (max-width: 1100px) {
-    .harness-intro .section-head p {
-      white-space: normal;
-    }
-  }
-
-  .harness-grid {
+  .connect-heading {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: clamp(20px, 4vw, 64px);
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.72fr);
+    column-gap: 64px;
+    align-items: end;
+    margin-bottom: 44px;
+  }
+
+  .connect-heading .connect-kicker {
+    grid-column: 1 / -1;
+  }
+
+  .connect-heading h2 {
+    margin: 0;
+    font-size: clamp(38px, 4.6vw, 58px);
+    letter-spacing: -0.045em;
+    line-height: 1;
+  }
+
+  .connect-heading > p:last-child {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 18px;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+
+  .connect-grid {
+    display: grid;
+    grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+    gap: clamp(40px, 6vw, 80px);
     align-items: center;
   }
 
-  .harness {
-    display: flex;
+  .connect-steps {
+    display: grid;
+    gap: 0;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .connect-steps li {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 16px;
+    padding: 20px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .connect-steps li:last-child {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .connect-step-number {
+    display: grid;
+    width: 28px;
+    height: 28px;
     align-items: center;
     justify-content: center;
-    gap: 13px;
-    min-width: 0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 50%;
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.035);
   }
 
-  .harness-mark {
-    color: var(--fg); opacity: 0.95;
-    flex-shrink: 0; width: 32px; height: 32px;
-    display: grid; place-items: center;
-  }
-  .harness-mark img { width: 26px; height: 26px; object-fit: contain; }
-  .harness:nth-child(2) .harness-mark img { width: 27px; height: 27px; }
-  .harness:nth-child(3) .harness-mark img { width: 29px; height: 29px; }
-  .harness:nth-child(4) .harness-mark img,
-  .harness:nth-child(5) .harness-mark img { width: 28px; height: 28px; }
-
-  .harness-name {
+  .connect-steps h3 {
+    margin: 2px 0 5px;
     font-size: 18px;
+    font-weight: 550;
+    letter-spacing: -0.02em;
+  }
+
+  .connect-steps p {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .connect-surfaces {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 30px;
+    color: var(--fg-dim);
+    font-size: 13px;
+  }
+
+  .connect-surfaces strong {
+    margin-right: 6px;
+    color: var(--fg-muted);
     font-weight: 500;
-    letter-spacing: -0.015em;
-    white-space: nowrap;
+  }
+
+  .connect-surfaces span {
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    line-height: 1;
   }
 
   /* ── Endorsements ─────────────────────────────────────── */
   .sec-endorsements {
     overflow: hidden;
+    border-top: 0;
   }
 
   .endorsements-head {
@@ -1812,33 +1917,10 @@ const faqs = [
     -webkit-line-clamp: 3;
   }
 
-  /* ── Screenshot walkthroughs + split feature sections ── */
-  .git-inner {
-    display: grid;
-    grid-template-columns: 1.1fr 1fr;
-    gap: 64px; align-items: center;
-  }
-
-  .connect-inner .git-visual {
-    order: -1;
-  }
-
-  .connect-inner .git-copy {
-    text-align: right;
-  }
-
-  .connect-inner .git-copy .section-head,
-  .connect-inner .git-copy .section-head p {
-    margin-left: auto;
-  }
-
+  /* ── Screenshot walkthroughs ───────────────────────────── */
   .sec-showcase {
     overflow: hidden;
     padding: 48px 0;
-    border-top: 0;
-  }
-
-  .sec-showcase + .sec-connect {
     border-top: 0;
   }
 
@@ -2604,9 +2686,15 @@ const faqs = [
       margin-top: 48px;
     }
 
-    .harness-grid {
-      grid-template-columns: repeat(3, 1fr);
-      row-gap: 24px;
+    .connect-heading {
+      grid-template-columns: 1fr;
+      row-gap: 18px;
+      align-items: start;
+    }
+
+    .connect-grid {
+      grid-template-columns: 1fr;
+      gap: 40px;
     }
 
     .showcase-inner {
@@ -2618,14 +2706,6 @@ const faqs = [
       grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
     }
 
-    .git-inner { grid-template-columns: 1fr; gap: 40px; }
-    .connect-inner .git-copy {
-      text-align: left;
-    }
-    .connect-inner .git-copy .section-head,
-    .connect-inner .git-copy .section-head p {
-      margin-left: 0;
-    }
     .open-simple {
       grid-template-columns: 1fr;
       grid-template-rows: auto;
@@ -2689,10 +2769,43 @@ const faqs = [
     }
     .hero--layout-2 .hero-copy {
       z-index: 3;
-      width: min(72vw, 280px);
+      width: min(80vw, 320px);
       text-shadow: 0 2px 24px #000, 0 1px 8px #000;
     }
+    .hero-kicker {
+      margin-bottom: 9px;
+      font-size: 10px;
+    }
+    .hero-title {
+      margin-bottom: 12px;
+      font-size: clamp(38px, 11vw, 48px);
+    }
+    .hero-lede {
+      max-width: 285px;
+      margin-bottom: 16px;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .hero-agent-list {
+      max-width: 275px;
+      gap: 5px;
+      margin-bottom: 18px;
+      text-shadow: none;
+    }
+    .hero-agent {
+      gap: 5px;
+      padding: 5px 7px;
+      font-size: 10px;
+      background: rgba(8, 8, 9, 0.7);
+      backdrop-filter: blur(10px);
+    }
+    .hero-agent img {
+      width: 13px;
+      height: 13px;
+    }
     .hero--layout-2 .hero-actions {
+      width: 205px;
       text-shadow: none;
     }
     .hero-mobile-showcase {
@@ -2862,7 +2975,6 @@ const faqs = [
       --mobile-right: -72vw;
       --mobile-width: min(113vw, 473px);
     }
-    .git-visual { display: none; }
     .endorsements-head {
       margin-bottom: 40px;
     }
@@ -2893,18 +3005,27 @@ const faqs = [
   }
 
   @media (max-width: 560px) {
-    .harness-intro {
-      margin-bottom: 40px;
+    .connect-heading {
+      margin-bottom: 32px;
     }
-    .harness-grid {
-      grid-template-columns: 1fr 1fr;
-      gap: 22px 18px;
+    .connect-heading h2 {
+      font-size: 38px;
     }
-    .harness {
-      gap: 10px;
+    .connect-heading > p:last-child {
+      font-size: 16px;
     }
-    .harness:nth-child(5) {
-      grid-column: 1 / -1;
+    .connect-grid {
+      gap: 32px;
+    }
+    .connect-steps li {
+      padding: 17px 0;
+    }
+    .connect-surfaces strong {
+      width: 100%;
+    }
+    .connect-term .open-term-body {
+      padding: 17px 16px;
+      font-size: 11px;
     }
 
     .showcase-copy .section-head h2 {
