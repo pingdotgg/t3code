@@ -11,6 +11,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import type { ChangeRequestSettlementState } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -481,14 +482,14 @@ export function HomeScreen(props: HomeScreenProps) {
   // PR states stream in per-row (rows own the VCS subscriptions); a merged or
   // closed PR auto-settles its thread on the next partition (mirrors web).
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+    ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
+    (threadKey: string, state: ChangeRequestSettlementState) => {
       setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+        if ((current.get(threadKey) ?? "unknown") === state) return current;
         const next = new Map(current);
-        if (state === null) {
+        if (state === "unknown") {
           next.delete(threadKey);
         } else {
           next.set(threadKey, state);

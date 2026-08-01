@@ -2,10 +2,9 @@ import {
   type EnvironmentId,
   type VcsListRefsInput,
   type VcsListRefsResult,
-  type VcsStatusResult,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
+import { applyGitStatusStreamEvent, type VcsStatusStreamResult } from "@t3tools/shared/git";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -275,7 +274,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
         subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
           Stream.mapAccum(
-            () => null as VcsStatusResult | null,
+            () => null as VcsStatusStreamResult | null,
             (current, event) => {
               const next = applyGitStatusStreamEvent(current, event);
               return [next, [next]] as const;

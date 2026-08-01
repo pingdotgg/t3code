@@ -1,4 +1,8 @@
-import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -102,6 +106,56 @@ describe("isTemporaryWorktreeBranch", () => {
 });
 
 describe("applyGitStatusStreamEvent", () => {
+  it("tracks whether the initial snapshot has resolved remote status", () => {
+    const local = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/demo",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    } satisfies VcsStatusLocalResult;
+
+    expect(
+      applyGitStatusStreamEvent(null, {
+        _tag: "snapshot",
+        local,
+        remote: null,
+        remoteLoaded: false,
+      }),
+    ).toMatchObject({ remoteLoaded: false });
+    expect(
+      applyGitStatusStreamEvent(null, {
+        _tag: "snapshot",
+        local,
+        remote: null,
+        remoteLoaded: true,
+      }),
+    ).toMatchObject({ remoteLoaded: true });
+
+    const remote: VcsStatusRemoteResult = {
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    };
+    expect(
+      applyGitStatusStreamEvent(null, {
+        _tag: "snapshot",
+        local,
+        remote,
+      }),
+    ).toMatchObject({ remoteLoaded: true });
+    expect(
+      applyGitStatusStreamEvent(null, {
+        _tag: "snapshot",
+        local,
+        remote,
+        remoteLoaded: false,
+      }),
+    ).toMatchObject({ remoteLoaded: false });
+  });
+
   it("treats a remote-only update as a repository when local state is missing", () => {
     const remote: VcsStatusRemoteResult = {
       hasUpstream: true,
@@ -121,11 +175,32 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      remoteLoaded: true,
+    });
+  });
+
+  it("marks retained remote data unresolved when its refresh fails", () => {
+    const remote: VcsStatusRemoteResult = {
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    };
+
+    expect(
+      applyGitStatusStreamEvent(null, {
+        _tag: "remoteUpdated",
+        remote,
+        remoteLoaded: false,
+      }),
+    ).toMatchObject({
+      ...remote,
+      remoteLoaded: false,
     });
   });
 
   it("preserves local-only fields when applying a remote update", () => {
-    const current: VcsStatusResult = {
+    const current: VcsStatusResult & { readonly remoteLoaded: boolean } = {
       isRepo: true,
       sourceControlProvider: {
         kind: "github",
@@ -145,6 +220,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 0,
       behindCount: 0,
       pr: null,
+      remoteLoaded: false,
     };
 
     const remote: VcsStatusRemoteResult = {
@@ -160,6 +236,56 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      remoteLoaded: true,
+    });
+  });
+
+  it("invalidates remote status when a local update changes refs", () => {
+    const current = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/merged",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: {
+        number: 123,
+        title: "Merged work",
+        url: "https://github.com/pingdotgg/t3code/pull/123",
+        baseRef: "main",
+        headRef: "feature/merged",
+        state: "merged" as const,
+      },
+      remoteLoaded: true,
+    };
+    const nextLocal: VcsStatusLocalResult = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/new-work",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+
+    expect(
+      applyGitStatusStreamEvent(current, { _tag: "localUpdated", local: nextLocal }),
+    ).toMatchObject({
+      refName: "feature/new-work",
+      pr: null,
+      remoteLoaded: false,
+    });
+    expect(
+      applyGitStatusStreamEvent(current, {
+        _tag: "localUpdated",
+        local: { ...nextLocal, refName: current.refName, hasWorkingTreeChanges: true },
+      }),
+    ).toMatchObject({
+      refName: "feature/merged",
+      pr: current.pr,
+      remoteLoaded: true,
     });
   });
 });

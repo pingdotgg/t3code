@@ -3,7 +3,11 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  type ChangeRequestSettlementState,
+  resolveSnoozePresets,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import {
@@ -25,7 +29,7 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { useThreadPr } from "../../state/use-thread-pr";
+import { useThreadPrLookup } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
   resolveThreadListV2SnoozeMenuSelection,
@@ -346,10 +350,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   /** Reports this row's live PR state up so the partition can auto-settle
       merged/closed work (mirrors web's onChangeRequestState). */
-  readonly onChangeRequestState?: (
-    threadKey: string,
-    state: "open" | "closed" | "merged" | null,
-  ) => void;
+  readonly onChangeRequestState?: (threadKey: string, state: ChangeRequestSettlementState) => void;
   readonly projectCwd?: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
@@ -372,12 +373,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
 
-  const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
-  const prState = pr?.state ?? null;
+  const { changeRequestState, pr } = useThreadPrLookup(
+    thread,
+    props.projectCwd ?? props.project?.workspaceRoot ?? null,
+  );
   const threadKey = `${thread.environmentId}:${thread.id}`;
   useEffect(() => {
-    onChangeRequestState?.(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    onChangeRequestState?.(threadKey, changeRequestState);
+  }, [changeRequestState, onChangeRequestState, threadKey]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");

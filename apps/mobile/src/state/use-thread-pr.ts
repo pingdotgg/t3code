@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { resolveChangeRequestSettlementState } from "@t3tools/client-runtime/state/thread-settled";
 
 import { useEnvironmentQuery } from "./query";
 import { presentThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
@@ -16,10 +17,7 @@ export {
  * or project root share one stream — and virtualization means only visible
  * rows subscribe at all.
  */
-export function useThreadPr(
-  thread: EnvironmentThreadShell,
-  projectCwd: string | null,
-): ThreadPrPresentation | null {
+export function useThreadPrLookup(thread: EnvironmentThreadShell, projectCwd: string | null) {
   const cwd = thread.worktreePath ?? projectCwd;
   const gitStatus = useEnvironmentQuery(
     thread.branch !== null && cwd !== null
@@ -31,11 +29,21 @@ export function useThreadPr(
   );
 
   const status = gitStatus.data;
-  if (status === null || thread.branch === null || status.refName !== thread.branch) {
-    return null;
-  }
-  if (!status.pr) {
-    return null;
-  }
-  return presentThreadPr(status.pr, status.sourceControlProvider);
+  const changeRequestState = resolveChangeRequestSettlementState({
+    threadBranch: thread.branch,
+    gitStatus: status,
+    gitStatusError: gitStatus.error,
+  });
+  const pr =
+    status !== null && thread.branch !== null && status.refName === thread.branch && status.pr
+      ? presentThreadPr(status.pr, status.sourceControlProvider)
+      : null;
+  return { changeRequestState, pr };
+}
+
+export function useThreadPr(
+  thread: EnvironmentThreadShell,
+  projectCwd: string | null,
+): ThreadPrPresentation | null {
+  return useThreadPrLookup(thread, projectCwd).pr;
 }

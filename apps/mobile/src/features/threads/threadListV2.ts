@@ -6,7 +6,10 @@ import {
   resolveSnoozePresets,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import type {
+  ChangeRequestSettlementState,
+  SnoozePreset,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -317,7 +320,7 @@ export function buildThreadListV2Items(input: {
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
   /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
-  readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
+  readonly changeRequestStateByKey?: ReadonlyMap<string, ChangeRequestSettlementState>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
@@ -377,7 +380,9 @@ export function buildThreadListV2Items(input: {
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =
-      input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
+      thread.branch === null
+        ? "none"
+        : (input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? "unknown");
     // Visibility parity with web: a snoozed thread leaves the list until it
     // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
     // work). Snooze outranks settled classification, same as web.

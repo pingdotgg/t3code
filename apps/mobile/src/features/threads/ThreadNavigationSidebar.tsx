@@ -7,6 +7,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import type { ChangeRequestSettlementState } from "@t3tools/client-runtime/state/thread-settled";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -407,14 +408,14 @@ function ThreadNavigationSidebarPane(
   // PR states stream in per-row; merged/closed PRs auto-settle their thread
   // on the next partition.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+    ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
+    (threadKey: string, state: ChangeRequestSettlementState) => {
       setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+        if ((current.get(threadKey) ?? "unknown") === state) return current;
         const next = new Map(current);
-        if (state === null) {
+        if (state === "unknown") {
           next.delete(threadKey);
         } else {
           next.set(threadKey, state);

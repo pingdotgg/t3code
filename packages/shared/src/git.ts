@@ -11,6 +11,10 @@ import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
+
+export type VcsStatusStreamResult = VcsStatusResult & {
+  readonly remoteLoaded: boolean;
+};
 // Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
 // via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
 // that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
@@ -240,6 +244,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
       ? {}
       : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
     pr: status.pr,
+    ...(status.prLookupFailed === undefined ? {} : { prLookupFailed: status.prLookupFailed }),
   };
 }
 
@@ -258,28 +263,46 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
 }
 
 export function applyGitStatusStreamEvent(
-  current: VcsStatusResult | null,
+  current: VcsStatusStreamResult | null,
   event: VcsStatusStreamEvent,
-): VcsStatusResult {
+): VcsStatusStreamResult {
   switch (event._tag) {
     case "snapshot":
-      return mergeGitStatusParts(event.local, event.remote);
+      return {
+        ...mergeGitStatusParts(event.local, event.remote),
+        remoteLoaded: event.remoteLoaded ?? event.remote !== null,
+      };
     case "localUpdated":
-      return mergeGitStatusParts(event.local, current ? toRemoteStatusPart(current) : null);
+      if (current === null || current.refName !== event.local.refName) {
+        return {
+          ...mergeGitStatusParts(event.local, null),
+          remoteLoaded: false,
+        };
+      }
+      return {
+        ...mergeGitStatusParts(event.local, toRemoteStatusPart(current)),
+        remoteLoaded: current.remoteLoaded,
+      };
     case "remoteUpdated":
       if (current === null) {
-        return mergeGitStatusParts(
-          {
-            isRepo: true,
-            hasPrimaryRemote: false,
-            isDefaultRef: false,
-            refName: null,
-            hasWorkingTreeChanges: false,
-            workingTree: { files: [], insertions: 0, deletions: 0 },
-          },
-          event.remote,
-        );
+        return {
+          ...mergeGitStatusParts(
+            {
+              isRepo: true,
+              hasPrimaryRemote: false,
+              isDefaultRef: false,
+              refName: null,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            },
+            event.remote,
+          ),
+          remoteLoaded: event.remoteLoaded !== false,
+        };
       }
-      return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
+      return {
+        ...mergeGitStatusParts(toLocalStatusPart(current), event.remote),
+        remoteLoaded: event.remoteLoaded !== false,
+      };
   }
 }

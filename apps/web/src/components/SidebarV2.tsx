@@ -2,8 +2,10 @@ import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canSnooze,
+  type ChangeRequestSettlementState,
   effectiveSettled,
   effectiveSnoozed,
+  resolveChangeRequestSettlementState,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -419,7 +421,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestSettlementState) => void;
 }) {
   const {
     isRenaming,
@@ -545,10 +547,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
   // Report the PR state up: the parent partitions rows with effectiveSettled,
   // and a merged/closed PR auto-settles a thread — data only rows have.
-  const prState = pr?.state ?? null;
+  const changeRequestState = resolveChangeRequestSettlementState({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    gitStatusError: gitStatus.error,
+  });
   useEffect(() => {
-    onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    onChangeRequestState(threadKey, changeRequestState);
+  }, [changeRequestState, onChangeRequestState, threadKey]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1350,14 +1356,14 @@ export default function SidebarV2() {
   // PR states stream in per-row (rows own the VCS subscriptions); a merged or
   // closed PR auto-settles its thread on the next partition.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+    ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
+    (threadKey: string, state: ChangeRequestSettlementState) => {
       setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+        if ((current.get(threadKey) ?? "unknown") === state) return current;
         const next = new Map(current);
-        if (state === null) {
+        if (state === "unknown") {
           next.delete(threadKey);
         } else {
           next.set(threadKey, state);
@@ -1584,7 +1590,8 @@ export default function SidebarV2() {
       const supportsSnooze =
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
+      const changeRequestState =
+        thread.branch === null ? "none" : (changeRequestStateByKey.get(threadKey) ?? "unknown");
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).

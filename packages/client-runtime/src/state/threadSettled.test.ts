@@ -11,6 +11,7 @@ import {
   canSettle,
   effectiveSettled,
   hasQueuedTurnStart,
+  resolveChangeRequestSettlementState,
   threadLastActivityAt,
   type ChangeRequestStateLike,
 } from "./threadSettled.ts";
@@ -88,6 +89,57 @@ describe("threadLastActivityAt", () => {
 
     expect(threadLastActivityAt(withActivity)).toBe("2026-04-06T00:00:00.000Z");
     expect(threadLastActivityAt(shell)).toBeNull();
+  });
+});
+
+describe("resolveChangeRequestSettlementState", () => {
+  it("distinguishes an unresolved lookup from a confirmed missing or matching PR", () => {
+    expect(
+      resolveChangeRequestSettlementState({
+        threadBranch: "feature/unknown-pr",
+        gitStatus: null,
+        gitStatusError: null,
+      }),
+    ).toBe("unknown");
+    expect(
+      resolveChangeRequestSettlementState({
+        threadBranch: "feature/unknown-pr",
+        gitStatus: { refName: "feature/unknown-pr", pr: null, remoteLoaded: false },
+        gitStatusError: null,
+      }),
+    ).toBe("unknown");
+    expect(
+      resolveChangeRequestSettlementState({
+        threadBranch: "feature/unknown-pr",
+        gitStatus: { refName: "feature/unknown-pr", pr: null, remoteLoaded: true },
+        gitStatusError: null,
+      }),
+    ).toBe("none");
+    expect(
+      resolveChangeRequestSettlementState({
+        threadBranch: "feature/unknown-pr",
+        gitStatus: { refName: "feature/unknown-pr", pr: null, remoteLoaded: true },
+        gitStatusError: "remote lookup failed",
+      }),
+    ).toBe("unknown");
+    expect(
+      resolveChangeRequestSettlementState({
+        threadBranch: "feature/unknown-pr",
+        gitStatus: {
+          refName: "feature/unknown-pr",
+          pr: {
+            number: 123,
+            title: "Fix unknown PR settlement",
+            url: "https://github.com/pingdotgg/t3code/pull/123",
+            baseRef: "main",
+            headRef: "feature/unknown-pr",
+            state: "open",
+          },
+          remoteLoaded: true,
+        },
+        gitStatusError: null,
+      }),
+    ).toBe("open");
   });
 });
 
@@ -196,6 +248,20 @@ describe("effectiveSettled", () => {
         changeRequestState: "open",
       }),
     ).toBe(true);
+  });
+
+  it("defaults a branch thread to active while its change request state is unknown", () => {
+    const stale = {
+      ...makeShell({ activityAt: STALE }),
+      branch: "feature/unknown-pr",
+    };
+
+    expect(
+      effectiveSettled(stale, {
+        now: NOW,
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(false);
   });
 
   it("keeps an explicitly un-settled merged-PR thread active", () => {

@@ -457,6 +457,39 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledShelfHeaderIndex).toBe(1);
   });
 
+  it("keeps stale branch threads active until their PR state is known", () => {
+    const thread = makeThread({
+      id: ThreadId.make("unknown-pr"),
+      title: "Unknown PR",
+      branch: "feature/unknown-pr",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+    });
+    const unresolved = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(unresolved.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["unknown-pr", "card"],
+    ]);
+    expect(unresolved.settledCount).toBe(0);
+
+    const confirmedNoPr = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[`${environmentId}:${thread.id}`, "none"]]),
+      now: NOW,
+    });
+
+    expect(confirmedNoPr.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["unknown-pr", "slim"],
+    ]);
+    expect(confirmedNoPr.settledCount).toBe(1);
+  });
+
   it("collapses settled threads to a counted shelf header", () => {
     const layout = buildThreadListV2Items({
       threads: [
