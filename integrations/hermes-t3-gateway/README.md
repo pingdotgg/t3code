@@ -54,7 +54,11 @@ T3 loads the selectable model catalog on demand from Hermes' explicitly
 configured providers. Changing model or reasoning in T3 applies Hermes'
 official `/model ... --session` and `/reasoning ...` commands before the next
 turn starts. These are per-session overrides: they never rewrite Hermes'
-global `config.yaml`, and each T3 thread remains isolated from the others.
+global `config.yaml`, and each T3 thread remains isolated from the others. A
+failed or cancelled start rolls those session surfaces back transactionally;
+configuration across threads is serialized, and Hermes' runner-wide
+`_reasoning_config` compatibility mirror is restored only while this turn still
+owns the value it last observed.
 
 ## The Home thread
 

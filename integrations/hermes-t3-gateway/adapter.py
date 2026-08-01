@@ -1430,6 +1430,14 @@ class T3PlatformAdapter(BasePlatformAdapter):
         prior_reasoning_config = copy.deepcopy(
             getattr(runner, "_reasoning_config", None)
         )
+        # Track the runner-global reasoning mirror this transaction last
+        # observed. Session correctness lives in the per-session override map;
+        # `_reasoning_config` is only a process-wide compatibility field that
+        # Hermes' slash handler also updates. On rollback we restore it only
+        # while it still matches this ownership snapshot so a later writer is
+        # never clobbered (the configuration lock already serializes T3 turns).
+        owned_reasoning_config_present = had_reasoning_config
+        owned_reasoning_config = copy.deepcopy(prior_reasoning_config)
 
         durable_store = None
         durable_entry = None
@@ -1554,10 +1562,24 @@ class T3PlatformAdapter(BasePlatformAdapter):
                 session_id,
                 voice_channel_snapshot,
             )
-            if had_reasoning_config:
-                runner._reasoning_config = prior_reasoning_config
-            elif hasattr(runner, "_reasoning_config"):
-                delattr(runner, "_reasoning_config")
+            currently_has_reasoning_config = hasattr(runner, "_reasoning_config")
+            current_reasoning_config = (
+                getattr(runner, "_reasoning_config", None)
+                if currently_has_reasoning_config
+                else None
+            )
+            still_owns_reasoning_config = (
+                currently_has_reasoning_config == owned_reasoning_config_present
+                and (
+                    not currently_has_reasoning_config
+                    or current_reasoning_config == owned_reasoning_config
+                )
+            )
+            if still_owns_reasoning_config:
+                if had_reasoning_config:
+                    runner._reasoning_config = prior_reasoning_config
+                elif currently_has_reasoning_config:
+                    delattr(runner, "_reasoning_config")
             if had_cache:
                 self._applied_turn_configuration[thread_id] = prior_cache
             else:
@@ -1642,18 +1664,32 @@ class T3PlatformAdapter(BasePlatformAdapter):
 
         dispatched_configuration = False
 
+        def note_owned_reasoning_config() -> None:
+            nonlocal owned_reasoning_config_present, owned_reasoning_config
+            owned_reasoning_config_present = hasattr(runner, "_reasoning_config")
+            owned_reasoning_config = (
+                copy.deepcopy(getattr(runner, "_reasoning_config", None))
+                if owned_reasoning_config_present
+                else None
+            )
+
         async def dispatch(command: str) -> None:
             nonlocal dispatched_configuration
             dispatched_configuration = True
-            await handler(
-                MessageEvent(
-                    text=command,
-                    message_type=MessageType.COMMAND,
-                    source=source,
-                    message_id=str(message["requestId"]),
-                    metadata={"t3_control": "turn-configuration"},
+            try:
+                await handler(
+                    MessageEvent(
+                        text=command,
+                        message_type=MessageType.COMMAND,
+                        source=source,
+                        message_id=str(message["requestId"]),
+                        metadata={"t3_control": "turn-configuration"},
+                    )
                 )
-            )
+            finally:
+                # Capture ownership even when the handler mutates then raises so
+                # rollback can tell our write apart from a later foreign write.
+                note_owned_reasoning_config()
 
         try:
             effective_model: dict[str, str] | None = None

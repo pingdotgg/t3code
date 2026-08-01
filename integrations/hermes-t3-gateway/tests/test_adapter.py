@@ -1143,6 +1143,65 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(first_thread, self.adapter._active_turns)
         self.assertIn(second_thread, self.adapter._active_turns)
 
+    async def test_reasoning_rollback_does_not_clobber_foreign_global_config(self):
+        """Global `_reasoning_config` is restored only while this turn owns it.
+
+        Session-scoped overrides still roll back. If something else rewrites the
+        runner-wide mirror after our dispatch (and before we restore), leave that
+        newer value alone instead of replaying this turn's preimage.
+        """
+        thread_id = "thread-foreign-reasoning-config"
+        session_id = await self._ensure_thread(thread_id)
+        runner = FakeGatewayRunner()
+        prior_reasoning = {"enabled": True, "effort": "medium"}
+        runner._reasoning_config = dict(prior_reasoning)
+        runner._session_reasoning_overrides[session_id] = dict(prior_reasoning)
+        foreign_reasoning = {"enabled": True, "effort": "low"}
+
+        async def handler(event):
+            del event
+            selected = {"enabled": True, "effort": "high"}
+            runner._reasoning_config = dict(selected)
+            runner._session_reasoning_overrides[session_id] = dict(selected)
+            return "hidden"
+
+        original_effective = self.adapter._effective_reasoning_effort
+
+        def effective_then_foreign(runner_arg, key, *, model=""):
+            original_effective(runner_arg, key, model=model)
+            # A later writer lands between ownership capture and rollback.
+            runner_arg._reasoning_config = dict(foreign_reasoning)
+            raise adapter_module._TurnConfigurationError(
+                "verification failed after a foreign reasoning write"
+            )
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+        self.adapter._effective_reasoning_effort = effective_then_foreign
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-foreign-reasoning",
+                "threadId": thread_id,
+                "sessionId": session_id,
+                "turnId": "turn-foreign-reasoning",
+                "text": "Must not run",
+                "reasoningEffort": "high",
+            }
+        )
+
+        # Session-scoped state rolls back; the foreign global write is preserved.
+        self.assertEqual(
+            runner._session_reasoning_overrides, {session_id: prior_reasoning}
+        )
+        self.assertEqual(runner._reasoning_config, foreign_reasoning)
+        self.assertNotIn(thread_id, self.adapter._active_turns)
+        error = self.connection.messages[-1]
+        self.assertEqual(error["type"], "protocol.error")
+        self.assertIn("foreign reasoning write", error["message"])
+
     async def test_cancelled_configuration_restores_prior_state(self):
         thread_id = "thread-cancelled-config"
         session_id = await self._ensure_thread(thread_id)
