@@ -246,6 +246,7 @@ interface ClaudeSessionContext {
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
+  readonly interruptedTurnIds: Set<TurnId>;
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -2345,6 +2346,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const updatedAt = yield* nowIso;
     context.turnState = undefined;
+    context.interruptedTurnIds.delete(turnState.turnId);
     context.session = {
       ...context.session,
       status: "ready",
@@ -2941,7 +2943,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
+    const interrupted =
+      context.turnState !== undefined && context.interruptedTurnIds.has(context.turnState.turnId);
+    const status =
+      interrupted && message.subtype !== "success" ? "interrupted" : turnStatusFromResult(message);
     const errorMessage = resultUserFacingError(message);
 
     if (status === "failed") {
@@ -3567,8 +3572,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    const interrupted =
+      context.turnState !== undefined && context.interruptedTurnIds.has(context.turnState.turnId);
+
     if (Exit.isFailure(exit)) {
-      if (isClaudeInterruptedCause(exit.cause)) {
+      if (interrupted || isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
           yield* completeTurn(context, "interrupted", "Claude runtime interrupted.");
         }
@@ -4214,6 +4222,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
+        interruptedTurnIds: new Set(),
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
@@ -4403,8 +4412,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-    function* (threadId, _turnId) {
+    function* (threadId, turnId) {
       const context = yield* requireSession(threadId);
+      const targetTurnId = turnId ?? context.turnState?.turnId;
+      if (targetTurnId !== undefined) {
+        context.interruptedTurnIds.add(targetTurnId);
+      }
+
       // Stop-everything semantics: users reach for Stop precisely when a
       // fleet ran away. interrupt() alone only ends the parent turn —
       // background subagents/shells keep running and keep burning tokens.
