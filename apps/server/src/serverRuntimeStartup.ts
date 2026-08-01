@@ -29,6 +29,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as RunJanitor from "./orchestration-v2/RunJanitorService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
@@ -361,6 +362,7 @@ export const make = Effect.gen(function* () {
   const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
   const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+  const runJanitor = yield* RunJanitor.RunJanitorV2;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -497,6 +499,9 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
     });
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+    // The boot sweep above is the janitor's first tick; the daemon keeps the
+    // same guarantee holding continuously while the server is alive.
+    yield* runStartupPhase("orchestration-v2.janitor.start", Effect.forkScoped(runJanitor.daemon));
 
     yield* Effect.logDebug("Accepting commands");
     yield* commandGate.signalCommandReady;

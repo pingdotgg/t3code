@@ -48,6 +48,7 @@ import type {
 } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import { RunLeaseServiceV2 } from "./RunLeaseService.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -483,6 +484,7 @@ export const layer: Layer.Layer<
   | EventSinkV2
   | IdAllocatorV2
   | ProviderEventIngestorV2
+  | RunLeaseServiceV2
   | ServerSettingsService
 > = Layer.effect(
   RunExecutionServiceV2,
@@ -491,6 +493,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSinkV2;
     const idAllocator = yield* IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestorV2;
+    const runLease = yield* RunLeaseServiceV2;
     const serverSettings = yield* ServerSettingsService;
 
     const writeFinalRunEvents = (input: {
@@ -1091,6 +1094,11 @@ export const layer: Layer.Layer<
               ),
             ),
             Effect.ensuring(eventSubscription.close),
+            // The ingestion fiber is the run's liveness anchor: the lease is
+            // held (and renewed) exactly as long as this fiber is alive, on
+            // ANY exit path. A fiber that dies without finalizing the run
+            // stops renewing, and the janitor terminalizes the orphan.
+            runLease.withRunLease({ threadId: input.run.threadId, runId: input.run.id }),
             Effect.forkDetach,
           );
 

@@ -41,6 +41,7 @@ import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "../RunExecutionService.ts";
+import { layer as runLeaseServiceLayer } from "../RunLeaseService.ts";
 import { layer as runFinalizationServiceLayer } from "../RunFinalizationService.ts";
 import {
   layer as runtimePolicyLayer,
@@ -289,6 +290,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         eventSinkProvided,
         idAllocatorLayer,
         providerEventIngestorProvided,
+        runLeaseServiceLayer.pipe(Layer.provide(databaseLayer)),
         serverSettingsLayer,
       ),
     ),

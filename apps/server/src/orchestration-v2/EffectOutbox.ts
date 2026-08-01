@@ -182,6 +182,16 @@ export interface EffectOutboxV2Shape {
     { readonly requeued: number; readonly cancelled: number },
     EffectOutboxError
   >;
+  /**
+   * Settle claimed rows whose lease expired without the claimer reporting
+   * back: the fiber that owned them is hung or dead, and leaving the row
+   * `running` would block the thread's effect queue forever. Replay-safe
+   * effects requeue (up to maxAttempts); process-bound effects fail — their
+   * external work must not run twice.
+   */
+  readonly settleExpiredLeases: (input: {
+    readonly maxAttempts: number;
+  }) => Effect.Effect<{ readonly requeued: number; readonly failed: number }, EffectOutboxError>;
   readonly claimNext: (input: {
     readonly workerId: string;
     readonly leaseDurationMs: number;
@@ -444,6 +454,58 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           (cause) => new EffectOutboxError({ operation: "reconcile-process-loss", cause }),
         ),
       ),
+      settleExpiredLeases: ({ maxAttempts }) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const nowIso = DateTime.formatIso(now);
+          const requeuedRows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'pending',
+              lease_owner = NULL,
+              lease_expires_at = NULL,
+              available_at = ${nowIso},
+              updated_at = ${nowIso},
+              last_error = 'Requeued after its worker lease expired without settlement.'
+            WHERE status = 'running'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < ${nowIso}
+              AND effect_type IN ${sql.in(REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)}
+              AND attempt_count < ${Math.max(1, maxAttempts)}
+            RETURNING effect_id
+          `;
+          const failedRows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'failed',
+              lease_owner = NULL,
+              lease_expires_at = NULL,
+              completed_at = ${nowIso},
+              updated_at = ${nowIso},
+              last_error = 'Failed after its worker lease expired without settlement.'
+            WHERE status = 'running'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < ${nowIso}
+            RETURNING effect_id
+          `;
+          for (const row of [...requeuedRows, ...failedRows]) {
+            const signal = cancellationSignals.get(row.effect_id);
+            if (signal !== undefined) {
+              // Unblock the abandoned claimer's cancellation race so a merely
+              // slow (not dead) fiber stops executing work it no longer owns.
+              yield* Deferred.succeed(signal, undefined);
+              cancellationSignals.delete(row.effect_id);
+            }
+          }
+          if (requeuedRows.length > 0 || failedRows.length > 0) {
+            yield* notifyAvailable(requeuedRows.length + failedRows.length);
+          }
+          return { requeued: requeuedRows.length, failed: failedRows.length };
+        }).pipe(
+          Effect.mapError(
+            (cause) => new EffectOutboxError({ operation: "settle-expired-leases", cause }),
+          ),
+        ),
       claimNext: ({ workerId, leaseDurationMs }) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;
@@ -454,12 +516,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           // Empty safety claims are expected while the daemon is idle. Tracing
           // this query records the full SQL text on every poll and can dominate
           // the local trace without adding actionable information.
+          //
+          // The lease owner is a per-claim token (worker id + attempt): a
+          // fiber that lost its lease to expiry cannot settle a row that has
+          // since been reclaimed.
           const claimStatement = sql<EffectRow>`
             UPDATE orchestration_v2_effect_outbox
             SET
               status = 'running',
               attempt_count = attempt_count + 1,
-              lease_owner = ${workerId},
+              lease_owner = ${workerId} || '#' || CAST(attempt_count + 1 AS TEXT),
               lease_expires_at = ${leaseExpiresAt},
               updated_at = ${nowIso},
               last_error = NULL

@@ -760,7 +760,12 @@ function buildVisibleTurnItems(input: {
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
-  const latestRun = projection.runs.at(-1) ?? null;
+  // The shell's status run is the run that is actually live (lowest-ordinal
+  // non-terminal — the one executing or next to execute), not simply the
+  // newest row: a cancelled queued run must never outrank the running turn
+  // behind it, and a terminal tail row must not hide live work.
+  const orderedRuns = projection.runs.toSorted((left, right) => left.ordinal - right.ordinal);
+  const latestRun = orderedRuns.find(isLiveRunForShell) ?? orderedRuns.at(-1) ?? null;
   const activeRun =
     projection.runs
       .filter(isInterruptibleRunForShell)
@@ -854,6 +859,16 @@ export function threadShellFromProjection(
 
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
+}
+
+function isLiveRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
+  return (
+    run.status === "preparing" ||
+    run.status === "queued" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
 }
 
 type ShellThreadState = {
@@ -2122,35 +2137,70 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT r.run_id
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
+                ORDER BY
+                  (r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')) DESC,
+                  CASE
+                    WHEN r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      THEN -r.ordinal
+                    ELSE r.ordinal
+                  END DESC,
+                  r.run_id DESC
                 LIMIT 1
               ) AS latest_run_id,
               (
                 SELECT r.status
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
+                ORDER BY
+                  (r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')) DESC,
+                  CASE
+                    WHEN r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      THEN -r.ordinal
+                    ELSE r.ordinal
+                  END DESC,
+                  r.run_id DESC
                 LIMIT 1
               ) AS latest_run_status,
               (
                 SELECT r.requested_at
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
+                ORDER BY
+                  (r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')) DESC,
+                  CASE
+                    WHEN r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      THEN -r.ordinal
+                    ELSE r.ordinal
+                  END DESC,
+                  r.run_id DESC
                 LIMIT 1
               ) AS latest_run_requested_at,
               (
                 SELECT json_extract(r.payload_json, '$.startedAt')
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
+                ORDER BY
+                  (r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')) DESC,
+                  CASE
+                    WHEN r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      THEN -r.ordinal
+                    ELSE r.ordinal
+                  END DESC,
+                  r.run_id DESC
                 LIMIT 1
               ) AS latest_run_started_at,
               (
                 SELECT r.completed_at
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
+                ORDER BY
+                  (r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')) DESC,
+                  CASE
+                    WHEN r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      THEN -r.ordinal
+                    ELSE r.ordinal
+                  END DESC,
+                  r.run_id DESC
                 LIMIT 1
               ) AS latest_run_completed_at,
               (

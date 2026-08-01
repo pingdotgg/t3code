@@ -1063,10 +1063,16 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       const claimedByA = claims[0];
       const claimedByB = claims[1];
       if (Option.isSome(claimedByA)) {
-        yield* outbox.succeed({ effectId: claimedByA.value.id, workerId: "worker-a" });
+        yield* outbox.succeed({
+          effectId: claimedByA.value.id,
+          workerId: claimedByA.value.leaseOwner ?? "worker-a",
+        });
       }
       if (Option.isSome(claimedByB)) {
-        yield* outbox.succeed({ effectId: claimedByB.value.id, workerId: "worker-b" });
+        yield* outbox.succeed({
+          effectId: claimedByB.value.id,
+          workerId: claimedByB.value.leaseOwner ?? "worker-b",
+        });
       }
     }),
   );
@@ -1116,7 +1122,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
 
       yield* outbox.succeed({
         effectId: claimed.value.id,
-        workerId: "next-claimable-worker",
+        workerId: claimed.value.leaseOwner ?? "next-claimable-worker",
       });
       const afterCompletion = yield* outbox.nextClaimableAt;
       assert.isTrue(Option.isSome(afterCompletion));
@@ -1133,7 +1139,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         assert.equal(unblocked.value.id, "effect:foundation-next-claimable:a2");
         yield* outbox.succeed({
           effectId: unblocked.value.id,
-          workerId: "next-claimable-worker",
+          workerId: unblocked.value.leaseOwner ?? "next-claimable-worker",
         });
       }
       yield* outbox.cancelUnsettled({
@@ -1220,7 +1226,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         assert.equal(unblocked.value.request.type, "terminal.cleanup");
         yield* outbox.succeed({
           effectId: unblocked.value.id,
-          workerId: "cancellation-wakeup-worker",
+          workerId: unblocked.value.leaseOwner ?? "cancellation-wakeup-worker",
         });
       }
     }).pipe(Effect.provide(Layer.fresh(effectOutboxProvided))),

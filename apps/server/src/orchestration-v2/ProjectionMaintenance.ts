@@ -148,6 +148,11 @@ export const layer: Layer.Layer<
       const events = yield* readAllEvents;
       yield* sql.withTransaction(
         Effect.gen(function* () {
+          // Replay must reproduce what the log says happened, including
+          // transition sequences written before the lifecycle guard existed.
+          // The mode flips back inside the same transaction, so a failed
+          // rebuild rolls back to 'enforcing'.
+          yield* sql`UPDATE orchestration_v2_projection_guard SET mode = 'replay' WHERE id = 1`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_transfers`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_handoffs`;
           yield* sql`DELETE FROM orchestration_v2_projection_checkpoints`;
@@ -206,6 +211,7 @@ export const layer: Layer.Layer<
               last_sequence = excluded.last_sequence,
               updated_at = excluded.updated_at
           `;
+          yield* sql`UPDATE orchestration_v2_projection_guard SET mode = 'enforcing' WHERE id = 1`;
         }),
       );
       return yield* verify;

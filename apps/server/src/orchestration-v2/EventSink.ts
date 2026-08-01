@@ -37,10 +37,28 @@ import {
   TurnItemPositionStoreV2,
   layer as turnItemPositionStoreLayer,
 } from "./TurnItemPositionStore.ts";
+import { illegalLifecycleTransition, type LifecycleEntityKind } from "./RunLifecycle.ts";
 
 /**
  * ERRORS
  */
+export class EventSinkIllegalTransitionError extends Schema.TaggedErrorClass<EventSinkIllegalTransitionError>()(
+  "EventSinkIllegalTransitionError",
+  {
+    kind: Schema.Literals(["run", "run-attempt", "node"]),
+    entityId: Schema.String,
+    threadId: ThreadId,
+    from: Schema.NullOr(Schema.String),
+    to: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Rejected orchestration V2 event for ${this.kind} ${this.entityId}: ${this.detail}.`;
+  }
+}
+
+export const isEventSinkIllegalTransitionError = Schema.is(EventSinkIllegalTransitionError);
 export class EventSinkWriteError extends Schema.TaggedErrorClass<EventSinkWriteError>()(
   "EventSinkWriteError",
   {
@@ -165,6 +183,92 @@ const baseLayer: Layer.Layer<
     const turnItemPositions = yield* TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
 
+    const lifecycleTarget = (
+      event: OrchestrationV2DomainEvent,
+    ): {
+      kind: LifecycleEntityKind;
+      entityId: string;
+      status: string;
+      nodeKind?: string;
+    } | null => {
+      switch (event.type) {
+        case "run.created":
+        case "run.updated":
+          return { kind: "run", entityId: event.payload.id, status: event.payload.status };
+        case "run-attempt.created":
+        case "run-attempt.updated":
+          return { kind: "run-attempt", entityId: event.payload.id, status: event.payload.status };
+        case "node.updated":
+          return {
+            kind: "node",
+            entityId: event.payload.id,
+            status: event.payload.status,
+            nodeKind: event.payload.kind,
+          };
+        default:
+          return null;
+      }
+    };
+
+    const currentLifecycleStatus = (kind: LifecycleEntityKind, entityId: string) => {
+      switch (kind) {
+        case "run":
+          return sql<{ readonly status: string }>`
+            SELECT status FROM orchestration_v2_projection_runs
+            WHERE run_id = ${entityId} LIMIT 1
+          `;
+        case "run-attempt":
+          return sql<{ readonly status: string }>`
+            SELECT status FROM orchestration_v2_projection_run_attempts
+            WHERE attempt_id = ${entityId} LIMIT 1
+          `;
+        case "node":
+          return sql<{ readonly status: string }>`
+            SELECT status FROM orchestration_v2_projection_nodes
+            WHERE node_id = ${entityId} LIMIT 1
+          `;
+      }
+    };
+
+    /**
+     * The transition gate. Runs inside the same transaction as the append, so
+     * the status it reads is the status the event would overwrite. Statuses
+     * fold through the batch: an event sequence that terminalizes and then
+     * reopens an entity is rejected even when the database has not seen the
+     * intermediate state yet.
+     */
+    const assertLegalLifecycleTransitions = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        const folded = new Map<string, string | null>();
+        for (const event of events) {
+          const target = lifecycleTarget(event);
+          if (target === null) continue;
+          const key = `${target.kind}:${target.entityId}`;
+          let from = folded.get(key);
+          if (from === undefined) {
+            const rows = yield* currentLifecycleStatus(target.kind, target.entityId);
+            from = rows[0]?.status ?? null;
+          }
+          const violation = illegalLifecycleTransition({
+            kind: target.kind,
+            from,
+            to: target.status,
+            ...(target.nodeKind === undefined ? {} : { nodeKind: target.nodeKind }),
+          });
+          if (violation !== null) {
+            return yield* new EventSinkIllegalTransitionError({
+              kind: target.kind,
+              entityId: target.entityId,
+              threadId: event.threadId,
+              from,
+              to: target.status,
+              detail: violation,
+            });
+          }
+          folded.set(key, target.status);
+        }
+      });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -229,6 +333,7 @@ const baseLayer: Layer.Layer<
 
       const storedEvents = yield* sql.withTransaction(
         Effect.gen(function* () {
+          yield* assertLegalLifecycleTransitions(input.events);
           const normalized = yield* normalizeEvents(input.events);
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -282,6 +387,7 @@ const baseLayer: Layer.Layer<
               };
             }
 
+            yield* assertLegalLifecycleTransitions(input.events);
             const normalized = yield* normalizeEvents(input.events);
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -333,6 +439,7 @@ const baseLayer: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
+          yield* assertLegalLifecycleTransitions(input.events);
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,

@@ -31,6 +31,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
+import * as RunLease from "./RunLeaseService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -139,6 +140,7 @@ export const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
+  const runLease = yield* RunLease.RunLeaseServiceV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
@@ -400,7 +402,11 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
   ) {
-    yield* prepareInBackground(input, threadId, runId).pipe(
+    const prepare = prepareInBackground(input, threadId, runId);
+    // Preparation can legitimately outlast the janitor's grace window (large
+    // clones, slow setup scripts), so the preparing run holds a liveness
+    // lease for as long as this fiber is alive.
+    yield* (runId === null ? prepare : runLease.withRunLease({ threadId, runId })(prepare)).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void

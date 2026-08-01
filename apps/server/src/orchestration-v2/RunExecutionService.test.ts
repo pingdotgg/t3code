@@ -49,6 +49,7 @@ import {
   routeProviderEvent,
   RunExecutionServiceV2,
 } from "./RunExecutionService.ts";
+import { RunLeaseServiceV2 } from "./RunLeaseService.ts";
 
 const driver = ProviderDriverKind.make("codex");
 
@@ -59,6 +60,7 @@ const RunExecutionTestLayer = runExecutionServiceLayer.pipe(
       Layer.mock(EventSinkV2)({}),
       idAllocatorLayer,
       Layer.mock(ProviderEventIngestorV2)({ ingestNormalized: () => Effect.succeed([]) }),
+      Layer.mock(RunLeaseServiceV2)({ withRunLease: () => (effect) => effect }),
       ServerSettingsService.layerTest(),
     ),
   ),
@@ -418,6 +420,7 @@ it.effect("keeps ingesting owned child events after the root turn terminalizes",
             writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
           }),
           idAllocatorLayer,
+          Layer.mock(RunLeaseServiceV2)({ withRunLease: () => (effect) => effect }),
           Layer.mock(ProviderEventIngestorV2)({
             ingestNormalized: (input) =>
               Effect.gen(function* () {
@@ -693,6 +696,7 @@ it.effect(
               writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
             }),
             idAllocatorLayer,
+            Layer.mock(RunLeaseServiceV2)({ withRunLease: () => (effect) => effect }),
             Layer.mock(ProviderEventIngestorV2)({
               ingestNormalized: (input) =>
                 Ref.update(ingested, (current) => [...current, input.event]).pipe(Effect.as([])),
@@ -1064,6 +1068,7 @@ it.effect(
               writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
             }),
             idAllocatorLayer,
+            Layer.mock(RunLeaseServiceV2)({ withRunLease: () => (effect) => effect }),
             Layer.mock(ProviderEventIngestorV2)({
               ingestNormalized: () => Effect.succeed([]),
             }),
@@ -1635,6 +1640,7 @@ function captureInterruptTerminalTurnItems(input: {
             writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
           }),
           idAllocatorLayer,
+          Layer.mock(RunLeaseServiceV2)({ withRunLease: () => (effect) => effect }),
           Layer.mock(ProviderEventIngestorV2)({
             ingestNormalized: () => Effect.succeed([]),
           }),
@@ -2054,6 +2060,7 @@ function runBackgroundItemScenario(
             writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
           }),
           idAllocatorLayer,
+          Layer.mock(RunLeaseServiceV2)({ withRunLease: () => (effect) => effect }),
           Layer.mock(ProviderEventIngestorV2)({
             ingestNormalized: (input) =>
               Effect.gen(function* () {

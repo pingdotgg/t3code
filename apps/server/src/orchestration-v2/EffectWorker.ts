@@ -328,6 +328,20 @@ export interface OrchestrationEffectWorkerOptions {
   readonly maxAttempts?: number;
 }
 
+/**
+ * A lease is the outbox's hang detector, not an execution deadline: an effect
+ * that runs past it gets resettled by the janitor (requeued when replay-safe,
+ * failed when process-bound), so the value must comfortably exceed any
+ * legitimately slow effect. Overridable for tests and demos.
+ */
+export const DEFAULT_EFFECT_LEASE_DURATION_MS = (() => {
+  const raw = process.env["PIKU_ORCH_EFFECT_LEASE_MS"];
+  const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000;
+})();
+
+export const DEFAULT_EFFECT_WORKER_MAX_ATTEMPTS = 5;
+
 export const layerWithOptions = (
   options: OrchestrationEffectWorkerOptions = {},
 ): Layer.Layer<
@@ -341,8 +355,11 @@ export const layerWithOptions = (
       const outbox = yield* EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
-      const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
-      const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
+      const leaseDurationMs = Math.max(
+        1,
+        options.leaseDurationMs ?? DEFAULT_EFFECT_LEASE_DURATION_MS,
+      );
+      const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_EFFECT_WORKER_MAX_ATTEMPTS);
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
           Effect.map(
@@ -352,13 +369,17 @@ export const layerWithOptions = (
             }),
           ),
         );
+      // Settlement must present the lease token minted by the claim: after a
+      // lease expires and the row is reclaimed, the abandoned claimer's token
+      // no longer matches and its late settlement attempts are refused.
+      const claimOwner = (effect: OrchestrationEffectV2) => effect.leaseOwner ?? workerId;
       const requeueClaim = (effect: OrchestrationEffectV2, cause: Cause.Cause<unknown>) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void
           : outbox
               .retry({
                 effectId: effect.id,
-                workerId,
+                workerId: claimOwner(effect),
                 error: `Worker failed before settling the claimed effect: ${Cause.pretty(cause)}`,
                 delayMs: 0,
               })
@@ -387,7 +408,7 @@ export const layerWithOptions = (
         return outbox
           .fail({
             effectId: effect.id,
-            workerId,
+            workerId: claimOwner(effect),
             error: `Worker failed to settle a process-bound effect after execution started: ${Cause.pretty(cause)}`,
           })
           .pipe(
@@ -483,7 +504,10 @@ export const layerWithOptions = (
         }
         if (Exit.isSuccess(exit)) {
           return yield* Effect.gen(function* () {
-            const completed = yield* outbox.succeed({ effectId: effect.id, workerId });
+            const completed = yield* outbox.succeed({
+              effectId: effect.id,
+              workerId: claimOwner(effect),
+            });
             if (!completed) {
               if (yield* wasCancelled(effect.id)) return true;
               return yield* new OrchestrationEffectWorkerError({
@@ -509,16 +533,16 @@ export const layerWithOptions = (
         // keep a failed interrupt around; fail only when we must not retry.
         const updated = nonRetryable
           ? yield* outbox
-              .succeed({ effectId: effect.id, workerId })
+              .succeed({ effectId: effect.id, workerId: claimOwner(effect) })
               .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
           : effect.attemptCount >= maxAttempts
             ? yield* outbox
-                .fail({ effectId: effect.id, workerId, error })
+                .fail({ effectId: effect.id, workerId: claimOwner(effect), error })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : yield* outbox
                 .retry({
                   effectId: effect.id,
-                  workerId,
+                  workerId: claimOwner(effect),
                   error,
                   delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
                 })
