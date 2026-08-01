@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSnoozePresets, snoozeWakeDescription, snoozeWakeLabel } from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeDescription } from "./Sidebar.snooze";
 
 // Local-time constructor so preset math is timezone-stable in tests.
 function localDate(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -61,21 +61,6 @@ describe("resolveSnoozePresets", () => {
     const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
-  });
-});
-
-describe("snoozeWakeLabel", () => {
-  const now = localDate(2026, 4, 8, 10);
-
-  it("formats minutes, hours, and days, rounding up", () => {
-    expect(snoozeWakeLabel(new Date(now.getTime() + 30 * 60_000).toISOString(), now)).toBe("30m");
-    expect(snoozeWakeLabel(new Date(now.getTime() + 90 * 60_000).toISOString(), now)).toBe("2h");
-    expect(snoozeWakeLabel(new Date(now.getTime() + 26 * 3_600_000).toISOString(), now)).toBe("2d");
-  });
-
-  it("reports now for past and malformed wake times", () => {
-    expect(snoozeWakeLabel(new Date(now.getTime() - 1000).toISOString(), now)).toBe("now");
-    expect(snoozeWakeLabel("not-a-date", now)).toBe("now");
   });
 });
 
