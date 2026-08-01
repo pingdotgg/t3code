@@ -62,6 +62,7 @@ import Migration0057 from "./Migrations/057_ExcludeHandoffContinuationsFromSearc
 import Migration0058 from "./Migrations/058_ProjectionSnapshotUpdatedAtIndexes.ts";
 import Migration0059 from "./Migrations/059_RepairSkippedProjectionThreadMessageSearch.ts";
 import Migration0061 from "./Migrations/061_ProjectionThreadsSettledSnoozed.ts";
+import Migration0062 from "./Migrations/062_WorktreeCleanupJobs.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -123,6 +124,7 @@ export const migrationEntries = [
   [58, "ProjectionSnapshotUpdatedAtIndexes", Migration0058],
   [59, "RepairSkippedProjectionThreadMessageSearch", Migration0059],
   [61, "ProjectionThreadsSettledSnoozed", Migration0061],
+  [62, "WorktreeCleanupJobs", Migration0062],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

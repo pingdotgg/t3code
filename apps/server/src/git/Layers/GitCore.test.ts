@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1717,6 +1718,31 @@ it.layer(TestLayer)("git integration", (it) => {
 
         yield* (yield* GitCore).removeWorktree({ cwd: tmp, path: wtPath, force: true });
         expect(existsSync(wtPath)).toBe(false);
+      }),
+    );
+
+    it.effect("prunes registrations for missing worktree directories", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+
+        const wtPath = path.join(tmp, "wt-prune-dir");
+        const currentBranch = (yield* (yield* GitCore).listBranches({ cwd: tmp })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+
+        yield* (yield* GitCore).createWorktree({
+          cwd: tmp,
+          branch: currentBranch,
+          newBranch: "wt-prune",
+          path: wtPath,
+        });
+        yield* Effect.promise(() => rm(wtPath, { recursive: true, force: true }));
+
+        yield* (yield* GitCore).pruneWorktrees(tmp);
+
+        const worktreeList = yield* git(tmp, ["worktree", "list", "--porcelain"]);
+        expect(worktreeList).not.toContain(wtPath);
       }),
     );
   });

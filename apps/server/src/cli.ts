@@ -1883,6 +1883,9 @@ const chatRenameCommand = Command.make("rename", {
 const chatDeleteCommand = Command.make("delete", {
   ...liveTargetFlags,
   chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
+  cleanupWorktree: Flag.boolean("cleanup-worktree").pipe(
+    Flag.withDescription("Remove the worktree if this is its last active chat and it is clean."),
+  ),
 }).pipe(
   Command.withDescription("Delete a chat."),
   Command.withHandler((flags) =>
@@ -1892,6 +1895,7 @@ const chatDeleteCommand = Command.make("delete", {
           type: "thread.delete",
           commandId: CommandId.make(crypto.randomUUID()),
           threadId: thread.id,
+          cleanupWorktree: flags.cleanupWorktree,
         });
         yield* printJson(result);
       }),

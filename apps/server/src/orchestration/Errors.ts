@@ -52,6 +52,19 @@ export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedEr
   }
 }
 
+export class OrchestrationCommandWorktreeCleanupPendingError extends Schema.TaggedErrorClass<OrchestrationCommandWorktreeCleanupPendingError>()(
+  "OrchestrationCommandWorktreeCleanupPendingError",
+  {
+    commandType: Schema.String,
+    worktreePath: Schema.String,
+    cause: Schema.optional(Schema.Unknown),
+  },
+) {
+  override get message(): string {
+    return `Worktree '${this.worktreePath}' is pending cleanup and cannot be assigned (${this.commandType}).`;
+  }
+}
+
 export class OrchestrationProjectorDecodeError extends Schema.TaggedErrorClass<OrchestrationProjectorDecodeError>()(
   "OrchestrationProjectorDecodeError",
   {
@@ -82,6 +95,7 @@ export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
   | OrchestrationCommandPreviouslyRejectedError
+  | OrchestrationCommandWorktreeCleanupPendingError
   | OrchestrationProjectorDecodeError
   | OrchestrationListenerCallbackError;
 

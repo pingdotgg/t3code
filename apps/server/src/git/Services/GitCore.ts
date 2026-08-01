@@ -278,6 +278,11 @@ export interface GitCoreShape {
   readonly removeWorktree: (input: GitRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
 
   /**
+   * Prune stale worktree registrations whose checkout directories no longer exist.
+   */
+  readonly pruneWorktrees: (cwd: string) => Effect.Effect<void, GitCommandError>;
+
+  /**
    * Rename an existing local branch.
    */
   readonly renameBranch: (

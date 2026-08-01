@@ -91,6 +91,7 @@ describe("QueuedTurnReactor", () => {
           }
           return { sequence: 2 };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.never,
     });
     const layer = QueuedTurnReactorLive.pipe(Layer.provide(engineLayer));

@@ -174,6 +174,60 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(makeProjectionPipelinePrefixedTestLayer("t3-worktree-cleanup-job-test-"))(
+  "worktree cleanup projection",
+  (it) => {
+    it.effect("persists worktree cleanup jobs with thread deletion events", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const sql = yield* SqlClient.SqlClient;
+        const now = new Date().toISOString();
+
+        yield* projectionPipeline.projectEvent({
+          sequence: 1,
+          type: "thread.deleted",
+          eventId: EventId.make("evt-worktree-cleanup"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-worktree-cleanup"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-worktree-cleanup"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-worktree-cleanup"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-worktree-cleanup"),
+            deletedAt: now,
+            worktreeCleanup: {
+              cwd: "/tmp/project",
+              path: "/tmp/project-worktree",
+            },
+          },
+        });
+
+        const rows = yield* sql<{
+          readonly threadId: string;
+          readonly cwd: string;
+          readonly worktreePath: string;
+        }>`
+          SELECT
+            thread_id AS "threadId",
+            cwd,
+            worktree_path AS "worktreePath"
+          FROM worktree_cleanup_jobs
+        `;
+
+        assert.deepStrictEqual(rows, [
+          {
+            threadId: "thread-worktree-cleanup",
+            cwd: "/tmp/project",
+            worktreePath: "/tmp/project-worktree",
+          },
+        ]);
+      }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
   (it) => {

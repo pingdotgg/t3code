@@ -16,6 +16,7 @@ import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { WorktreeCleanupJobRepository } from "../../persistence/Services/WorktreeCleanupJobs.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -54,8 +55,12 @@ async function createOrchestrationSystem() {
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  const worktreeCleanupJobs = await runtime.runPromise(
+    Effect.service(WorktreeCleanupJobRepository),
+  );
   return {
     engine,
+    worktreeCleanupJobs,
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -77,6 +82,83 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("rejects assigning a worktree while its cleanup job is pending", async () => {
+    const system = await createOrchestrationSystem();
+    const createdAt = now();
+    const projectId = asProjectId("project-pending-worktree");
+    const deletedThreadId = ThreadId.make("deleted-thread-pending-worktree");
+    const threadId = ThreadId.make("thread-pending-worktree");
+    const worktreePath = "/tmp/pending-worktree";
+
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-pending-worktree"),
+          projectId,
+          title: "Pending Worktree",
+          workspaceRoot: "/tmp/project-pending-worktree",
+          defaultModelSelection: null,
+          createdAt,
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-deleted-thread-pending-worktree"),
+          threadId: deletedThreadId,
+          projectId,
+          title: "Deleted Pending Worktree",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: "feature/deleted-pending-worktree",
+          worktreePath: "/tmp/pending-parent/../pending-worktree",
+          createdAt,
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-delete-pending-worktree"),
+          threadId: deletedThreadId,
+          cleanupWorktree: true,
+        }),
+      );
+
+      const retryableCommand = {
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-pending-worktree"),
+        threadId,
+        projectId,
+        title: "Pending Worktree",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: "feature/pending-worktree",
+        worktreePath,
+        createdAt,
+      } as const;
+
+      await expect(system.run(system.engine.dispatch(retryableCommand))).rejects.toThrow(
+        "pending cleanup",
+      );
+
+      await system.run(system.worktreeCleanupJobs.cancelByThreadId(deletedThreadId));
+      await expect(system.run(system.engine.dispatch(retryableCommand))).resolves.toEqual({
+        sequence: 4,
+      });
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it("bootstraps the in-memory read model from persisted projections", async () => {
     const bootstrapStarted = Effect.runSync(Deferred.make<void>());
     const releaseBootstrap = Effect.runSync(Deferred.make<void>());

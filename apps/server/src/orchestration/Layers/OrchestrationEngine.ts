@@ -12,6 +12,7 @@ import {
   PubSub,
   Queue,
   Schema,
+  Semaphore,
   Stream,
 } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -25,9 +26,13 @@ import {
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { WorktreeCleanupJobRepository } from "../../persistence/Services/WorktreeCleanupJobs.ts";
+import { WorktreeCleanupJobRepositoryLive } from "../../persistence/Layers/WorktreeCleanupJobs.ts";
+import { canonicalizeWorktreePath } from "../../git/worktreePaths.ts";
 import {
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
+  OrchestrationCommandWorktreeCleanupPendingError,
   type OrchestrationDispatchError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
@@ -84,12 +89,65 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const worktreeCleanupJobs = yield* WorktreeCleanupJobRepository;
 
   let readModel = createEmptyReadModel(new Date().toISOString());
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
   const initialized = yield* Deferred.make<void, OrchestrationDispatchError>();
+  const worktreeLock = yield* Semaphore.make(1);
+
+  const withWorktreeLock: OrchestrationEngineShape["withWorktreeLock"] = (effect) =>
+    worktreeLock.withPermits(1)(effect);
+
+  const commandWorktreePath = (command: OrchestrationCommand): string | null => {
+    switch (command.type) {
+      case "thread.create":
+        return command.worktreePath;
+      case "thread.meta.update":
+        return command.worktreePath ?? null;
+      case "thread.workspace.handoff":
+        return command.worktreePath;
+      default:
+        return null;
+    }
+  };
+
+  const canonicalizeCommandWorktree = Effect.fn("canonicalizeCommandWorktree")(function* (
+    command: OrchestrationCommand,
+  ) {
+    const worktreePath = commandWorktreePath(command);
+    if (worktreePath === null) {
+      return command;
+    }
+    const canonicalPath = yield* Effect.promise(() => canonicalizeWorktreePath(worktreePath));
+    switch (command.type) {
+      case "thread.create":
+      case "thread.meta.update":
+      case "thread.workspace.handoff":
+        return { ...command, worktreePath: canonicalPath };
+      default:
+        return command;
+    }
+  });
+
+  const isWorktreeCleanupPending = Effect.fn("isWorktreeCleanupPending")(function* (
+    worktreePath: string,
+  ) {
+    if (yield* worktreeCleanupJobs.existsByPath(worktreePath)) {
+      return true;
+    }
+    const jobs = yield* worktreeCleanupJobs.list();
+    return yield* Effect.forEach(
+      jobs,
+      (job) =>
+        Effect.promise(() => canonicalizeWorktreePath(job.worktreePath)).pipe(
+          Effect.map((pendingPath) => pendingPath === worktreePath),
+        ),
+      { concurrency: 4 },
+    ).pipe(Effect.map((matches) => matches.some(Boolean)));
+  });
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = readModel.snapshotSequence;
@@ -118,8 +176,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
     });
 
-    return Effect.exit(
+    const process = Effect.exit(
       Effect.gen(function* () {
+        const command = yield* canonicalizeCommandWorktree(envelope.command);
         yield* Effect.annotateCurrentSpan({
           "orchestration.command_id": envelope.command.commandId,
           "orchestration.command_type": envelope.command.type,
@@ -142,8 +201,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        const worktreePath = commandWorktreePath(command);
+        if (worktreePath !== null && (yield* isWorktreeCleanupPending(worktreePath))) {
+          return yield* new OrchestrationCommandWorktreeCleanupPendingError({
+            commandType: command.type,
+            worktreePath,
+          });
+        }
+
         const eventBase = yield* decideOrchestrationCommand({
-          command: envelope.command,
+          command,
           readModel,
         });
         const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
@@ -276,6 +343,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }),
       ),
     );
+    return commandWorktreePath(envelope.command) !== null ? withWorktreeLock(process) : process;
   };
 
   const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
@@ -323,6 +391,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     getReadModel,
     readEvents,
     dispatch,
+    withWorktreeLock,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
     // each independently receive all domain events.
@@ -335,4 +404,4 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
   makeOrchestrationEngine,
-);
+).pipe(Layer.provideMerge(WorktreeCleanupJobRepositoryLive));

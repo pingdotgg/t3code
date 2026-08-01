@@ -148,6 +148,7 @@ describe("WorkflowCoordinatorReactor", () => {
           commands.push(command);
           return { sequence: commands.length };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const workflows: ProjectionWorkflowRepositoryShape = {
@@ -213,6 +214,7 @@ describe("WorkflowCoordinatorReactor", () => {
           commands.push(command);
           return { sequence: commands.length };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const finalizedRun: ProjectionWorkflowRun = { ...run, status: "completed" };
@@ -267,6 +269,7 @@ describe("WorkflowCoordinatorReactor", () => {
       getReadModel: () => Effect.succeed(readModel),
       readEvents: () => Stream.empty,
       dispatch: () => Effect.succeed({ sequence: 1 }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const workflows: ProjectionWorkflowRepositoryShape = {
@@ -309,6 +312,7 @@ describe("WorkflowCoordinatorReactor", () => {
           commands.push(command);
           return { sequence: commands.length };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const workflows: ProjectionWorkflowRepositoryShape = {
@@ -392,6 +396,7 @@ describe("WorkflowCoordinatorReactor", () => {
           commands.push(command);
           return { sequence: commands.length };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const workflows: ProjectionWorkflowRepositoryShape = {
@@ -490,6 +495,7 @@ describe("WorkflowCoordinatorReactor", () => {
           commands.push(command);
           return { sequence: commands.length };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const workflows: ProjectionWorkflowRepositoryShape = {
@@ -585,6 +591,7 @@ describe("WorkflowCoordinatorReactor", () => {
           commands.push(command);
           return { sequence: commands.length };
         }),
+      withWorktreeLock: (effect) => effect,
       streamDomainEvents: Stream.empty,
     };
     const workflows: ProjectionWorkflowRepositoryShape = {

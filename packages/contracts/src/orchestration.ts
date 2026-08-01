@@ -585,6 +585,7 @@ const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
   threadId: ThreadId,
+  cleanupWorktree: Schema.optional(Schema.Boolean),
 });
 
 const ThreadArchiveCommand = Schema.Struct({
@@ -1167,6 +1168,12 @@ export const ThreadCreatedPayload = Schema.Struct({
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
   deletedAt: IsoDateTime,
+  worktreeCleanup: Schema.optional(
+    Schema.Struct({
+      cwd: TrimmedNonEmptyString,
+      path: TrimmedNonEmptyString,
+    }),
+  ),
 });
 
 export const ThreadArchivedPayload = Schema.Struct({

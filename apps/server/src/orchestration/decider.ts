@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
+import { canonicalizeWorktreePath } from "../git/worktreePaths.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
@@ -89,6 +90,28 @@ function findActiveWorktreeOwner(
       thread.worktreePath === worktreePath,
   );
 }
+
+const hasCanonicalActiveWorktreeOwner = Effect.fn("hasCanonicalActiveWorktreeOwner")(function* (
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+  worktreePath: string,
+) {
+  const canonicalWorktreePath = yield* Effect.promise(() => canonicalizeWorktreePath(worktreePath));
+  const activeWorktreePaths = readModel.threads.flatMap((thread) =>
+    thread.id !== threadId && thread.deletedAt === null && thread.worktreePath !== null
+      ? [thread.worktreePath]
+      : [],
+  );
+  const matches = yield* Effect.forEach(
+    activeWorktreePaths,
+    (activeWorktreePath) =>
+      Effect.promise(() => canonicalizeWorktreePath(activeWorktreePath)).pipe(
+        Effect.map((canonicalActivePath) => canonicalActivePath === canonicalWorktreePath),
+      ),
+    { concurrency: 4 },
+  );
+  return matches.some(Boolean);
+});
 
 function forkedTitle(title: string): string {
   return title.startsWith(FORK_TITLE_PREFIX) ? title : `${FORK_TITLE_PREFIX}${title}`;
@@ -500,12 +523,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
+      const project = readModel.projects.find((entry) => entry.id === thread.projectId);
+      const shouldCheckWorktreeOwnership =
+        command.cleanupWorktree === true && thread.worktreePath !== null && project !== undefined;
+      const hasActiveWorktreeOwner = shouldCheckWorktreeOwnership
+        ? yield* hasCanonicalActiveWorktreeOwner(readModel, thread.id, thread.worktreePath)
+        : false;
+      const worktreeCleanup =
+        shouldCheckWorktreeOwnership && !hasActiveWorktreeOwner
+          ? {
+              cwd: project.workspaceRoot,
+              path: thread.worktreePath,
+            }
+          : undefined;
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -517,6 +553,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           deletedAt: occurredAt,
+          ...(worktreeCleanup !== undefined ? { worktreeCleanup } : {}),
         },
       };
     }
