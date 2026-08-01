@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -87,6 +89,86 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         ),
         [],
       );
+    }),
+  );
+
+  it.effect("replaces an incomplete pinned runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-repair-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, "1.2.3");
+      yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
+      yield* fs.writeFileString(path.join(finalPaths.versionDir, "partial"), "incomplete\n");
+
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner: successfulRunner(fs, path),
+        validate: () => Effect.void,
+      });
+
+      assert.isFalse(yield* fs.exists(path.join(finalPaths.versionDir, "partial")));
+      assert.isTrue(yield* fs.exists(finalPaths.entryPath));
+    }),
+  );
+
+  it.effect("reinstalls an invalid completed runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-repair-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, "1.2.3");
+      yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
+      yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
+      yield* fs.writeFileString(finalPaths.sentinelPath, "1.2.3\n");
+
+      let validations = 0;
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner: successfulRunner(fs, path),
+        validate: (paths) =>
+          Effect.gen(function* () {
+            validations += 1;
+            const source = yield* fs.readFileString(paths.entryPath).pipe(Effect.orDie);
+            if (source === "broken\n") {
+              return yield* new PinnedRuntimeInstallError({ step: "validating the runtime" });
+            }
+          }),
+      });
+
+      assert.equal(validations, 2);
+      assert.equal(yield* fs.readFileString(finalPaths.entryPath), "export {};\n");
+    }),
+  );
+
+  it.effect("removes staging when installation is interrupted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-interrupt-" });
+      const started = yield* Deferred.make<void>();
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner,
+        validate: () => Effect.void,
+      }).pipe(Effect.forkScoped);
+
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(install);
+      const versionsDir = path.join(baseDir, "runtime", "versions");
+      assert.deepEqual(yield* fs.readDirectory(versionsDir), []);
     }),
   );
 });

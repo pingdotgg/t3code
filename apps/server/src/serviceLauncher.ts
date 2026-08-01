@@ -299,9 +299,12 @@ function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
   return new Promise((resolve) => child.once("exit", () => resolve()));
 }
 
-async function terminateChild(child: NodeChildProcess.ChildProcess): Promise<void> {
+async function terminateChild(
+  child: NodeChildProcess.ChildProcess,
+  signal: NodeJS.Signals = "SIGTERM",
+): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
+  child.kill(signal);
   const force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
   try {
     await waitForExit(child);
@@ -341,7 +344,7 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
-      await this.#recover();
+      this.#enqueue(() => this.#recover());
       await this.#completion;
     } finally {
       process.off("SIGTERM", onSigterm);
@@ -350,34 +353,40 @@ export class Launcher {
   }
 
   #enqueue(transition: () => Promise<void>): void {
-    this.#transitions = this.#transitions.then(transition, transition).catch((cause: unknown) => {
-      this.#fatal(cause instanceof Error ? cause : new Error(String(cause)));
-    });
+    this.#transitions = this.#transitions
+      .then(transition, transition)
+      .catch((cause: unknown) =>
+        this.#fatal(cause instanceof Error ? cause : new Error(String(cause))),
+      );
   }
 
-  #fatal(error: Error): void {
+  async #fatal(error: Error): Promise<void> {
     if (this.#finished) return;
     this.#finished = true;
-    this.#clearTimers();
-    const child = this.#child?.process;
-    this.#child = null;
-    if (child?.connected) child.disconnect();
-    child?.unref();
-    this.#rejectCompletion(error);
-  }
-
-  async stop(signal: NodeJS.Signals): Promise<void> {
-    if (this.#finished || this.#stopping) return;
     this.#stopping = true;
     this.#clearTimers();
     const child = this.#child?.process;
     this.#child = null;
-    if (child !== undefined) {
-      child.kill(signal);
-      await waitForExit(child);
+    if (child !== undefined) await terminateChild(child);
+    this.#rejectCompletion(error);
+  }
+
+  async stop(signal: NodeJS.Signals): Promise<void> {
+    if (this.#finished || this.#stopping) {
+      await this.#completion.catch(() => undefined);
+      return;
     }
-    this.#finished = true;
-    this.#resolveCompletion();
+    this.#stopping = true;
+    this.#clearTimers();
+    this.#enqueue(async () => {
+      if (this.#finished) return;
+      const child = this.#child?.process;
+      this.#child = null;
+      if (child !== undefined) await terminateChild(child, signal);
+      this.#finished = true;
+      this.#resolveCompletion();
+    });
+    await this.#completion.catch(() => undefined);
   }
 
   #clearTimers(): void {
@@ -401,9 +410,11 @@ export class Launcher {
   }
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
+    if (this.#stopping || this.#finished) return;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
+    if (this.#stopping || this.#finished) return;
     const paths = runtimePaths(this.#baseDir, version);
     const context: ServiceLauncherContext = {
       protocol: LAUNCHER_PROTOCOL,
@@ -421,10 +432,14 @@ export class Launcher {
       child.once("error", onError);
       child.once("spawn", () => {
         child.removeListener("error", onError);
-        child.on("error", (error) => this.#fatal(error));
+        child.on("error", (error) => this.#enqueue(() => Promise.reject(error)));
         resolve();
       });
     });
+    if (this.#stopping || this.#finished) {
+      await terminateChild(child);
+      return;
+    }
 
     const managed: ManagedChild = {
       generation: ++this.#generation,

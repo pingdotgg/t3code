@@ -72,6 +72,32 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
+  it.effect("serializes shutdown with launcher recovery", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-stop-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          schemaVersion: 1,
+          launcherProtocol: 1,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+    }),
+  );
+
   it.effect("commits only after the trial reports prepared", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

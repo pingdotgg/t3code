@@ -302,6 +302,7 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    const shutdown = yield* ServerShutdown.ServerShutdown;
     const awaitActivation = launcher.awaitActivation.pipe(Effect.orDie);
 
     const commandGate = yield* makeCommandGate;
@@ -480,7 +481,7 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
             cause: startupExit.cause,
           }).pipe(
             Effect.andThen(commandGate.failCommandReady(error)),
-            Effect.andThen(launcher.trial ? ServerShutdown.request(1) : Effect.void),
+            Effect.andThen(launcher.trial ? shutdown.request(1) : Effect.void),
           );
         }),
       ),

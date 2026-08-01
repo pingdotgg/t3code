@@ -1,15 +1,22 @@
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
-const listeners = new Set<(exitCode: number) => void>();
+export class ServerShutdown extends Context.Service<
+  ServerShutdown,
+  {
+    readonly request: (exitCode: number) => Effect.Effect<void>;
+    readonly awaitRequest: Effect.Effect<number>;
+  }
+>()("t3/serverShutdown") {}
 
-/** Process-local handoff channel. The CLI races this against the scoped server runtime. */
-export const request = (exitCode: number): Effect.Effect<void> =>
-  Effect.sync(() => {
-    for (const listener of listeners) listener(exitCode);
+export const make = Effect.gen(function* () {
+  const requested = yield* Deferred.make<number>();
+  return ServerShutdown.of({
+    request: (exitCode) => Deferred.succeed(requested, exitCode).pipe(Effect.asVoid),
+    awaitRequest: Deferred.await(requested),
   });
-
-export const awaitRequest: Effect.Effect<number> = Effect.callback((resume) => {
-  const listener = (exitCode: number) => resume(Effect.succeed(exitCode));
-  listeners.add(listener);
-  return Effect.sync(() => listeners.delete(listener));
 });
+
+export const layer = Layer.effect(ServerShutdown, make);

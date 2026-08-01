@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -8,7 +9,7 @@ import {
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
-import { make } from "./serviceLauncherClient.ts";
+import { make, ServiceLauncherHostProcess } from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
   readonly connected = true;
@@ -41,6 +42,12 @@ class FakeLauncherProcess {
   }
 }
 
+const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
+  make({ currentVersion }).pipe(
+    Effect.provideService(ServiceLauncherHostProcess, host),
+    Effect.provideService(HostProcessEnvironment, host.env),
+  );
+
 it.effect("parks a trial until the launcher durably commits its update ID", () =>
   Effect.gen(function* () {
     const pending = {
@@ -57,7 +64,7 @@ it.effect("parks a trial until the launcher durably commits its update ID", () =
       trial: true,
       update: pending,
     });
-    const client = yield* make({ process: host, currentVersion: "1.1.0" });
+    const client = yield* makeClient(host, "1.1.0");
     const prepared = yield* Effect.forkChild(client.prepareTrial, { startImmediately: true });
     yield* Effect.yieldNow;
     expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
@@ -83,7 +90,7 @@ it.effect("returns the launcher-generated ID only after update acceptance", () =
       childVersion: "1.0.0",
       trial: false,
     });
-    const client = yield* make({ process: host, currentVersion: "1.0.0" });
+    const client = yield* makeClient(host, "1.0.0");
     const requested = yield* Effect.forkChild(
       client.requestUpdate({ fromVersion: "1.0.0", targetVersion: "1.1.0" }),
       { startImmediately: true },
@@ -111,7 +118,7 @@ it.effect("rejects contradictory trial context instead of leaving activation clo
       childVersion: "1.1.0",
       trial: true,
     });
-    const error = yield* make({ process: host, currentVersion: "1.1.0" }).pipe(Effect.flip);
-    expect(error.reason).toBe("The service launcher supplied invalid startup context.");
+    const error = yield* makeClient(host, "1.1.0").pipe(Effect.flip);
+    expect(error.message).toBe("The service launcher supplied invalid startup context.");
   }),
 );

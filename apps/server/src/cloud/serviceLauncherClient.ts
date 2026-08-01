@@ -1,4 +1,5 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -22,15 +23,44 @@ import {
 export class ServiceLauncherClientError extends Schema.TaggedErrorClass<ServiceLauncherClientError>()(
   "ServiceLauncherClientError",
   {
-    reason: Schema.String,
+    operation: Schema.Literals([
+      "decode-context",
+      "version-mismatch",
+      "ipc-unavailable",
+      "unmanaged",
+      "send",
+      "disconnect",
+      "rejected",
+    ]),
+    launcherVersion: Schema.optional(Schema.String),
+    childVersion: Schema.optional(Schema.String),
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "decode-context":
+        return "The service launcher supplied invalid startup context.";
+      case "version-mismatch":
+        return `The service launcher started t3@${this.launcherVersion ?? "unknown"}, but the child reports t3@${this.childVersion ?? "unknown"}.`;
+      case "ipc-unavailable":
+        return "The service launcher IPC channel is unavailable.";
+      case "unmanaged":
+        return "This server is not managed by the launcher.";
+      case "send":
+        return "Could not send a request to the service launcher.";
+      case "disconnect":
+        return "The service launcher disconnected before acknowledging the request.";
+      case "rejected":
+        return this.detail ?? "The service launcher rejected the request.";
+    }
+  }
+}
 
 interface ServiceLauncherProcess {
-  readonly connected?: boolean;
-  readonly env: Readonly<Record<string, string | undefined>>;
-  readonly send?: (
+  readonly connected: boolean;
+  readonly send: (
     message: ServiceLauncherChildMessage,
     callback?: (error: Error | null) => void,
   ) => boolean;
@@ -43,6 +73,39 @@ interface ServiceLauncherProcess {
     listener: (...args: ReadonlyArray<unknown>) => void,
   ) => void;
 }
+
+export const ServiceLauncherHostProcess = Context.Reference<ServiceLauncherProcess>(
+  "t3/cloud/serviceLauncherHostProcess",
+  {
+    defaultValue: () => ({
+      connected: process.connected && process.send !== undefined,
+      send: (message, callback) => {
+        if (process.send === undefined) return false;
+        return callback === undefined ? process.send(message) : process.send(message, callback);
+      },
+      on: (event, listener) => {
+        process.on(event, listener);
+      },
+      off: (event, listener) => {
+        process.off(event, listener);
+      },
+    }),
+  },
+);
+
+export const ServiceLauncherTrial = Context.Reference<boolean>("t3/cloud/serviceLauncherTrial", {
+  defaultValue: () => false,
+});
+
+export const isServiceLauncherManaged = Effect.fn("cloud.service_launcher_client.is_managed")(
+  function* (currentVersion = packageJson.version) {
+    const host = yield* ServiceLauncherHostProcess;
+    const environment = yield* HostProcessEnvironment;
+    const raw = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
+    const context = raw === undefined ? undefined : decodeContext(raw);
+    return context?.childVersion === currentVersion && host.connected;
+  },
+);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -140,36 +203,6 @@ function decodeContext(raw: string): ServiceLauncherContext | undefined {
     : undefined;
 }
 
-export function isServiceLauncherManaged(options?: {
-  readonly process?: ServiceLauncherProcess;
-  readonly currentVersion?: string;
-}): boolean {
-  const host = options?.process ?? process;
-  const raw = host.env[SERVICE_LAUNCHER_CONTEXT_ENV];
-  if (raw === undefined) return false;
-  const context = decodeContext(raw);
-  return (
-    context !== undefined &&
-    context.childVersion === (options?.currentVersion ?? packageJson.version) &&
-    host.connected === true &&
-    host.send !== undefined
-  );
-}
-
-export function isServiceLauncherTrial(options?: {
-  readonly process?: ServiceLauncherProcess;
-  readonly currentVersion?: string;
-}): boolean {
-  const host = options?.process ?? process;
-  const raw = host.env[SERVICE_LAUNCHER_CONTEXT_ENV];
-  if (raw === undefined) return false;
-  const context = decodeContext(raw);
-  return (
-    context?.trial === true &&
-    context.childVersion === (options?.currentVersion ?? packageJson.version)
-  );
-}
-
 function decodeParentMessage(value: unknown): ServiceLauncherParentMessage | undefined {
   if (!isRecord(value) || typeof value.type !== "string") return undefined;
   if (value.type === "update-rejected" && typeof value.reason === "string") {
@@ -204,29 +237,31 @@ export class ServiceLauncherClient extends Context.Service<
 >()("t3/cloud/serviceLauncherClient") {}
 
 export const make = Effect.fn("cloud.service_launcher_client.make")(function* (options?: {
-  readonly process?: ServiceLauncherProcess;
   readonly currentVersion?: string;
 }) {
-  const host = options?.process ?? process;
+  const host = yield* ServiceLauncherHostProcess;
+  const environment = yield* HostProcessEnvironment;
   const currentVersion = options?.currentVersion ?? packageJson.version;
-  const rawContext = host.env[SERVICE_LAUNCHER_CONTEXT_ENV];
+  const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
   const context = rawContext === undefined ? undefined : decodeContext(rawContext);
 
   if (rawContext !== undefined && context === undefined) {
     return yield* new ServiceLauncherClientError({
-      reason: "The service launcher supplied invalid startup context.",
+      operation: "decode-context",
     });
   }
   if (context !== undefined && context.childVersion !== currentVersion) {
     return yield* new ServiceLauncherClientError({
-      reason: `The service launcher started t3@${context.childVersion}, but the child reports t3@${currentVersion}.`,
+      operation: "version-mismatch",
+      launcherVersion: context.childVersion,
+      childVersion: currentVersion,
     });
   }
 
-  const managed = context !== undefined && host.connected === true && host.send !== undefined;
+  const managed = context !== undefined && host.connected;
   if (context !== undefined && !managed) {
     return yield* new ServiceLauncherClientError({
-      reason: "The service launcher IPC channel is unavailable.",
+      operation: "ipc-unavailable",
     });
   }
 
@@ -245,11 +280,11 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     accept: (reply: ServiceLauncherParentMessage) => boolean,
   ) =>
     Effect.callback<ServiceLauncherParentMessage, ServiceLauncherClientError>((resume) => {
-      if (!managed || host.send === undefined) {
+      if (!managed) {
         resume(
           Effect.fail(
             new ServiceLauncherClientError({
-              reason: "This server is not managed by the launcher.",
+              operation: "unmanaged",
             }),
           ),
         );
@@ -277,7 +312,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         settle(
           Effect.fail(
             new ServiceLauncherClientError({
-              reason: "The service launcher disconnected before acknowledging the request.",
+              operation: "disconnect",
             }),
           ),
         );
@@ -290,7 +325,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
             settle(
               Effect.fail(
                 new ServiceLauncherClientError({
-                  reason: "Could not send a request to the service launcher.",
+                  operation: "send",
                   cause: error,
                 }),
               ),
@@ -301,7 +336,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         settle(
           Effect.fail(
             new ServiceLauncherClientError({
-              reason: "Could not send a request to the service launcher.",
+              operation: "send",
               cause,
             }),
           ),
@@ -320,7 +355,9 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         reply.type === "update-accepted"
           ? Effect.succeed(reply.update)
           : reply.type === "update-rejected"
-            ? Effect.fail(new ServiceLauncherClientError({ reason: reply.reason }))
+            ? Effect.fail(
+                new ServiceLauncherClientError({ operation: "rejected", detail: reply.reason }),
+              )
             : Effect.die("service launcher returned an impossible update response"),
       ),
     );
@@ -353,4 +390,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
   });
 });
 
-export const layer = Layer.effect(ServiceLauncherClient, make());
+export const layer: Layer.Layer<ServiceLauncherClient, ServiceLauncherClientError> = Layer.effect(
+  ServiceLauncherClient,
+  make(),
+);

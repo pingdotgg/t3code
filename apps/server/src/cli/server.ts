@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Runtime from "effect/Runtime";
 import { Command, GlobalFlag } from "effect/unstable/cli";
 
@@ -17,12 +18,17 @@ export const runServerCommand = (
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveServerConfig(flags, logLevel, options);
+    const shutdown = yield* ServerShutdown.make;
+    const serverServices = Layer.mergeAll(
+      Layer.succeed(ServerConfig, config),
+      Layer.succeed(ServerShutdown.ServerShutdown, shutdown),
+    );
     return yield* Effect.raceFirst(
       runServer,
-      ServerShutdown.awaitRequest.pipe(
+      shutdown.awaitRequest.pipe(
         Effect.flatMap((exitCode) => Effect.fail(new ServerRequestedExit(exitCode))),
       ),
-    ).pipe(Effect.provideService(ServerConfig, config));
+    ).pipe(Effect.provide(serverServices));
   });
 
 class ServerRequestedExit extends Error {

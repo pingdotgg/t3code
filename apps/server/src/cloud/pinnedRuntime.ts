@@ -54,6 +54,18 @@ export class PinnedRuntimeInstallError extends Schema.TaggedErrorClass<PinnedRun
   }
 }
 
+export class PinnedRuntimePreflightBlockedError extends Schema.TaggedErrorClass<PinnedRuntimePreflightBlockedError>()(
+  "PinnedRuntimePreflightBlockedError",
+  {
+    version: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 /**
  * Installs `t3@<version>` into the pinned runtime directory unless a complete
  * install is already there, and returns its paths. The sentinel is written
@@ -70,7 +82,7 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     readonly runner: ProcessRunner.ProcessRunner["Service"];
     readonly validate: (
       paths: PinnedRuntimePaths,
-    ) => Effect.Effect<void, PinnedRuntimeInstallError>;
+    ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
   }) {
     const { fs, runner } = input;
     const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
@@ -86,13 +98,33 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     const alreadyPinned =
       entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
     if (versionDirExists && !alreadyPinned) {
-      return yield* new PinnedRuntimeInstallError({
-        step: "checking an incomplete pinned runtime",
-      });
+      yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({
+              step: "removing an incomplete pinned runtime",
+              cause,
+            }),
+        ),
+      );
     }
     if (alreadyPinned) {
-      yield* input.validate(paths);
-      return paths;
+      const valid = yield* input.validate(paths).pipe(
+        Effect.as(true),
+        Effect.catchTag("PinnedRuntimeInstallError", () =>
+          fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new PinnedRuntimeInstallError({
+                  step: "removing an invalid pinned runtime",
+                  cause,
+                }),
+            ),
+            Effect.as(false),
+          ),
+        ),
+      );
+      if (valid) return paths;
     }
 
     const versionsDir = input.path.dirname(paths.versionDir);
@@ -196,9 +228,7 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
       }
       return paths;
     }).pipe(
-      Effect.tapError(() =>
-        fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
-      ),
+      Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
     );
   },
 );

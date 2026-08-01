@@ -73,6 +73,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
+import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAvailableEditorsForConfig } from "./ws.ts";
@@ -89,6 +90,7 @@ import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerShutdown from "./serverShutdown.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -680,6 +682,8 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
+          ServiceLauncherClient.layer,
+          ServerShutdown.layer,
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
@@ -1318,6 +1322,39 @@ const getWsServerUrl = (
   });
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
+  it.effect("parks HTTP ingress until command readiness", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-gate-" });
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "ready");
+      const entered = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const completed = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        config: { staticDir },
+        layers: {
+          serverRuntimeStartup: {
+            awaitCommandReady: Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(ready)),
+            ),
+          },
+        },
+      });
+      const request = yield* HttpClient.get("/").pipe(
+        Effect.tap(() => Deferred.succeed(completed, undefined)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(entered);
+      assert.isFalse(yield* Deferred.isDone(completed));
+
+      yield* Deferred.succeed(ready, undefined);
+      assert.equal((yield* Fiber.join(request)).status, 200);
+      assert.isTrue(yield* Deferred.isDone(completed));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves static index content for GET / when staticDir is configured", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

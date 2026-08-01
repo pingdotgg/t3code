@@ -18,7 +18,11 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerShutdown from "../serverShutdown.ts";
-import { ensurePinnedRuntimeInstalled, PinnedRuntimeInstallError } from "./pinnedRuntime.ts";
+import {
+  ensurePinnedRuntimeInstalled,
+  PinnedRuntimeInstallError,
+  PinnedRuntimePreflightBlockedError,
+} from "./pinnedRuntime.ts";
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import { isServiceLauncherManaged, ServiceLauncherClient } from "./serviceLauncherClient.ts";
 import {
@@ -32,15 +36,10 @@ const HANDOFF_DELAY = Duration.seconds(2);
 
 export const resolveServerSelfUpdateCapability = Effect.fn(
   "cloud.server_self_update.resolve_capability",
-)((input: { readonly desktopManaged: boolean }) =>
-  Effect.succeed(
-    input.desktopManaged
-      ? ("desktop-managed" as const)
-      : isServiceLauncherManaged()
-        ? ("boot-service" as const)
-        : null,
-  ),
-);
+)(function* (input: { readonly desktopManaged: boolean }) {
+  if (input.desktopManaged) return "desktop-managed" as const;
+  return (yield* isServiceLauncherManaged()) ? ("boot-service" as const) : null;
+});
 
 export class ServerSelfUpdate extends Context.Service<
   ServerSelfUpdate,
@@ -59,6 +58,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
+  const shutdown = yield* ServerShutdown.ServerShutdown;
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -117,51 +117,58 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                     cause,
                   }),
               ),
-              Effect.flatMap((result) => {
-                if (result.code !== 0) {
-                  return Effect.fail(
-                    new PinnedRuntimeInstallError({
-                      step: "running the staged service preflight",
-                      exitCode: Number(result.code),
-                      stdoutLength: result.stdout.length,
-                      stderrLength: result.stderr.length,
-                    }),
-                  );
-                }
-                let parsed: unknown;
-                try {
-                  parsed = JSON.parse(result.stdout.trim());
-                } catch (cause) {
-                  return Effect.fail(
-                    new PinnedRuntimeInstallError({
-                      step: "decoding the staged service preflight",
-                      cause,
-                    }),
-                  );
-                }
-                const preflight = decodeServicePreflightResult(parsed);
-                if (preflight === undefined || preflight.version !== targetVersion) {
-                  return Effect.fail(
-                    new PinnedRuntimeInstallError({
-                      step: "verifying the staged service preflight",
-                    }),
-                  );
-                }
-                return preflight.status === "ready"
-                  ? Effect.void
-                  : Effect.fail(
+              Effect.flatMap(
+                (
+                  result,
+                ): Effect.Effect<
+                  void,
+                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
+                > => {
+                  if (result.code !== 0) {
+                    return Effect.fail(
                       new PinnedRuntimeInstallError({
-                        step: preflight.reason,
+                        step: "running the staged service preflight",
+                        exitCode: Number(result.code),
+                        stdoutLength: result.stdout.length,
+                        stderrLength: result.stderr.length,
                       }),
                     );
-              }),
+                  }
+                  let parsed: unknown;
+                  try {
+                    parsed = JSON.parse(result.stdout.trim());
+                  } catch (cause) {
+                    return Effect.fail(
+                      new PinnedRuntimeInstallError({
+                        step: "decoding the staged service preflight",
+                        cause,
+                      }),
+                    );
+                  }
+                  const preflight = decodeServicePreflightResult(parsed);
+                  if (preflight === undefined || preflight.version !== targetVersion) {
+                    return Effect.fail(
+                      new PinnedRuntimeInstallError({
+                        step: "verifying the staged service preflight",
+                      }),
+                    );
+                  }
+                  return preflight.status === "ready"
+                    ? Effect.void
+                    : Effect.fail(
+                        new PinnedRuntimePreflightBlockedError({
+                          version: targetVersion,
+                          reason: preflight.reason,
+                        }),
+                      );
+                },
+              ),
             ),
       }).pipe(
         Effect.mapError((error) =>
           failWith(
-            error.step.startsWith("This version includes") ||
-              error.step.startsWith("This release requires")
-              ? error.step
+            error._tag === "PinnedRuntimePreflightBlockedError"
+              ? error.message
               : `Could not prepare t3@${targetVersion}: ${error.message}`,
           ),
         ),
@@ -170,10 +177,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       yield* reportProgress("installing");
       const pending = yield* launcher
         .requestUpdate({ fromVersion: packageJson.version, targetVersion })
-        .pipe(Effect.mapError((error) => failWith(error.reason)));
+        .pipe(Effect.mapError((error) => failWith(error.message)));
 
       yield* Effect.sleep(HANDOFF_DELAY).pipe(
-        Effect.andThen(ServerShutdown.request(SERVICE_HANDOFF_EXIT_CODE)),
+        Effect.andThen(shutdown.request(SERVICE_HANDOFF_EXIT_CODE)),
         Effect.forkDetach({ startImmediately: true }),
       );
 

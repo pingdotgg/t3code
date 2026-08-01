@@ -399,6 +399,14 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provide(NetService.layer),
 );
 
+const commandReadinessLayer = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.flatMap(ServerRuntimeStartup.ServerRuntimeStartup, (startup) =>
+      startup.awaitCommandReady.pipe(Effect.orDie, Effect.andThen(httpEffect)),
+    ),
+  { global: true },
+);
+
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -416,7 +424,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(ServiceLauncherClient.layer))),
+  Layer.provide(ServerSelfUpdate.layer),
+  Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
 );
@@ -424,10 +433,15 @@ export const makeRoutesLayer = Layer.mergeAll(
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const launcherClient = yield* ServiceLauncherClient.make();
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
+    const launcherLayer = Layer.mergeAll(
+      Layer.succeed(ServiceLauncherClient.ServiceLauncherClient, launcherClient),
+      Layer.succeed(ServiceLauncherClient.ServiceLauncherTrial, launcherClient.trial),
+    );
 
     yield* fixPath();
 
@@ -441,8 +455,7 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeStateLayer = Layer.effectDiscard(
       Effect.acquireRelease(
         Effect.gen(function* () {
-          const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-          const awaitActivation = launcher.awaitActivation.pipe(Effect.orDie);
+          const awaitActivation = launcherClient.awaitActivation.pipe(Effect.orDie);
           yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
           yield* awaitActivation;
           const server = yield* HttpServer.HttpServer;
@@ -481,8 +494,7 @@ export const makeServerLayer = Layer.unwrap(
       ? Layer.effectDiscard(
           Effect.acquireRelease(
             Effect.gen(function* () {
-              const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-              const awaitActivation = launcher.awaitActivation.pipe(Effect.orDie);
+              const awaitActivation = launcherClient.awaitActivation.pipe(Effect.orDie);
               yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
               yield* awaitActivation;
               const server = yield* HttpServer.HttpServer;
@@ -538,8 +550,7 @@ export const makeServerLayer = Layer.unwrap(
           yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
           return;
         }
-        const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-        const awaitActivation = launcher.awaitActivation.pipe(Effect.orDie);
+        const awaitActivation = launcherClient.awaitActivation.pipe(Effect.orDie);
         yield* forkParked(
           awaitActivation,
           Effect.gen(function* () {
@@ -602,9 +613,9 @@ export const makeServerLayer = Layer.unwrap(
         ],
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid),
-    }).pipe(Layer.provideMerge(RuntimeDependenciesLive));
+    }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
 
-    const routesLayer = HttpRouter.serve(makeRoutesLayer, {
+    const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
     }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
     const serverApplicationLayer = Layer.mergeAll(
@@ -626,7 +637,7 @@ export const makeServerLayer = Layer.unwrap(
       Layer.provideMerge(PlatformServicesLive),
     );
   }),
-).pipe(Layer.provide(ServiceLauncherClient.layer));
+);
 
-// The CLI supplies configuration and the controlled-shutdown channel.
+// The CLI supplies configuration and the controlled-shutdown service.
 export const runServer = Layer.launch(makeServerLayer);

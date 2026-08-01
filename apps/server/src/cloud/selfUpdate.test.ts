@@ -9,6 +9,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerShutdown from "../serverShutdown.ts";
 import { ServiceLauncherClient } from "./serviceLauncherClient.ts";
 import { make } from "./selfUpdate.ts";
 
@@ -71,9 +72,11 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         prepareTrial: Effect.succeed(Option.none()),
         latestOutcome: Effect.succeed(Option.none()),
       });
+      const shutdown = yield* ServerShutdown.make;
       const selfUpdate = yield* make().pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
         Effect.provideService(ServiceLauncherClient, launcher),
+        Effect.provideService(ServerShutdown.ServerShutdown, shutdown),
         Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
       );

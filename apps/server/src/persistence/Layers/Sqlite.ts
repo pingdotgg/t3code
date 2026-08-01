@@ -7,7 +7,7 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import { assertMigrationManifest, runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
-import { isServiceLauncherTrial } from "../../cloud/serviceLauncherClient.ts";
+import { ServiceLauncherTrial } from "../../cloud/serviceLauncherClient.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -77,6 +77,7 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;
-    return makeSqlitePersistenceLive(dbPath, { trial: isServiceLauncherTrial() });
+    const trial = yield* ServiceLauncherTrial;
+    return makeSqlitePersistenceLive(dbPath, { trial });
   }),
 );
