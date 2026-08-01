@@ -1,8 +1,9 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
 import type {
+  BackgroundActivitySettings,
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
@@ -10,7 +11,11 @@ import type {
   VcsDriverKind,
   VcsDiscoveryItem,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  getBackgroundActivityBaseProfile,
+  getBackgroundActivityPresetSettings,
+  resolveServerBackgroundActivitySettings,
+} from "@t3tools/shared/backgroundActivitySettings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -48,7 +53,9 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -69,6 +76,11 @@ const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
 
 const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
 const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
+type BackgroundActivityOverridePatch = Partial<{
+  [K in keyof BackgroundActivitySettings["overrides"]]:
+    | BackgroundActivitySettings["overrides"][K]
+    | undefined;
+}>;
 
 function durationToSeconds(duration: Duration.Duration): number {
   return Math.round(Duration.toMillis(duration) / 1_000);
@@ -79,6 +91,50 @@ function normalizeFetchIntervalSeconds(value: number | null): number {
     return 0;
   }
   return Math.max(0, Math.round(value));
+}
+
+function backgroundActivityOverrideSettings(
+  current: BackgroundActivitySettings,
+  overrides: BackgroundActivityOverridePatch,
+) {
+  const nextOverrides: BackgroundActivityOverridePatch = {
+    ...current.overrides,
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(nextOverrides)) {
+    if (value === undefined) {
+      delete nextOverrides[key as keyof typeof nextOverrides];
+    }
+  }
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile: "custom" as const,
+      baseProfile: getBackgroundActivityBaseProfile(current),
+      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
+    },
+  };
+}
+
+function BackgroundPolicyTooltip({ children }: { readonly children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            aria-label="Background policy details"
+          >
+            <InfoIcon className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 function optionLabel(value: Option.Option<string>): string | null {
@@ -195,7 +251,7 @@ function itemSummary({
         <span>
           {item.label} is not authenticated on this server. Sign in or configure credentials using
           the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable pull request features.
+          tool on the server host to enable change request features.
         </span>
       );
     }
@@ -229,16 +285,16 @@ function DiscoveryItemRow({
   return (
     <div
       className={cn(
-        "border-t border-border/60 first:border-t-0",
+        "rounded-xl transition-colors hover:bg-muted/20",
         isVcsNotReady(item) && "opacity-80",
       )}
     >
-      <div className="px-4 py-3.5 sm:px-5">
+      <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+              <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
                 {item.label}
               </span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
@@ -253,7 +309,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -282,7 +338,7 @@ function DiscoveryItemRow({
       {hasDetails ? (
         <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
           <CollapsibleContent>
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">{children}</div>
+            <div className="px-3 pb-4 pt-1 sm:px-4">{children}</div>
           </CollapsibleContent>
         </Collapsible>
       ) : null}
@@ -291,13 +347,16 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const automaticGitFetchInterval = usePrimarySettings(
-    (settings) => settings.automaticGitFetchInterval,
-  );
+  const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const automaticGitFetchIntervalSeconds = durationToSeconds(automaticGitFetchInterval);
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const automaticGitFetchIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.automaticGitFetchInterval,
+  );
   const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
-    DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+    getBackgroundActivityPresetSettings(
+      getBackgroundActivityBaseProfile(settings.backgroundActivity),
+    ).automaticGitFetchInterval,
   );
   const canResetFetchInterval =
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
@@ -308,6 +367,11 @@ function GitFetchIntervalSettings() {
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
             <span className="text-xs font-medium text-foreground">Fetch interval</span>
+            <BackgroundPolicyTooltip>
+              This interval is configured for Git only. The shared Background activity policy still
+              decides whether Git refreshes may run when the timer fires. Custom intervals appear as
+              Advanced in General settings.
+            </BackgroundPolicyTooltip>
             <span
               className={cn(
                 "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
@@ -319,9 +383,11 @@ function GitFetchIntervalSettings() {
                 <SettingResetButton
                   label="fetch interval"
                   onClick={() =>
-                    updateSettings({
-                      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
-                    })
+                    updateSettings(
+                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
+                        automaticGitFetchInterval: undefined,
+                      }),
+                    )
                   }
                 />
               ) : null}
@@ -340,9 +406,11 @@ function GitFetchIntervalSettings() {
             size="sm"
             className="w-32"
             onValueChange={(value) =>
-              updateSettings({
-                automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
-              })
+              updateSettings(
+                backgroundActivityOverrideSettings(settings.backgroundActivity, {
+                  automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
+                }),
+              )
             }
           >
             <NumberFieldGroup>
@@ -368,7 +436,7 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
+        <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
@@ -407,7 +475,7 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection title="Server environment">
+    <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
       <Empty className="min-h-88">
         <EmptyMedia variant="icon">
           <GitPullRequestIcon />
@@ -450,8 +518,8 @@ export function SourceControlSettingsPanel() {
         }),
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
-  const hasDiscoveryItems =
-    result.versionControlSystems.length > 0 || result.sourceControlProviders.length > 0;
+  const hasVersionControlSystems = result.versionControlSystems.length > 0;
+  const hasDiscoveryItems = hasVersionControlSystems || result.sourceControlProviders.length > 0;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
   const handleScan = () => {
     discovery.refresh();
@@ -485,8 +553,12 @@ export function SourceControlSettingsPanel() {
         </>
       ) : hasDiscoveryItems ? (
         <>
-          {result.versionControlSystems.length > 0 ? (
-            <SettingsSection title="Version Control" headerAction={scanButton}>
+          {hasVersionControlSystems ? (
+            <SettingsSection
+              id={searchableSetting("source-control").id}
+              title="Version Control"
+              headerAction={scanButton}
+            >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
                   {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
@@ -497,8 +569,9 @@ export function SourceControlSettingsPanel() {
 
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
+              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title="Source Control Providers"
-              headerAction={result.versionControlSystems.length === 0 ? scanButton : null}
+              headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
@@ -513,6 +586,8 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }

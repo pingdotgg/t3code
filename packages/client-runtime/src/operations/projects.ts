@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type {
   CommandId,
   EnvironmentId,
@@ -7,7 +8,6 @@ import type {
   SourceControlProviderKind,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
-import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -27,6 +27,12 @@ export type AddProjectRemoteProviderKind = Extract<
   "github" | "gitlab" | "bitbucket" | "azure-devops"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
+
+export function canCreateProjectInEnvironment(
+  connectionPhase: EnvironmentConnectionPhase | null | undefined,
+): boolean {
+  return connectionPhase === "connected";
+}
 
 export type AddProjectRemoteSourceReadiness = Record<
   AddProjectRemoteSource,
@@ -215,10 +221,7 @@ export function buildProjectCreateCommand(input: {
     title: inferProjectTitleFromPath(input.workspaceRoot),
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
-    defaultModelSelection: {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: DEFAULT_MODEL,
-    },
+    defaultModelSelection: null,
     createdAt: input.createdAt,
   };
 }

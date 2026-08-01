@@ -4,31 +4,9 @@
  * An `Event` is the durable contract shared by writers, handlers, journals, and
  * replicas. It gives an event a stable tag, derives the aggregate or entity
  * primary key from the decoded payload, and records the schemas used for the
- * payload and handler result. The payload schema also derives the MessagePack
- * schema used when entries are written to an event journal or sent to a remote
- * replica.
- *
- * **Mental model**
- *
- * The tag names the event kind, the primary key chooses the partition or entity
- * affected by the event, the payload schema describes the persisted fact, and
- * the success and error schemas describe the handler boundary. Type helpers in
- * this module derive payload, success, error, and service types from either a
- * single event definition or a union selected by tag.
- *
- * **Common tasks**
- *
- * Use `make` to define a single event, `addError` to add a shared handler error
- * to an existing definition, and the tag-based helper types when a client or
- * server API needs the payload, success, or error type for one event in a group.
- *
- * **Gotchas**
- *
- * Persisted tags and payload schemas should remain stable. Prefer a new tag or a
- * backward-compatible schema when an event shape changes, and keep
- * `primaryKey` deterministic so related entries group consistently across
- * local journals and remote replicas. Omitted payload and success schemas
- * default to `Schema.Void`; omitted error schemas default to `Schema.Never`.
+ * payload, handler result, and handler errors. The payload schema is also used
+ * to derive the MessagePack encoding for journal entries and remote
+ * replication.
  *
  * @since 4.0.0
  */
@@ -426,9 +404,9 @@ export function make<
 export function make(options: {
   readonly tag: string
   readonly primaryKey: (payload: Schema.Schema.Type<Schema.Top>) => string
-  readonly payload?: Schema.Top | undefined
-  readonly success?: Schema.Top | undefined
-  readonly error?: Schema.Top | undefined
+  readonly payload?: Schema.Constraint | undefined
+  readonly success?: Schema.Constraint | undefined
+  readonly error?: Schema.Constraint | undefined
 }): Event<string, Schema.Top, Schema.Top, typeof Schema.Never> {
   const payload = options.payload ?? Schema.Void
   const success = options.success ?? Schema.Void

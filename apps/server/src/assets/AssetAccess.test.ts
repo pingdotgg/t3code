@@ -2,15 +2,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 
@@ -20,7 +23,10 @@ const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(
   configLayer,
   WorkspacePaths.layer,
-  ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
+  ProjectFaviconResolver.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(T3ProjectFileLoader.layer),
+  ),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -210,12 +216,21 @@ describe("AssetAccess", () => {
         prefix: "t3-asset-favicon-",
       });
       const faviconPath = path.join(root, "favicon.svg");
-      yield* fileSystem.writeFileString(faviconPath, "<svg />");
+      const initialFavicon = "<svg>a</svg>";
+      const updatedFavicon = "<svg>b</svg>";
+      expect(updatedFavicon).toHaveLength(initialFavicon.length);
+      yield* fileSystem.writeFileString(faviconPath, initialFavicon);
       const canonicalFaviconPath = yield* fileSystem.realPath(faviconPath);
 
       const faviconResult = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root },
       });
+      expect(faviconResult.relativeUrl).toMatch(/\/v[0-9a-f]{64}-favicon\.svg$/);
+      expect(
+        yield* issueAssetUrl({
+          resource: { _tag: "project-favicon", cwd: root },
+        }),
+      ).toEqual(faviconResult);
       const faviconSuffix = faviconResult.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const faviconSeparatorIndex = faviconSuffix.indexOf("/");
       expect(
@@ -224,6 +239,14 @@ describe("AssetAccess", () => {
           faviconSuffix.slice(faviconSeparatorIndex + 1),
         ),
       ).toEqual({ kind: "file", path: canonicalFaviconPath });
+
+      yield* fileSystem.writeFileString(faviconPath, updatedFavicon);
+      const updatedFaviconResult = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      });
+      expect(
+        updatedFaviconResult.relativeUrl.slice(updatedFaviconResult.relativeUrl.lastIndexOf("/")),
+      ).not.toBe(faviconResult.relativeUrl.slice(faviconResult.relativeUrl.lastIndexOf("/")));
 
       yield* fileSystem.remove(faviconPath);
       const fallbackResult = yield* issueAssetUrl({
@@ -238,6 +261,31 @@ describe("AssetAccess", () => {
           fallbackSuffix.slice(fallbackSeparatorIndex + 1),
         ),
       ).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("buckets project favicon expiry after content hashing", () =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-expiry-",
+      });
+      yield* fileSystem.writeFileString(path.join(root, "favicon.svg"), "<svg />");
+
+      const bucketMs = 30 * 60 * 1000;
+      yield* TestClock.setTime(bucketMs - 1);
+      const crossingCrypto = Crypto.make({
+        randomBytes: (size) => new Uint8Array(size),
+        digest: (algorithm, data) =>
+          TestClock.adjust("2 millis").pipe(Effect.andThen(crypto.digest(algorithm, data))),
+      });
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(Effect.provideService(Crypto.Crypto, crossingCrypto));
+
+      expect(result.expiresAt).toBe(3 * bucketMs);
     }).pipe(Effect.provide(testLayer)),
   );
 

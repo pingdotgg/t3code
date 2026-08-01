@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
@@ -91,12 +92,140 @@ export function canSettle(
 }
 
 /**
- * Settled resolution over the server-backed settled lifecycle. The explicit
- * user override (thread.settle / thread.unsettle commands, projected into
- * settledOverride + settledAt) wins in both directions; without one, a
- * thread auto-settles on a merged/closed PR or inactivity past the window.
- * The server un-settles on real activity (user message, session start,
- * approval/user-input request), so an override never goes stale silently.
+ * The snooze lifecycle fields plus everything needed to detect a raised
+ * hand. Snooze is an overlay on the active state: a snoozed thread stays
+ * "active" in the data model and is only suppressed from the inbox until
+ * its wake time passes or the thread demands attention.
+ */
+export type ThreadSnoozeShell = Pick<
+  OrchestrationThreadShell,
+  | "snoozedUntil"
+  | "snoozedAt"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "session"
+  | "latestTurn"
+>;
+
+/**
+ * A snoozed thread "raises its hand" when something happens that outranks
+ * the user's snooze: the agent is blocked on them (approval / user input),
+ * the session failed, or a run completed after the snooze was set — the
+ * v1 taste of event-based snooze ("something happened" wakes early).
+ * Raising a hand never clears the server-side snooze fields; it only stops
+ * the thread from CLASSIFYING as snoozed, exactly like blocked work and
+ * effectiveSettled.
+ */
+export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
+  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
+  // Only a FRESH failure raises the hand: a thread snoozed while already
+  // failed stays snoozed — that snooze was the user saying "I saw it, not
+  // now". session.updatedAt stamps the status edge, so an error newer than
+  // the snooze is new information.
+  if (
+    shell.session?.status === "error" &&
+    (shell.snoozedAt == null || Date.parse(shell.session.updatedAt) > Date.parse(shell.snoozedAt))
+  ) {
+    return true;
+  }
+  if (
+    shell.snoozedAt != null &&
+    shell.latestTurn?.state === "completed" &&
+    shell.latestTurn.completedAt != null &&
+    Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A thread may be snoozed unless the agent is blocked on the user: hiding a
+ * pending approval or user-input request defeats the request, and a queued
+ * turn start (a message no turn has adopted yet) is invisible pending work
+ * the same way it is for settle. A running session IS snoozable — snooze
+ * only affects visibility, never the agent. Client-side twin of the server
+ * invariants so the UI can reject before a round trip.
+ */
+export function canSnooze(
+  shell: Pick<
+    OrchestrationThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "latestUserMessageAt" | "latestTurn" | "session"
+  >,
+  options: { readonly now: string },
+): boolean {
+  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
+  if (hasQueuedTurnStart(shell, options)) return false;
+  return true;
+}
+
+/**
+ * Snoozed resolution: hidden from the inbox while the wake time is in the
+ * future and the thread has not raised its hand. Timer wakes are derived —
+ * no server event fires when snoozedUntil passes; the stale fields simply
+ * stop classifying as snoozed (and feed the woke indicator until the user
+ * visits or re-engages).
+ */
+export function effectiveSnoozed(
+  shell: ThreadSnoozeShell,
+  options: { readonly now: string },
+): boolean {
+  if (shell.snoozedUntil == null) return false;
+  const wakeAtMs = Date.parse(shell.snoozedUntil);
+  // Malformed data never hides a thread.
+  if (Number.isNaN(wakeAtMs)) return false;
+  if (wakeAtMs <= Date.parse(options.now)) return false;
+  return !threadRaisedHandWhileSnoozed(shell);
+}
+
+/**
+ * When a previously-snoozed thread woke, or null if it never snoozed / is
+ * still snoozed. Used for the "Woke" indicator: the thread reappears in its
+ * original sort position (the inbox sort is deliberately static), so the
+ * wake signal has to carry the weight. Compare against the client's
+ * lastVisitedAt — visiting clears the indicator like it clears unread.
+ *
+ * Timer wakes report the wake time itself; raised-hand wakes report the
+ * triggering timestamp so a visit BEFORE the early wake doesn't suppress
+ * the indicator.
+ */
+export function threadWokeAt(
+  shell: ThreadSnoozeShell,
+  options: { readonly now: string },
+): string | null {
+  if (shell.snoozedUntil == null) return null;
+  const wakeAtMs = Date.parse(shell.snoozedUntil);
+  if (Number.isNaN(wakeAtMs)) return null;
+  // An early hand-raise wake stays authoritative even after the scheduled
+  // wake time passes: reporting snoozedUntil then would resurface a Woke
+  // indicator the user already cleared by visiting (snoozedUntil is newer
+  // than that visit's lastVisitedAt).
+  if (threadRaisedHandWhileSnoozed(shell)) {
+    if (
+      shell.snoozedAt != null &&
+      shell.latestTurn?.state === "completed" &&
+      shell.latestTurn.completedAt != null &&
+      Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
+    ) {
+      return shell.latestTurn.completedAt;
+    }
+    return shell.session?.updatedAt ?? shell.snoozedAt ?? null;
+  }
+  // No raised hand: woke iff the timer elapsed (still-snoozed → null).
+  return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
+}
+
+/**
+ * Settled resolution over the server-backed settled lifecycle. Activity
+ * blockers (pending approval/user-input, a live session, an unadjudicated
+ * queued turn) are checked first and hold a thread active regardless of any
+ * override. Past the blockers, the explicit user override (thread.settle /
+ * thread.unsettle commands, projected into settledOverride + settledAt)
+ * wins in both directions; without one, a thread auto-settles on a
+ * merged/closed PR immediately or on inactivity past the window — except
+ * that an open PR blocks the inactivity path entirely. The server
+ * un-settles on real activity (user message, session start, approval/
+ * user-input request), so an override never goes stale silently.
  */
 export function effectiveSettled(
   shell: OrchestrationThreadShell,
@@ -132,6 +261,11 @@ export function effectiveSettled(
   if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
     return true;
   }
+  // An open PR is unfinished business regardless of how long the thread has
+  // been quiet: review can take days, and hiding the thread would bury the
+  // work waiting on it. Only merge/close (above) or an explicit user settle
+  // resolves it.
+  if (options.changeRequestState === "open") return false;
   if (options.autoSettleAfterDays === null) return false;
 
   const lastActivityAt = threadLastActivityAt(shell);
@@ -144,4 +278,101 @@ export function effectiveSettled(
   return (
     Date.parse(lastActivityAt) < Date.parse(options.now) - options.autoSettleAfterDays * DAY_MS
   );
+}
+
+const HOUR_MS = 60 * 60 * 1_000;
+const EVENING_HOUR = 18;
+const MORNING_HOUR = 9;
+
+export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+
+export interface SnoozePreset {
+  readonly id: SnoozePresetId;
+  readonly label: string;
+  /** Menu-row time column. Complements the label instead of repeating it:
+      "Tomorrow" pairs with "9:00 AM", not "tomorrow 9:00 AM". */
+  readonly whenLabel: string;
+  /** ISO wake time. */
+  readonly snoozedUntil: string;
+}
+
+function snoozeTimeOfDayLabel(date: Date): string {
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function snoozeAtHour(base: Date, hour: number): Date {
+  const next = new Date(base);
+  next.setHours(hour, 0, 0, 0);
+  return next;
+}
+
+// Calendar-day advance instead of adding DAY_MS: fixed millisecond offsets
+// land on the wrong local day across DST transitions (a spring-forward day
+// is 23 hours, so 23:30 + 24h skips the whole next day).
+function addSnoozeDays(base: Date, days: number): Date {
+  const next = new Date(base);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+/**
+ * Shared "snooze until" choices for every client. "This evening" only
+ * appears while it is meaningfully before evening; after that the list
+ * starts at "Tomorrow".
+ */
+export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+  const inAnHour = new Date(now.getTime() + HOUR_MS);
+  const presets: SnoozePreset[] = [
+    {
+      id: "hour",
+      label: "In 1 hour",
+      whenLabel: snoozeTimeOfDayLabel(inAnHour),
+      snoozedUntil: inAnHour.toISOString(),
+    },
+  ];
+
+  const evening = snoozeAtHour(now, EVENING_HOUR);
+  if (evening.getTime() - now.getTime() > HOUR_MS) {
+    presets.push({
+      id: "evening",
+      label: "This evening",
+      whenLabel: snoozeTimeOfDayLabel(evening),
+      snoozedUntil: evening.toISOString(),
+    });
+  }
+
+  const tomorrow = snoozeAtHour(addSnoozeDays(now, 1), MORNING_HOUR);
+  presets.push({
+    id: "tomorrow",
+    label: "Tomorrow",
+    whenLabel: snoozeTimeOfDayLabel(tomorrow),
+    snoozedUntil: tomorrow.toISOString(),
+  });
+
+  const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
+  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), MORNING_HOUR);
+  presets.push({
+    id: "next-week",
+    label: "Next week",
+    whenLabel: `${nextWeek.toLocaleDateString(undefined, { weekday: "short" })} ${snoozeTimeOfDayLabel(nextWeek)}`,
+    snoozedUntil: nextWeek.toISOString(),
+  });
+
+  return presets;
+}
+
+/**
+ * Compact "wakes in" label for snoozed rows: "2h", "18h", "3d". Minutes
+ * round up so a snooze never reads "0m" while still hidden. Shared by web
+ * and mobile so the same wake time never reads differently per client.
+ */
+export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
+  const wakeMs = Date.parse(snoozedUntil);
+  const nowMs = Date.parse(options.now);
+  if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
+  const remainingMs = wakeMs - nowMs;
+  if (remainingMs <= 0) return "now";
+  if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
+  if (remainingMs < DAY_MS) return `${Math.ceil(remainingMs / HOUR_MS)}h`;
+  return `${Math.ceil(remainingMs / DAY_MS)}d`;
 }

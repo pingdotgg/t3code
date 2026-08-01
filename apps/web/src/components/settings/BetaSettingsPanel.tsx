@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useSidebarV2Enabled,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const AUTO_SETTLE_MIN_DAYS = 1;
 const AUTO_SETTLE_MAX_DAYS = 90;
@@ -51,7 +56,7 @@ function AutoSettleDaysInput({
 }
 
 export function BetaSettingsPanel() {
-  const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
+  const sidebarV2Enabled = useSidebarV2Enabled();
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
@@ -61,12 +66,19 @@ export function BetaSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="Beta features">
         <SettingsRow
-          title="Sidebar v2"
+          {...searchableSetting("sidebar-v2")}
           description="One flat thread list in creation order. Active work renders as rich cards; settled threads collapse to compact rows. Settling requires an up-to-date server — on older servers threads simply stay active. Switch back any time."
           control={
             <Switch
               checked={sidebarV2Enabled}
-              onCheckedChange={(checked) => updateSettings({ sidebarV2Enabled: Boolean(checked) })}
+              // Touching the switch pins the choice, so a nightly build that
+              // defaults v2 on does not flip it back after the user opts out.
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  sidebarV2Enabled: Boolean(checked),
+                  sidebarV2ConfiguredByUser: true,
+                })
+              }
               aria-label="Enable the sidebar v2 beta"
             />
           }
@@ -74,7 +86,7 @@ export function BetaSettingsPanel() {
         {sidebarV2Enabled ? (
           <>
             <SettingsRow
-              title="Auto-settle inactive threads"
+              title={searchableSetting("auto-settle-inactive-threads").title}
               description="Threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
               control={
                 <Switch

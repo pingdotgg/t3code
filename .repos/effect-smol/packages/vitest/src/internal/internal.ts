@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit"
 import { flow, pipe } from "effect/Function"
 import * as Layer from "effect/Layer"
 import { isObject } from "effect/Predicate"
+import * as Rec from "effect/Record"
 import * as Schedule from "effect/Schedule"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
@@ -61,11 +62,11 @@ const makeItProxy = <Methods extends object>(
       return Reflect.apply(target, thisArg, argArray)
     },
     get(target, property, receiver) {
-      if (property in overrides) {
+      if (Object.hasOwn(overrides, property)) {
         return Reflect.get(overrides, property)
       }
-      const value = Reflect.get(target, property, receiver)
-      return typeof value === "function" ? value.bind(target) : value
+      // do not bind: binding would strip vitest's static helpers (e.g. `describe.each`)
+      return Reflect.get(target, property, receiver)
     }
   })
 
@@ -148,10 +149,7 @@ const makeTester = <R>(
     const arbs = fc.record(
       Object.keys(arbitraries).reduce(function(result, key) {
         const arb: any = arbitraries[key]
-        if (Schema.isSchema(arb)) {
-          result[key] = Schema.toArbitrary(arb)
-        }
-        result[key] = arb
+        Rec.assignProperty(result, key, Schema.isSchema(arb) ? Schema.toArbitrary(arb) : arb)
         return result
       }, {} as Record<string, fc.Arbitrary<any>>)
     )
@@ -197,7 +195,7 @@ export const prop: Vitest.Vitest.Methods["prop"] = (name, arbitraries, self, tim
       if (Schema.isSchema(arb)) {
         throw new Error("Schemas are not supported yet")
       }
-      result[key] = arb
+      Rec.assignProperty(result, key, arb)
       return result
     }, {} as Record<string, fc.Arbitrary<any>>)
   )

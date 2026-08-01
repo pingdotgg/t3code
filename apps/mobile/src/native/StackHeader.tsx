@@ -142,6 +142,13 @@ function stabilizeOptionFunctions(
 
 export function NativeStackScreenOptions(props: {
   readonly options?: AppNativeStackNavigationOptions;
+  /**
+   * Causes dynamic native header factories to be reapplied when their closed-over
+   * menu content changes. Factory functions are intentionally stabilized, so
+   * their source alone cannot capture a menu that was initially empty while
+   * asynchronous data was loading.
+   */
+  readonly optionsVersion?: unknown;
   readonly listeners?: Record<string, (event: never) => void>;
   readonly name?: string;
 }) {
@@ -163,7 +170,7 @@ export function NativeStackScreenOptions(props: {
     if (!navigation || !stableOptions) {
       return;
     }
-    const signature = optionsSignature(stableOptions);
+    const signature = optionsSignature([stableOptions, props.optionsVersion]);
     // Avoid re-entering navigation state when semantically equal options are
     // reapplied every layout (common when callers pass unstable object literals).
     if (lastAppliedOptionsSignatureRef.current === signature) {
@@ -171,7 +178,7 @@ export function NativeStackScreenOptions(props: {
     }
     lastAppliedOptionsSignatureRef.current = signature;
     navigation.setOptions(stableOptions);
-  }, [navigation, stableOptions]);
+  }, [navigation, props.optionsVersion, stableOptions]);
 
   useEffect(() => {
     if (!navigation || !props.listeners) {
@@ -333,7 +340,8 @@ function convertToolbarChild(child: ReactNode): NativeStackHeaderItem | null {
     return {
       type: "spacing",
       spacing: typeof child.props.width === "number" ? child.props.width : 8,
-    };
+      flexible: Boolean(child.props.flexible),
+    } as NativeStackHeaderItem;
   }
 
   return null;
@@ -344,6 +352,11 @@ function collectToolbarItems(children: ReactNode): NativeStackHeaderItem[] {
   Children.forEach(children, (child) => {
     const item = convertToolbarChild(child);
     if (item) {
+      if (item.type === "spacing") {
+        // Native inserts spacing items at `index`, treating a missing index
+        // as 0 — which would move the spacer in front of earlier siblings.
+        (item as { index?: number }).index = items.length;
+      }
       items.push(item);
     }
   });
@@ -357,7 +370,8 @@ function NativeHeaderToolbarRoot(props: {
   const navigation = useNativeStackNavigation();
   const items = useMemo(() => collectToolbarItems(props.children), [props.children]);
 
-  useEffect(() => {
+  // Swap toolbar owners before paint so split and compact headers cannot clear each other.
+  useLayoutEffect(() => {
     if (!navigation) {
       return;
     }
@@ -433,6 +447,7 @@ function NativeHeaderToolbarLabel(_props: { readonly children?: ReactNode }) {
 NativeHeaderToolbarLabel.displayName = "NativeHeaderToolbarLabel";
 
 function NativeHeaderToolbarSpacer(_props: {
+  readonly flexible?: boolean;
   readonly sharesBackground?: boolean;
   readonly width?: number;
 }) {

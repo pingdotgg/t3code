@@ -1,40 +1,9 @@
 /**
- * Provide Effect sockets backed by the browser `WebSocket` implementation.
+ * Browser WebSocket layers for Effect sockets.
  *
- * This module is the browser entry point for Effect's socket abstraction. Use
- * {@link layerWebSocket} when a client-side Effect program needs a complete
- * `Socket.Socket` connected to a WebSocket URL. Use
- * {@link layerWebSocketConstructor} when lower-level socket code only needs the
- * browser-backed constructor service.
- *
- * ## Mental model
- *
- * `layerWebSocket` delegates socket behavior to Effect's WebSocket support and
- * supplies `globalThis.WebSocket` as the constructor. Incoming browser messages
- * are normalized to strings or binary `Uint8Array` values. Browser `Blob`
- * messages are read into bytes before they reach the socket consumer.
- *
- * Outgoing data should already be serialized to a string or bytes. To close the
- * underlying browser socket with a specific code and reason, send a
- * `CloseEvent` value so the close metadata is preserved.
- *
- * ## Common tasks
- *
- * - Connect RPC transports, browser tests, or realtime UI features to a
- *   WebSocket URL with {@link layerWebSocket}.
- * - Provide only the browser constructor service with
- *   {@link layerWebSocketConstructor} when another socket layer builds the
- *   connection.
- * - Customize `closeCodeIsError` for protocols that treat specific close codes
- *   as normal completion instead of socket failure.
- *
- * ## Gotchas
- *
- * Browser WebSocket rules still apply. URL schemes, subprotocol negotiation,
- * mixed-content blocking, cookies, authentication, server origin checks, and
- * extension negotiation are controlled by the browser and server rather than by
- * Effect. Close events become socket errors unless `closeCodeIsError`
- * classifies the close code as clean.
+ * `layerWebSocket` creates a `Socket.Socket` connected to a WebSocket URL using
+ * the browser `WebSocket` constructor. `layerWebSocketConstructor` provides
+ * only the browser-backed constructor service for lower-level socket code.
  *
  * @since 4.0.0
  */
@@ -46,8 +15,8 @@ import * as Socket from "effect/unstable/socket/Socket"
  *
  * **When to use**
  *
- * Use when browser or client-side code needs a complete `Socket` layer
- * connected to a WebSocket URL.
+ * Use when you need browser code to satisfy the platform socket service from a
+ * URL without wiring the browser constructor service separately.
  *
  * **Details**
  *

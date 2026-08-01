@@ -134,7 +134,7 @@ const SERVER_CONFIG: ServerConfigType = {
 };
 
 const RpcRequest = Schema.TaggedStruct("Request", {
-  id: Schema.String,
+  id: Schema.Union([Schema.String, Schema.Number]),
   payload: Schema.Unknown,
   tag: Schema.String,
 });
@@ -284,6 +284,40 @@ describe("RpcSessionFactory", () => {
       );
 
       expect(sockets[0]?.readyState).toBe(TestWebSocket.CLOSED);
+    }),
+  );
+
+  it.effect("reaches ready when a newer server sends unknown config members", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+
+      const shortcut = {
+        key: "p",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      };
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        keybindings: [
+          { command: "someFuture.toggle", shortcut },
+          { command: "terminal.toggle", shortcut },
+        ],
+        issues: [{ kind: "keybindings.future-issue", message: "From a newer server" }],
+        availableEditors: ["some-future-editor", "zed"],
+      });
+      yield* Fiber.join(readyFiber);
+
+      const config = yield* session.initialConfig;
+      expect(config.keybindings).toEqual([{ command: "terminal.toggle", shortcut }]);
+      expect(config.issues).toEqual([]);
+      expect(config.availableEditors).toEqual(["zed"]);
     }),
   );
 

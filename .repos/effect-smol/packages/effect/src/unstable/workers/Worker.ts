@@ -1,40 +1,12 @@
 /**
  * Client-side worker primitives shared by browser, Node, and Bun adapters.
  *
- * This module defines the platform-neutral {@link Worker} client and the
- * {@link WorkerPlatform} service that creates one for a numeric worker id.
- * Platform packages provide the runtime-specific spawn, setup, listen, and
- * cleanup logic; higher-level code uses the resulting worker to send messages
- * and run an Effect handler for messages coming back from the worker.
- *
- * **Mental model**
- *
- * A {@link Spawner} locates or creates the native worker value, and
- * {@link makePlatform} turns platform hooks into a scoped {@link Worker}.
- * Sending and receiving are separate: `send` queues outbound values until
- * `run` observes the platform ready signal, then `run` keeps the message loop
- * alive and owns the cleanup scope for the active port.
- *
- * **Common tasks**
- *
- * Use {@link layerSpawner} to provide the runtime's worker lookup function,
- * {@link makePlatform} to build browser, Node, Bun, or custom adapters, and
- * {@link makeUnsafe} when an adapter already exposes the low-level platform
- * protocol. Worker-backed RPC clients use these primitives to communicate with
- * dedicated workers, shared workers, `MessagePort`s, worker threads, or child
- * processes.
- *
- * **Gotchas**
- *
- * - Messages sent before readiness are buffered, so the returned worker must be
- *   run or those messages never leave the client
- * - Values pass through `postMessage`; callers must use values supported by
- *   the selected runtime's structured clone implementation
- * - Transfer lists can avoid copies, but ownership moves to the worker and
- *   invalid transfer lists fail with `WorkerSendError`
- * - Incoming messages are handled concurrently in the run fiber set; add a
- *   queue, semaphore, or protocol acknowledgement when ordering or back
- *   pressure matters
+ * This module defines the platform-neutral `Worker` client, the `WorkerPlatform`
+ * service that creates workers by numeric id, and the `Spawner` service used to
+ * find platform-specific worker instances. `makePlatform` wraps platform setup
+ * and listen hooks into a `WorkerPlatform`, buffers outgoing messages until the
+ * worker is ready, runs incoming messages with Effect handlers, and ties worker
+ * cleanup to scope lifetime.
  *
  * @since 4.0.0
  */
@@ -133,7 +105,7 @@ export interface Spawner {
 /**
  * Service tag for the worker `SpawnerFn`.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const Spawner: Context.Service<

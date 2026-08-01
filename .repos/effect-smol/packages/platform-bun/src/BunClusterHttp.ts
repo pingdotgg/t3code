@@ -1,36 +1,10 @@
 /**
- * The `BunClusterHttp` module provides the Bun HTTP and WebSocket transports
- * for Effect Cluster runners. It wires `HttpRunner` to the Bun HTTP server,
- * supplies Fetch and Bun WebSocket client protocols, and builds a complete
- * sharding layer with serialization, runner health, runner storage, and message
- * storage.
+ * Bun HTTP and WebSocket layers for Effect Cluster runners.
  *
- * **Common tasks**
- *
- * - Run a Bun process as a cluster runner over HTTP or WebSocket with
- *   {@link layer}
- * - Connect a client-only process to an existing HTTP cluster without starting
- *   a runner server
- * - Use SQL-backed storage for durable multi-process clusters, `local` storage
- *   for short-lived development, or `byo` storage when the deployment owns the
- *   persistence boundary
- * - Check runner health with protocol pings or Kubernetes pod readiness through
- *   {@link layerK8sHttpClient}
- *
- * **Gotchas**
- *
- * - `runnerAddress` is the host and port advertised to other runners; set
- *   `runnerListenAddress` when the local bind address differs from the
- *   externally reachable address
- * - The HTTP and WebSocket transports serve runner RPCs at the default
- *   `HttpRunner` route, so proxies and load balancers must preserve the path
- *   and allow WebSocket upgrades when `transport` is `"websocket"`
- * - `clientOnly` does not start an HTTP server or receive shard assignments
- * - SQL storage is the default; `local` storage is in-memory/noop and `byo`
- *   requires the surrounding application to provide both runner and message
- *   storage services
- * - Ping health checks use the selected transport and serialization, so route,
- *   port, proxy, or codec mismatches can make a runner appear unhealthy
+ * `layerHttpServer` provides the Bun HTTP server used by cluster runners. The
+ * main `layer` builds a sharding layer for HTTP or WebSocket transport,
+ * choosing serialization, runner health checks, runner storage, message
+ * storage, and optional client-only mode from the supplied options.
  *
  * @since 4.0.0
  */
@@ -55,6 +29,7 @@ import type { ServeError } from "effect/unstable/http/HttpServerError"
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
 import type { SqlClient } from "effect/unstable/sql/SqlClient"
 import { layerK8sHttpClient } from "./BunClusterSocket.ts"
+import * as BunCrypto from "./BunCrypto.ts"
 import * as BunFileSystem from "./BunFileSystem.ts"
 import * as BunHttpServer from "./BunHttpServer.ts"
 import type { BunServices } from "./BunServices.ts"
@@ -183,7 +158,7 @@ export const layer = <
         ? MessageStorage.layerNoop
         : options?.storage === "byo"
         ? Layer.empty
-        : Layer.orDie(SqlMessageStorage.layer)
+        : Layer.orDie(SqlMessageStorage.layer).pipe(Layer.provide(BunCrypto.layer))
     ),
     Layer.provide(
       options?.storage === "local"

@@ -180,7 +180,7 @@ const removeEntryUnsafe = <A extends Request.Any>(
   if (entry.uninterruptible) return
   const batchMap = pendingBatches.get(resolver)
   if (!batchMap) return
-  const key = resolver.batchKey(entry.request as any)
+  const key = resolver.batchKey(entry)
   const batch = batchMap.get(key)
   if (!batch) return
 
