@@ -299,19 +299,29 @@ export class KittyClipboardManager {
     if (status === "DATA" && packet.payload !== undefined) {
       const encodedMimeType = packet.fields.get("mime");
       const responseMimeType = encodedMimeType ? decodeBase64Text(encodedMimeType) : null;
+      // A discarded read keeps draining DATA packets until DONE; report each
+      // failure once and keep the timeout armed so the drain cannot end in a
+      // second, misleading timeout error.
       if (
         responseMimeType !== null &&
         baseMimeType(responseMimeType) !== baseMimeType(this.#read.mimeType)
       ) {
+        if (!this.#read.discarded) {
+          this.#reportError("Terminal returned an unexpected clipboard data type.");
+        }
         this.#read.discarded = true;
         this.#read.chunks.length = 0;
-        this.#reportError("Terminal returned an unexpected clipboard data type.");
+        this.#startTimeout();
         return;
       }
       const chunk = decodeBase64(packet.payload);
       if (!chunk) {
+        if (!this.#read.discarded) {
+          this.#reportError("Clipboard image data is not valid base64.");
+        }
         this.#read.discarded = true;
-        this.#reportError("Clipboard image data is not valid base64.");
+        this.#read.chunks.length = 0;
+        this.#startTimeout();
         return;
       }
       const nextByteLength = this.#read.byteLength + chunk.byteLength;
@@ -321,6 +331,7 @@ export class KittyClipboardManager {
         }
         this.#read.discarded = true;
         this.#read.chunks.length = 0;
+        this.#startTimeout();
         return;
       }
       if (!this.#read.discarded) {
