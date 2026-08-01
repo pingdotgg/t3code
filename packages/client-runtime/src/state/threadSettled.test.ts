@@ -12,6 +12,7 @@ import {
   effectiveSettled,
   hasQueuedTurnStart,
   resolveChangeRequestSettlementState,
+  threadChangeRequestStateKey,
   threadLastActivityAt,
   type ChangeRequestStateLike,
 } from "./threadSettled.ts";
@@ -93,6 +94,18 @@ describe("threadLastActivityAt", () => {
 });
 
 describe("resolveChangeRequestSettlementState", () => {
+  it("keys cached PR state by branch", () => {
+    const thread = {
+      environmentId: "environment-1",
+      id: ThreadId.make("thread-1"),
+      branch: "feature/previous",
+    };
+
+    expect(threadChangeRequestStateKey(thread)).not.toBe(
+      threadChangeRequestStateKey({ ...thread, branch: "feature/current" }),
+    );
+  });
+
   it("distinguishes an unresolved lookup from a confirmed missing or matching PR", () => {
     expect(
       resolveChangeRequestSettlementState({
@@ -115,6 +128,13 @@ describe("resolveChangeRequestSettlementState", () => {
         gitStatusError: null,
       }),
     ).toBe("none");
+    expect(
+      resolveChangeRequestSettlementState({
+        threadBranch: "feature/unknown-pr",
+        gitStatus: { refName: "feature/other-branch", pr: null, remoteLoaded: true },
+        gitStatusError: null,
+      }),
+    ).toBe("unknown");
     expect(
       resolveChangeRequestSettlementState({
         threadBranch: "feature/unknown-pr",

@@ -5,6 +5,7 @@ import {
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
   snoozeWakeLabel,
+  threadChangeRequestStateKey,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   ChangeRequestSettlementState,
@@ -16,7 +17,7 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
-export { snoozeWakeLabel };
+export { snoozeWakeLabel, threadChangeRequestStateKey };
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
@@ -28,6 +29,8 @@ export { snoozeWakeLabel };
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+export const THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT = 16;
+export const THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_WINDOW_MS = 30_000;
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -178,6 +181,94 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
   );
 }
 
+export interface ThreadListV2ChangeRequestLookupTarget {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly hasUnknownState: boolean;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+}
+
+export function threadChangeRequestLookupTargetKey(
+  environmentId: EnvironmentId,
+  cwd: string,
+): string {
+  return JSON.stringify([environmentId, cwd]);
+}
+
+export function buildThreadListV2ChangeRequestLookupTargets(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly environmentId: EnvironmentId | null;
+  readonly projectRefs?: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+  }> | null;
+  readonly projectCwdByKey: ReadonlyMap<string, string>;
+  readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestSettlementState>;
+}): ReadonlyArray<ThreadListV2ChangeRequestLookupTarget> {
+  const projectKeys = input.projectRefs
+    ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
+    : null;
+  const groups = new Map<
+    string,
+    {
+      environmentId: EnvironmentId;
+      cwd: string;
+      hasUnknownState: boolean;
+      threads: EnvironmentThreadShell[];
+    }
+  >();
+
+  for (const thread of sortThreadsForListV2(input.threads)) {
+    if (thread.archivedAt !== null || thread.branch === null) continue;
+    if (!input.settlementEnvironmentIds.has(thread.environmentId)) continue;
+    if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
+    const projectKey = `${thread.environmentId}:${thread.projectId}`;
+    if (projectKeys !== null && !projectKeys.has(projectKey)) continue;
+    const state = input.changeRequestStateByKey.get(threadChangeRequestStateKey(thread));
+    if (state !== undefined && state !== "unknown" && state !== "open") continue;
+    const cwd = thread.worktreePath ?? input.projectCwdByKey.get(projectKey) ?? null;
+    if (cwd === null) continue;
+    const key = threadChangeRequestLookupTargetKey(thread.environmentId, cwd);
+    const current = groups.get(key);
+    if (current) {
+      current.threads.push(thread);
+      current.hasUnknownState ||= state === undefined || state === "unknown";
+    } else {
+      groups.set(key, {
+        environmentId: thread.environmentId,
+        cwd,
+        hasUnknownState: state === undefined || state === "unknown",
+        threads: [thread],
+      });
+    }
+  }
+
+  return [...groups]
+    .map(([key, group]) => ({ key, ...group }))
+    .sort(
+      (left, right) =>
+        Number(right.hasUnknownState) - Number(left.hasUnknownState) ||
+        left.key.localeCompare(right.key),
+    );
+}
+
+export function selectThreadListV2ChangeRequestLookupWindow(input: {
+  readonly targets: ReadonlyArray<ThreadListV2ChangeRequestLookupTarget>;
+  readonly windowIndex: number;
+  readonly limit?: number;
+}): ReadonlyArray<ThreadListV2ChangeRequestLookupTarget> {
+  const limit = input.limit ?? THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT;
+  const count = Math.min(limit, input.targets.length);
+  if (count === 0) return [];
+  const start = (input.windowIndex * limit) % input.targets.length;
+  return Array.from(
+    { length: count },
+    (_, index) => input.targets[(start + index) % input.targets.length]!,
+  );
+}
+
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
@@ -319,7 +410,7 @@ export function buildThreadListV2Items(input: {
   }> | null;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
-  /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
+  /** PR state reported by branch-aware lookup reporters. */
   readonly changeRequestStateByKey?: ReadonlyMap<string, ChangeRequestSettlementState>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
@@ -382,7 +473,7 @@ export function buildThreadListV2Items(input: {
     const changeRequestState =
       thread.branch === null
         ? "none"
-        : (input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? "unknown");
+        : (input.changeRequestStateByKey?.get(threadChangeRequestStateKey(thread)) ?? "unknown");
     // Visibility parity with web: a snoozed thread leaves the list until it
     // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
     // work). Snooze outranks settled classification, same as web.

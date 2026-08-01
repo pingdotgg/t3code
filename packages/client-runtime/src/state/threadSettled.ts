@@ -4,6 +4,12 @@ import type { OrchestrationThreadShell, VcsStatusResult } from "@t3tools/contrac
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 export type ChangeRequestSettlementState = ChangeRequestStateLike | "none" | "unknown";
 
+export function threadChangeRequestStateKey(
+  thread: Pick<OrchestrationThreadShell, "id" | "branch"> & { readonly environmentId: string },
+): string {
+  return `${thread.environmentId}:${thread.id}:${thread.branch ?? ""}`;
+}
+
 export function resolveChangeRequestSettlementState(input: {
   readonly threadBranch: string | null;
   readonly gitStatus:
@@ -14,7 +20,7 @@ export function resolveChangeRequestSettlementState(input: {
   if (input.threadBranch === null) return "none" as const;
   if (input.gitStatusError !== null) return "unknown" as const;
   if (input.gitStatus === null) return "unknown" as const;
-  if (input.gitStatus.refName !== input.threadBranch) return "none" as const;
+  if (input.gitStatus.refName !== input.threadBranch) return "unknown" as const;
   if (!input.gitStatus.remoteLoaded) return "unknown" as const;
   return input.gitStatus.pr?.state ?? ("none" as const);
 }

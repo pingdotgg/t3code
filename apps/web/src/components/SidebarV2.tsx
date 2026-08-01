@@ -6,6 +6,7 @@ import {
   effectiveSettled,
   effectiveSnoozed,
   resolveChangeRequestSettlementState,
+  threadChangeRequestStateKey,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -552,9 +553,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     gitStatus: gitStatus.data,
     gitStatusError: gitStatus.error,
   });
+  const changeRequestStateCacheKey = threadChangeRequestStateKey(thread);
   useEffect(() => {
-    onChangeRequestState(threadKey, changeRequestState);
-  }, [changeRequestState, onChangeRequestState, threadKey]);
+    onChangeRequestState(changeRequestStateCacheKey, changeRequestState);
+  }, [changeRequestState, changeRequestStateCacheKey, onChangeRequestState]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1589,9 +1591,10 @@ export default function SidebarV2() {
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
       const supportsSnooze =
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState =
-        thread.branch === null ? "none" : (changeRequestStateByKey.get(threadKey) ?? "unknown");
+        thread.branch === null
+          ? "none"
+          : (changeRequestStateByKey.get(threadChangeRequestStateKey(thread)) ?? "unknown");
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).

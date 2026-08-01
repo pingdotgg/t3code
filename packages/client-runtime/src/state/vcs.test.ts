@@ -113,6 +113,20 @@ function cacheWithRefs(
   });
 }
 
+it("allows clients to dispose VCS status streams immediately", () => {
+  const runtime = Atom.runtime(Layer.empty) as unknown as Parameters<
+    typeof createVcsEnvironmentAtoms
+  >[0];
+  const atoms = createVcsEnvironmentAtoms(runtime, { statusIdleTtlMs: 0 });
+
+  expect(
+    atoms.status({
+      environmentId: TARGET.environmentId,
+      input: { cwd: "/repo" },
+    }).idleTTL,
+  ).toBe(0);
+});
+
 describe("cached VCS refs", () => {
   it("invalidates all ref streams in the mutated environment", () => {
     const registry = AtomRegistry.make();

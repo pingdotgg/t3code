@@ -460,7 +460,13 @@ export const make = Effect.gen(function* () {
         publish: true,
         expectedRefGeneration,
       });
-    }).pipe(Effect.tapError(() => markCachedRemoteUnavailable(cwd, expectedRefGeneration)));
+    }).pipe(
+      Effect.tapCause((cause) =>
+        cause.reasons.some((reason) => !Cause.isInterruptReason(reason))
+          ? markCachedRemoteUnavailable(cwd, expectedRefGeneration)
+          : Effect.void,
+      ),
+    );
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
@@ -468,17 +474,25 @@ export const make = Effect.gen(function* () {
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     const expectedRefGeneration = (yield* getCachedStatus(cwd))?.refGeneration ?? 0;
-    // invalidateStatus (not the two partial invalidations) so an explicit
-    // refresh also bypasses GitManager's slow PR-lookup cache.
-    yield* workflow.invalidateStatus(cwd);
-    const [local, remote] = yield* Effect.all(
-      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-      { concurrency: "unbounded" },
-    ).pipe(Effect.tapError(() => markCachedRemoteUnavailable(cwd, expectedRefGeneration)));
-    return yield* updateCachedStatus(cwd, local, remote, {
-      publish: true,
-      expectedRefGeneration,
-    });
+    return yield* Effect.gen(function* () {
+      // invalidateStatus (not the two partial invalidations) so an explicit
+      // refresh also bypasses GitManager's slow PR-lookup cache.
+      yield* workflow.invalidateStatus(cwd);
+      const [local, remote] = yield* Effect.all(
+        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
+        { concurrency: "unbounded" },
+      );
+      return yield* updateCachedStatus(cwd, local, remote, {
+        publish: true,
+        expectedRefGeneration,
+      });
+    }).pipe(
+      Effect.tapCause((cause) =>
+        cause.reasons.some((reason) => !Cause.isInterruptReason(reason))
+          ? markCachedRemoteUnavailable(cwd, expectedRefGeneration)
+          : Effect.void,
+      ),
+    );
   });
 
   const makeRemoteRefreshLoop = (

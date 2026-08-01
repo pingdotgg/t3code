@@ -69,6 +69,7 @@ import {
   ThreadListShowMoreRow,
 } from "./thread-list-items";
 import {
+  ThreadListV2ChangeRequestLookupPool,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -405,20 +406,20 @@ function ThreadNavigationSidebarPane(
 
   // Thread List v2 (beta) support — same model as the compact Home list
   // (HomeScreen.tsx): flat creation-order card block + settled recency tail.
-  // PR states stream in per-row; merged/closed PRs auto-settle their thread
-  // on the next partition.
+  // PR states stream independently of virtualized rows so every branch-backed
+  // thread can reach a definitive state before the partition settles it.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
     ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: ChangeRequestSettlementState) => {
+    (stateKey: string, state: ChangeRequestSettlementState) => {
       setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? "unknown") === state) return current;
+        if ((current.get(stateKey) ?? "unknown") === state) return current;
         const next = new Map(current);
         if (state === "unknown") {
-          next.delete(threadKey);
+          next.delete(stateKey);
         } else {
-          next.set(threadKey, state);
+          next.set(stateKey, state);
         }
         return next;
       });
@@ -1156,6 +1157,17 @@ function ThreadNavigationSidebarPane(
           }}
         />
         <View className="flex-1">
+          {threadListV2Enabled ? (
+            <ThreadListV2ChangeRequestLookupPool
+              threads={threads}
+              environmentId={options.selectedEnvironmentId}
+              projectRefs={selectedProjectScope?.projectRefs ?? null}
+              projectCwdByKey={projectCwdByKey}
+              settlementEnvironmentIds={settlementEnvironmentIds}
+              changeRequestStateByKey={changeRequestStateByKey}
+              onChangeRequestState={handleChangeRequestState}
+            />
+          ) : null}
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
@@ -1216,6 +1228,17 @@ function ThreadNavigationSidebarPane(
         borderRightWidth: StyleSheet.hairlineWidth,
       }}
     >
+      {threadListV2Enabled ? (
+        <ThreadListV2ChangeRequestLookupPool
+          threads={threads}
+          environmentId={options.selectedEnvironmentId}
+          projectRefs={selectedProjectScope?.projectRefs ?? null}
+          projectCwdByKey={projectCwdByKey}
+          settlementEnvironmentIds={settlementEnvironmentIds}
+          changeRequestStateByKey={changeRequestStateByKey}
+          onChangeRequestState={handleChangeRequestState}
+        />
+      ) : null}
       <View className="flex-1" style={{ paddingBottom: insets.bottom }}>
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <GestureDetector gesture={sidebarScrollGesture}>

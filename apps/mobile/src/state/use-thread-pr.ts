@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveChangeRequestSettlementState } from "@t3tools/client-runtime/state/thread-settled";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { useEnvironmentQuery } from "./query";
 import { presentThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
@@ -11,22 +12,25 @@ export {
   type ThreadPrPresentation,
 } from "./thread-pr-presentation";
 
+export function useThreadVcsStatus(environmentId: EnvironmentId, cwd: string | null) {
+  return useEnvironmentQuery(
+    cwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd },
+        }),
+  );
+}
+
 /**
  * Live PR status for a thread's branch. Subscriptions are deduplicated per
- * (environmentId, cwd) by the atom family, so many rows on the same worktree
- * or project root share one stream — and virtualization means only visible
- * rows subscribe at all.
+ * (environmentId, cwd) by the atom family, so visible rows and Thread List
+ * v2's bounded off-screen lookup pool share one stream per worktree/project.
  */
 export function useThreadPrLookup(thread: EnvironmentThreadShell, projectCwd: string | null) {
   const cwd = thread.worktreePath ?? projectCwd;
-  const gitStatus = useEnvironmentQuery(
-    thread.branch !== null && cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: thread.environmentId,
-          input: { cwd },
-        })
-      : null,
-  );
+  const gitStatus = useThreadVcsStatus(thread.environmentId, thread.branch === null ? null : cwd);
 
   const status = gitStatus.data;
   const changeRequestState = resolveChangeRequestSettlementState({
