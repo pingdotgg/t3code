@@ -252,7 +252,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("keeps the cached snapshot unchanged when a refresh branch fails", () => {
+  it.effect("reloads remote status after a full refresh fails", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -317,17 +317,22 @@ describe("VcsStatusBroadcaster", () => {
       state.failRemoteStatus = true;
 
       const refreshExit = yield* broadcaster.refreshStatus("/repo").pipe(Effect.exit);
+      state.failRemoteStatus = false;
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       assert.isTrue(Exit.isFailure(refreshExit));
-      assert.deepStrictEqual(cached, baseStatus);
+      assert.deepStrictEqual(cached, {
+        ...baseLocalStatus,
+        ...state.currentRemoteStatus,
+      });
+      assert.equal(state.remoteStatusCalls, 3);
     }).pipe(Effect.provide(testLayer));
   });
 
-  it.effect("refreshes only the cached local snapshot when requested", () => {
+  it.effect("reloads remote status after the local branch changes", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
+      currentRemoteStatus: remoteStatusWithPr,
       localStatusCalls: 0,
       remoteStatusCalls: 0,
       localInvalidationCalls: 0,
@@ -343,18 +348,22 @@ describe("VcsStatusBroadcaster", () => {
         refName: "feature/local-only-refresh",
         hasWorkingTreeChanges: true,
       };
+      state.currentRemoteStatus = baseRemoteStatus;
 
       const refreshedLocal = yield* broadcaster.refreshLocalStatus("/repo");
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
 
-      assert.deepStrictEqual(initial, baseStatus);
+      assert.deepStrictEqual(initial, {
+        ...baseLocalStatus,
+        ...remoteStatusWithPr,
+      });
       assert.deepStrictEqual(refreshedLocal, state.currentLocalStatus);
       assert.deepStrictEqual(cached, {
         ...state.currentLocalStatus,
         ...baseRemoteStatus,
       });
       assert.equal(state.localStatusCalls, 2);
-      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 2);
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));

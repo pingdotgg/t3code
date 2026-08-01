@@ -419,13 +419,15 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
     const cached = yield* getCachedStatus(cwd);
-    if (cached?.local && cached.remote) {
+    if (cached?.local && cached.remote && cached.remoteLoaded) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
     const [local, remote] = yield* Effect.all(
       [
         cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
-        cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
+        cached?.remote && cached.remoteLoaded
+          ? Effect.succeed(cached.remote.value)
+          : workflow.remoteStatus({ cwd }),
       ],
       { concurrency: "unbounded" },
     );
