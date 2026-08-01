@@ -6,8 +6,21 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { resolveThreadLifecycleSupport, selectSnoozeShelfBulkTargets } from "./SidebarV2.logic";
-import { DEFAULT_INTERACTION_MODE, type SidebarThreadSummary } from "../types";
+import {
+  formatWorkingDurationLabel,
+  latestTurnDiffStats,
+  resolveSidebarV2Status,
+  resolveSidebarV2StatusLabel,
+  resolveThreadLifecycleSupport,
+  resolveWorkingStartedAt,
+  selectSnoozeShelfBulkTargets,
+} from "./SidebarV2.logic";
+import {
+  DEFAULT_INTERACTION_MODE,
+  type SidebarThreadSummary,
+  type ThreadSession,
+  type TurnDiffSummary,
+} from "../types";
 
 const now = "2026-01-01T12:00:00.000Z";
 const capableEnvironmentId = EnvironmentId.make("environment-capable");
@@ -106,5 +119,194 @@ describe("selectSnoozeShelfBulkTargets", () => {
 
     expect(targets.wakeable).toEqual([queued]);
     expect(targets.reschedulable).toEqual([]);
+  });
+});
+
+function session(overrides: Partial<ThreadSession> = {}): ThreadSession {
+  return {
+    provider: "codex",
+    status: "ready",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    orchestrationStatus: "idle",
+    ...overrides,
+  } as ThreadSession;
+}
+
+describe("resolveSidebarV2Status", () => {
+  it("ranks approval above every other signal", () => {
+    expect(
+      resolveSidebarV2Status(
+        thread({
+          hasPendingApprovals: true,
+          hasPendingUserInput: true,
+          session: session({ status: "error" }),
+        }),
+      ),
+    ).toBe("approval");
+  });
+
+  it("ranks input above working", () => {
+    expect(
+      resolveSidebarV2Status(
+        thread({
+          hasPendingUserInput: true,
+          latestTurn: {
+            turnId: "turn-1",
+            state: "running",
+            requestedAt: "2026-01-01T00:00:00.000Z",
+            startedAt: "2026-01-01T00:00:01.000Z",
+            completedAt: null,
+            assistantMessageId: null,
+          } as SidebarThreadSummary["latestTurn"],
+          session: session({ orchestrationStatus: "running" }),
+        }),
+      ),
+    ).toBe("input");
+  });
+
+  it("reports a running turn and a connecting session as working", () => {
+    expect(
+      resolveSidebarV2Status(
+        thread({
+          latestTurn: {
+            turnId: "turn-1",
+            state: "running",
+            requestedAt: "2026-01-01T00:00:00.000Z",
+            startedAt: "2026-01-01T00:00:01.000Z",
+            completedAt: null,
+            assistantMessageId: null,
+          } as SidebarThreadSummary["latestTurn"],
+          session: session({ orchestrationStatus: "running" }),
+        }),
+      ),
+    ).toBe("working");
+    expect(resolveSidebarV2Status(thread({ session: session({ status: "connecting" }) }))).toBe(
+      "working",
+    );
+  });
+
+  it("reports an errored session as failed and everything else as ready", () => {
+    expect(resolveSidebarV2Status(thread({ session: session({ status: "error" }) }))).toBe(
+      "failed",
+    );
+    expect(resolveSidebarV2Status(thread())).toBe("ready");
+  });
+});
+
+describe("resolveSidebarV2StatusLabel", () => {
+  it("labels a ready thread only while its completion is unseen", () => {
+    expect(resolveSidebarV2StatusLabel({ status: "ready", unseenCompletion: false })).toBeNull();
+    expect(resolveSidebarV2StatusLabel({ status: "ready", unseenCompletion: true })?.label).toBe(
+      "Done",
+    );
+  });
+
+  it("shows the elapsed counter only for working threads", () => {
+    expect(
+      resolveSidebarV2StatusLabel({ status: "working", unseenCompletion: false })?.showElapsed,
+    ).toBe(true);
+    expect(
+      resolveSidebarV2StatusLabel({ status: "approval", unseenCompletion: false })?.showElapsed,
+    ).toBe(false);
+  });
+});
+
+describe("resolveWorkingStartedAt", () => {
+  const startedAt = "2026-01-01T00:00:05.000Z";
+
+  it("prefers the running turn's start, then its request time", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: {
+          startedAt,
+          requestedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: null,
+        } as NonNullable<SidebarThreadSummary["latestTurn"]>,
+        session: session(),
+      }),
+    ).toBe(startedAt);
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: {
+          startedAt: null,
+          requestedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: null,
+        } as NonNullable<SidebarThreadSummary["latestTurn"]>,
+        session: session(),
+      }),
+    ).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("falls through malformed timestamps instead of only absent ones", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: {
+          startedAt: "not-a-date",
+          requestedAt: "also-not-a-date",
+          completedAt: null,
+        } as NonNullable<SidebarThreadSummary["latestTurn"]>,
+        session: session({ updatedAt: startedAt }),
+      }),
+    ).toBe(startedAt);
+  });
+
+  it("falls back to the session for a completed turn", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: {
+          startedAt: "2026-01-01T00:00:00.000Z",
+          requestedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: "2026-01-01T00:00:09.000Z",
+        } as NonNullable<SidebarThreadSummary["latestTurn"]>,
+        session: session({ updatedAt: startedAt }),
+      }),
+    ).toBe(startedAt);
+  });
+});
+
+describe("formatWorkingDurationLabel", () => {
+  it("formats seconds, minutes and hours", () => {
+    expect(formatWorkingDurationLabel(4_200)).toBe("4s");
+    expect(formatWorkingDurationLabel(4 * 60_000)).toBe("4m");
+    expect(formatWorkingDurationLabel(125 * 60_000)).toBe("2h 5m");
+  });
+
+  it("clamps negative and non-finite elapsed values", () => {
+    expect(formatWorkingDurationLabel(-1_000)).toBe("0s");
+    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
+  });
+});
+
+describe("latestTurnDiffStats", () => {
+  function summary(files: TurnDiffSummary["files"]): TurnDiffSummary {
+    return {
+      turnId: "turn-1",
+      completedAt: "2026-01-01T00:00:00.000Z",
+      files,
+    } as TurnDiffSummary;
+  }
+
+  it("sums the turn's file changes", () => {
+    expect(
+      latestTurnDiffStats(
+        summary([
+          { path: "a.ts", additions: 3, deletions: 1 },
+          { path: "b.ts", additions: 2, deletions: 4 },
+        ]),
+      ),
+    ).toEqual({ insertions: 5, deletions: 5 });
+  });
+
+  it("prefers turn-scoped files over the full checkpoint", () => {
+    const scoped = summary([{ path: "a.ts", additions: 10, deletions: 10 }]);
+    expect(
+      latestTurnDiffStats({ ...scoped, turnFiles: [{ path: "a.ts", additions: 1, deletions: 2 }] }),
+    ).toEqual({ insertions: 1, deletions: 2 });
+  });
+
+  it("renders nothing when no line counts are carried", () => {
+    expect(latestTurnDiffStats(summary([{ path: "a.ts" }]))).toBeNull();
+    expect(latestTurnDiffStats(undefined)).toBeNull();
   });
 });

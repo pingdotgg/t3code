@@ -1,9 +1,11 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  buildProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
+  scopedProviderInstanceKey,
 } from "./providerInstances";
 
 function provider(input: {
@@ -128,5 +130,49 @@ describe("resolveProviderDriverKindForInstanceSelection", () => {
         ProviderInstanceId.make("removed_instance"),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("buildProviderEntriesByEnvironment", () => {
+  it("keeps colliding instance ids from different environments apart", () => {
+    const byKey = buildProviderEntriesByEnvironment([
+      {
+        environmentId: "local",
+        providers: [
+          provider({
+            provider: ProviderDriverKind.make("codex"),
+            instanceId: "shared",
+            displayName: "Local Codex",
+          }),
+        ],
+      },
+      {
+        environmentId: "remote",
+        providers: [
+          provider({
+            provider: ProviderDriverKind.make("claude"),
+            instanceId: "shared",
+            displayName: "Remote Claude",
+          }),
+        ],
+      },
+    ]);
+
+    expect(byKey.get(scopedProviderInstanceKey("local", "shared"))?.displayName).toBe(
+      "Local Codex",
+    );
+    expect(byKey.get(scopedProviderInstanceKey("remote", "shared"))?.driverKind).toBe("claude");
+  });
+
+  it("reports an unknown environment or instance as absent", () => {
+    const byKey = buildProviderEntriesByEnvironment([
+      {
+        environmentId: "local",
+        providers: [provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" })],
+      },
+    ]);
+
+    expect(byKey.get(scopedProviderInstanceKey("remote", "codex"))).toBeUndefined();
+    expect(byKey.get(scopedProviderInstanceKey("local", "missing"))).toBeUndefined();
   });
 });

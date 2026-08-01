@@ -2500,6 +2500,25 @@ export function selectSidebarThreadSummaryByRef(
     : undefined;
 }
 
+/**
+ * Latest checkpoint summary for a thread, straight out of the store's own map
+ * so the returned object keeps a stable identity across unrelated updates.
+ * Only hydrated threads carry checkpoints, so sidebar rows for threads the
+ * user has not opened resolve to `undefined`.
+ */
+export function selectLatestTurnDiffSummaryByRef(
+  state: AppState,
+  ref: ScopedThreadRef | null | undefined,
+): TurnDiffSummary | undefined {
+  if (!ref) return undefined;
+  const environmentState = selectEnvironmentState(state, ref.environmentId);
+  const turnIds = environmentState.turnDiffIdsByThreadId[ref.threadId];
+  const latestTurnId = turnIds?.at(-1);
+  return latestTurnId === undefined
+    ? undefined
+    : environmentState.turnDiffSummaryByThreadId[ref.threadId]?.[latestTurnId];
+}
+
 export function selectThreadIdsByProjectRef(
   state: AppState,
   ref: ScopedProjectRef | null | undefined,

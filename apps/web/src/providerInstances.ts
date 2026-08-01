@@ -153,6 +153,31 @@ export function deriveProviderInstanceEntries(
 }
 
 /**
+ * Provider instances keyed by `environmentId:instanceId`. Instance IDs are only
+ * unique within an environment, so a remote thread would otherwise resolve
+ * against the primary environment's identically-named instance and render the
+ * wrong provider name and icon.
+ */
+export function buildProviderEntriesByEnvironment(
+  providersByEnvironment: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly providers: ReadonlyArray<ServerProvider>;
+  }>,
+): ReadonlyMap<string, ProviderInstanceEntry> {
+  const byKey = new Map<string, ProviderInstanceEntry>();
+  for (const { environmentId, providers } of providersByEnvironment) {
+    for (const entry of deriveProviderInstanceEntries(providers)) {
+      byKey.set(scopedProviderInstanceKey(environmentId, entry.instanceId), entry);
+    }
+  }
+  return byKey;
+}
+
+export function scopedProviderInstanceKey(environmentId: string, instanceId: string): string {
+  return `${environmentId}:${instanceId}`;
+}
+
+/**
  * Sort instance entries so the default instance of each driver kind appears
  * before any custom instances of the same kind. Within a kind, custom
  * instances keep their settings-author order (which is how the server
