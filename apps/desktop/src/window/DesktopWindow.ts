@@ -514,6 +514,19 @@ export const make = Effect.gen(function* () {
       }
     });
 
+    // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the
+    // close-terminal shortcut auto-repeats faster than the renderer can re-arm
+    // its guard after the last terminal closes, and a single leaked repeat
+    // closes the whole window (and on Windows/Linux, the app). Only deliberate,
+    // non-repeated presses may act.
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || !input.isAutoRepeat) return;
+      const modifier = environment.platform === "darwin" ? input.meta : input.control;
+      if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
+        event.preventDefault();
+      }
+    });
+
     window.on("page-title-updated", (event) => {
       event.preventDefault();
       window.setTitle(environment.displayName);
