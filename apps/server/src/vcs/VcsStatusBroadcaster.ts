@@ -246,13 +246,17 @@ export const make = Effect.gen(function* () {
     function* (
       cwd: string,
       remote: VcsStatusRemoteResult | null,
-      options?: { publish?: boolean; expectedRefGeneration?: number },
+      options?: {
+        publish?: boolean;
+        expectedRefGeneration?: number;
+        remoteLoaded?: boolean;
+      },
     ) {
       const nextRemote = {
         fingerprint: fingerprintStatusPart(remote),
         value: remote,
       } satisfies CachedValue<VcsStatusRemoteResult | null>;
-      const remoteLoaded = remote?.prLookupFailed !== true;
+      const remoteLoaded = options?.remoteLoaded ?? remote?.prLookupFailed !== true;
       const update = yield* Ref.modify(
         cacheRef,
         (
@@ -302,43 +306,25 @@ export const make = Effect.gen(function* () {
   );
 
   const markCachedRemoteUnavailable = Effect.fn("VcsStatusBroadcaster.markCachedRemoteUnavailable")(
-    function* (cwd: string, expectedRefGeneration?: number) {
-      const transition = yield* Ref.modify(
-        cacheRef,
-        (
-          cache,
-        ): readonly [
-          { readonly changed: boolean; readonly remote: VcsStatusRemoteResult | null },
-          Map<string, CachedVcsStatus>,
-        ] => {
-          const previous = cache.get(cwd) ?? EMPTY_CACHED_VCS_STATUS;
-          if (
-            expectedRefGeneration !== undefined &&
-            previous.refGeneration !== expectedRefGeneration
-          ) {
-            return [{ changed: false, remote: null }, cache];
-          }
-          if (!previous.remoteLoaded) {
-            return [{ changed: false, remote: null }, cache];
-          }
-          const nextCache = new Map(cache);
-          nextCache.set(cwd, { ...previous, remoteLoaded: false });
-          return [{ changed: true, remote: previous.remote?.value ?? null }, nextCache];
-        },
-      );
-
-      if (transition.changed) {
-        yield* PubSub.publish(changesPubSub, {
-          cwd,
-          event: {
-            _tag: "remoteUpdated",
-            remote: transition.remote,
-            remoteLoaded: false,
-          },
-        });
-      }
+    function* (cwd: string, expectedRefGeneration: number) {
+      const cached = yield* getCachedStatus(cwd);
+      if (cached?.remoteLoaded !== true) return;
+      yield* updateCachedRemoteStatus(cwd, cached.remote?.value ?? null, {
+        publish: true,
+        expectedRefGeneration,
+        remoteLoaded: false,
+      });
     },
   );
+
+  const markRemoteUnavailableForCause = (
+    cwd: string,
+    expectedRefGeneration: number,
+    cause: Cause.Cause<unknown>,
+  ) =>
+    cause.reasons.some((reason) => !Cause.isInterruptReason(reason))
+      ? markCachedRemoteUnavailable(cwd, expectedRefGeneration)
+      : Effect.void;
 
   const updateCachedStatus = Effect.fn("VcsStatusBroadcaster.updateCachedStatus")(function* (
     cwd: string,
@@ -365,7 +351,10 @@ export const make = Effect.gen(function* () {
           {
             shouldPublish: false,
             status: previous.local
-              ? mergeGitStatusParts(previous.local.value, previous.remote?.value ?? null)
+              ? mergeGitStatusParts(
+                  previous.local.value,
+                  previous.remoteLoaded ? (previous.remote?.value ?? null) : null,
+                )
               : mergeGitStatusParts(local, remote),
           },
           cache,
@@ -473,11 +462,7 @@ export const make = Effect.gen(function* () {
         expectedRefGeneration,
       });
     }).pipe(
-      Effect.tapCause((cause) =>
-        cause.reasons.some((reason) => !Cause.isInterruptReason(reason))
-          ? markCachedRemoteUnavailable(cwd, expectedRefGeneration)
-          : Effect.void,
-      ),
+      Effect.tapCause((cause) => markRemoteUnavailableForCause(cwd, expectedRefGeneration, cause)),
     );
   });
 
@@ -499,11 +484,7 @@ export const make = Effect.gen(function* () {
         expectedRefGeneration,
       });
     }).pipe(
-      Effect.tapCause((cause) =>
-        cause.reasons.some((reason) => !Cause.isInterruptReason(reason))
-          ? markCachedRemoteUnavailable(cwd, expectedRefGeneration)
-          : Effect.void,
-      ),
+      Effect.tapCause((cause) => markRemoteUnavailableForCause(cwd, expectedRefGeneration, cause)),
     );
   });
 

@@ -7,7 +7,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
-import type { ChangeRequestSettlementState } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  type ChangeRequestSettlementState,
+  updateChangeRequestSettlementState,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -413,16 +416,9 @@ function ThreadNavigationSidebarPane(
   >(() => new Map());
   const handleChangeRequestState = useCallback(
     (stateKey: string, state: ChangeRequestSettlementState) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(stateKey) ?? "unknown") === state) return current;
-        const next = new Map(current);
-        if (state === "unknown") {
-          next.delete(stateKey);
-        } else {
-          next.set(stateKey, state);
-        }
-        return next;
-      });
+      setChangeRequestStateByKey((current) =>
+        updateChangeRequestSettlementState(current, stateKey, state),
+      );
     },
     [],
   );
@@ -1129,6 +1125,17 @@ function ThreadNavigationSidebarPane(
             : "No threads yet"}
     </Text>
   );
+  const changeRequestLookupPool = threadListV2Enabled ? (
+    <ThreadListV2ChangeRequestLookupPool
+      threads={threads}
+      environmentId={options.selectedEnvironmentId}
+      projectRefs={selectedProjectScope?.projectRefs ?? null}
+      projectCwdByKey={projectCwdByKey}
+      settlementEnvironmentIds={settlementEnvironmentIds}
+      changeRequestStateByKey={changeRequestStateByKey}
+      onChangeRequestState={handleChangeRequestState}
+    />
+  ) : null;
 
   if (props.nativeChrome) {
     return (
@@ -1157,17 +1164,7 @@ function ThreadNavigationSidebarPane(
           }}
         />
         <View className="flex-1">
-          {threadListV2Enabled ? (
-            <ThreadListV2ChangeRequestLookupPool
-              threads={threads}
-              environmentId={options.selectedEnvironmentId}
-              projectRefs={selectedProjectScope?.projectRefs ?? null}
-              projectCwdByKey={projectCwdByKey}
-              settlementEnvironmentIds={settlementEnvironmentIds}
-              changeRequestStateByKey={changeRequestStateByKey}
-              onChangeRequestState={handleChangeRequestState}
-            />
-          ) : null}
+          {changeRequestLookupPool}
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
@@ -1228,17 +1225,7 @@ function ThreadNavigationSidebarPane(
         borderRightWidth: StyleSheet.hairlineWidth,
       }}
     >
-      {threadListV2Enabled ? (
-        <ThreadListV2ChangeRequestLookupPool
-          threads={threads}
-          environmentId={options.selectedEnvironmentId}
-          projectRefs={selectedProjectScope?.projectRefs ?? null}
-          projectCwdByKey={projectCwdByKey}
-          settlementEnvironmentIds={settlementEnvironmentIds}
-          changeRequestStateByKey={changeRequestStateByKey}
-          onChangeRequestState={handleChangeRequestState}
-        />
-      ) : null}
+      {changeRequestLookupPool}
       <View className="flex-1" style={{ paddingBottom: insets.bottom }}>
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <GestureDetector gesture={sidebarScrollGesture}>

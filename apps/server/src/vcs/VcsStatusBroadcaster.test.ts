@@ -67,7 +67,7 @@ const baseStatus: VcsStatusResult = {
   ...baseRemoteStatus,
 };
 
-function makeTestLayer(state: {
+interface VcsTestState {
   currentLocalStatus: VcsStatusLocalResult;
   currentRemoteStatus: VcsStatusRemoteResult | null;
   localStatusCalls: number;
@@ -81,7 +81,21 @@ function makeTestLayer(state: {
   blockRemoteStatusAtCall?: number;
   remoteStatusStarted?: Deferred.Deferred<void> | null;
   remoteStatusRelease?: Deferred.Deferred<void> | null;
-}) {
+}
+
+function makeTestState(overrides: Partial<VcsTestState> = {}): VcsTestState {
+  return {
+    currentLocalStatus: baseLocalStatus,
+    currentRemoteStatus: baseRemoteStatus,
+    localStatusCalls: 0,
+    remoteStatusCalls: 0,
+    localInvalidationCalls: 0,
+    remoteInvalidationCalls: 0,
+    ...overrides,
+  };
+}
+
+function makeTestLayer(state: VcsTestState) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(makeBackgroundPolicyLayer(() => true)),
@@ -679,15 +693,7 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect("marks cached remote status unresolved across refresh failures", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      failRemoteStatus: false,
-    };
+    const state = makeTestState({ failRemoteStatus: false });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -744,15 +750,7 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect("marks cached remote status unresolved across refresh defects", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      dieRemoteStatus: false,
-    };
+    const state = makeTestState({ dieRemoteStatus: false });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -791,14 +789,9 @@ describe("VcsStatusBroadcaster", () => {
       ...baseRemoteStatus,
       prLookupFailed: true,
     } satisfies VcsStatusRemoteResult;
-    const state = {
-      currentLocalStatus: baseLocalStatus,
+    const state = makeTestState({
       currentRemoteStatus: lookupFallback as VcsStatusRemoteResult,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-    };
+    });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -834,15 +827,7 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect("marks cached remote status unresolved when an explicit refresh fails", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      failRemoteStatus: false,
-    };
+    const state = makeTestState({ failRemoteStatus: false });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -871,15 +856,7 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect("marks cached remote status unresolved when full refresh invalidation defects", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      dieInvalidateStatus: false,
-    };
+    const state = makeTestState({ dieInvalidateStatus: false });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -908,17 +885,12 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect("returns cached status when a full refresh is dropped after a ref change", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
+    const state = makeTestState({
+      currentRemoteStatus: remoteStatusWithPr,
       blockRemoteStatusAtCall: 2,
-      remoteStatusStarted: null as Deferred.Deferred<void> | null,
-      remoteStatusRelease: null as Deferred.Deferred<void> | null,
-    };
+      remoteStatusStarted: null,
+      remoteStatusRelease: null,
+    });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -954,7 +926,11 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.succeed(state.remoteStatusRelease, undefined);
       assert.deepStrictEqual(yield* Deferred.await(refreshResult), {
         ...state.currentLocalStatus,
-        ...baseRemoteStatus,
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        aheadOfDefaultCount: 0,
+        pr: null,
       } satisfies VcsStatusResult);
 
       const latestSnapshot = yield* Stream.runHead(
@@ -968,7 +944,7 @@ describe("VcsStatusBroadcaster", () => {
         assert.deepStrictEqual(latestSnapshot.value, {
           _tag: "snapshot",
           local: state.currentLocalStatus,
-          remote: baseRemoteStatus,
+          remote: remoteStatusWithPr,
           remoteLoaded: false,
         } satisfies VcsStatusStreamEvent);
       }
@@ -978,18 +954,12 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect("ignores a stale refresh failure after the new ref has loaded", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
+    const state = makeTestState({
       failRemoteStatus: false,
       blockRemoteStatusAtCall: 2,
-      remoteStatusStarted: null as Deferred.Deferred<void> | null,
-      remoteStatusRelease: null as Deferred.Deferred<void> | null,
-    };
+      remoteStatusStarted: null,
+      remoteStatusRelease: null,
+    });
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;

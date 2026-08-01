@@ -4,6 +4,18 @@ import type { OrchestrationThreadShell, VcsStatusResult } from "@t3tools/contrac
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 export type ChangeRequestSettlementState = ChangeRequestStateLike | "none" | "unknown";
 
+export function updateChangeRequestSettlementState(
+  current: ReadonlyMap<string, ChangeRequestSettlementState>,
+  stateKey: string,
+  state: ChangeRequestSettlementState,
+) {
+  if ((current.get(stateKey) ?? "unknown") === state) return current;
+  const next = new Map(current);
+  if (state === "unknown") next.delete(stateKey);
+  else next.set(stateKey, state);
+  return next;
+}
+
 export function threadChangeRequestStateKey(
   thread: Pick<OrchestrationThreadShell, "id" | "branch"> & { readonly environmentId: string },
 ): string {

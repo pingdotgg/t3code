@@ -11,7 +11,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
-import type { ChangeRequestSettlementState } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  type ChangeRequestSettlementState,
+  updateChangeRequestSettlementState,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -487,16 +490,9 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const handleChangeRequestState = useCallback(
     (stateKey: string, state: ChangeRequestSettlementState) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(stateKey) ?? "unknown") === state) return current;
-        const next = new Map(current);
-        if (state === "unknown") {
-          next.delete(stateKey);
-        } else {
-          next.set(stateKey, state);
-        }
-        return next;
-      });
+      setChangeRequestStateByKey((current) =>
+        updateChangeRequestSettlementState(current, stateKey, state),
+      );
     },
     [],
   );

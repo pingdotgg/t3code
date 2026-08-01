@@ -8,6 +8,7 @@ import {
   resolveChangeRequestSettlementState,
   threadChangeRequestStateKey,
   threadWokeAt,
+  updateChangeRequestSettlementState,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
@@ -1362,16 +1363,9 @@ export default function SidebarV2() {
   >(() => new Map());
   const handleChangeRequestState = useCallback(
     (threadKey: string, state: ChangeRequestSettlementState) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? "unknown") === state) return current;
-        const next = new Map(current);
-        if (state === "unknown") {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, state);
-        }
-        return next;
-      });
+      setChangeRequestStateByKey((current) =>
+        updateChangeRequestSettlementState(current, threadKey, state),
+      );
     },
     [],
   );

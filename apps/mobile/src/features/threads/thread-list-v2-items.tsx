@@ -8,6 +8,7 @@ import {
   type ChangeRequestSettlementState,
   resolveChangeRequestSettlementState,
   resolveSnoozePresets,
+  threadChangeRequestStateKey,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -42,7 +43,6 @@ import {
   selectThreadListV2ChangeRequestLookupWindow,
   THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT,
   THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_WINDOW_MS,
-  threadChangeRequestStateKey,
   type ThreadListV2ChangeRequestLookupTarget,
   type ThreadListV2Status,
 } from "./threadListV2";

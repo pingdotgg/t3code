@@ -1,6 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  resolveSnoozePresets,
+  threadChangeRequestStateKey,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -24,7 +27,6 @@ import {
   resolveThreadListV2SwipeActions,
   selectThreadListV2ChangeRequestLookupWindow,
   sortThreadsForListV2,
-  threadChangeRequestStateKey,
 } from "./threadListV2";
 
 const environmentId = EnvironmentId.make("environment-1");

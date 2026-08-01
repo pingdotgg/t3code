@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import { useEnvironmentQuery } from "./query";
 import { presentThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
-import { vcsEnvironment } from "./vcs";
+import { threadVcsEnvironment } from "./vcs";
 
 export {
   presentThreadPr,
@@ -16,7 +16,7 @@ export function useThreadVcsStatus(environmentId: EnvironmentId, cwd: string | n
   return useEnvironmentQuery(
     cwd === null
       ? null
-      : vcsEnvironment.status({
+      : threadVcsEnvironment.status({
           environmentId,
           input: { cwd },
         }),

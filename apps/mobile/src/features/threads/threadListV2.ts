@@ -17,7 +17,7 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
-export { snoozeWakeLabel, threadChangeRequestStateKey };
+export { snoozeWakeLabel };
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
