@@ -29,7 +29,9 @@ export function MessageSurface({
   }
 
   const text =
-    message.role === "user" ? deriveDisplayedUserMessageState(message.text).copyText : message.text;
+    message.role === "user"
+      ? deriveDisplayedUserMessageState(message.text).visibleText
+      : message.text;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" data-message-surface>
