@@ -15,7 +15,7 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+import { chatImageMimeTypeForPath, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -215,6 +215,16 @@ export const make = Effect.gen(function* () {
           }
 
           const encoding = input.encoding ?? "utf8";
+          // Base64 reads exist for the image-attach flow only. Gate them to
+          // image extensions so the raised 10MB cap and the skipped binary
+          // guard below cannot become an arbitrary-binary read primitive.
+          if (encoding === "base64" && chatImageMimeTypeForPath(input.relativePath) === null) {
+            return yield* new WorkspaceBinaryFileError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: realTargetPath,
+            });
+          }
           const maxBytes =
             encoding === "base64"
               ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES

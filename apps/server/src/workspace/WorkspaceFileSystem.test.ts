@@ -193,6 +193,29 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("rejects base64 reads of non-image paths", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "database.sqlite");
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0x53, 0x51, 0x4c, 0]));
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "database.sqlite", encoding: "base64" })
+          .pipe(Effect.flip);
+        const resolvedPath = yield* fileSystem.realPath(absolutePath);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "database.sqlite",
+          resolvedPath,
+        });
+      }),
+    );
+
     it.effect("rejects oversized base64 reads without returning a partial payload", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

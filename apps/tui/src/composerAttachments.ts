@@ -2,6 +2,7 @@ import * as NodeBuffer from "node:buffer";
 import * as NodePath from "node:path";
 
 import {
+  CHAT_IMAGE_MIME_BY_EXTENSION,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
@@ -10,18 +11,8 @@ import { decodeImage, type RgbaImage } from "@t3tools/opentui-image";
 const PREVIEW_MAX_WIDTH = 240;
 const PREVIEW_MAX_HEIGHT = 160;
 
-const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
-  avif: "image/avif",
-  bmp: "image/bmp",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  png: "image/png",
-  svg: "image/svg+xml",
-  tif: "image/tiff",
-  tiff: "image/tiff",
-  webp: "image/webp",
-};
+// Shared with the server, which gates base64 workspace reads to this list.
+const IMAGE_MIME_BY_EXTENSION = CHAT_IMAGE_MIME_BY_EXTENSION;
 
 const IMAGE_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
   "image/avif": "avif",
