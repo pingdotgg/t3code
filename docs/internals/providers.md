@@ -44,10 +44,11 @@ orchestration, contract, or client change is required for the common case.
 Most drivers publish their skills once, as `ServerProvider.skills` on the status snapshot, and the
 composer's `$` menu renders that array with no round trip.
 
-Cursor cannot: its skills come from `.cursor/skills` and `.agents/skills` under both the user's home
-and the workspace, so the answer depends on the directory the agent will run in — a different project
-or a worktree thread has a different inventory. Such a driver implements the optional
-`skillInventory` capability on [`ProviderInstance`][adapterdriver]. The provider registry derives
+Cursor cannot: its skills come from `.cursor/skills`, `.agents/skills`, `.codex/skills`, and
+`.claude/skills` under both the user's home and the workspace, so the answer depends on the directory
+the agent will run in — a different project or a worktree thread has a different inventory. Such a
+driver implements the optional `skillInventory` capability on
+[`ProviderInstance`][adapterdriver]. The provider registry derives
 `skillInventoryMode: "project"` on every published snapshot, so the capability has one source of
 truth. Clients see that flag and call the `providers.skillInventory` RPC with a thread or project id
 instead of reading `skills`.

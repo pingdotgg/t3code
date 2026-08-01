@@ -42,54 +42,79 @@ const makeFixture = Effect.fn(function* () {
     home,
     workspace,
     environment: { HOME: home, USERPROFILE: home } satisfies NodeJS.ProcessEnv,
+    userClaude: path.join(home, ".claude", "skills"),
+    userCodex: path.join(home, ".codex", "skills"),
     userCursor: path.join(home, ".cursor", "skills"),
     userAgents: path.join(home, ".agents", "skills"),
+    projectClaude: path.join(workspace, ".claude", "skills"),
+    projectCodex: path.join(workspace, ".codex", "skills"),
     projectCursor: path.join(workspace, ".cursor", "skills"),
     projectAgents: path.join(workspace, ".agents", "skills"),
   };
 });
 
 it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
-  it.effect("merges all four roots with project and .cursor winning collisions", () =>
+  it.effect("merges all eight roots with project and .cursor winning collisions", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fixture = yield* makeFixture();
 
-      yield* writeSkill(
-        path.join(fixture.userAgents, "user-agents-only"),
-        frontmatter("user-agents-only", "From the user .agents root."),
-      );
-      yield* writeSkill(
-        path.join(fixture.userCursor, "user-cursor-only"),
-        frontmatter("user-cursor-only", "From the user .cursor root."),
-      );
+      for (const [root, name, description] of [
+        [fixture.userClaude, "user-claude-only", "From the user .claude root."],
+        [fixture.userCodex, "user-codex-only", "From the user .codex root."],
+        [fixture.userAgents, "user-agents-only", "From the user .agents root."],
+        [fixture.userCursor, "user-cursor-only", "From the user .cursor root."],
+        [fixture.projectClaude, "project-claude-only", "From the project .claude root."],
+        [fixture.projectCodex, "project-codex-only", "From the project .codex root."],
+      ] as const) {
+        yield* writeSkill(path.join(root, name), frontmatter(name, description));
+      }
+
       // Same name in every root: the highest-precedence one must win, and the
       // row must appear exactly once.
-      yield* writeSkill(
-        path.join(fixture.userAgents, "everywhere"),
-        frontmatter("everywhere", "user agents"),
-      );
-      yield* writeSkill(
-        path.join(fixture.userCursor, "everywhere"),
-        frontmatter("everywhere", "user cursor"),
-      );
-      yield* writeSkill(
-        path.join(fixture.projectAgents, "everywhere"),
-        frontmatter("everywhere", "project agents"),
-      );
-      yield* writeSkill(
-        path.join(fixture.projectCursor, "everywhere"),
-        frontmatter("everywhere", "project cursor"),
-      );
+      for (const [root, description] of [
+        [fixture.userClaude, "user claude"],
+        [fixture.userCodex, "user codex"],
+        [fixture.userAgents, "user agents"],
+        [fixture.userCursor, "user cursor"],
+        [fixture.projectClaude, "project claude"],
+        [fixture.projectCodex, "project codex"],
+        [fixture.projectAgents, "project agents"],
+        [fixture.projectCursor, "project cursor"],
+      ] as const) {
+        yield* writeSkill(path.join(root, "everywhere"), frontmatter("everywhere", description));
+      }
+
       // Same scope, different roots: `.cursor` beats `.agents`.
-      yield* writeSkill(
-        path.join(fixture.projectAgents, "same-scope"),
-        frontmatter("same-scope", "project agents"),
-      );
-      yield* writeSkill(
-        path.join(fixture.projectCursor, "same-scope"),
-        frontmatter("same-scope", "project cursor"),
-      );
+      for (const [root, description] of [
+        [fixture.projectClaude, "project claude"],
+        [fixture.projectCodex, "project codex"],
+        [fixture.projectAgents, "project agents"],
+        [fixture.projectCursor, "project cursor"],
+      ] as const) {
+        yield* writeSkill(path.join(root, "same-scope"), frontmatter("same-scope", description));
+      }
+
+      for (const [name, roots] of [
+        [
+          "compat-precedence",
+          [
+            [fixture.projectClaude, "project claude"],
+            [fixture.projectCodex, "project codex"],
+          ],
+        ],
+        [
+          "portable-precedence",
+          [
+            [fixture.projectCodex, "project codex"],
+            [fixture.projectAgents, "project agents"],
+          ],
+        ],
+      ] as const) {
+        for (const [root, description] of roots) {
+          yield* writeSkill(path.join(root, name), frontmatter(name, description));
+        }
+      }
       // Organizational category directory nested inside a root.
       yield* writeSkill(
         path.join(fixture.projectCursor, "shipping", "land-it"),
@@ -101,10 +126,16 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
       assert.deepEqual(
         skills.map((skill) => [skill.name, skill.scope, skill.description]),
         [
+          ["compat-precedence", "project", "project codex"],
           ["everywhere", "project", "project cursor"],
           ["land-it", "project", "Nested under a category directory."],
+          ["portable-precedence", "project", "project agents"],
+          ["project-claude-only", "project", "From the project .claude root."],
+          ["project-codex-only", "project", "From the project .codex root."],
           ["same-scope", "project", "project cursor"],
           ["user-agents-only", "user", "From the user .agents root."],
+          ["user-claude-only", "user", "From the user .claude root."],
+          ["user-codex-only", "user", "From the user .codex root."],
           ["user-cursor-only", "user", "From the user .cursor root."],
         ],
       );
@@ -224,6 +255,37 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
           // Frontmatter never opened, so `name: ignored` is body text and the
           // description comes from the heading.
           ["not-a-delimiter", "Real heading"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("ignores heading-like lines inside fenced code blocks", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "backtick-fence"),
+        ["```sh", "# install command", "```", "", "# Real heading"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "tilde-fence"),
+        ["~~~md", "# rendered as code", "~~~~", "", "## Visible heading"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "unclosed-fence"),
+        ["```sh", "# remains code through end of file"].join("\n"),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [
+          ["backtick-fence", "Real heading"],
+          ["tilde-fence", "Visible heading"],
+          ["unclosed-fence", undefined],
         ],
       );
     }),
@@ -350,6 +412,38 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
       const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
 
       assert.isEmpty(skills);
+    }),
+  );
+
+  it.effect("reads a symlinked SKILL.md only when its target stays inside the root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const inRootTarget = path.join(fixture.projectCursor, "in-root-target.md");
+      const outsideTarget = path.join(fixture.tempDir, "outside-target.md");
+      const inRootSkill = path.join(fixture.projectCursor, "in-root-link");
+      const escapedSkill = path.join(fixture.projectCursor, "escaped-file-link");
+
+      yield* fs.makeDirectory(inRootSkill, { recursive: true });
+      yield* fs.makeDirectory(escapedSkill, { recursive: true });
+      yield* fs.writeFileString(
+        inRootTarget,
+        frontmatter("in-root-link", "Read through an in-root file symlink."),
+      );
+      yield* fs.writeFileString(
+        outsideTarget,
+        frontmatter("escaped-file-link", "Must not escape the skill root."),
+      );
+      yield* fs.symlink(inRootTarget, path.join(inRootSkill, "SKILL.md"));
+      yield* fs.symlink(outsideTarget, path.join(escapedSkill, "SKILL.md"));
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [["in-root-link", "Read through an in-root file symlink."]],
+      );
     }),
   );
 

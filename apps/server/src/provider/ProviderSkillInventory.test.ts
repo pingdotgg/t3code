@@ -59,17 +59,24 @@ const makeInstance = (input: {
  */
 const projectionLayer = (input: {
   readonly projects?: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
-  readonly thread?: { readonly projectId: ProjectId; readonly worktreePath: string | null };
+  readonly threadContext?: {
+    readonly projectId: ProjectId;
+    readonly workspaceRoot: string | null;
+    readonly worktreePath: string | null;
+  };
 }) =>
   Layer.mock(ProjectionSnapshotQuery)({
     getProjectShellById: ((projectId: ProjectId) =>
       Effect.succeed(
         Option.fromNullishOr(input.projects?.find((project) => project.id === projectId)),
       )) as unknown as ProjectionSnapshotQuery["Service"]["getProjectShellById"],
-    getThreadShellById: (() =>
+    getThreadWorkspaceContextById: ((threadId: ThreadId) =>
       Effect.succeed(
-        Option.fromNullishOr(input.thread),
-      )) as unknown as ProjectionSnapshotQuery["Service"]["getThreadShellById"],
+        Option.map(Option.fromNullishOr(input.threadContext), (context) => ({
+          threadId,
+          ...context,
+        })),
+      )) as unknown as ProjectionSnapshotQuery["Service"]["getThreadWorkspaceContextById"],
   });
 
 const registryLayer = (instance: ProviderInstance | undefined) =>
@@ -120,14 +127,42 @@ it.effect("resolves thread scope to the thread's worktree when it has one", () =
         Layer.mergeAll(
           registryLayer(makeInstance({ inventory: () => [], observedCwds })),
           projectionLayer({
-            projects: [{ id: PROJECT_ID, workspaceRoot: "/repos/a" }],
-            thread: { projectId: PROJECT_ID, worktreePath: "/repos/a-worktrees/feature" },
+            threadContext: {
+              projectId: PROJECT_ID,
+              workspaceRoot: "/repos/a",
+              worktreePath: "/repos/a-worktrees/feature",
+            },
           }),
         ),
       ),
     );
 
     assert.deepEqual(observedCwds, ["/repos/a-worktrees/feature"]);
+  }),
+);
+
+it.effect("resolves an archived thread scope to the thread's worktree", () =>
+  Effect.gen(function* () {
+    const observedCwds: Array<string> = [];
+    yield* resolveProviderSkillInventory({
+      scope: { kind: "thread", threadId: THREAD_ID },
+      instanceId: INSTANCE_ID,
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          registryLayer(makeInstance({ inventory: () => [], observedCwds })),
+          projectionLayer({
+            threadContext: {
+              projectId: PROJECT_ID,
+              workspaceRoot: "/repos/a",
+              worktreePath: "/repos/a-worktrees/archived",
+            },
+          }),
+        ),
+      ),
+    );
+
+    assert.deepEqual(observedCwds, ["/repos/a-worktrees/archived"]);
   }),
 );
 
@@ -142,8 +177,11 @@ it.effect("resolves a worktree thread even when the project row is missing", () 
         Layer.mergeAll(
           registryLayer(makeInstance({ inventory: () => [], observedCwds })),
           projectionLayer({
-            projects: [],
-            thread: { projectId: PROJECT_ID, worktreePath: "/repos/a-worktrees/feature" },
+            threadContext: {
+              projectId: PROJECT_ID,
+              workspaceRoot: null,
+              worktreePath: "/repos/a-worktrees/feature",
+            },
           }),
         ),
       ),
@@ -164,8 +202,11 @@ it.effect("falls back to the project workspace root for a thread without a workt
         Layer.mergeAll(
           registryLayer(makeInstance({ inventory: () => [], observedCwds })),
           projectionLayer({
-            projects: [{ id: PROJECT_ID, workspaceRoot: "/repos/a" }],
-            thread: { projectId: PROJECT_ID, worktreePath: null },
+            threadContext: {
+              projectId: PROJECT_ID,
+              workspaceRoot: "/repos/a",
+              worktreePath: null,
+            },
           }),
         ),
       ),

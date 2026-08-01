@@ -59,34 +59,34 @@ const resolveInventoryCwd = Effect.fn("resolveInventoryCwd")(function* (
     return project.value.workspaceRoot;
   }
 
-  const thread = yield* projectionSnapshotQuery.getThreadShellById(scope.threadId).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ServerProviderSkillInventoryError({
-          reason: "Failed to read the thread read model.",
-          cause,
-        }),
-    ),
-  );
-  if (Option.isNone(thread)) {
+  const threadContext = yield* projectionSnapshotQuery
+    .getThreadWorkspaceContextById(scope.threadId)
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerProviderSkillInventoryError({
+            reason: "Failed to read the thread read model.",
+            cause,
+          }),
+      ),
+    );
+  if (Option.isNone(threadContext)) {
     return yield* new ServerProviderSkillInventoryError({
       reason: `Unknown thread '${scope.threadId}'.`,
     });
   }
 
-  const project = yield* projectionSnapshotQuery.getProjectShellById(thread.value.projectId).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ServerProviderSkillInventoryError({
-          reason: "Failed to read the project read model.",
-          cause,
-        }),
-    ),
-  );
-
   const cwd = resolveThreadWorkspaceCwd({
-    thread: thread.value,
-    projects: Option.isSome(project) ? [project.value] : [],
+    thread: threadContext.value,
+    projects:
+      threadContext.value.workspaceRoot === null
+        ? []
+        : [
+            {
+              id: threadContext.value.projectId,
+              workspaceRoot: threadContext.value.workspaceRoot,
+            },
+          ],
   });
   if (cwd === undefined) {
     return yield* new ServerProviderSkillInventoryError({

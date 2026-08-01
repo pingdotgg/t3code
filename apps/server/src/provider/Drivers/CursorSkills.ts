@@ -1,11 +1,12 @@
 /**
  * CursorSkills — filesystem discovery of Cursor Agent skills for the `$` picker.
  *
- * Cursor loads skills from a user-scope and a project-scope pair of roots, one
- * directory per skill with a `SKILL.md`. Unlike Codex, Cursor's ACP surface
- * exposes skills only as slash-command metadata mixed in with commands and
- * built-ins, without filesystem paths or a stable scope tag, so we scan the
- * same locations directly.
+ * Cursor loads skills from `.cursor`, `.agents`, `.codex`, and `.claude`
+ * roots at both user and project scope, one directory per skill with a
+ * `SKILL.md`. Unlike Codex, Cursor's ACP surface exposes skills only as
+ * slash-command metadata mixed in with commands and built-ins, without
+ * filesystem paths or a stable scope tag, so we scan the same locations
+ * directly.
  *
  * Discovery is per working directory: two projects in one environment have
  * different project roots, and a thread running in a worktree resolves to that
@@ -73,10 +74,48 @@ export const MAX_DIRECTORIES_PER_ROOT = 2_000;
 export const MAX_ENTRIES_PER_ROOT = 10_000;
 
 const FRONTMATTER_PATTERN = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-const HEADING_PATTERN = /^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/m;
+const FENCE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/;
+const HEADING_PATTERN = /^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/;
 const UTF8_BOM = "\ufeff";
 
 const utf8Decoder = new TextDecoder("utf-8");
+
+/** Find the first ATX heading that Markdown renders outside a fenced code block. */
+function firstBodyHeading(body: string): string | undefined {
+  let fence: { readonly marker: "`" | "~"; readonly length: number } | undefined;
+
+  for (const line of body.split(/\r?\n/)) {
+    const fenceMatch = FENCE_PATTERN.exec(line);
+    const fenceRun = fenceMatch?.[1];
+
+    if (fence) {
+      if (
+        fenceRun?.startsWith(fence.marker) === true &&
+        fenceRun.length >= fence.length &&
+        fenceMatch?.[2]?.trim().length === 0
+      ) {
+        fence = undefined;
+      }
+      continue;
+    }
+
+    if (fenceRun) {
+      const marker = fenceRun[0] as "`" | "~";
+      const info = fenceMatch?.[2] ?? "";
+      // Backticks in a backtick fence's info string make it plain text under
+      // CommonMark, while tilde fences have no corresponding restriction.
+      if (marker === "~" || !info.includes("`")) {
+        fence = { marker, length: fenceRun.length };
+        continue;
+      }
+    }
+
+    const headingText = HEADING_PATTERN.exec(line)?.[1]?.trim();
+    if (headingText) return headingText;
+  }
+
+  return undefined;
+}
 
 /**
  * Pull a display description out of `SKILL.md`, preferring frontmatter and
@@ -102,9 +141,7 @@ function parseSkillDescription(contents: string): string | undefined {
     }
   }
 
-  const heading = HEADING_PATTERN.exec(match ? body.slice(match[0].length) : body);
-  const headingText = heading?.[1]?.trim();
-  return headingText && headingText.length > 0 ? headingText : undefined;
+  return firstBodyHeading(match ? body.slice(match[0].length) : body);
 }
 
 /**
@@ -139,9 +176,10 @@ export function resolveCursorHomeDirectory(
 }
 
 /**
- * The four roots Cursor reads, lowest precedence first. Later roots overwrite
- * earlier ones by name, so `.cursor` beating `.agents` and project beating
- * user both fall out of the ordering.
+ * The eight roots Cursor reads, lowest precedence first: `.claude`, `.codex`,
+ * `.agents`, then `.cursor` within each scope. Later roots overwrite earlier
+ * ones by name, and all project roots follow all user roots so project scope
+ * wins.
  */
 function buildSkillRoots(input: {
   readonly path: Path.Path;
@@ -151,8 +189,20 @@ function buildSkillRoots(input: {
   const home = input.path.resolve(input.homeDirectory);
   const workspace = input.path.resolve(input.cwd);
   return [
+    { directory: input.path.join(home, ".claude", "skills"), boundary: home, scope: "user" },
+    { directory: input.path.join(home, ".codex", "skills"), boundary: home, scope: "user" },
     { directory: input.path.join(home, ".agents", "skills"), boundary: home, scope: "user" },
     { directory: input.path.join(home, ".cursor", "skills"), boundary: home, scope: "user" },
+    {
+      directory: input.path.join(workspace, ".claude", "skills"),
+      boundary: workspace,
+      scope: "project",
+    },
+    {
+      directory: input.path.join(workspace, ".codex", "skills"),
+      boundary: workspace,
+      scope: "project",
+    },
     {
       directory: input.path.join(workspace, ".agents", "skills"),
       boundary: workspace,
@@ -258,7 +308,13 @@ const collectSkillsInRoot = Effect.fn("collectSkillsInRoot")(function* (input: {
 
       const skillPath = path.join(directory, "SKILL.md");
       if (entries.includes("SKILL.md")) {
-        const contents = yield* readSkillMetadata(path.join(resolved, "SKILL.md"));
+        const resolvedSkillPath = yield* fileSystem
+          .realPath(path.join(resolved, "SKILL.md"))
+          .pipe(Effect.orElseSucceed(() => undefined));
+        const contents =
+          resolvedSkillPath !== undefined && isWithin(resolvedSkillPath, resolvedRoot)
+            ? yield* readSkillMetadata(resolvedSkillPath)
+            : undefined;
         // Cursor names a skill after the directory that holds its SKILL.md,
         // ignoring any frontmatter `name`.
         const name = path.basename(directory).trim();
@@ -311,11 +367,17 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
     cwd,
   });
 
-  // Lowest precedence first, so a later `set` is the more specific root
-  // winning: project over user, and `.cursor` over `.agents` within a scope.
+  // Root scans are independent filesystem work. `Effect.forEach` preserves
+  // input order, so bounded concurrency does not change precedence merging.
+  const inventories = yield* Effect.forEach(roots, (root) => collectSkillsInRoot({ root }), {
+    concurrency: 4,
+  });
+
+  // Lowest precedence first, so later roots win: project over user, and
+  // `.cursor` over `.agents`, `.codex`, and `.claude` within a scope.
   const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const root of roots) {
-    for (const skill of yield* collectSkillsInRoot({ root })) {
+  for (const inventory of inventories) {
+    for (const skill of inventory) {
       skillsByName.set(skill.name, skill);
     }
   }
