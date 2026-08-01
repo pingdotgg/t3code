@@ -33,6 +33,7 @@ const BOOT_SERVICE_NAME = "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
+/** systemd expands `%` specifiers, including in unquoted append-log paths. */
 export function escapeSystemdSpecifiers(value: string): string {
   return value.replaceAll("%", "%%");
 }
@@ -52,7 +53,9 @@ export interface BootServicePlan {
   readonly unitPath: string;
 }
 
+/** Pure renderer: service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
     "Description=T3 Code server",

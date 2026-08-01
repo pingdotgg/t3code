@@ -433,10 +433,6 @@ export const make = (options?: StartupOptions) =>
       // This is the prepared boundary. Every dependency has been acquired and
       // every runtime root has confirmed that it is parked before this request.
       const updateOutcome = yield* launcher.prepareTrial;
-      yield* options?.activate ?? Effect.void;
-
-      yield* Effect.logDebug("Accepting commands");
-      yield* commandGate.signalCommandReady;
       yield* runStartupPhase(
         "welcome.publish",
         lifecycleEvents.publish({
@@ -445,6 +441,10 @@ export const make = (options?: StartupOptions) =>
           payload: { environment, ...welcomeBase },
         }),
       );
+      yield* options?.activate ?? Effect.void;
+
+      yield* Effect.logDebug("Accepting commands");
+      yield* commandGate.signalCommandReady;
       yield* runStartupPhase(
         "ready.publish",
         lifecycleEvents.publish({
