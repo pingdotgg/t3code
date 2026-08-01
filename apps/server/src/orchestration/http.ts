@@ -15,6 +15,7 @@ import { GitCore } from "../git/Services/GitCore.ts";
 import { GitStatusBroadcaster } from "../git/Services/GitStatusBroadcaster.ts";
 import { ProjectSetupScriptRunner } from "../project/Services/ProjectSetupScriptRunner.ts";
 import { ServerRuntimeStartup } from "../serverRuntimeStartup.ts";
+import { projectReadModel, projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
 import { makeClientCommandDispatcher } from "./clientCommandDispatcher.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
@@ -79,9 +80,12 @@ export const orchestrationSnapshotRouteLayer = HttpRouter.add(
           }),
       ),
     );
-    return HttpServerResponse.jsonUnsafe(snapshot satisfies OrchestrationReadModel, {
-      status: 200,
-    });
+    return HttpServerResponse.jsonUnsafe(
+      projectReadModel(snapshot satisfies OrchestrationReadModel),
+      {
+        status: 200,
+      },
+    );
   }).pipe(
     Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError),
     Effect.catchTag("OrchestrationGetSnapshotError", respondToOrchestrationHttpError),
@@ -138,10 +142,10 @@ export const orchestrationThreadSnapshotRouteLayer = HttpRouter.add(
       });
     }
     return HttpServerResponse.jsonUnsafe(
-      {
+      projectThreadDetailSnapshot({
         snapshotSequence,
         thread: threadDetail.value,
-      } satisfies OrchestrationThreadDetailSnapshot,
+      } satisfies OrchestrationThreadDetailSnapshot),
       { status: 200 },
     );
   }).pipe(

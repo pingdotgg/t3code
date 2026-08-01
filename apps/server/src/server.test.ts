@@ -2015,6 +2015,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* connectNodeWebSocket(wsUrl);
+          assert.equal(socket.extensions, "permessage-deflate");
           socket.send(
             JSON.stringify({
               id: "pre-hello-shell-1",

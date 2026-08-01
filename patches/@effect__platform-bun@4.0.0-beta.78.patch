@@ -1,0 +1,30 @@
+diff --git a/dist/BunHttpServer.js b/dist/BunHttpServer.js
+index 5fb0cbacc183b58e31a442badf4aef06bebcd592..a23b60a99f4e95b09960e7c51df344e23c971859 100644
+--- a/dist/BunHttpServer.js
++++ b/dist/BunHttpServer.js
+@@ -45,6 +45,10 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+     ...options,
+     fetch: handlerStack[0],
+     websocket: {
++      perMessageDeflate: {
++        compress: "dedicated",
++        decompress: "shared"
++      },
+       open(ws) {
+         Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws));
+       },
+diff --git a/src/BunHttpServer.ts b/src/BunHttpServer.ts
+index 91bb25fd1793bd1edc721cefad98bbdeb6cf8877..b01f8a8567620dc89b74d2957caf29bab16f3fc1 100644
+--- a/src/BunHttpServer.ts
++++ b/src/BunHttpServer.ts
+@@ -111,6 +111,10 @@ export const make = Effect.fnUntraced(
+       ...options as ServeOptions<R>,
+       fetch: handlerStack[0],
+       websocket: {
++        perMessageDeflate: {
++          compress: "dedicated",
++          decompress: "shared"
++        },
+         open(ws) {
+           Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws))
+         },

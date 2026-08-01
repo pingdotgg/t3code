@@ -1,0 +1,32 @@
+diff --git a/dist/NodeHttpServer.js b/dist/NodeHttpServer.js
+index 4ca746097f782fccc6b595e4d772f98d764278b5..85e03ffea5271290cc9e3ba91db342dc8aa53ced 100644
+--- a/dist/NodeHttpServer.js
++++ b/dist/NodeHttpServer.js
+@@ -101,7 +101,8 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (evaluate, options)
+   });
+   const address = server.address();
+   const wss = yield* Effect.acquireRelease(Effect.sync(() => new NodeWS.WebSocketServer({
+-    noServer: true
++    noServer: true,
++    perMessageDeflate: true
+   })), wss => Effect.callback(resume => {
+     wss.close(() => resume(Effect.void));
+   })).pipe(Scope.provide(scope), Effect.cached);
+diff --git a/src/NodeHttpServer.ts b/src/NodeHttpServer.ts
+index 3bc28527ffad0eda569d89da50a8b8211bc6468c..92f22aa3c246f53a1a6ced35738c89234cb1aede 100644
+--- a/src/NodeHttpServer.ts
++++ b/src/NodeHttpServer.ts
+@@ -134,7 +134,12 @@ export const make = Effect.fnUntraced(function*(
+   const address = server.address()!
+ 
+   const wss = yield* Effect.acquireRelease(
+-    Effect.sync(() => new NodeWS.WebSocketServer({ noServer: true })),
++    Effect.sync(() =>
++      new NodeWS.WebSocketServer({
++        noServer: true,
++        perMessageDeflate: true
++      })
++    ),
+     (wss) =>
+       Effect.callback<void>((resume) => {
+         wss.close(() => resume(Effect.void))

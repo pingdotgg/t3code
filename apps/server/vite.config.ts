@@ -4,6 +4,8 @@ import { defineConfig, mergeConfig } from "vite-plus";
 import baseConfig from "../../vite.config.ts";
 
 const bundledPackagePrefixes = [
+  "@effect/platform-bun",
+  "@effect/platform-node",
   "@pierre/diffs",
   "@t3tools/",
   "effect-acp",

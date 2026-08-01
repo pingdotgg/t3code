@@ -456,8 +456,214 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
-        assert.deepEqual(threadDetail.value, snapshot.threads[0]);
+        const snapshotThread = snapshot.threads[0];
+        assert.isDefined(snapshotThread);
+        assert.deepEqual(threadDetail.value, {
+          ...snapshotThread,
+          activityContext: [],
+          hasMoreActivities: false,
+        });
       }
+    }),
+  );
+
+  it.effect("loads a bounded recent window and pages across sequenced and legacy activities", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-pagination");
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+
+      yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'project-pagination',
+            'Pagination project',
+            '/tmp/project-pagination',
+            '{"provider":"copilot","model":"gpt-5.4"}',
+            '[]',
+            '2026-07-28T00:00:00.000Z',
+            '2026-07-28T00:00:00.000Z',
+            NULL
+          )
+        `;
+      yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            latest_user_message_at,
+            pending_approval_count,
+            pending_user_input_count,
+            has_actionable_proposed_plan,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'thread-pagination',
+            'project-pagination',
+            'Pagination thread',
+            '{"provider":"copilot","model":"gpt-5.4"}',
+            'approval-required',
+            'default',
+            NULL,
+            1,
+            0,
+            0,
+            '2026-07-28T00:00:00.000Z',
+            '2026-07-28T00:00:00.000Z',
+            NULL
+          )
+        `;
+      yield* sql`
+          WITH RECURSIVE activity_sequence(value) AS (
+            VALUES (1)
+            UNION ALL
+            SELECT value + 1 FROM activity_sequence WHERE value < 205
+          )
+          INSERT INTO projection_thread_activities (
+            activity_id,
+            thread_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at
+          )
+          SELECT
+            printf('sequenced-%03d', value),
+            'thread-pagination',
+            NULL,
+            'info',
+            'runtime.note',
+            printf('activity %d', value),
+            '{}',
+            value,
+            printf('2026-07-28T00:%02d:%02d.000Z', value / 60, value % 60)
+          FROM activity_sequence
+        `;
+      yield* sql`
+          INSERT INTO projection_thread_activities (
+            activity_id,
+            thread_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at
+          )
+          VALUES
+            (
+              'z-same-time-request',
+              'thread-pagination',
+              NULL,
+              'approval',
+              'approval.requested',
+              'same-time approval needed',
+              '{"requestId":"approval-2"}',
+              NULL,
+              '2026-07-27T23:59:56.000Z'
+            ),
+            (
+              'a-same-time-resolution',
+              'thread-pagination',
+              NULL,
+              'approval',
+              'approval.resolved',
+              'same-time approval resolved',
+              '{"requestId":"approval-2"}',
+              NULL,
+              '2026-07-27T23:59:56.000Z'
+            ),
+            (
+              'legacy-approval',
+              'thread-pagination',
+              NULL,
+              'approval',
+              'approval.requested',
+              'approval needed',
+              '{"requestId":"approval-1"}',
+              NULL,
+              '2026-07-27T23:59:57.000Z'
+            ),
+            (
+              'legacy-2',
+              'thread-pagination',
+              NULL,
+              'info',
+              'runtime.note',
+              'legacy 2',
+              '{}',
+              NULL,
+              '2026-07-27T23:59:58.000Z'
+            ),
+            (
+              'legacy-3',
+              'thread-pagination',
+              NULL,
+              'info',
+              'runtime.note',
+              'legacy 3',
+              '{}',
+              NULL,
+              '2026-07-27T23:59:59.000Z'
+            )
+        `;
+
+      const detail = yield* snapshotQuery.getThreadDetailById(threadId);
+      assert.equal(detail._tag, "Some");
+      if (detail._tag === "None") return;
+
+      assert.equal(detail.value.activities.length, 200);
+      assert.deepEqual(
+        detail.value.activities.map((activity) => activity.sequence),
+        Array.from({ length: 200 }, (_, index) => index + 6),
+      );
+      assert.deepEqual(
+        detail.value.activityContext?.map((activity) => activity.id),
+        [asEventId("legacy-approval")],
+      );
+
+      const allActivityIds = detail.value.activities.map((activity) => activity.id);
+      let hasMore = detail.value.hasMoreActivities ?? false;
+      let oldestActivity = detail.value.activities[0];
+      while (hasMore && oldestActivity) {
+        const result = yield* snapshotQuery.getThreadActivitiesPage({
+          threadId,
+          beforeCreatedAt: oldestActivity.createdAt,
+          beforeActivityId: oldestActivity.id,
+          limit: 3,
+        });
+        allActivityIds.push(...result.activities.map((activity) => activity.id));
+        hasMore = result.hasMore;
+        oldestActivity = result.activities[0];
+      }
+
+      assert.equal(allActivityIds.length, 210);
+      assert.equal(new Set(allActivityIds).size, 210);
+      assert.isTrue(allActivityIds.includes(asEventId("legacy-approval")));
+      assert.isTrue(allActivityIds.includes(asEventId("sequenced-001")));
+      assert.isTrue(allActivityIds.includes(asEventId("sequenced-205")));
     }),
   );
 
@@ -1018,13 +1224,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       assert.deepEqual(snapshot.threads[0]?.activities ?? [], [
         {
-          id: asEventId("activity-unsequenced"),
+          id: asEventId("activity-sequence-2"),
           tone: "info",
           kind: "runtime.note",
-          summary: "unsequenced first",
-          payload: { source: "unsequenced" },
+          summary: "sequence two",
+          payload: { source: "sequence-2" },
           turnId: null,
-          createdAt: "2026-04-01T00:00:06.000Z",
+          sequence: 2,
+          createdAt: "2026-04-01T00:00:04.000Z",
         },
         {
           id: asEventId("activity-sequence-1"),
@@ -1037,14 +1244,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-04-01T00:00:05.000Z",
         },
         {
-          id: asEventId("activity-sequence-2"),
+          id: asEventId("activity-unsequenced"),
           tone: "info",
           kind: "runtime.note",
-          summary: "sequence two",
-          payload: { source: "sequence-2" },
+          summary: "unsequenced first",
+          payload: { source: "unsequenced" },
           turnId: null,
-          sequence: 2,
-          createdAt: "2026-04-01T00:00:04.000Z",
+          createdAt: "2026-04-01T00:00:06.000Z",
         },
       ]);
     }),
@@ -1606,7 +1812,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const olderPage = yield* snapshotQuery.getThreadActivitiesPage({
         threadId: ThreadId.make("thread-history"),
-        beforeSequence: 41,
+        beforeCreatedAt: "2026-04-05T00:01:00.000Z",
+        beforeActivityId: asEventId("activity-0041"),
       });
       assert.equal(olderPage.activities.length, 40);
       assert.equal(olderPage.activities[0]?.summary, "activity-1");
@@ -1687,7 +1894,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const transitionPage = yield* snapshotQuery.getThreadActivitiesPage({
         threadId: ThreadId.make("thread-history"),
-        beforeSequence: 3,
+        beforeCreatedAt: "2026-04-05T00:02:00.000Z",
+        beforeActivityId: asEventId("sequenced-0003"),
         limit: 3,
       });
       assert.deepStrictEqual(

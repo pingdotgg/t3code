@@ -46,11 +46,113 @@ const checkpointOrder = O.mapInput(
     cp.checkpointTurnCount ?? Number.MAX_SAFE_INTEGER,
 );
 
+const MAX_ACTIVITY_CONTEXT_PLANS = 64;
+
+function activityLifecycleRank(activity: OrchestrationThreadActivity): number {
+  return activity.kind.endsWith(".completed") ||
+    activity.kind.endsWith(".resolved") ||
+    activity.kind.endsWith(".failed")
+    ? 2
+    : 1;
+}
+
 const activityOrder = O.combineAll<OrchestrationThreadActivity>([
-  O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
-  O.mapInput(O.String, (a) => a.createdAt),
-  O.mapInput(O.String, (a) => a.id),
+  O.mapInput(O.String, (activity) => activity.createdAt),
+  O.mapInput(O.Number, activityLifecycleRank),
+  O.mapInput(O.String, (activity) => activity.id),
 ]);
+
+function compareActivities(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): number {
+  return activityOrder(left, right);
+}
+
+function activityPayload(activity: OrchestrationThreadActivity): Record<string, unknown> | null {
+  return activity.payload && typeof activity.payload === "object"
+    ? (activity.payload as Record<string, unknown>)
+    : null;
+}
+
+function activityContextKey(activity: OrchestrationThreadActivity): string | null {
+  const payload = activityPayload(activity);
+  if (
+    activity.kind === "approval.requested" ||
+    activity.kind === "approval.resolved" ||
+    activity.kind === "provider.approval.respond.failed" ||
+    activity.kind === "user-input.requested" ||
+    activity.kind === "user-input.resolved" ||
+    activity.kind === "provider.user-input.respond.failed"
+  ) {
+    return typeof payload?.requestId === "string" ? `request:${payload.requestId}` : null;
+  }
+  if (activity.kind === "task.started" || activity.kind === "task.completed") {
+    return typeof payload?.taskId === "string" ? `task:${payload.taskId}` : null;
+  }
+  return null;
+}
+
+function isActivityContextStart(activity: OrchestrationThreadActivity): boolean {
+  const payload = activityPayload(activity);
+  return (
+    activity.kind === "approval.requested" ||
+    activity.kind === "user-input.requested" ||
+    (activity.kind === "task.started" && payload?.taskType === "background-agent")
+  );
+}
+
+function isActivityContextTerminal(activity: OrchestrationThreadActivity): boolean {
+  if (
+    activity.kind === "provider.approval.respond.failed" ||
+    activity.kind === "provider.user-input.respond.failed"
+  ) {
+    const detail = activityPayload(activity)?.detail;
+    if (typeof detail !== "string") {
+      return false;
+    }
+    const normalized = detail.toLowerCase();
+    return (
+      normalized.includes("stale pending approval request") ||
+      normalized.includes("stale pending user-input request") ||
+      normalized.includes("unknown pending approval request") ||
+      normalized.includes("unknown pending permission request") ||
+      normalized.includes("unknown pending user-input request")
+    );
+  }
+  return (
+    activity.kind === "approval.resolved" ||
+    activity.kind === "user-input.resolved" ||
+    activity.kind === "task.completed"
+  );
+}
+
+function reconcileActivityContext(
+  context: readonly OrchestrationThreadActivity[] | undefined,
+  activity: OrchestrationThreadActivity,
+): readonly OrchestrationThreadActivity[] {
+  const current = context ?? [];
+  if (activity.kind === "turn.plan.updated") {
+    const nonPlans = current.filter((entry) => entry.kind !== "turn.plan.updated");
+    const plans = current
+      .filter((entry) => entry.kind === "turn.plan.updated" && entry.id !== activity.id)
+      .concat(activity)
+      .toSorted(compareActivities)
+      .slice(-MAX_ACTIVITY_CONTEXT_PLANS);
+    return [...nonPlans, ...plans].toSorted(compareActivities);
+  }
+
+  const key = activityContextKey(activity);
+  if (!key || (!isActivityContextStart(activity) && !isActivityContextTerminal(activity))) {
+    return current;
+  }
+
+  const next = current.filter((entry) => activityContextKey(entry) !== key);
+  if (isActivityContextStart(activity)) {
+    next.push(activity);
+  }
+  return next.toSorted(compareActivities);
+}
 
 /**
  * Apply a single orchestration event to an `OrchestrationThread`, returning
@@ -486,6 +588,9 @@ export function applyThreadDetailEvent(
         thread.activities,
         Arr.filter((activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId)),
       );
+      const activityContext = thread.activityContext?.filter(
+        (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+      );
       const latestCheckpoint = checkpoints.at(-1) ?? null;
 
       return {
@@ -496,6 +601,7 @@ export function applyThreadDetailEvent(
           messages,
           proposedPlans,
           activities,
+          ...(activityContext ? { activityContext } : {}),
           latestTurn:
             latestCheckpoint === null
               ? null
@@ -516,17 +622,19 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
+      const activity = event.payload.activity;
       const activities = pipe(
         thread.activities,
-        Arr.filter((activity) => activity.id !== event.payload.activity.id),
-        Arr.append(event.payload.activity),
+        Arr.filter((entry) => entry.id !== activity.id),
+        Arr.append(activity),
         Arr.sort(activityOrder),
         Arr.takeRight(limits.maxActivities),
       );
+      const activityContext = reconcileActivityContext(thread.activityContext, activity);
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: { ...thread, activities, activityContext, updatedAt: event.occurredAt },
       };
     }
 

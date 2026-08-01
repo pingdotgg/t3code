@@ -920,7 +920,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["real-work-log"]);
   });
 
-  it("orders work log by activity sequence when present", () => {
+  it("orders work log by persisted chronology instead of provider sequence", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "second",
@@ -939,7 +939,7 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries.map((entry) => entry.id)).toEqual(["first", "second"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["second", "first"]);
   });
 
   it("extracts command text for command tool activities", () => {

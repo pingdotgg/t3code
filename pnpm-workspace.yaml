@@ -100,6 +100,8 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
+  "@effect/platform-bun@4.0.0-beta.78": patches/@effect__platform-bun@4.0.0-beta.78.patch
+  "@effect/platform-node@4.0.0-beta.78": patches/@effect__platform-node@4.0.0-beta.78.patch
   "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
   "@expo/metro-config@56.0.14": patches/@expo%2Fmetro-config@56.0.14.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch

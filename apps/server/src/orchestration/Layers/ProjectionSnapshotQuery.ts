@@ -210,11 +210,6 @@ const ThreadActivitiesLimitInput = Schema.Struct({
   threadId: ThreadId,
   limit: NonNegativeInt,
 });
-const ThreadActivitiesBeforeSequenceInput = Schema.Struct({
-  threadId: ThreadId,
-  beforeSequence: NonNegativeInt,
-  limit: NonNegativeInt,
-});
 const ThreadActivitiesBeforeActivityInput = Schema.Struct({
   threadId: ThreadId,
   beforeCreatedAt: IsoDateTime,
@@ -599,8 +594,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_activities
         ORDER BY
           thread_id ASC,
-          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
-          sequence ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -997,7 +990,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  const listSequencedThreadActivityRowsByThread = SqlSchema.findAll({
+  const listThreadActivityRowsByThread = SqlSchema.findAll({
     Request: ThreadActivitiesLimitInput,
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId, limit }) =>
@@ -1014,60 +1007,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
-          AND sequence IS NOT NULL
-        ORDER BY sequence DESC
-        LIMIT ${limit}
-      `,
-  });
-
-  const listUnsequencedThreadActivityRowsByThread = SqlSchema.findAll({
-    Request: ThreadActivitiesLimitInput,
-    Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId, limit }) =>
-      sql`
-        SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND sequence IS NULL
         ORDER BY created_at DESC, activity_id DESC
         LIMIT ${limit}
       `,
   });
 
-  const listThreadActivityRowsBeforeSequence = SqlSchema.findAll({
-    Request: ThreadActivitiesBeforeSequenceInput,
-    Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId, beforeSequence, limit }) =>
-      sql`
-        SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND sequence IS NOT NULL
-          AND sequence < ${beforeSequence}
-        ORDER BY sequence DESC
-        LIMIT ${limit}
-      `,
-  });
-
-  const listUnsequencedThreadActivityRowsBeforeActivity = SqlSchema.findAll({
+  const listThreadActivityRowsBeforeActivity = SqlSchema.findAll({
     Request: ThreadActivitiesBeforeActivityInput,
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId, beforeCreatedAt, beforeActivityId, limit }) =>
@@ -1084,7 +1029,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
-          AND sequence IS NULL
           AND (
             created_at < ${beforeCreatedAt}
             OR (
@@ -1096,6 +1040,123 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at DESC,
           activity_id DESC
         LIMIT ${limit}
+      `,
+  });
+
+  const listThreadActivityContextRows = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        WITH approval_ranked AS (
+          SELECT
+            activities.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_extract(payload_json, '$.requestId')
+              ORDER BY
+                created_at DESC,
+                CASE WHEN kind = 'approval.requested' THEN 0 ELSE 1 END DESC,
+                activity_id DESC
+            ) AS lifecycle_rank
+          FROM projection_thread_activities AS activities
+          WHERE thread_id = ${threadId}
+            AND kind IN (
+              'approval.requested',
+              'approval.resolved',
+              'provider.approval.respond.failed'
+            )
+            AND json_extract(payload_json, '$.requestId') IS NOT NULL
+            AND (
+              kind <> 'provider.approval.respond.failed'
+              OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                LIKE '%stale pending approval request%'
+              OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                LIKE '%unknown pending approval request%'
+              OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                LIKE '%unknown pending permission request%'
+            )
+        ),
+        user_input_ranked AS (
+          SELECT
+            activities.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_extract(payload_json, '$.requestId')
+              ORDER BY
+                created_at DESC,
+                CASE WHEN kind = 'user-input.requested' THEN 0 ELSE 1 END DESC,
+                activity_id DESC
+            ) AS lifecycle_rank
+          FROM projection_thread_activities AS activities
+          WHERE thread_id = ${threadId}
+            AND kind IN (
+              'user-input.requested',
+              'user-input.resolved',
+              'provider.user-input.respond.failed'
+            )
+            AND json_extract(payload_json, '$.requestId') IS NOT NULL
+            AND (
+              kind <> 'provider.user-input.respond.failed'
+              OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                LIKE '%stale pending user-input request%'
+              OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                LIKE '%unknown pending user-input request%'
+            )
+        ),
+        task_ranked AS (
+          SELECT
+            activities.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_extract(payload_json, '$.taskId')
+              ORDER BY
+                created_at DESC,
+                CASE WHEN kind = 'task.started' THEN 0 ELSE 1 END DESC,
+                activity_id DESC
+            ) AS lifecycle_rank
+          FROM projection_thread_activities AS activities
+          WHERE thread_id = ${threadId}
+            AND kind IN ('task.started', 'task.completed')
+            AND json_extract(payload_json, '$.taskId') IS NOT NULL
+            AND (
+              kind = 'task.completed'
+              OR (
+                kind = 'task.started'
+                AND json_extract(payload_json, '$.taskType') = 'background-agent'
+              )
+            )
+        ),
+        selected AS (
+          SELECT * FROM approval_ranked
+          WHERE lifecycle_rank = 1 AND kind = 'approval.requested'
+          UNION ALL
+          SELECT * FROM user_input_ranked
+          WHERE lifecycle_rank = 1 AND kind = 'user-input.requested'
+          UNION ALL
+          SELECT * FROM task_ranked
+          WHERE lifecycle_rank = 1 AND kind = 'task.started'
+          UNION ALL
+          SELECT * FROM (
+            SELECT
+              activities.*,
+              1 AS lifecycle_rank
+            FROM projection_thread_activities AS activities
+            WHERE thread_id = ${threadId}
+              AND kind = 'turn.plan.updated'
+            ORDER BY created_at DESC, activity_id DESC
+            LIMIT 64
+          )
+        )
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM selected
+        ORDER BY created_at ASC, activity_id ASC
       `,
   });
 
@@ -1955,34 +2016,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
 
   const listLatestThreadActivityRows = (threadId: ThreadId, limit: number) =>
-    Effect.gen(function* () {
-      const sequencedRows = yield* listSequencedThreadActivityRowsByThread({
-        threadId,
-        limit,
-      }).pipe(
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "ProjectionSnapshotQuery.listLatestThreadActivityRows:listSequenced:query",
-            "ProjectionSnapshotQuery.listLatestThreadActivityRows:listSequenced:decodeRows",
-          ),
+    listThreadActivityRowsByThread({
+      threadId,
+      limit,
+    }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listLatestThreadActivityRows:query",
+          "ProjectionSnapshotQuery.listLatestThreadActivityRows:decodeRows",
         ),
-      );
-      if (sequencedRows.length >= limit) {
-        return sequencedRows;
-      }
-      const unsequencedRows = yield* listUnsequencedThreadActivityRowsByThread({
-        threadId,
-        limit: limit - sequencedRows.length,
-      }).pipe(
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "ProjectionSnapshotQuery.listLatestThreadActivityRows:listUnsequenced:query",
-            "ProjectionSnapshotQuery.listLatestThreadActivityRows:listUnsequenced:decodeRows",
-          ),
-        ),
-      );
-      return [...sequencedRows, ...unsequencedRows];
-    });
+      ),
+    );
 
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     Effect.gen(function* () {
@@ -1992,6 +2036,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         proposedPlanRows,
         queuedTurnRows,
         activityRows,
+        activityContextRows,
         checkpointRows,
         latestTurnRow,
         sessionRow,
@@ -2029,6 +2074,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ),
         ),
         listLatestThreadActivityRows(threadId, THREAD_DETAIL_ACTIVITY_WINDOW + 1),
+        listThreadActivityContextRows({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listActivityContext:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listActivityContext:decodeRows",
+            ),
+          ),
+        ),
         listCheckpointRowsByThread({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -2060,6 +2113,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       }
 
       const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
+      const visibleActivities = activityRows
+        .slice(0, THREAD_DETAIL_ACTIVITY_WINDOW)
+        .map(mapThreadActivityRow)
+        .toReversed();
+      const visibleActivityIds = new Set(visibleActivities.map((activity) => activity.id));
 
       const thread = {
         id: threadRow.value.threadId,
@@ -2114,10 +2172,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updatedAt: row.updatedAt,
         })),
         queuedTurns: queuedTurnRows.map(mapQueuedTurnRow),
-        activities: activityRows
-          .slice(0, THREAD_DETAIL_ACTIVITY_WINDOW)
+        activities: visibleActivities,
+        activityContext: activityContextRows
           .map(mapThreadActivityRow)
-          .toReversed(),
+          .filter((activity) => !visibleActivityIds.has(activity.id)),
         hasMoreActivities: activityRows.length > THREAD_DETAIL_ACTIVITY_WINDOW,
         checkpoints: checkpointRows.map((row) => ({
           turnId: row.turnId,
@@ -2150,51 +2208,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Math.max(1, input.limit ?? THREAD_DETAIL_ACTIVITY_WINDOW),
         THREAD_DETAIL_ACTIVITY_WINDOW,
       );
-      let rows: ReadonlyArray<ProjectionThreadActivityDbRow>;
-      if ("beforeSequence" in input) {
-        const sequencedRows = yield* listThreadActivityRowsBeforeSequence({
-          threadId: input.threadId,
-          beforeSequence: input.beforeSequence,
-          limit: limit + 1,
-        }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadActivitiesPage:listSequenced:query",
-              "ProjectionSnapshotQuery.getThreadActivitiesPage:listSequenced:decodeRows",
-            ),
+      const rows = yield* listThreadActivityRowsBeforeActivity({
+        threadId: input.threadId,
+        beforeCreatedAt: input.beforeCreatedAt,
+        beforeActivityId: input.beforeActivityId,
+        limit: limit + 1,
+      }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadActivitiesPage:query",
+            "ProjectionSnapshotQuery.getThreadActivitiesPage:decodeRows",
           ),
-        );
-        if (sequencedRows.length >= limit + 1) {
-          rows = sequencedRows;
-        } else {
-          const unsequencedRows = yield* listUnsequencedThreadActivityRowsByThread({
-            threadId: input.threadId,
-            limit: limit + 1 - sequencedRows.length,
-          }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getThreadActivitiesPage:listUnsequenced:query",
-                "ProjectionSnapshotQuery.getThreadActivitiesPage:listUnsequenced:decodeRows",
-              ),
-            ),
-          );
-          rows = [...sequencedRows, ...unsequencedRows];
-        }
-      } else {
-        rows = yield* listUnsequencedThreadActivityRowsBeforeActivity({
-          threadId: input.threadId,
-          beforeCreatedAt: input.beforeCreatedAt,
-          beforeActivityId: input.beforeActivityId,
-          limit: limit + 1,
-        }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadActivitiesPage:listLegacy:query",
-              "ProjectionSnapshotQuery.getThreadActivitiesPage:listLegacy:decodeRows",
-            ),
-          ),
-        );
-      }
+        ),
+      );
       const hasMore = rows.length > limit;
       return {
         activities: (hasMore ? rows.slice(0, limit) : rows).map(mapThreadActivityRow).toReversed(),

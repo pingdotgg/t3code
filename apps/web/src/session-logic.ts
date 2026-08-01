@@ -1307,26 +1307,13 @@ function extractWorkLogRequestKind(
 }
 
 function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
-  return extractNormalizedChangedFilePathsFromToolPayload(payload?.data, {
-    maxDepth: 4,
-    maxPaths: 12,
-  });
+  return extractNormalizedChangedFilePathsFromToolPayload(payload?.data);
 }
 
 function compareActivitiesByOrder(
   left: OrchestrationThreadActivity,
   right: OrchestrationThreadActivity,
 ): number {
-  if (left.sequence !== undefined && right.sequence !== undefined) {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-  } else if (left.sequence !== undefined) {
-    return 1;
-  } else if (right.sequence !== undefined) {
-    return -1;
-  }
-
   const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
   if (createdAtComparison !== 0) {
     return createdAtComparison;
@@ -1348,7 +1335,7 @@ function compareActivityLifecycleRank(kind: string): number {
   if (kind.endsWith(".progress") || kind.endsWith(".updated")) {
     return 1;
   }
-  if (kind.endsWith(".completed") || kind.endsWith(".resolved")) {
+  if (kind.endsWith(".completed") || kind.endsWith(".resolved") || kind.endsWith(".failed")) {
     return 2;
   }
   return 1;

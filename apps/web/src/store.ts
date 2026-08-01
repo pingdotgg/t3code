@@ -83,6 +83,7 @@ export interface EnvironmentState {
   messageByThreadId: Record<ThreadId, Record<MessageId, ChatMessage>>;
   activityIdsByThreadId: Record<ThreadId, string[]>;
   activityByThreadId: Record<ThreadId, Record<string, OrchestrationThreadActivity>>;
+  activityContextByThreadId: Record<ThreadId, readonly OrchestrationThreadActivity[]>;
   hasMoreActivitiesByThreadId?: Record<ThreadId, boolean>;
   // Insights lifecycle records retained independently of `activityByThreadId`
   // so thread-wide timing stays complete after the capped activity window
@@ -125,6 +126,7 @@ const initialEnvironmentState: EnvironmentState = {
   messageByThreadId: {},
   activityIdsByThreadId: {},
   activityByThreadId: {},
+  activityContextByThreadId: {},
   hasMoreActivitiesByThreadId: {},
   insightActivitiesByThreadId: {},
   proposedPlanIdsByThreadId: {},
@@ -148,6 +150,7 @@ const MAX_THREAD_CHECKPOINTS = 500;
 const MAX_THREAD_PROPOSED_PLANS = 200;
 const MAX_THREAD_ACTIVITIES = 500;
 const MAX_THREAD_INSIGHT_TURNS = 500;
+const EMPTY_ACTIVITY_CONTEXT: readonly OrchestrationThreadActivity[] = [];
 const EMPTY_INSIGHT_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 const EMPTY_THREAD_IDS: ThreadId[] = [];
 const EMPTY_QUEUED_TURNS: readonly OrchestrationQueuedTurn[] = [];
@@ -332,6 +335,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     ...(thread.reviewResult !== undefined ? { reviewResult: thread.reviewResult } : {}),
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    activityContext: thread.activityContext?.map((activity) => ({ ...activity })) ?? [],
     hasMoreActivities: thread.hasMoreActivities ?? false,
   };
 }
@@ -840,6 +844,16 @@ function writeThreadState(
     };
   }
 
+  if (previousThread?.activityContext !== nextThread.activityContext) {
+    nextState = {
+      ...nextState,
+      activityContextByThreadId: {
+        ...nextState.activityContextByThreadId,
+        [nextThread.id]: nextThread.activityContext ?? EMPTY_ACTIVITY_CONTEXT,
+      },
+    };
+  }
+
   if (previousThread?.hasMoreActivities !== nextThread.hasMoreActivities) {
     nextState = {
       ...nextState,
@@ -1028,6 +1042,8 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedMessages, ...messageByThreadId } = state.messageByThreadId;
   const { [threadId]: _removedActivityIds, ...activityIdsByThreadId } = state.activityIdsByThreadId;
   const { [threadId]: _removedActivities, ...activityByThreadId } = state.activityByThreadId;
+  const { [threadId]: _removedActivityContext, ...activityContextByThreadId } =
+    state.activityContextByThreadId;
   const { [threadId]: _removedHasMoreActivities, ...hasMoreActivitiesByThreadId } =
     state.hasMoreActivitiesByThreadId ?? {};
   const { [threadId]: _removedInsightActivities, ...insightActivitiesByThreadId } =
@@ -1055,6 +1071,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     messageByThreadId,
     activityIdsByThreadId,
     activityByThreadId,
+    activityContextByThreadId,
     hasMoreActivitiesByThreadId,
     insightActivitiesByThreadId,
     proposedPlanIdsByThreadId,
@@ -1088,17 +1105,23 @@ function compareActivities(
   left: Thread["activities"][number],
   right: Thread["activities"][number],
 ): number {
-  if (left.sequence !== undefined && right.sequence !== undefined) {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-  } else if (left.sequence !== undefined) {
-    return 1;
-  } else if (right.sequence !== undefined) {
-    return -1;
-  }
-
-  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+  const leftLifecycleRank =
+    left.kind.endsWith(".completed") ||
+    left.kind.endsWith(".resolved") ||
+    left.kind.endsWith(".failed")
+      ? 2
+      : 1;
+  const rightLifecycleRank =
+    right.kind.endsWith(".completed") ||
+    right.kind.endsWith(".resolved") ||
+    right.kind.endsWith(".failed")
+      ? 2
+      : 1;
+  return (
+    left.createdAt.localeCompare(right.createdAt) ||
+    leftLifecycleRank - rightLifecycleRank ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 /**
@@ -1587,6 +1610,10 @@ function syncEnvironmentShellSnapshot(
     messageByThreadId: retainThreadScopedRecord(state.messageByThreadId, nextThreadIds),
     activityIdsByThreadId: retainThreadScopedRecord(state.activityIdsByThreadId, nextThreadIds),
     activityByThreadId: retainThreadScopedRecord(state.activityByThreadId, nextThreadIds),
+    activityContextByThreadId: retainThreadScopedRecord(
+      state.activityContextByThreadId,
+      nextThreadIds,
+    ),
     ...(state.hasMoreActivitiesByThreadId
       ? {
           hasMoreActivitiesByThreadId: retainThreadScopedRecord(

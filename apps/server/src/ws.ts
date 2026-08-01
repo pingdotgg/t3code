@@ -91,6 +91,11 @@ import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings } from "./keybindings.ts";
 import { Open, resolveAvailableEditors } from "./open.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import {
+  projectActivityEvent,
+  projectActivityPayload,
+  projectThreadDetailSnapshot,
+} from "./orchestration/ActivityPayloadProjection.ts";
 import { makeClientCommandDispatcher } from "./orchestration/clientCommandDispatcher.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -893,6 +898,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getThreadActivities,
             projectionSnapshotQuery.getThreadActivitiesPage(input).pipe(
+              Effect.map((page) => ({
+                ...page,
+                activities: page.activities.map(projectActivityPayload),
+              })),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationGetThreadActivitiesError({
@@ -958,6 +967,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ).pipe(
               Effect.map((events) => Array.from(events)),
               Effect.flatMap(enrichOrchestrationEvents),
+              Effect.map((events) => events.map(projectActivityEvent)),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationReplayEventsError({
@@ -1016,7 +1026,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 return Effect.succeed({
                   snapshotSequence: shellSnapshot.snapshotSequence,
                   thread: threadDetail.value,
-                });
+                }).pipe(Effect.map(projectThreadDetailSnapshot));
               }),
               Effect.mapError((cause) =>
                 cause instanceof OrchestrationGetSnapshotError
@@ -1073,7 +1083,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ),
                 Stream.map((event) => ({
                   kind: "event" as const,
-                  event,
+                  event: projectActivityEvent(event),
                 })),
               );
 
@@ -1110,10 +1120,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
-                  snapshot: {
+                  snapshot: projectThreadDetailSnapshot({
                     snapshotSequence,
                     thread: threadDetail.value,
-                  },
+                  }),
                 }),
                 Stream.fromQueue(liveBuffer),
               );

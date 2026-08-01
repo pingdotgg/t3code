@@ -912,14 +912,13 @@ function compareActivityLifecycleRank(kind: string): number {
   if (kind.endsWith(".progress") || kind.endsWith(".updated")) {
     return 1;
   }
-  if (kind.endsWith(".completed") || kind.endsWith(".resolved")) {
+  if (kind.endsWith(".completed") || kind.endsWith(".resolved") || kind.endsWith(".failed")) {
     return 2;
   }
   return 1;
 }
 
 const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
-  Order.mapInput(Order.Number, (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
   Order.mapInput(Order.String, (activity) => activity.createdAt),
   Order.mapInput(Order.Number, (activity) => compareActivityLifecycleRank(activity.kind)),
   Order.mapInput(Order.String, (activity) => activity.id),

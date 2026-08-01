@@ -1232,6 +1232,10 @@ function ChatViewBody(
     () => mergeActivityWindows(activeOlderActivityState.activities, liveThreadActivities),
     [activeOlderActivityState.activities, liveThreadActivities],
   );
+  const threadStateActivities = useMemo(
+    () => mergeActivityWindows(activeThread?.activityContext ?? EMPTY_ACTIVITIES, threadActivities),
+    [activeThread?.activityContext, threadActivities],
+  );
   const insightActivities = useMemo(
     () =>
       mergeInsightActivityWindows(
@@ -1260,18 +1264,11 @@ function ChatViewBody(
       hasMore: previous.historyKey === requestKey ? previous.hasMore : false,
       loading: true,
     }));
-    const cursor =
-      oldestActivity.sequence !== undefined
-        ? { beforeSequence: oldestActivity.sequence }
-        : {
-            beforeCreatedAt: oldestActivity.createdAt,
-            beforeActivityId: oldestActivity.id,
-          };
-
     void api.orchestration
       .getThreadActivities({
         threadId: activeThread.id,
-        ...cursor,
+        beforeCreatedAt: oldestActivity.createdAt,
+        beforeActivityId: oldestActivity.id,
       })
       .then((page) => {
         if (activeThreadActivityHistoryKeyRef.current !== requestKey) return;
@@ -1323,12 +1320,12 @@ function ChatViewBody(
     [activeLatestTurn?.turnId, threadActivities],
   );
   const pendingApprovals = useMemo(
-    () => derivePendingApprovals(threadActivities),
-    [threadActivities],
+    () => derivePendingApprovals(threadStateActivities),
+    [threadStateActivities],
   );
   const pendingUserInputs = useMemo(
-    () => derivePendingUserInputs(threadActivities),
-    [threadActivities],
+    () => derivePendingUserInputs(threadStateActivities),
+    [threadStateActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
@@ -1383,8 +1380,8 @@ function ChatViewBody(
     [activeLatestTurn, activeThread?.id, latestTurnSettled, threadPlanCatalog],
   );
   const activePlan = useMemo(
-    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveActivePlanState(threadStateActivities, activeLatestTurn?.turnId ?? undefined),
+    [activeLatestTurn?.turnId, threadStateActivities],
   );
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =

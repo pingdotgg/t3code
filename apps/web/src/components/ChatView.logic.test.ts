@@ -464,6 +464,9 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         Object.fromEntries(thread.activities.map((activity) => [activity.id, activity])),
       ]),
     ),
+    activityContextByThreadId: Object.fromEntries(
+      threads.map((thread) => [thread.id, thread.activityContext ?? []]),
+    ),
     insightActivitiesByThreadId: Object.fromEntries(
       threads.map((thread) => [thread.id, thread.activities.filter(isInsightActivity)]),
     ),

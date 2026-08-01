@@ -13,6 +13,7 @@ import {
 
 import {
   buildThreadFeed,
+  derivePendingApprovals,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -54,6 +55,53 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("derives approval lifecycle by chronology instead of restarted provider sequences", () => {
+    const requestId = "request-1";
+    const activities = [
+      makeActivity({
+        id: EventId.make("approval-requested"),
+        kind: "approval.requested",
+        summary: "Approval requested",
+        sequence: 99,
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: { requestId, requestKind: "command" },
+      }),
+      makeActivity({
+        id: EventId.make("approval-resolved"),
+        kind: "approval.resolved",
+        summary: "Approval resolved",
+        sequence: 1,
+        createdAt: "2026-04-01T00:00:02.000Z",
+        payload: { requestId },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+
+  it("orders stale failures after requests at the same timestamp", () => {
+    const requestId = "request-1";
+    const createdAt = "2026-04-01T00:00:01.000Z";
+    const activities = [
+      makeActivity({
+        id: EventId.make("z-approval-requested"),
+        kind: "approval.requested",
+        summary: "Approval requested",
+        createdAt,
+        payload: { requestId, requestKind: "command" },
+      }),
+      makeActivity({
+        id: EventId.make("a-approval-failed"),
+        kind: "provider.approval.respond.failed",
+        summary: "Approval response failed",
+        createdAt,
+        payload: { requestId, detail: "Unknown pending approval request" },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

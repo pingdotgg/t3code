@@ -441,6 +441,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   queuedTurns: Schema.optionalKey(Schema.Array(OrchestrationQueuedTurn)),
   activities: Schema.Array(OrchestrationThreadActivity),
+  activityContext: Schema.optionalKey(Schema.Array(OrchestrationThreadActivity)),
   hasMoreActivities: Schema.optionalKey(Schema.Boolean),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
@@ -1930,19 +1931,12 @@ export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput
 export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
 export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
 
-export const OrchestrationGetThreadActivitiesInput = Schema.Union([
-  Schema.Struct({
-    threadId: ThreadId,
-    beforeSequence: NonNegativeInt,
-    limit: Schema.optionalKey(NonNegativeInt),
-  }),
-  Schema.Struct({
-    threadId: ThreadId,
-    beforeCreatedAt: IsoDateTime,
-    beforeActivityId: EventId,
-    limit: Schema.optionalKey(NonNegativeInt),
-  }),
-]);
+export const OrchestrationGetThreadActivitiesInput = Schema.Struct({
+  threadId: ThreadId,
+  beforeCreatedAt: IsoDateTime,
+  beforeActivityId: EventId,
+  limit: Schema.optionalKey(NonNegativeInt),
+});
 export type OrchestrationGetThreadActivitiesInput =
   typeof OrchestrationGetThreadActivitiesInput.Type;
 

@@ -13,13 +13,7 @@ import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } 
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { isInsightActivity } from "../insights";
 import { Schema } from "effect";
-import {
-  type AppState,
-  type EnvironmentState,
-  selectThreadByRef,
-  selectThreadExistsByRef,
-  useStore,
-} from "../store";
+import { type AppState, type EnvironmentState, selectThreadExistsByRef, useStore } from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,

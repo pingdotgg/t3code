@@ -198,6 +198,9 @@ function makeState(thread: Thread): AppState {
         thread.activities.map((activity) => [activity.id, activity] as const),
       ) as EnvironmentState["activityByThreadId"][ThreadId],
     },
+    activityContextByThreadId: {
+      [thread.id]: thread.activityContext ?? [],
+    },
     hasMoreActivitiesByThreadId: {
       [thread.id]: thread.hasMoreActivities ?? false,
     },
@@ -244,6 +247,7 @@ function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): A
     messageByThreadId: {},
     activityIdsByThreadId: {},
     activityByThreadId: {},
+    activityContextByThreadId: {},
     insightActivitiesByThreadId: {},
     proposedPlanIdsByThreadId: {},
     proposedPlanByThreadId: {},

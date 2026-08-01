@@ -30,11 +30,20 @@ const checkpointOrder = O.mapInput(
     cp.checkpointTurnCount ?? Number.MAX_SAFE_INTEGER,
 );
 
-const activityOrder = O.combineAll<OrchestrationThreadActivity>([
-  O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
-  O.mapInput(O.String, (a) => a.createdAt),
-  O.mapInput(O.String, (a) => a.id),
-]);
+const activityLifecycleRank = (activity: OrchestrationThreadActivity): number =>
+  activity.kind.endsWith(".completed") ||
+  activity.kind.endsWith(".resolved") ||
+  activity.kind.endsWith(".failed")
+    ? 2
+    : 1;
+
+const activityOrder = O.combine<OrchestrationThreadActivity>(
+  O.mapInput(O.String, (activity) => activity.createdAt),
+  O.combine(
+    O.mapInput(O.Number, activityLifecycleRank),
+    O.mapInput(O.String, (activity) => activity.id),
+  ),
+);
 
 /**
  * Apply a single orchestration event to an `OrchestrationThread`, returning

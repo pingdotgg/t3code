@@ -438,6 +438,66 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.activities[0]?.kind).toBe("file-edit");
       }
     });
+
+    it("orders mixed provider sequences chronologically and reconciles lifecycle context", () => {
+      const requested = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 12,
+        occurredAt: "2026-04-01T11:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("approval-requested"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: { requestId: "request-1", requestKind: "command" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 99,
+            createdAt: "2026-04-01T11:00:00.000Z",
+          },
+        },
+      });
+      expect(requested.kind).toBe("updated");
+      if (requested.kind !== "updated") return;
+      expect(requested.thread.activityContext?.map((activity) => activity.id)).toEqual([
+        "approval-requested",
+      ]);
+
+      const resolved = applyThreadDetailEvent(requested.thread, {
+        ...baseEventFields,
+        eventId: EventId.make("event-2"),
+        sequence: 13,
+        occurredAt: "2026-04-01T11:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("approval-resolved"),
+            tone: "approval",
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            payload: { requestId: "request-1" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 1,
+            createdAt: "2026-04-01T11:00:00.000Z",
+          },
+        },
+      });
+      expect(resolved.kind).toBe("updated");
+      if (resolved.kind === "updated") {
+        expect(resolved.thread.activities.map((activity) => activity.id)).toEqual([
+          "approval-requested",
+          "approval-resolved",
+        ]);
+        expect(resolved.thread.activityContext).toEqual([]);
+      }
+    });
   });
 
   describe("thread.turn-diff-completed", () => {

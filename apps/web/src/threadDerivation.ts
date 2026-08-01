@@ -12,6 +12,7 @@ import type {
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_ACTIVITIES: Thread["activities"] = [];
+const EMPTY_ACTIVITY_CONTEXT: NonNullable<Thread["activityContext"]> = [];
 const EMPTY_INSIGHT_ACTIVITIES: NonNullable<Thread["insightActivities"]> = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
@@ -29,6 +30,7 @@ const threadCache = new WeakMap<
     turnState: ThreadTurnState | undefined;
     messages: Thread["messages"];
     activities: Thread["activities"];
+    activityContext: NonNullable<Thread["activityContext"]>;
     hasMoreActivities: boolean;
     insightActivities: NonNullable<Thread["insightActivities"]>;
     proposedPlans: Thread["proposedPlans"];
@@ -117,6 +119,7 @@ export function getThreadFromEnvironmentState(
   const turnState = state.threadTurnStateById[threadId];
   const messages = selectThreadMessages(state, threadId);
   const activities = selectThreadActivities(state, threadId);
+  const activityContext = state.activityContextByThreadId[threadId] ?? EMPTY_ACTIVITY_CONTEXT;
   const hasMoreActivities = state.hasMoreActivitiesByThreadId?.[threadId] ?? false;
   const insightActivities = state.insightActivitiesByThreadId[threadId] ?? EMPTY_INSIGHT_ACTIVITIES;
   const proposedPlans = selectThreadProposedPlans(state, threadId);
@@ -131,6 +134,7 @@ export function getThreadFromEnvironmentState(
     cached.turnState === turnState &&
     cached.messages === messages &&
     cached.activities === activities &&
+    cached.activityContext === activityContext &&
     cached.hasMoreActivities === hasMoreActivities &&
     cached.insightActivities === insightActivities &&
     cached.proposedPlans === proposedPlans &&
@@ -148,6 +152,7 @@ export function getThreadFromEnvironmentState(
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     messages,
     activities,
+    activityContext,
     hasMoreActivities,
     insightActivities,
     proposedPlans,
@@ -161,6 +166,7 @@ export function getThreadFromEnvironmentState(
     turnState,
     messages,
     activities,
+    activityContext,
     hasMoreActivities,
     insightActivities,
     proposedPlans,
