@@ -4,6 +4,7 @@ import {
   restoreMarkdownImageSourcesForClipboard,
   serializeMarkdownImageElement,
 } from "./markdown-clipboard";
+import { resolveMarkdownImageFileLinkMeta } from "./markdown-links";
 
 function makeImageAttributes(initial: Record<string, string>) {
   const attributes = new Map(Object.entries(initial));
@@ -32,6 +33,22 @@ describe("workspace image clipboard serialization", () => {
     });
 
     expect(serializeMarkdownImageElement(element)).toBe("![Result](screenshots/result.png)");
+  });
+
+  it("round-trips an encoded Windows path copied from a work-log image", () => {
+    const imagePath = "C:\\Users\\mike\\dev-stuff\\t3code\\result.png";
+    const encodedImagePath = encodeURIComponent(imagePath);
+    const { element } = makeImageAttributes({
+      alt: "Generated image",
+      "data-markdown-src": encodedImagePath,
+      src: "https://environment.example/api/assets/signed-token/result.png",
+    });
+
+    const copiedMarkdown = serializeMarkdownImageElement(element);
+    const copiedSource = /^!\[[^\]]*\]\((.*)\)$/.exec(copiedMarkdown)?.[1];
+
+    expect(copiedMarkdown).toBe(`![Generated image](${encodedImagePath})`);
+    expect(resolveMarkdownImageFileLinkMeta(copiedSource)?.filePath).toBe(imagePath);
   });
 
   it("restores original sources and removes signed-URL metadata before rich copy", () => {
