@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import {
   HostProcessArguments,
   HostProcessExecutablePath,

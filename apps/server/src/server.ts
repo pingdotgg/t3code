@@ -433,7 +433,6 @@ export const makeRoutesLayer = Layer.mergeAll(
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const launcherClient = yield* ServiceLauncherClient.make();
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
@@ -441,10 +440,7 @@ export const makeServerLayer = Layer.unwrap(
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
-    const launcherLayer = Layer.succeed(
-      ServiceLauncherClient.ServiceLauncherClient,
-      launcherClient,
-    );
+    const launcherLayer = ServiceLauncherClient.layer;
 
     yield* fixPath();
 

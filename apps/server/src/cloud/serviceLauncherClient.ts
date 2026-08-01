@@ -2,6 +2,7 @@ import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -230,3 +231,5 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     prepareTrial,
   });
 });
+
+export const layer = Layer.effect(ServiceLauncherClient, make());
