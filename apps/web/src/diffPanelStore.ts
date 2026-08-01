@@ -5,8 +5,11 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
+export type DiffPanelGitScope = "branch" | "since-fork" | "unstaged";
+
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
+  | { kind: "since-fork"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "turn"; turnId: TurnId; filePath: string | null; revealRequestId: number };
 
@@ -16,7 +19,7 @@ const DEFAULT_WORKING_TREE_SELECTION: DiffPanelSelection = { kind: "unstaged" };
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
-  selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
+  selectGitScope: (ref: ScopedThreadRef, scope: DiffPanelGitScope) => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: TurnId, filePath?: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<TurnId>) => void;
@@ -28,6 +31,13 @@ function normalizeBaseRef(baseRef: string | null): string | null {
   return normalized ? normalized : null;
 }
 
+/** Both base-relative scopes share one remembered comparison target per thread. */
+function isBaseRefSelection(
+  selection: DiffPanelSelection | undefined,
+): selection is Extract<DiffPanelSelection, { baseRef: string | null }> {
+  return selection?.kind === "branch" || selection?.kind === "since-fork";
+}
+
 export const useDiffPanelStore = create<DiffPanelStoreState>()(
   persist(
     (set) => ({
@@ -37,32 +47,34 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
-          const previousBaseRef =
-            previous?.kind === "branch"
-              ? previous.baseRef
-              : (state.branchBaseRefByThreadKey[threadKey] ?? null);
+          const previousBaseRef = isBaseRefSelection(previous)
+            ? previous.baseRef
+            : (state.branchBaseRefByThreadKey[threadKey] ?? null);
           return {
             byThreadKey: {
               ...state.byThreadKey,
               [threadKey]:
-                scope === "branch"
-                  ? { kind: "branch", baseRef: previousBaseRef }
-                  : { kind: "unstaged" },
+                scope === "unstaged"
+                  ? { kind: "unstaged" }
+                  : { kind: scope, baseRef: previousBaseRef },
             },
-            branchBaseRefByThreadKey:
-              previous?.kind === "branch"
-                ? { ...state.branchBaseRefByThreadKey, [threadKey]: previous.baseRef }
-                : state.branchBaseRefByThreadKey,
+            branchBaseRefByThreadKey: isBaseRefSelection(previous)
+              ? { ...state.branchBaseRefByThreadKey, [threadKey]: previous.baseRef }
+              : state.branchBaseRefByThreadKey,
           };
         }),
       selectBranchBaseRef: (ref, baseRef) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const normalizedBaseRef = normalizeBaseRef(baseRef);
+          const previous = state.byThreadKey[threadKey];
           return {
             byThreadKey: {
               ...state.byThreadKey,
-              [threadKey]: { kind: "branch", baseRef: normalizedBaseRef },
+              [threadKey]: {
+                kind: previous?.kind === "since-fork" ? "since-fork" : "branch",
+                baseRef: normalizedBaseRef,
+              },
             },
             branchBaseRefByThreadKey: {
               ...state.branchBaseRefByThreadKey,
