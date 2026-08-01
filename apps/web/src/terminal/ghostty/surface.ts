@@ -317,9 +317,10 @@ export interface GhosttyTerminalSurfaceOptions {
   /**
    * Requests a PTY resize. When it returns a promise, the grid is resized only
    * once it settles, so output keeps being interpreted at the width it was
-   * generated for (see `fit`).
+   * generated for (see `fit`). Resolving `false` means the PTY kept its old
+   * size and the grid must not follow.
    */
-  readonly onResize: (cols: number, rows: number) => Promise<unknown> | void;
+  readonly onResize: (cols: number, rows: number) => Promise<boolean> | void;
   readonly onSelectionChange: () => void;
   readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
@@ -379,6 +380,7 @@ export class GhosttyTerminalSurface {
   private composing = false;
   private focused = false;
   private resizeRequestedOnce = false;
+  private resizeGranted = false;
   private desiredCols = 0;
   private desiredRows = 0;
   private resizeRequestActive = false;
@@ -627,21 +629,36 @@ export class GhosttyTerminalSurface {
     this.resizeRequestedOnce = true;
     const cols = this.desiredCols;
     const rows = this.desiredRows;
-    const settle = () => {
+    const settle = (granted: boolean) => {
       if (this.disposed) return;
       this.resizeRequestActive = false;
-      // Applied even when the request fails: a stuck grid is worse than a
-      // transient width mismatch, and the next fit re-requests anyway.
-      this.applyGridSize(cols, rows);
-      if (this.desiredCols !== cols || this.desiredRows !== rows) {
+      const hasNewerMeasurement = this.desiredCols !== cols || this.desiredRows !== rows;
+      if (granted || !this.resizeGranted) {
+        // The pre-grant exception keeps mount bookkeeping honest: the core was
+        // constructed at the first measured grid, so a failed initial request
+        // must still align this.cols with it rather than stay at the 1x1
+        // sentinel.
+        this.resizeGranted = this.resizeGranted || granted;
+        this.applyGridSize(cols, rows);
+      } else if (!hasNewerMeasurement) {
+        // The PTY kept its old size. Keep the grid with it, and align the
+        // desired size with the applied one so a future fit at the failed
+        // size re-requests instead of being skipped.
+        this.desiredCols = this.cols;
+        this.desiredRows = this.rows;
+      }
+      if (hasNewerMeasurement) {
         this.requestResize();
       }
     };
     const acknowledgement = this.options.onResize(cols, rows);
     if (acknowledgement && typeof acknowledgement.then === "function") {
-      void acknowledgement.then(settle, settle);
+      void acknowledgement.then(
+        (granted) => settle(granted !== false),
+        () => settle(false),
+      );
     } else {
-      settle();
+      settle(true);
     }
   }
 

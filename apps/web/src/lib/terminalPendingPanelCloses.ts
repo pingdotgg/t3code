@@ -11,6 +11,32 @@ import type { TerminalSurfaceSnapshot } from "../rightPanelStore";
  */
 const pendingByThreadKey = new Map<string, Map<string, TerminalSurfaceSnapshot>>();
 
+// Recording can happen after the metadata that would settle it has already
+// arrived (the close promise reports interruption late, or the session survived
+// so the list never changes). Version + subscribe lets the settling effect
+// re-run on every record instead of waiting for a metadata change that may
+// never come.
+let version = 0;
+const listeners = new Set<() => void>();
+
+function notifyPendingPanelCloses(): void {
+  version += 1;
+  for (const listener of [...listeners]) {
+    listener();
+  }
+}
+
+export function subscribePendingPanelCloses(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function pendingPanelCloseVersion(): number {
+  return version;
+}
+
 export function recordPendingPanelClose(
   threadKey: string,
   terminalId: string,
@@ -19,6 +45,7 @@ export function recordPendingPanelClose(
   const pending = pendingByThreadKey.get(threadKey) ?? new Map<string, TerminalSurfaceSnapshot>();
   pending.set(terminalId, snapshot);
   pendingByThreadKey.set(threadKey, pending);
+  notifyPendingPanelCloses();
 }
 
 /**

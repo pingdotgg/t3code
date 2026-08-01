@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   clearPendingPanelCloses,
+  pendingPanelCloseVersion,
   recordPendingPanelClose,
   resolvePendingPanelCloses,
+  subscribePendingPanelCloses,
 } from "./terminalPendingPanelCloses";
 
 const snapshot = {
@@ -43,6 +45,24 @@ describe("terminalPendingPanelCloses", () => {
     expect(resolvePendingPanelCloses("thread-a", ["terminal-1", "terminal-2"])).toEqual([
       { terminalId: "terminal-2", snapshot },
     ]);
+  });
+
+  it("notifies subscribers when a close is recorded", () => {
+    // The settling effect must re-run even when session metadata never changes
+    // again (the session survived, or metadata arrived before the record).
+    let notified = 0;
+    const unsubscribe = subscribePendingPanelCloses(() => {
+      notified += 1;
+    });
+    const versionBefore = pendingPanelCloseVersion();
+
+    recordPendingPanelClose("thread-a", "terminal-2", snapshot);
+
+    expect(notified).toBe(1);
+    expect(pendingPanelCloseVersion()).toBeGreaterThan(versionBefore);
+    unsubscribe();
+    recordPendingPanelClose("thread-a", "terminal-3", snapshot);
+    expect(notified).toBe(1);
   });
 
   it("scopes pending closes per thread", () => {

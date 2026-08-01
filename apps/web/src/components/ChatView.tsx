@@ -53,6 +53,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
@@ -208,8 +209,10 @@ import {
   reserveTerminalOpen,
 } from "../lib/terminalOpenReservations";
 import {
+  pendingPanelCloseVersion,
   recordPendingPanelClose,
   resolvePendingPanelCloses,
+  subscribePendingPanelCloses,
 } from "../lib/terminalPendingPanelCloses";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -1553,7 +1556,14 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // Settles right-panel closes whose result never arrived. Only the server list
   // is authoritative here, so a still-reported session is put back exactly where
-  // it was and one the server dropped stays closed.
+  // it was and one the server dropped stays closed. Subscribes to the pending
+  // registry as well: a close can be recorded after the metadata that settles
+  // it already arrived (and a survived session never changes the list), so the
+  // effect must also re-run on record.
+  const activePendingPanelCloseVersion = useSyncExternalStore(
+    subscribePendingPanelCloses,
+    pendingPanelCloseVersion,
+  );
   useEffect(() => {
     if (!activeThreadRef) return;
     const restored = resolvePendingPanelCloses(
@@ -1564,7 +1574,12 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore.getState().restoreTerminal(activeThreadRef, snapshot, terminalId);
       storeUnsuppressTerminal(activeThreadRef, terminalId);
     }
-  }, [activeServerOrderedTerminalIds, activeThreadRef, storeUnsuppressTerminal]);
+  }, [
+    activePendingPanelCloseVersion,
+    activeServerOrderedTerminalIds,
+    activeThreadRef,
+    storeUnsuppressTerminal,
+  ]);
   const allocatableActiveTerminalIds = useMemo(
     () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
     [activeKnownTerminalIds, panelTerminalIds],

@@ -321,12 +321,15 @@ export function TerminalViewport({
       input: { threadId, terminalId, data },
     }),
   );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) =>
-    runTerminalResize({
+  const resizeTerminal = useEffectEvent(async (cols: number, rows: number) => {
+    const result = await runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
-    }),
-  );
+    });
+    // A failed request means the PTY kept its old size; the surface must not
+    // move the grid onto a width the shell never redrew for.
+    return result._tag === "Success";
+  });
   const terminalBuffer = terminalSession.buffer;
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
