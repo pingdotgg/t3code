@@ -9,6 +9,12 @@ import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRe
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import {
+  modelPickerLegacySectionKey,
+  modelPickerModelKey,
+  parseModelPickerLegacySectionKey,
+  parseModelPickerModelKey,
+} from "./modelPickerKeys";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
 import {
@@ -49,34 +55,9 @@ type ModelPickerItem = {
 };
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
-const LEGACY_SECTION_KEY_PREFIX = "legacy-models:";
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
-}
-
-function legacySectionKey(instanceId: ProviderInstanceId): string {
-  return `${LEGACY_SECTION_KEY_PREFIX}${instanceId}`;
-}
-
-function legacySectionInstanceId(key: string): ProviderInstanceId | null {
-  return key.startsWith(LEGACY_SECTION_KEY_PREFIX)
-    ? (key.slice(LEGACY_SECTION_KEY_PREFIX.length) as ProviderInstanceId)
-    : null;
-}
-
-// Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
-// can contain colons (e.g. some vendor model ids), so we only split on the
-// first colon — anything after that is the slug.
-function splitInstanceModelKey(key: string): { instanceId: ProviderInstanceId; slug: string } {
-  const colonIndex = key.indexOf(":");
-  if (colonIndex === -1) {
-    return { instanceId: key as ProviderInstanceId, slug: "" };
-  }
-  return {
-    instanceId: key.slice(0, colonIndex) as ProviderInstanceId,
-    slug: key.slice(colonIndex + 1),
-  };
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
@@ -405,7 +386,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return null;
     }
     return {
-      key: legacySectionKey(selectedInstanceId),
+      key: modelPickerLegacySectionKey(selectedInstanceId),
       currentModels,
       legacyModels,
       isExpanded: expandedLegacyInstances.has(selectedInstanceId),
@@ -486,7 +467,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!jumpCommand) {
         return mapping;
       }
-      mapping.set(`${model.instanceId}:${model.slug}`, jumpCommand);
+      mapping.set(modelPickerModelKey(model.instanceId, model.slug), jumpCommand);
       selectableModelIndex += 1;
     }
     return mapping;
@@ -497,17 +478,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
   const allItemKeys = useMemo(
     (): string[] => [
-      ...flatModels.map((model) => `${model.instanceId}:${model.slug}`),
+      ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
       ...new Set(
         flatModels
           .filter((model) => model.isLegacy)
-          .map((model) => legacySectionKey(model.instanceId)),
+          .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
     ],
     [flatModels],
   );
   const filteredItemKeys = useMemo((): string[] => {
-    const modelKeys = visibleModels.map((model) => `${model.instanceId}:${model.slug}`);
+    const modelKeys = visibleModels.map((model) =>
+      modelPickerModelKey(model.instanceId, model.slug),
+    );
     if (!legacySection) {
       return modelKeys;
     }
@@ -516,7 +499,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [legacySection, visibleModels]);
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
-      new Map(visibleModels.map((model) => [`${model.instanceId}:${model.slug}`, model] as const)),
+      new Map(
+        visibleModels.map(
+          (model) => [modelPickerModelKey(model.instanceId, model.slug), model] as const,
+        ),
+      ),
     [visibleModels],
   );
   const updateModelListScrollFades = useCallback(() => {
@@ -574,10 +561,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!targetModelKey) {
         return;
       }
-      const { instanceId, slug } = splitInstanceModelKey(targetModelKey);
+      const model = parseModelPickerModelKey(targetModelKey);
+      if (!model) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
-      handleModelSelect(slug, instanceId);
+      handleModelSelect(model.slug, model.instanceId);
     };
 
     window.addEventListener("keydown", onWindowKeyDown, true);
@@ -633,7 +623,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           autoHighlight
           open
           virtualized
-          value={`${props.activeInstanceId}:${props.model}`}
+          value={modelPickerModelKey(props.activeInstanceId, props.model)}
           onItemHighlighted={(modelKey, eventDetails) => {
             highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
             if (eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
@@ -647,13 +637,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             if (typeof modelKey !== "string") {
               return;
             }
-            const legacyInstanceId = legacySectionInstanceId(modelKey);
+            const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
             if (legacyInstanceId) {
               toggleLegacySection(legacyInstanceId);
               return;
             }
-            const { instanceId, slug } = splitInstanceModelKey(modelKey);
-            handleModelSelect(slug, instanceId);
+            const model = parseModelPickerModelKey(modelKey);
+            if (model) {
+              handleModelSelect(model.slug, model.instanceId);
+            }
           }}
         >
           <div
@@ -689,17 +681,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       ).preventBaseUIHandler?.();
                       e.preventDefault();
                       e.stopPropagation();
-                      const legacyInstanceId = legacySectionInstanceId(
+                      const legacyInstanceId = parseModelPickerLegacySectionKey(
                         highlightedModelKeyRef.current,
                       );
                       if (legacyInstanceId) {
                         toggleLegacySection(legacyInstanceId);
                         return;
                       }
-                      const { instanceId, slug } = splitInstanceModelKey(
-                        highlightedModelKeyRef.current,
-                      );
-                      handleModelSelect(slug, instanceId);
+                      const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
+                      if (model) {
+                        handleModelSelect(model.slug, model.instanceId);
+                      }
                       return;
                     }
                     e.stopPropagation();
@@ -761,8 +753,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         driverKind={model.driverKind}
                         providerDisplayName={model.instanceDisplayName}
                         providerAccentColor={model.instanceAccentColor}
-                        isFavorite={favoritesSet.has(modelKey)}
-                        isSelected={modelKey === `${props.activeInstanceId}:${props.model}`}
+                        isFavorite={favoritesSet.has(
+                          providerModelKey(model.instanceId, model.slug),
+                        )}
+                        isSelected={
+                          modelKey === modelPickerModelKey(props.activeInstanceId, props.model)
+                        }
                         showProvider
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
