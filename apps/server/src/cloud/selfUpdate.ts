@@ -24,7 +24,7 @@ import {
   PinnedRuntimePreflightBlockedError,
 } from "./pinnedRuntime.ts";
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
-import { isServiceLauncherManaged, ServiceLauncherClient } from "./serviceLauncherClient.ts";
+import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import {
   isExactServiceVersion,
   SERVICE_HANDOFF_EXIT_CODE,
@@ -38,7 +38,9 @@ export const resolveServerSelfUpdateCapability = Effect.fn(
   "cloud.server_self_update.resolve_capability",
 )(function* (input: { readonly desktopManaged: boolean }) {
   if (input.desktopManaged) return "desktop-managed" as const;
-  return (yield* isServiceLauncherManaged()) ? ("boot-service" as const) : null;
+  return (yield* ServiceLauncherClient.isServiceLauncherManaged())
+    ? ("boot-service" as const)
+    : null;
 });
 
 export class ServerSelfUpdate extends Context.Service<
@@ -53,7 +55,7 @@ export class ServerSelfUpdate extends Context.Service<
 
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const launcher = yield* ServiceLauncherClient;
+  const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -63,7 +65,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
-  const failWith = (reason: string) => new ServerSelfUpdateError({ reason });
+  const failWith = (reason: string, cause?: unknown) =>
+    cause === undefined
+      ? new ServerSelfUpdateError({ reason })
+      : new ServerSelfUpdateError({ reason, cause });
 
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
@@ -166,18 +171,25 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
             ),
       }).pipe(
         Effect.mapError((error) =>
-          failWith(
-            error._tag === "PinnedRuntimePreflightBlockedError"
-              ? error.message
-              : `Could not prepare t3@${targetVersion}: ${error.message}`,
-          ),
+          error._tag === "PinnedRuntimePreflightBlockedError"
+            ? failWith(error.reason, error)
+            : failWith(`Could not prepare t3@${targetVersion}.`, error),
         ),
       );
 
       yield* reportProgress("installing");
       const pending = yield* launcher
         .requestUpdate({ fromVersion: packageJson.version, targetVersion })
-        .pipe(Effect.mapError((error) => failWith(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            failWith(
+              error.operation === "rejected" && error.detail !== undefined
+                ? error.detail
+                : "Could not ask the service launcher to activate the prepared update.",
+              error,
+            ),
+          ),
+        );
 
       yield* Effect.sleep(HANDOFF_DELAY).pipe(
         Effect.andThen(shutdown.request(SERVICE_HANDOFF_EXIT_CODE)),

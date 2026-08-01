@@ -111,18 +111,19 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     if (alreadyPinned) {
       const valid = yield* input.validate(paths).pipe(
         Effect.as(true),
-        Effect.catchTag("PinnedRuntimeInstallError", () =>
-          fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new PinnedRuntimeInstallError({
-                  step: "removing an invalid pinned runtime",
-                  cause,
-                }),
+        Effect.catchTags({
+          PinnedRuntimeInstallError: () =>
+            fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PinnedRuntimeInstallError({
+                    step: "removing an invalid pinned runtime",
+                    cause,
+                  }),
+              ),
+              Effect.as(false),
             ),
-            Effect.as(false),
-          ),
-        ),
+        }),
       );
       if (valid) return paths;
     }
