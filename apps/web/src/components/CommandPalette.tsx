@@ -1116,7 +1116,7 @@ function OpenCommandPaletteDialog() {
   return (
     <CommandDialogPopup
       aria-label="Command palette"
-      className="overflow-hidden p-0"
+      className="overflow-hidden bg-chat-background p-0 before:bg-transparent"
       data-testid="command-palette"
       finalFocus={() => {
         composerHandleRef?.current?.focusAtEnd();
@@ -1193,7 +1193,7 @@ function OpenCommandPaletteDialog() {
             </Button>
           ) : null}
         </div>
-        <CommandPanel className="max-h-[min(28rem,70vh)]">
+        <CommandPanel className="max-h-[min(28rem,70vh)] bg-chat-background">
           <CommandPaletteResults
             groups={displayedGroups}
             highlightedItemValue={highlightedItemValue}
