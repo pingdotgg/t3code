@@ -1307,7 +1307,6 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const [rightPanelSheetMounted, setRightPanelSheetMounted] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -1549,14 +1548,6 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
-
-  useEffect(() => {
-    if (shouldUsePlanSidebarSheet && rightPanelOpen) {
-      setRightPanelSheetMounted(true);
-    } else if (!shouldUsePlanSidebarSheet) {
-      setRightPanelSheetMounted(false);
-    }
-  }, [rightPanelOpen, shouldUsePlanSidebarSheet]);
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -6158,15 +6149,10 @@ function ChatViewContent(props: ChatViewProps) {
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {shouldUsePlanSidebarSheet &&
-      (rightPanelOpen || rightPanelSheetMounted) &&
-      activeThreadRef ? (
+      {shouldUsePlanSidebarSheet && activeThreadRef ? (
         <RightPanelSheet
           open={rightPanelOpen}
           onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}
-          onOpenChangeComplete={(open) => {
-            if (!open) setRightPanelSheetMounted(false);
-          }}
         >
           <RightPanelTabs
             mode="sheet"
@@ -6195,19 +6181,16 @@ function ChatViewContent(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
-      {expandedImageDialog && expandedImage && (
-        <ExpandedImageDialog
-          key={`${expandedImage.images[expandedImage.index]?.src ?? "image"}:${expandedImage.index}`}
-          open={expandedImageDialog.open}
-          preview={expandedImage}
-          onOpenChange={(open) => {
-            if (!open) closeExpandedImage();
-          }}
-          onOpenChangeComplete={(open) => {
-            if (!open) setExpandedImageDialog(null);
-          }}
-        />
-      )}
+      <ExpandedImageDialog
+        open={expandedImageDialog?.open ?? false}
+        preview={expandedImage}
+        onOpenChange={(open) => {
+          if (!open) closeExpandedImage();
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setExpandedImageDialog(null);
+        }}
+      />
     </div>
   );
 }

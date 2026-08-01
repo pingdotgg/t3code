@@ -68,7 +68,7 @@ function ActiveSshPasswordPrompt({
   readonly onRemove: (requestId: string) => void;
 }) {
   const [password, setPassword] = useState("");
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [responseError, setResponseError] = useState<string | null>(null);
@@ -78,6 +78,7 @@ function ActiveSshPasswordPrompt({
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
+      setOpen(true);
       inputRef.current?.focus();
       inputRef.current?.select();
     });
