@@ -639,6 +639,7 @@ export const DESKTOP_FILE_EXCLUSIONS = [
 // bundle (otherwise ERR_MODULE_NOT_FOUND: "Cannot find package 'effect'").
 // The Windows primary backend reads the same files through the asar redirect,
 // so nothing is duplicated.
+export const TUI_ASAR_UNPACK = ["apps/server/dist/tui/**", "**/node_modules/**"] as const;
 export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
@@ -1544,10 +1545,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    // Only the Windows WSL backend needs files outside the asar (see
-    // WINDOWS_ASAR_UNPACK); macOS and Linux stay packed — smart unpack
-    // extracts native libraries, which fff-node finds in app.asar.unpacked.
-    ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
+    // Bun cannot read Electron's virtual asar filesystem. Keep the staged TUI
+    // entry and its public runtime dependencies on disk on every platform;
+    // Windows additionally needs the complete server bundle for WSL.
+    asarUnpack: [...(platform === "win" ? WINDOWS_ASAR_UNPACK : TUI_ASAR_UNPACK)],
     extraResources: DESKTOP_EXTRA_RESOURCES,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);

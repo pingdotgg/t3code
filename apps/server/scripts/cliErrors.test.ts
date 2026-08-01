@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { ServerCliBuildAssetMissingError, ServerCliCommandExitError } from "./cliErrors.ts";
+import {
+  ServerCliBuildAssetMissingError,
+  ServerCliCommandExitError,
+  ServerCliTuiBundleImportError,
+} from "./cliErrors.ts";
 
 describe("server CLI errors", () => {
   it("preserves failed command context without changing its message", () => {
@@ -26,6 +30,18 @@ describe("server CLI errors", () => {
     assert.equal(
       error.message,
       "Missing build asset: /repo/server.mjs. Run the build subcommand first.",
+    );
+  });
+
+  it("identifies an unresolved TUI runtime import", () => {
+    const error = new ServerCliTuiBundleImportError({
+      assetPath: "/repo/dist/tui/index.js",
+      specifier: "@xterm/headless",
+    });
+
+    assert.equal(
+      error.message,
+      "TUI bundle contains an unresolved runtime import (@xterm/headless): /repo/dist/tui/index.js",
     );
   });
 });

@@ -1,8 +1,7 @@
-import * as NodeModule from "node:module";
-
 import { RGBA } from "@opentui/core";
 import { usePaste } from "@opentui/react";
 import type { ThreadId } from "@t3tools/contracts";
+import * as XtermHeadless from "@xterm/headless";
 import * as React from "react";
 
 import type { TuiClient } from "../connection.ts";
@@ -20,11 +19,10 @@ import { THEME, usePalette } from "../theme.ts";
 // thread's PTY stream, and renders the grid into OpenTUI with the terminal's own
 // colours.
 
-// @xterm/headless ships as CommonJS, so load it via createRequire (matching the
-// repo's node-pty pattern) rather than a named ESM import. Works under Bun.
-const { Terminal } = NodeModule.createRequire(import.meta.url)(
-  "@xterm/headless",
-) as typeof import("@xterm/headless");
+// Keep this as a static namespace import. @xterm/headless is CommonJS, but Bun
+// can bundle the namespace interop; an opaque createRequire call would survive
+// the build and make the staged TUI depend on its private workspace node_modules.
+const { Terminal } = XtermHeadless;
 type XTerm = InstanceType<typeof Terminal>;
 
 /** A scrollback navigation request routed from the key handler to the active pane. */

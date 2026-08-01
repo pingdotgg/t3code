@@ -43,6 +43,7 @@ import {
   stageLinuxIconSize,
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
+  TUI_ASAR_UNPACK,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -346,8 +347,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
+      assert.deepStrictEqual(mac.asarUnpack, TUI_ASAR_UNPACK);
+      assert.deepStrictEqual(linux.asarUnpack, TUI_ASAR_UNPACK);
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.

@@ -68,3 +68,15 @@ export class ServerCliBuildAssetMissingError extends Schema.TaggedErrorClass<Ser
     return `Missing build asset: ${this.assetPath}. Run the build subcommand first.`;
   }
 }
+
+export class ServerCliTuiBundleImportError extends Schema.TaggedErrorClass<ServerCliTuiBundleImportError>()(
+  "ServerCliTuiBundleImportError",
+  {
+    assetPath: Schema.String,
+    specifier: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `TUI bundle contains an unresolved runtime import (${this.specifier}): ${this.assetPath}`;
+  }
+}

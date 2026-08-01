@@ -464,6 +464,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.3.15
         version: 1.15.13
+      '@opentui/core':
+        specifier: ^0.4.1
+        version: 0.4.5(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
       '@pierre/diffs':
         specifier: 'catalog:'
         version: 1.3.0-beta.10(patch_hash=7ef7cb0cbabb17c15cdb137554068b36f15f6f5265e73fb51452aa3380db91aa)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -473,6 +476,9 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -504,6 +510,52 @@ importers:
       effect-codex-app-server:
         specifier: workspace:*
         version: link:../../packages/effect-codex-app-server
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.2(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+
+  apps/tui:
+    dependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-beta.102
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@opentui/core':
+        specifier: ^0.4.1
+        version: 0.4.5(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+      '@opentui/react':
+        specifier: ^0.4.1
+        version: 0.4.5(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      '@t3tools/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@t3tools/opentui-image':
+        specifier: workspace:*
+        version: link:../../packages/opentui-image
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@xterm/headless':
+        specifier: ^5.5.0
+        version: 5.5.0
+      effect:
+        specifier: 4.0.0-beta.102
+        version: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
+      react:
+        specifier: 19.2.6
+        version: 19.2.6
+    devDependencies:
+      '@types/bun':
+        specifier: 1.3.14
+        version: 1.3.14
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: ~19.2.14
+        version: 19.2.16
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.2(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -808,6 +860,31 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.2(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+
+  packages/opentui-image:
+    dependencies:
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
+    devDependencies:
+      '@opentui/core':
+        specifier: ^0.4.1
+        version: 0.4.5(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+      '@opentui/react':
+        specifier: ^0.4.1
+        version: 0.4.5(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      '@types/bun':
+        specifier: 1.3.14
+        version: 1.3.14
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: ~19.2.14
+        version: 19.2.16
+      react:
+        specifier: 19.2.6
+        version: 19.2.6
 
   packages/shared:
     dependencies:
@@ -3282,6 +3359,60 @@ packages:
   '@opencode-ai/sdk@1.15.13':
     resolution: {integrity: sha512-4TwojIoQ8EG6/mVBuUVYZXiFcwNmiiytEnjnvyuvSJjGwFIlw2YIBFxtSVC3FbwwbwHT63teh1RHiQUUC4U5xw==}
 
+  '@opentui/core-darwin-arm64@0.4.5':
+    resolution: {integrity: sha512-8KUG0oRidnR+oW1RSZJ72/PhZLl+qRRMk5U/mieF4c0SJ5V3tYACpBZAKzQfHNd1f7QzD8FHZct1lPpQgtmkWg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@opentui/core-darwin-x64@0.4.5':
+    resolution: {integrity: sha512-R2bocsg55gwjOqCp/MWFgFYzRmsduKegB6nzgFAPCvAD/L5Jf30xpWJWFlSg3x8vxe1L9WJ84dfqa4M7mZZ3wA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@opentui/core-linux-arm64-musl@0.4.5':
+    resolution: {integrity: sha512-ieqdyKI6EIYPalYAETB2wsdP83hr5Ifi+dFnBFUmdEEFHsoKwBmn2S7bsTOYlX7Bg03F4/YPIg+IvRpeC+cUJw==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@opentui/core-linux-arm64@0.4.5':
+    resolution: {integrity: sha512-R4MZ25a4CzOAGVjW9aj1hUfzQGVfCJwrwBDbNs2SXaIvzcZqkxCVtU4FoQ5LsaD0j/BdNQVg2CIfFkFsm1fDuQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@opentui/core-linux-x64-musl@0.4.5':
+    resolution: {integrity: sha512-mKVKcIcPiSVVZZsdPSBoWwoa2/TCeQAaMDeHF7PFw2kt5bTXZPP7xxWfRQLCNIcA1eaGl59UuwUWHDR2Ve548Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@opentui/core-linux-x64@0.4.5':
+    resolution: {integrity: sha512-SNyuQoxMKI1vuJhgxSSW96adWM6LqFl2SoS3GM4tGeneGOanVVG2Y06PvlytXvF4cKik97t0rqkVMRetmOs93w==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opentui/core-win32-arm64@0.4.5':
+    resolution: {integrity: sha512-GHTTsqeR45q2Iek9Rb7ty+x/hAKn2jZ1ujlCgPR8LBKyF7h0E1dNFryoZ7ehMc3kJndP1sKn836IemKFqxuDdQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@opentui/core-win32-x64@0.4.5':
+    resolution: {integrity: sha512-Y8T/yXCDGagRGiQrtmuB6AhRcPucKFs/Dre3v8kJwNYqDccI4FzUPKclZ7djfmRZNjl7JUqPhZZP/PwDpQocMg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@opentui/core@0.4.5':
+    resolution: {integrity: sha512-JsgRTPkA6e+Vxmumxai6SElOSlRQkbzNKHlCfemlArRiLhfC1IZ9RXJo2QH4xSu+uBOWAM90uss73/pPlkdEig==}
+    peerDependencies:
+      web-tree-sitter: 0.25.10
+
+  '@opentui/react@0.4.5':
+    resolution: {integrity: sha512-n88Vx0cMmAu++/S14WscjvdcT46IDcxve02jMtcfHQ9j6cySRHfILfGEpOB7xxc8RpCwQceEyOjkKkfzPzm6Jg==}
+    peerDependencies:
+      react: '>=19.2.0'
+      react-devtools-core: ^7.0.1
+      ws: ^8.18.0
+
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
 
@@ -5150,6 +5281,9 @@ packages:
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
 
+  '@xterm/headless@5.5.0':
+    resolution: {integrity: sha512-5xXB7kdQlFBP82ViMJTwwEc3gKCLGKR/eoxQm4zge7GPBl86tCdI0IdPJjoKd8mUSFXz5V7i/25sfsEkP4j46g==}
+
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     resolution: {integrity: sha512-eDYLT0kVBkp7e2BwdRDmt6N1rkeDPUHDefk3ZX0/nok+GLsqfy1WBoSL3Yg7HVXN1EyW8OBVc2uK8Zq8HbmaSA==}
     engines: {node: '>= 12'}
@@ -5642,6 +5776,11 @@ packages:
   builder-util@26.15.3:
     resolution: {integrity: sha512-q2hn7Mbo2nFNkVekPiHFx6Nfo3hURmES3tfBn+k5Pqxl2RkmP3QGqZUhH/q9Pch/4G05NRhPjDlVj1O8q4Txvw==}
     engines: {node: '>=14.0.0'}
+
+  bun-ffi-structs@0.2.4:
+    resolution: {integrity: sha512-AJzsqoVFs1KBbJbWHIYrVZLDC3NhTqqh25awRXqzoLzmBAKr5oqk6+CwuYHAekKx+VBCYVohBoKuRq40dV+TYg==}
+    peerDependencies:
+      typescript: ^5
 
   bun-types@1.3.14:
     resolution: {integrity: sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ==}
@@ -7862,6 +8001,11 @@ packages:
   markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==}
 
+  marked@17.0.1:
+    resolution: {integrity: sha512-boeBdiS0ghpWcSwoNm/jJBwdpFaMnZWRzjA6SkUMYb40SVaN1x7mmfGKp0jvexGcx+7y2La5zRZsYFZI6Qpypg==}
+    engines: {node: '>= 20'}
+    hasBin: true
+
   marky@1.3.0:
     resolution: {integrity: sha512-ocnPZQLNpvbedwTy9kNrQEsknEfgvcLMvOtz3sFeWApDq1MXH1TqkCIx58xlpESsfwQOnuBO9beyQuNGzVvuhQ==}
 
@@ -9607,6 +9751,10 @@ packages:
     resolution: {integrity: sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==}
     engines: {node: '>=8'}
 
+  strip-ansi@7.1.2:
+    resolution: {integrity: sha512-gmBGslpoQJtgnMAvOVqGZpEz9dyoKTCzy2nfz/n8aIFhN/jCE/rCmcxabB6jOOHV+0WNnylOxaxBQPSvcWklhA==}
+    engines: {node: '>=12'}
+
   strip-ansi@7.2.0:
     resolution: {integrity: sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==}
     engines: {node: '>=12'}
@@ -10273,6 +10421,14 @@ packages:
 
   web-namespaces@2.0.1:
     resolution: {integrity: sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ==}
+
+  web-tree-sitter@0.25.10:
+    resolution: {integrity: sha512-Y09sF44/13XvgVKgO2cNDw5rGk6s26MgoZPXLESvMXeefBf7i6/73eFurre0IsTW6E14Y0ArIzhUMmjoc7xyzA==}
+    peerDependencies:
+      '@types/emscripten': ^1.40.0
+    peerDependenciesMeta:
+      '@types/emscripten':
+        optional: true
 
   webcrypto-core@1.9.2:
     resolution: {integrity: sha512-gsXecm82UQNlTBURJGuqOWy1Ww08S3kZUcr3aOJS02Pk0xLtkfeUAVC0u0xhgdonFme80edSJUIJyuvL/7250Q==}
@@ -12808,8 +12964,7 @@ snapshots:
 
   '@iarna/toml@2.2.5': {}
 
-  '@img/colour@1.1.0':
-    optional: true
+  '@img/colour@1.1.0': {}
 
   '@img/sharp-darwin-arm64@0.34.5':
     optionalDependencies:
@@ -13405,6 +13560,61 @@ snapshots:
   '@opencode-ai/sdk@1.15.13':
     dependencies:
       cross-spawn: 7.0.6
+
+  '@opentui/core-darwin-arm64@0.4.5':
+    optional: true
+
+  '@opentui/core-darwin-x64@0.4.5':
+    optional: true
+
+  '@opentui/core-linux-arm64-musl@0.4.5':
+    optional: true
+
+  '@opentui/core-linux-arm64@0.4.5':
+    optional: true
+
+  '@opentui/core-linux-x64-musl@0.4.5':
+    optional: true
+
+  '@opentui/core-linux-x64@0.4.5':
+    optional: true
+
+  '@opentui/core-win32-arm64@0.4.5':
+    optional: true
+
+  '@opentui/core-win32-x64@0.4.5':
+    optional: true
+
+  '@opentui/core@0.4.5(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))':
+    dependencies:
+      bun-ffi-structs: 0.2.4(typescript@6.0.3)
+      diff: 9.0.0
+      marked: 17.0.1
+      string-width: 7.2.0
+      strip-ansi: 7.1.2
+      web-tree-sitter: 0.25.10(@types/emscripten@1.41.5)
+    optionalDependencies:
+      '@opentui/core-darwin-arm64': 0.4.5
+      '@opentui/core-darwin-x64': 0.4.5
+      '@opentui/core-linux-arm64': 0.4.5
+      '@opentui/core-linux-arm64-musl': 0.4.5
+      '@opentui/core-linux-x64': 0.4.5
+      '@opentui/core-linux-x64-musl': 0.4.5
+      '@opentui/core-win32-arm64': 0.4.5
+      '@opentui/core-win32-x64': 0.4.5
+    transitivePeerDependencies:
+      - typescript
+
+  '@opentui/react@0.4.5(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))':
+    dependencies:
+      '@opentui/core': 0.4.5(typescript@6.0.3)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+      react: 19.2.6
+      react-devtools-core: 6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      react-reconciler: 0.33.0(react@19.2.6)
+      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+    transitivePeerDependencies:
+      - typescript
+      - web-tree-sitter
 
   '@oslojs/encoding@1.1.0': {}
 
@@ -15271,6 +15481,8 @@ snapshots:
 
   '@xmldom/xmldom@0.9.10': {}
 
+  '@xterm/headless@5.5.0': {}
+
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     optional: true
 
@@ -15969,6 +16181,10 @@ snapshots:
       tiny-async-pool: 1.3.0
     transitivePeerDependencies:
       - supports-color
+
+  bun-ffi-structs@0.2.4(typescript@6.0.3):
+    dependencies:
+      typescript: 6.0.3
 
   bun-types@1.3.14:
     dependencies:
@@ -18418,6 +18634,8 @@ snapshots:
 
   markdown-table@3.0.4: {}
 
+  marked@17.0.1: {}
+
   marky@1.3.0: {}
 
   matcher@3.0.0:
@@ -20643,7 +20861,6 @@ snapshots:
       '@img/sharp-win32-arm64': 0.34.5
       '@img/sharp-win32-ia32': 0.34.5
       '@img/sharp-win32-x64': 0.34.5
-    optional: true
 
   shebang-command@2.0.0:
     dependencies:
@@ -20854,6 +21071,10 @@ snapshots:
   strip-ansi@6.0.1:
     dependencies:
       ansi-regex: 5.0.1
+
+  strip-ansi@7.1.2:
+    dependencies:
+      ansi-regex: 6.2.2
 
   strip-ansi@7.2.0:
     dependencies:
@@ -21531,6 +21752,10 @@ snapshots:
       defaults: 1.0.4
 
   web-namespaces@2.0.1: {}
+
+  web-tree-sitter@0.25.10(@types/emscripten@1.41.5):
+    optionalDependencies:
+      '@types/emscripten': 1.41.5
 
   webcrypto-core@1.9.2:
     dependencies:

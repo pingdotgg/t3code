@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -69,7 +70,16 @@ function runBunTui(input: {
   readonly mintSocketUrl: () => Promise<string>;
 }): Promise<void> {
   const bunCommand = process.env.T3_TUI_BUN ?? "bun";
-  const tuiEntry = NodeModule.createRequire(import.meta.url).resolve("@t3tools/tui");
+  const bundledEntry = NodeURL.fileURLToPath(new URL("./tui/index.js", import.meta.url));
+  const unpackedEntry = bundledEntry.replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+  const workspaceEntry = NodeURL.fileURLToPath(
+    new URL("../../../tui/dist/index.js", import.meta.url),
+  );
+  const tuiEntry = NodeFS.existsSync(unpackedEntry)
+    ? unpackedEntry
+    : NodeFS.existsSync(bundledEntry)
+      ? bundledEntry
+      : workspaceEntry;
 
   return new Promise<void>((resolve) => {
     const child = NodeChildProcess.spawn(bunCommand, [tuiEntry], {

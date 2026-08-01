@@ -27,7 +27,9 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliPublishIconSourceMissingError,
   ServerCliPublishIconTargetMissingError,
+  ServerCliTuiBundleImportError,
 } from "./cliErrors.ts";
+import { findUnresolvedTuiBundleImport } from "./tuiBundle.ts";
 
 interface PackageJson {
   name: string;
@@ -162,6 +164,23 @@ const buildCmd = Command.make(
         }),
       );
 
+      const tuiEntry = path.join(repoRoot, "apps/tui/dist/index.js");
+      const tuiTarget = path.join(serverDir, "dist/tui/index.js");
+      if (!(yield* fs.exists(tuiEntry))) {
+        return yield* new ServerCliBuildAssetMissingError({ assetPath: tuiEntry });
+      }
+      yield* fs.makeDirectory(path.dirname(tuiTarget), { recursive: true });
+      yield* fs.copyFile(tuiEntry, tuiTarget);
+      const tuiBundle = yield* fs.readFileString(tuiTarget);
+      const unresolvedImport = findUnresolvedTuiBundleImport(tuiBundle);
+      if (unresolvedImport !== null) {
+        return yield* new ServerCliTuiBundleImportError({
+          assetPath: tuiTarget,
+          specifier: unresolvedImport,
+        });
+      }
+      yield* Effect.log("[cli] Bundled TUI entry into dist/tui");
+
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
@@ -223,7 +242,7 @@ const publishCmd = Command.make(
       const packageJsonPath = path.join(serverDir, "package.json");
 
       // Assert build assets exist
-      for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
+      for (const relPath of ["dist/bin.mjs", "dist/client/index.html", "dist/tui/index.js"]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {
           return yield* new ServerCliBuildAssetMissingError({ assetPath: abs });

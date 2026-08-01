@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "bun build src/index.tsx --target bun --packages external --outfile dist/index.js",
+    "build": "bun build src/index.tsx --target bun --external @opentui/core --external sharp --outfile dist/index.js",
     "typecheck": "tsgo --noEmit",
     "test": "bun test"
   },
