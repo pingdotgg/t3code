@@ -29,6 +29,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { cn } from "~/lib/utils";
 import { hasUnseenCompletion, resolveThreadStatusPill } from "./Sidebar.logic";
 import {
+  compactSidebarTimeLabel,
   formatWorkingDurationLabel,
   latestTurnDiffStats,
   resolveSidebarV2Status,
@@ -237,7 +238,6 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr);
-  const driverKind = providerEntry?.driverKind ?? thread.session?.provider ?? null;
 
   const latestTurnDiff = useStore(
     useMemo(
@@ -367,6 +367,15 @@ export const SidebarV2Row = memo(function SidebarV2Row({
     </span>
   ) : null;
 
+  // Branch, terminals, PR, diff and the remote marker share the third line;
+  // with none of them the line is pure blank height.
+  const hasMetadataLine =
+    thread.branch !== null ||
+    terminalIcon !== null ||
+    prStatus !== null ||
+    diff !== null ||
+    isRemote;
+
   const tooltip = (
     <ThreadDetailsTooltip
       environmentLabel={environmentLabel}
@@ -385,26 +394,27 @@ export const SidebarV2Row = memo(function SidebarV2Row({
           <TooltipTrigger
             render={
               <SidebarMenuButton
-                className="h-auto min-h-11 items-start px-2 py-1.5"
+                className="h-auto min-h-0 items-start px-2 py-1 text-[length:var(--app-sidebar-font-size)]"
                 isActive={active}
                 onClick={handleOpen}
               />
             }
           >
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
               <span className="flex min-w-0 items-center gap-1.5">
                 {pill ? (
                   <ThreadStatusLabel compact status={pill} />
                 ) : (
-                  <InboxIcon className="size-3.5" />
+                  <InboxIcon className="size-3.5 shrink-0" />
                 )}
                 <span className="truncate font-medium">{thread.title}</span>
               </span>
-              <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)] text-muted-foreground">
                 <span className="truncate">{projectName}</span>
-                <span aria-hidden="true">-</span>
-                <span className="shrink-0">
-                  {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
+                <span className="shrink-0 tabular-nums">
+                  {compactSidebarTimeLabel(
+                    formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt),
+                  )}
                 </span>
                 {snoozed && thread.snoozedUntil ? (
                   <span className="ml-auto shrink-0 text-muted-foreground">
@@ -425,12 +435,15 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   }
 
   return (
-    <SidebarMenuItem className="group/thread [contain-intrinsic-size:auto_78px] [content-visibility:auto]">
+    <SidebarMenuItem className="group/thread [contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]">
       <Tooltip>
         <TooltipTrigger
           render={
             <SidebarMenuButton
-              className="h-[4.875rem] items-stretch gap-0 px-2.5 py-2"
+              // Height is padding-driven rather than fixed so the row tracks
+              // the UI density scale and the sidebar font-size setting instead
+              // of locking every user to one hard-coded card height.
+              className="h-auto min-h-0 items-stretch gap-0 px-2 py-1 text-[length:var(--app-sidebar-font-size)]"
               isActive={active}
               onClick={handleOpen}
               onKeyDown={handleRowKeyDown}
@@ -443,19 +456,19 @@ export const SidebarV2Row = memo(function SidebarV2Row({
         >
           {/* One wrapper child: SidebarMenuButton truncates its LAST direct
               child, which would clip the metadata line's flex row. */}
-          <span className="flex w-full min-w-0 flex-col justify-center">
-            <span className="flex h-5 min-w-0 items-center gap-1.5">
+          <span className="flex w-full min-w-0 flex-col justify-center gap-0.5 leading-tight">
+            <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)]">
               <ProjectFavicon
-                className="size-4 shrink-0"
+                className="size-3.5 shrink-0"
                 cwd={projectCwd ?? ""}
                 environmentId={thread.environmentId}
               />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground/85">
+              <span className="min-w-0 flex-1 truncate text-muted-foreground/85">
                 {projectName}
               </span>
               {/* Status at rest, settle/snooze on hover: the label fades rather
                 than unmounting so the header line never reflows. */}
-              <span className="ml-auto shrink-0 text-xs transition-opacity group-hover/thread:opacity-0 group-focus-within/thread:opacity-0">
+              <span className="ml-auto shrink-0 transition-opacity group-hover/thread:opacity-0 group-focus-within/thread:opacity-0">
                 {statusLabel ? (
                   <span
                     className={cn(
@@ -472,52 +485,53 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                   </span>
                 ) : (
                   <span className="tabular-nums text-muted-foreground/65">
-                    {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
+                    {compactSidebarTimeLabel(
+                      formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt),
+                    )}
                   </span>
                 )}
               </span>
             </span>
-            <span className="mt-1 flex min-w-0">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{thread.title}</span>
+            <span className="flex min-w-0">
+              <span className="min-w-0 flex-1 truncate font-medium">{thread.title}</span>
             </span>
-            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalIcon}
-              {prStatus && pr ? (
-                <button
-                  aria-label={prStatus.tooltip}
-                  className={cn(
-                    "shrink-0 cursor-pointer font-mono hover:underline",
-                    prStatus.colorClass,
-                  )}
-                  onClick={handlePrClick}
-                  type="button"
-                >
-                  #{pr.number}
-                </button>
-              ) : null}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
-                  <span className="text-red-600 dark:text-red-400">-{diff.deletions}</span>
-                </span>
-              ) : null}
-              <span aria-hidden="true" className="ml-auto inline-flex shrink-0 items-center gap-1">
-                {isRemote ? <ServerIcon className="size-3.5 opacity-70" /> : null}
-                {driverKind ? (
-                  <ProviderInstanceIcon
-                    className="opacity-60"
-                    displayName={providerEntry?.displayName ?? driverKind}
-                    driverKind={driverKind}
-                    iconClassName="size-3.5"
-                  />
+            {/* The metadata line earns its row only when it has something to
+                say: a branchless thread with no PR, diff or terminal would
+                otherwise reserve blank height on every card. */}
+            {hasMetadataLine ? (
+              <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)] text-muted-foreground/75">
+                {thread.branch ? (
+                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {terminalIcon}
+                {prStatus && pr ? (
+                  <button
+                    aria-label={prStatus.tooltip}
+                    className={cn(
+                      "shrink-0 cursor-pointer font-mono hover:underline",
+                      prStatus.colorClass,
+                    )}
+                    onClick={handlePrClick}
+                    type="button"
+                  >
+                    #{pr.number}
+                  </button>
+                ) : null}
+                {diff ? (
+                  <span className="shrink-0 font-mono tabular-nums">
+                    <span className="text-emerald-600 dark:text-emerald-400">
+                      +{diff.insertions}
+                    </span>{" "}
+                    <span className="text-red-600 dark:text-red-400">-{diff.deletions}</span>
+                  </span>
+                ) : null}
+                {isRemote ? (
+                  <ServerIcon aria-hidden="true" className="size-3 shrink-0 opacity-70" />
                 ) : null}
               </span>
-            </span>
+            ) : null}
           </span>
         </TooltipTrigger>
         {tooltip}

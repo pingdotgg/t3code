@@ -132,6 +132,10 @@
   --app-code-font-size: 12px;
   --app-chat-font-size: 14px;
   --app-sidebar-font-size: 12px;
+  /* Secondary sidebar text (project, branch, timestamps) tracks the sidebar
+     font-size knob instead of a fixed size, so one setting scales the whole
+     row. Floored so a small sidebar font never renders sub-legible metadata. */
+  --app-sidebar-meta-font-size: max(10px, calc(var(--app-sidebar-font-size) - 1px));
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
   --sidebar-translucency-alpha: 100%;

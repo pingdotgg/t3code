@@ -35,14 +35,7 @@ import { resolveThreadLifecycleSupport, selectSnoozeShelfBulkTargets } from "./S
 import { SidebarV2Row } from "./SidebarV2Row";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import {
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-} from "./ui/sidebar";
+import { SidebarContent, SidebarGroup, SidebarMenu } from "./ui/sidebar";
 
 const SETTLED_PAGE_SIZE = 25;
 
@@ -82,34 +75,41 @@ function Shelf({
   icon,
   count,
   children,
+  action,
   defaultOpen = true,
 }: {
   readonly title: string;
   readonly icon: ReactNode;
   readonly count: number;
   readonly children: ReactNode;
+  readonly action?: ReactNode;
   readonly defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
   return (
-    <SidebarGroup className="px-2 py-0">
-      <button
-        type="button"
-        aria-controls={contentId}
-        aria-expanded={open}
-        className="flex h-8 w-full items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-        onClick={() => setOpen((value) => !value)}
-      >
-        {open ? (
-          <ChevronDownIcon className="size-3.5" />
-        ) : (
-          <ChevronRightIcon className="size-3.5" />
-        )}
-        {icon}
-        <span>{title}</span>
-        <span className="ml-auto tabular-nums">{count}</span>
-      </button>
+    <SidebarGroup className="px-1 py-0">
+      {/* The action sits beside the toggle rather than inside it: nesting an
+          interactive element in a button is invalid and would swallow clicks. */}
+      <div className="group/shelf flex items-center gap-0.5">
+        <button
+          type="button"
+          aria-controls={contentId}
+          aria-expanded={open}
+          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-[length:var(--app-sidebar-meta-font-size)] font-medium text-muted-foreground/80 hover:bg-sidebar-accent hover:text-foreground"
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? (
+            <ChevronDownIcon className="size-3.5 shrink-0" />
+          ) : (
+            <ChevronRightIcon className="size-3.5 shrink-0" />
+          )}
+          {icon}
+          <span className="truncate">{title}</span>
+          <span className="ml-auto tabular-nums text-muted-foreground/60">{count}</span>
+        </button>
+        {action}
+      </div>
       <div id={contentId}>{open ? children : null}</div>
     </SidebarGroup>
   );
@@ -400,24 +400,21 @@ export default function SidebarV2() {
 
   return (
     <>
-      <SidebarHeader>
-        <div className="flex items-center justify-between px-2">
-          <span className="text-sm font-semibold">Inbox</span>
-          <Button
-            disabled={defaultProjectRef === null}
-            onClick={() => {
-              if (defaultProjectRef) void handleNewThread(defaultProjectRef);
-            }}
-            size="icon-sm"
-            title="New thread"
-            variant="ghost"
-          >
-            <PlusIcon />
-          </Button>
-        </div>
-      </SidebarHeader>
-      <SidebarContent className="gap-1">
+      <SidebarContent className="gap-1 pt-1">
         <Shelf
+          action={
+            <Button
+              disabled={defaultProjectRef === null}
+              onClick={() => {
+                if (defaultProjectRef) void handleNewThread(defaultProjectRef);
+              }}
+              size="icon-sm"
+              title="New thread"
+              variant="ghost"
+            >
+              <PlusIcon />
+            </Button>
+          }
           count={shelves.active.length}
           icon={<InboxIcon className="size-3.5" />}
           title="Active"
@@ -487,11 +484,6 @@ export default function SidebarV2() {
           ) : null}
         </Shelf>
       </SidebarContent>
-      <SidebarFooter>
-        <SidebarGroupLabel className="px-2 text-[11px]">
-          Manual settling only - active work always stays visible.
-        </SidebarGroupLabel>
-      </SidebarFooter>
     </>
   );
 }

@@ -199,3 +199,14 @@ export function latestTurnDiffStats(
   }
   return counted ? { insertions, deletions } : null;
 }
+
+/**
+ * Sidebar rows are narrow and every row carries a timestamp, so the shared
+ * "3m ago" phrasing spends horizontal space on a word that is identical on
+ * every row. The suffix is dropped rather than reworded because the column
+ * position already says "when".
+ */
+export function compactSidebarTimeLabel(label: string): string {
+  if (label === "just now") return "now";
+  return label.endsWith(" ago") ? label.slice(0, -" ago".length) : label;
+}

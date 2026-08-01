@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
 import SidebarV2 from "./SidebarV2";
@@ -16,6 +16,12 @@ const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const sidebarV2Enabled = useSettings((settings) => settings.sidebarV2Enabled);
+  // The settings nav lives inside the v1 sidebar, so v1 stays mounted on
+  // settings routes regardless of the v2 preference. Without this, enabling v2
+  // leaves the thread inbox rendered on /settings with no way to navigate it.
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  const showSidebarV2 = sidebarV2Enabled && !isOnSettings;
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -69,7 +75,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        {sidebarV2Enabled ? <SidebarV2 /> : <ThreadSidebar />}
+        {showSidebarV2 ? <SidebarV2 /> : <ThreadSidebar />}
         <SidebarRail />
       </Sidebar>
       {children}

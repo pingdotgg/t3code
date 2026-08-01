@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  compactSidebarTimeLabel,
   formatWorkingDurationLabel,
   latestTurnDiffStats,
   resolveSidebarV2Status,
@@ -308,5 +309,22 @@ describe("latestTurnDiffStats", () => {
   it("renders nothing when no line counts are carried", () => {
     expect(latestTurnDiffStats(summary([{ path: "a.ts" }]))).toBeNull();
     expect(latestTurnDiffStats(undefined)).toBeNull();
+  });
+});
+
+describe("compactSidebarTimeLabel", () => {
+  it("drops the trailing ago suffix", () => {
+    expect(compactSidebarTimeLabel("3m ago")).toBe("3m");
+    expect(compactSidebarTimeLabel("5h ago")).toBe("5h");
+    expect(compactSidebarTimeLabel("12d ago")).toBe("12d");
+  });
+
+  it("shortens just now and leaves other labels alone", () => {
+    expect(compactSidebarTimeLabel("just now")).toBe("now");
+    expect(compactSidebarTimeLabel("4h left")).toBe("4h left");
+  });
+
+  it("only strips a trailing suffix, never an interior match", () => {
+    expect(compactSidebarTimeLabel("ago")).toBe("ago");
   });
 });
