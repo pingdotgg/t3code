@@ -556,6 +556,7 @@ export function NewTaskDraftScreen(props: {
         subactions: group.models.map((option) => ({
           id: `model:${option.key}`,
           title: option.label,
+          subtitle: option.subtitle === group.providerLabel ? undefined : option.subtitle,
           state:
             flow.selectedModel &&
             option.selection.instanceId === flow.selectedModel.instanceId &&
