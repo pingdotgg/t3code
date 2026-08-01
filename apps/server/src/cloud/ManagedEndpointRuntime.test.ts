@@ -96,6 +96,15 @@ describe("CloudManagedEndpointRuntime", () => {
         "2026-06-17T02:00:00Z INF Starting metrics server",
       ),
     ).toBe("debug");
+    // FTL (fatal) and PNC (panic) are more severe than ERR and must surface.
+    expect(
+      ManagedEndpointRuntime.classifyRelayClientOutput(
+        "2026-06-17T02:00:00Z FTL Cannot determine default origin certificate path",
+      ),
+    ).toBe("warning");
+    expect(
+      ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
+    ).toBe("warning");
   });
 
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>

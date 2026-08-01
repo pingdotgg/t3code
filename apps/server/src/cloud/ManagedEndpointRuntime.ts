@@ -72,7 +72,10 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
   }
-  return /\b(?:ERR|WRN)\b/u.test(line) ? "warning" : "debug";
+  // cloudflared uses zerolog level tokens. FTL (fatal) and PNC (panic) are more
+  // severe than ERR, so they must surface at least as loudly — without them a
+  // fatal connector failure would be logged at debug and hidden.
+  return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
 }
 
 function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
