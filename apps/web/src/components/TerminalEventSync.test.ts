@@ -4,7 +4,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { applyTerminalClosedEvent } from "./TerminalEventSync";
+import { applyTerminalRemovedEvent } from "./TerminalEventSync";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const THREAD_ID = ThreadId.make("thread-1");
@@ -26,11 +26,10 @@ describe("TerminalEventSync", () => {
     rightPanelStore.openTerminal(THREAD_REF, "term-1");
     rightPanelStore.splitTerminal(THREAD_REF, "terminal:term-1", "term-2");
 
-    applyTerminalClosedEvent(ENVIRONMENT_ID, {
-      type: "closed",
+    applyTerminalRemovedEvent(ENVIRONMENT_ID, {
+      type: "remove",
       threadId: THREAD_ID,
       terminalId: "term-1",
-      sequence: 3,
     });
 
     expect(
@@ -51,11 +50,10 @@ describe("TerminalEventSync", () => {
       },
     ]);
 
-    applyTerminalClosedEvent(ENVIRONMENT_ID, {
-      type: "closed",
+    applyTerminalRemovedEvent(ENVIRONMENT_ID, {
+      type: "remove",
       threadId: THREAD_ID,
       terminalId: "term-2",
-      sequence: 4,
     });
 
     expect(
@@ -67,25 +65,5 @@ describe("TerminalEventSync", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toEqual({ isOpen: false, activeSurfaceId: null, surfaces: [] });
-  });
-
-  it("ignores terminal events other than closed", () => {
-    useTerminalUiStateStore.getState().reconcileTerminalIds(THREAD_REF, ["term-1"]);
-
-    applyTerminalClosedEvent(ENVIRONMENT_ID, {
-      type: "exited",
-      threadId: THREAD_ID,
-      terminalId: "term-1",
-      sequence: 2,
-      exitCode: 0,
-      exitSignal: null,
-    });
-
-    expect(
-      selectThreadTerminalUiState(
-        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-        THREAD_REF,
-      ).terminalIds,
-    ).toEqual(["term-1"]);
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId, type TerminalEvent } from "@t3tools/contracts";
+import { type EnvironmentId, ThreadId, type TerminalMetadataStreamEvent } from "@t3tools/contracts";
 import { memo, useEffect, useRef } from "react";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
@@ -9,9 +9,10 @@ import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentQuery } from "../state/query";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
-export function applyTerminalClosedEvent(environmentId: EnvironmentId, event: TerminalEvent): void {
-  if (event.type !== "closed") return;
-
+export function applyTerminalRemovedEvent(
+  environmentId: EnvironmentId,
+  event: Extract<TerminalMetadataStreamEvent, { type: "remove" }>,
+): void {
   const threadRef = scopeThreadRef(environmentId, ThreadId.make(event.threadId));
   useTerminalUiStateStore.getState().removeTerminalFromServer(threadRef, event.terminalId);
 
@@ -32,25 +33,28 @@ export const TerminalEventSync = memo(function TerminalEventSync({
 }: {
   readonly environmentId: EnvironmentId;
 }) {
-  const terminalEvent = useEnvironmentQuery(
-    terminalEnvironment.events({
+  const terminalRemovals = useEnvironmentQuery(
+    terminalEnvironment.removals({
       environmentId,
       input: {},
     }),
   );
-  const appliedCountRef = useRef(0);
+  const appliedRef = useRef({ environmentId, count: 0 });
 
   useEffect(() => {
-    const closedEvents = terminalEvent.data;
-    if (!closedEvents) return;
-    // The stream accumulates closed events so none are lost between commits; a
-    // shrinking array means the subscription restarted from scratch.
-    if (closedEvents.length < appliedCountRef.current) appliedCountRef.current = 0;
-    for (const event of closedEvents.slice(appliedCountRef.current)) {
-      applyTerminalClosedEvent(environmentId, event);
+    const removals = terminalRemovals.data;
+    if (!removals) return;
+    if (appliedRef.current.environmentId !== environmentId) {
+      appliedRef.current = { environmentId, count: 0 };
     }
-    appliedCountRef.current = closedEvents.length;
-  }, [environmentId, terminalEvent.data]);
+    // The stream accumulates removals so none are lost between commits; a
+    // shrinking array means the subscription restarted from scratch.
+    if (removals.length < appliedRef.current.count) appliedRef.current.count = 0;
+    for (const event of removals.slice(appliedRef.current.count)) {
+      applyTerminalRemovedEvent(environmentId, event);
+    }
+    appliedRef.current.count = removals.length;
+  }, [environmentId, terminalRemovals.data]);
 
   return null;
 });
