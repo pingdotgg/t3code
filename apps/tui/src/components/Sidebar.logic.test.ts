@@ -4,6 +4,7 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 import {
   buildRows,
+  nextSidebarRefreshAt,
   type Row,
   rowHeight,
   SIDEBAR_SETTLED_INITIAL_COUNT,
@@ -70,6 +71,29 @@ const build = (
   );
 
 describe("Sidebar V2 row model", () => {
+  it("schedules the next refresh at a snooze wake before the minute tick", () => {
+    const nowMs = Date.parse(NOW);
+    const wakeAt = nowMs + 5_000;
+    expect(
+      nextSidebarRefreshAt(
+        shell([
+          thread("snoozed", "p1", {
+            snoozedAt: NOW,
+            snoozedUntil: new Date(wakeAt).toISOString(),
+          }),
+        ]),
+        nowMs,
+      ),
+    ).toBe(wakeAt);
+  });
+
+  it("schedules an idle refresh so relative-time labels stay current", () => {
+    const nowMs = Date.parse(NOW) + 12_345;
+    expect(nextSidebarRefreshAt(shell([thread("active", "p1")]), nowMs)).toBe(
+      Math.floor(nowMs / 60_000) * 60_000 + 60_000,
+    );
+  });
+
   it("Given active threads, then it is flat and stable by creation time", () => {
     const rows = build(
       shell([

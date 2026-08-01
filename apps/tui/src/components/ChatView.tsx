@@ -77,7 +77,7 @@ import {
 } from "../models.ts";
 import { isWorking, revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
-import { buildRows } from "./Sidebar.logic.ts";
+import { buildRows, nextSidebarRefreshAt } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import {
   CHAT_CONTENT_MAX_WIDTH,
@@ -425,6 +425,17 @@ export function ChatView({
   const selectedProjectId =
     state.selection?.kind === "project" ? state.selection.id : state.projectScopeId;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
+  const [sidebarNowMs, setSidebarNowMs] = React.useState(() => Date.now());
+  const nextSidebarRefresh = React.useMemo(
+    () => nextSidebarRefreshAt(state.shell, sidebarNowMs),
+    [state.shell, sidebarNowMs],
+  );
+  React.useEffect(() => {
+    if (nextSidebarRefresh === null) return;
+    const delayMs = Math.min(Math.max(0, nextSidebarRefresh - Date.now()) + 25, 2_147_483_647);
+    const timer = setTimeout(() => setSidebarNowMs(Date.now()), delayMs);
+    return () => clearTimeout(timer);
+  }, [nextSidebarRefresh]);
   const selectionKey = state.selection ? `${state.selection.kind}:${state.selection.id}` : "none";
   const rows = React.useMemo(
     () =>
@@ -435,6 +446,7 @@ export function ChatView({
         selectedThreadId,
         state.filter,
         state.projectScopeId,
+        new Date(sidebarNowMs).toISOString(),
       ),
     [
       state.shell,
@@ -443,6 +455,7 @@ export function ChatView({
       selectedThreadId,
       state.filter,
       state.projectScopeId,
+      sidebarNowMs,
     ],
   );
   const detail = state.detail;
