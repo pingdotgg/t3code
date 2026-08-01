@@ -6,12 +6,18 @@ import {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { SearchIcon } from "lucide-react";
+import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
-import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxListVirtualized } from "../ui/combobox";
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxListVirtualized,
+} from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
 import {
   modelPickerJumpCommandForIndex,
@@ -39,12 +45,24 @@ type ModelPickerItem = {
   instanceDisplayName: string;
   instanceAccentColor?: string | undefined;
   continuationGroupKey?: string | undefined;
+  isLegacy?: boolean | undefined;
 };
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
+const LEGACY_SECTION_KEY_PREFIX = "legacy-models:";
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
+}
+
+function legacySectionKey(instanceId: ProviderInstanceId): string {
+  return `${LEGACY_SECTION_KEY_PREFIX}${instanceId}`;
+}
+
+function legacySectionInstanceId(key: string): ProviderInstanceId | null {
+  return key.startsWith(LEGACY_SECTION_KEY_PREFIX)
+    ? (key.slice(LEGACY_SECTION_KEY_PREFIX.length) as ProviderInstanceId)
+    : null;
 }
 
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
@@ -116,6 +134,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
+  );
+  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
+    () =>
+      new Set<ProviderInstanceId>(
+        modelOptionsByInstance
+          .get(props.activeInstanceId)
+          ?.some((model) => model.slug === props.model && model.isLegacy)
+          ? [props.activeInstanceId]
+          : [],
+      ),
   );
   const keybindings = useMemo<ResolvedKeybindingsConfig>(
     () => providedKeybindings ?? [],
@@ -211,6 +239,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           name: model.name,
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+          ...(model.isLegacy ? { isLegacy: true } : {}),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
@@ -366,6 +395,45 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedInstanceId,
   ]);
 
+  const legacySection = useMemo(() => {
+    if (isSearching || selectedInstanceId === "favorites") {
+      return null;
+    }
+    const currentModels = filteredModels.filter((model) => !model.isLegacy);
+    const legacyModels = filteredModels.filter((model) => model.isLegacy);
+    if (legacyModels.length === 0) {
+      return null;
+    }
+    return {
+      key: legacySectionKey(selectedInstanceId),
+      currentModels,
+      legacyModels,
+      isExpanded: expandedLegacyInstances.has(selectedInstanceId),
+    };
+  }, [expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
+
+  const visibleModels = useMemo(() => {
+    if (!legacySection) {
+      return filteredModels;
+    }
+    return [
+      ...legacySection.currentModels,
+      ...(legacySection.isExpanded ? legacySection.legacyModels : []),
+    ];
+  }, [filteredModels, legacySection]);
+
+  const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
+    setExpandedLegacyInstances((expanded) => {
+      const next = new Set(expanded);
+      if (next.has(instanceId)) {
+        next.delete(instanceId);
+      } else {
+        next.add(instanceId);
+      }
+      return next;
+    });
+  }, []);
+
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId) => {
       if (getModelDisabledReason?.(instanceId, modelSlug)) {
@@ -410,7 +478,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       NonNullable<ReturnType<typeof modelPickerJumpCommandForIndex>>
     >();
     let selectableModelIndex = 0;
-    for (const model of filteredModels) {
+    for (const model of visibleModels) {
       if (getModelDisabledReason?.(model.instanceId, model.slug)) {
         continue;
       }
@@ -422,23 +490,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       selectableModelIndex += 1;
     }
     return mapping;
-  }, [filteredModels, getModelDisabledReason]);
+  }, [getModelDisabledReason, visibleModels]);
   const modelJumpModelKeys = useMemo(
     () => [...modelJumpCommandByKey.keys()],
     [modelJumpCommandByKey],
   );
-  const allModelKeys = useMemo(
-    (): string[] => flatModels.map((model) => `${model.instanceId}:${model.slug}`),
+  const allItemKeys = useMemo(
+    (): string[] => [
+      ...flatModels.map((model) => `${model.instanceId}:${model.slug}`),
+      ...new Set(
+        flatModels
+          .filter((model) => model.isLegacy)
+          .map((model) => legacySectionKey(model.instanceId)),
+      ),
+    ],
     [flatModels],
   );
-  const filteredModelKeys = useMemo(
-    (): string[] => filteredModels.map((model) => `${model.instanceId}:${model.slug}`),
-    [filteredModels],
-  );
+  const filteredItemKeys = useMemo((): string[] => {
+    const modelKeys = visibleModels.map((model) => `${model.instanceId}:${model.slug}`);
+    if (!legacySection) {
+      return modelKeys;
+    }
+    modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
+    return modelKeys;
+  }, [legacySection, visibleModels]);
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
-      new Map(filteredModels.map((model) => [`${model.instanceId}:${model.slug}`, model] as const)),
-    [filteredModels],
+      new Map(visibleModels.map((model) => [`${model.instanceId}:${model.slug}`, model] as const)),
+    [visibleModels],
   );
   const updateModelListScrollFades = useCallback(() => {
     const scrollElement = modelListRef.current?.getScrollableNode();
@@ -510,7 +589,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useLayoutEffect(() => {
     setShowTopScrollFade(false);
-    setShowBottomScrollFade(filteredModelKeys.length > 5);
+    setShowBottomScrollFade(filteredItemKeys.length > 5);
     let nestedFrame = 0;
     const frame = window.requestAnimationFrame(() => {
       updateModelListScrollFades();
@@ -520,7 +599,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       window.cancelAnimationFrame(frame);
       window.cancelAnimationFrame(nestedFrame);
     };
-  }, [filteredModelKeys, updateModelListScrollFades]);
+  }, [filteredItemKeys, updateModelListScrollFades]);
 
   return (
     <TooltipProvider delay={0}>
@@ -548,8 +627,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         {/* Main content area */}
         <Combobox
           inline
-          items={allModelKeys}
-          filteredItems={filteredModelKeys}
+          items={allItemKeys}
+          filteredItems={filteredItemKeys}
           filter={null}
           autoHighlight
           open
@@ -566,6 +645,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           }}
           onValueChange={(modelKey) => {
             if (typeof modelKey !== "string") {
+              return;
+            }
+            const legacyInstanceId = legacySectionInstanceId(modelKey);
+            if (legacyInstanceId) {
+              toggleLegacySection(legacyInstanceId);
               return;
             }
             const { instanceId, slug } = splitInstanceModelKey(modelKey);
@@ -605,6 +689,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       ).preventBaseUIHandler?.();
                       e.preventDefault();
                       e.stopPropagation();
+                      const legacyInstanceId = legacySectionInstanceId(
+                        highlightedModelKeyRef.current,
+                      );
+                      if (legacyInstanceId) {
+                        toggleLegacySection(legacyInstanceId);
+                        return;
+                      }
                       const { instanceId, slug } = splitInstanceModelKey(
                         highlightedModelKeyRef.current,
                       );
@@ -626,10 +717,35 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
                 <LegendList<string>
                   ref={modelListRef}
-                  data={filteredModelKeys}
+                  data={filteredItemKeys}
                   extraData={favoritesSet}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
+                    if (legacySection?.key === modelKey) {
+                      return (
+                        <ComboboxItem
+                          hideIndicator
+                          index={index}
+                          value={modelKey}
+                          aria-expanded={legacySection.isExpanded}
+                          className="group w-full cursor-pointer rounded-md px-2 py-2"
+                          contentClassName="flex w-full items-center gap-3"
+                        >
+                          <div className="min-w-0 flex-1 text-left">
+                            <div className="text-xs font-medium leading-snug">Legacy models</div>
+                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
+                              {legacySection.legacyModels.length} models
+                            </div>
+                          </div>
+                          <ChevronRightIcon
+                            className={cn(
+                              "size-4 transition-transform",
+                              legacySection.isExpanded && "rotate-90",
+                            )}
+                          />
+                        </ComboboxItem>
+                      );
+                    }
                     const model = filteredModelByKey.get(modelKey);
                     if (!model) {
                       return null;
@@ -657,7 +773,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       />
                     );
                   }}
-                  estimatedItemSize={60}
+                  estimatedItemSize={52}
                   drawDistance={480}
                   recycleItems
                   contentContainerClassName="pl-2 pr-px"
