@@ -314,12 +314,14 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveModelChangeRuntime,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldShowComposerContextStrip,
   startNewThreadForProject,
+  threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1561,6 +1563,11 @@ function ChatViewContent(props: ChatViewProps) {
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
+  const modelChangeRuntime = resolveModelChangeRuntime({
+    projectedRuntime: activeRuntime,
+    shellRuntime: activeThread?.runtime,
+  });
+  const hasStartedModelSession = modelChangeRuntime !== null || threadHasStarted(activeThread);
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -5105,6 +5112,24 @@ function ChatViewContent(props: ChatViewProps) {
             },
           ]
         : sendContextPreviewAnnotations;
+    if (isServerThread) {
+      const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
+        providers: providerStatuses,
+        hasStartedSession: hasStartedModelSession,
+        supportsProviderSwitchingViaHandoff,
+        currentModelSelection: activeThread.modelSelection,
+        currentProviderInstanceId: modelChangeRuntime?.providerInstanceId ?? null,
+        nextModelSelection: ctxSelectedModelSelection,
+      });
+      if (modelChangeBlockReason) {
+        toastManager.add({
+          type: "warning",
+          title: modelChangeBlockReason.title,
+          description: modelChangeBlockReason.description,
+        });
+        return;
+      }
+    }
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -5952,15 +5977,21 @@ function ChatViewContent(props: ChatViewProps) {
       }
       const reason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
-        hasStartedSession: activeRuntime !== null,
+        hasStartedSession: hasStartedModelSession,
         supportsProviderSwitchingViaHandoff,
         currentModelSelection: activeThread.modelSelection,
-        currentProviderInstanceId: activeRuntime?.providerInstanceId ?? null,
+        currentProviderInstanceId: modelChangeRuntime?.providerInstanceId ?? null,
         nextModelSelection: { instanceId, model },
       });
       return reason ? `${reason.description} Start a new thread to use this model.` : null;
     },
-    [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
+    [
+      activeThread,
+      hasStartedModelSession,
+      modelChangeRuntime,
+      providerStatuses,
+      supportsProviderSwitchingViaHandoff,
+    ],
   );
 
   const onProviderModelSelect = useCallback(
@@ -6013,10 +6044,10 @@ function ChatViewContent(props: ChatViewProps) {
       };
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
-        hasStartedSession: activeRuntime !== null,
+        hasStartedSession: hasStartedModelSession,
         supportsProviderSwitchingViaHandoff,
         currentModelSelection: activeThread.modelSelection,
-        currentProviderInstanceId: activeRuntime?.providerInstanceId ?? null,
+        currentProviderInstanceId: modelChangeRuntime?.providerInstanceId ?? null,
         nextModelSelection,
       });
       if (modelChangeBlockReason) {
@@ -6037,8 +6068,9 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeThread,
-      activeRuntime,
+      hasStartedModelSession,
       lockedProvider,
+      modelChangeRuntime,
       supportsProviderSwitchingViaHandoff,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
@@ -6579,6 +6611,7 @@ function ChatViewContent(props: ChatViewProps) {
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={modelPickerLockedProvider}
+                            hasStartedThread={threadHasStarted(activeThread)}
                             providerCatalogLoaded={serverConfig !== null}
                             providerStatuses={providerStatuses as ServerProvider[]}
                             activeProjectDefaultModelSelection={

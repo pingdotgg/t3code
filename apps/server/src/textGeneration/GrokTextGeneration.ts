@@ -28,6 +28,7 @@ import {
   currentGrokModelIdFromSessionSetup,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  resolveGrokReasoningEffortForSpawn,
 } from "../provider/acp/GrokAcpSupport.ts";
 
 const GROK_TIMEOUT_MS = 180_000;
@@ -67,6 +68,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+        reasoningEffort: resolveGrokReasoningEffortForSpawn(modelSelection),
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
       yield* runtime.handleSessionUpdate((notification) => {

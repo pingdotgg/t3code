@@ -17,12 +17,20 @@ import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  resolveOutboxModelSelectionForEnvironment,
+  threadShellHasStarted,
+} from "../lib/modelOptions";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
+import {
+  readEnvironmentServerConfigs,
+  subscribeEnvironmentServerConfigs,
+} from "./environment-server-configs-access";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
@@ -106,13 +114,21 @@ export function useThreadOutboxDrain(): void {
   const projects = useProjects();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
+  const deferredConfigMessageIdsRef = useRef(new Set<MessageId>());
   const retryAttemptRef = useRef(new Map<MessageId, number>());
   const retryNotBeforeRef = useRef(new Map<MessageId, number>());
   const retryTimersRef = useRef(new Map<MessageId, ReturnType<typeof setTimeout>>());
 
   useEffect(() => {
     ensureThreadOutboxLoaded();
+    // Keep the multi-environment config graph live for delivery-time reads and
+    // wake the drain when a previously missing environment config arrives.
+    const unsubscribeServerConfigs = subscribeEnvironmentServerConfigs(() => {
+      setRetryTick((current) => current + 1);
+    });
     return () => {
+      unsubscribeServerConfigs();
+      deferredConfigMessageIdsRef.current.clear();
       for (const timer of retryTimersRef.current.values()) {
         clearTimeout(timer);
       }
@@ -169,7 +185,28 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+      const baseSettings = resolveQueuedThreadSettings(queuedMessage, thread);
+      // Pin stale same-instance spawn-bound options to the committed selection
+      // before settings sync / send so permanent rejections are not retried.
+      // Read configs at delivery time so unrelated environment updates do not
+      // recreate this callback or capture a stale map identity.
+      const modelSelection = resolveOutboxModelSelectionForEnvironment({
+        serverConfigsByEnvironment: readEnvironmentServerConfigs(),
+        environmentId: queuedMessage.environmentId,
+        threadHasStarted: threadShellHasStarted(thread),
+        threadRuntime: thread.runtime,
+        committedModelSelection: thread.modelSelection,
+        queuedModelSelection: queuedMessage.modelSelection,
+      });
+      if (modelSelection === null) {
+        // Config projection changes wake the drain subscription above. This is
+        // a loading wait, not a failed delivery that should increase backoff.
+        return null;
+      }
+      const settings = {
+        ...baseSettings,
+        modelSelection,
+      };
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
@@ -291,6 +328,17 @@ export function useThreadOutboxDrain(): void {
   );
 
   useEffect(() => {
+    const queuedMessageIds = new Set(
+      Object.values(queuedMessagesByThreadKey).flatMap((messages) =>
+        messages.map((message) => message.messageId),
+      ),
+    );
+    for (const messageId of deferredConfigMessageIdsRef.current) {
+      if (!queuedMessageIds.has(messageId)) {
+        deferredConfigMessageIdsRef.current.delete(messageId);
+      }
+    }
+
     if (dispatchingQueuedMessageId !== null) {
       return;
     }
@@ -326,6 +374,28 @@ export function useThreadOutboxDrain(): void {
       });
       if (deliveryAction === "wait") {
         continue;
+      }
+      if (deliveryAction === "send" && creation === undefined && thread !== undefined) {
+        const modelSelection = resolveOutboxModelSelectionForEnvironment({
+          serverConfigsByEnvironment: readEnvironmentServerConfigs(),
+          environmentId: nextQueuedMessage.environmentId,
+          threadHasStarted: threadShellHasStarted(thread),
+          threadRuntime: thread.runtime,
+          committedModelSelection: thread.modelSelection,
+          queuedModelSelection: nextQueuedMessage.modelSelection,
+        });
+        if (modelSelection === null) {
+          if (!deferredConfigMessageIdsRef.current.has(nextQueuedMessage.messageId)) {
+            deferredConfigMessageIdsRef.current.add(nextQueuedMessage.messageId);
+            console.warn("[thread-outbox] waiting for provider config before queued delivery", {
+              environmentId: nextQueuedMessage.environmentId,
+              threadId: nextQueuedMessage.threadId,
+              messageId: nextQueuedMessage.messageId,
+            });
+          }
+          continue;
+        }
+        deferredConfigMessageIdsRef.current.delete(nextQueuedMessage.messageId);
       }
       // The live project shell is preferred for the workspace path, with the
       // snapshot taken at enqueue time as the fallback so a task never dies
@@ -382,12 +452,15 @@ export function useThreadOutboxDrain(): void {
             ? creationProjectCwd !== null
               ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
               : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
-            : thread !== undefined
-              ? sendQueuedMessage(nextQueuedMessage, thread)
+            : freshThread !== undefined
+              ? sendQueuedMessage(nextQueuedMessage, freshThread)
               : Promise.resolve(false);
       });
       void delivery
         .then((sent) => {
+          if (sent === null) {
+            return;
+          }
           if (sent) {
             retryAttemptRef.current.delete(nextQueuedMessage.messageId);
             retryNotBeforeRef.current.delete(nextQueuedMessage.messageId);

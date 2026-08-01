@@ -5,12 +5,14 @@ import {
   type ModelSelection,
   type OrchestrationV2ProjectedTurnItem,
   type ProviderDriverKind,
+  type ProviderOptionSelection,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type RunId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
@@ -372,6 +374,13 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }
 
+export function resolveModelChangeRuntime(input: {
+  projectedRuntime: Thread["runtime"] | null | undefined;
+  shellRuntime: Thread["runtime"] | null | undefined;
+}): Thread["runtime"] {
+  return input.projectedRuntime ?? input.shellRuntime ?? null;
+}
+
 // `threadProvider` is the open branded driver kind carried by the session.
 // Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
 // rollback / fork behavior — the routing layer is the right place to surface
@@ -453,6 +462,127 @@ export function getStartedThreadModelChangeBlockReason(input: {
     title: "Start a new chat to change models",
     description: "This provider does not allow switching models after a conversation has started.",
   };
+}
+
+/**
+ * Providers that cannot change models mid-thread bind their option values the
+ * same way: Grok reasoning effort is only honored as an agent spawn flag at
+ * session start (grok 0.2.117 keeps a loaded session's original effort even
+ * when respawned with a different flag), so a started thread cannot apply a
+ * new value. Locked provider-option rows render disabled and the committed
+ * selection stays in force; there is no toast or click-to-apply path.
+ *
+ * Compare provider *instance* ids, not driver kinds: two Grok instances must
+ * keep independent, editable options when composing a handoff away from the
+ * active session instance.
+ */
+export function isStartedThreadOptionChangeBlocked(input: {
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  lockedInstanceId: ModelSelection["instanceId"] | null;
+  instanceId: ModelSelection["instanceId"];
+}): boolean {
+  if (input.lockedInstanceId === null) {
+    return false;
+  }
+  if (input.instanceId !== input.lockedInstanceId) {
+    return false;
+  }
+  const provider = input.providers.find((snapshot) => snapshot.instanceId === input.instanceId);
+  return provider?.requiresNewThreadForModelChange === true;
+}
+
+/**
+ * ChatComposer keys session-bound option locks to the active provider
+ * instance, not the draft/handoff selection and not merely the driver kind.
+ * Shell history keeps the lock active while a detailed projection is loading.
+ */
+export function resolveSessionLockedInstanceId(input: {
+  hasStartedThread: boolean;
+  runtimeProviderInstanceId: ModelSelection["instanceId"] | null | undefined;
+  committedModelSelectionInstanceId: ModelSelection["instanceId"] | null | undefined;
+}): ModelSelection["instanceId"] | null {
+  if (!input.hasStartedThread) {
+    return null;
+  }
+  return input.runtimeProviderInstanceId ?? input.committedModelSelectionInstanceId ?? null;
+}
+
+/**
+ * Compose the ChatComposer traits lock: active session instance + selected
+ * instance + provider flags. Used for both UI disable and dispatch pinning.
+ */
+export function resolveTraitsOptionChangeBlocked(input: {
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  hasStartedThread: boolean;
+  runtimeProviderInstanceId: ModelSelection["instanceId"] | null | undefined;
+  committedModelSelectionInstanceId: ModelSelection["instanceId"] | null | undefined;
+  selectedInstanceId: ModelSelection["instanceId"];
+}): boolean {
+  return isStartedThreadOptionChangeBlocked({
+    providers: input.providers,
+    lockedInstanceId: resolveSessionLockedInstanceId(input),
+    instanceId: input.selectedInstanceId,
+  });
+}
+
+/**
+ * Model options fed into getComposerProviderState while composing.
+ *
+ * When session options are locked on the same instance and model as committed
+ * metadata, show the committed thread selection so the traits UI matches the
+ * in-force spawn-bound values rather than draft or sticky values the session
+ * never applied. Cross-instance handoff, model changes, and the narrow window
+ * where runtime lock still points at an old instance while committed metadata
+ * has moved keep the selected draft options.
+ */
+export function resolveComposerDisplayModelOptions(input: {
+  optionChangeBlocked: boolean;
+  selectedInstanceId: ModelSelection["instanceId"];
+  selectedModel: string;
+  committedModelSelectionInstanceId: ModelSelection["instanceId"] | null | undefined;
+  committedModel: string | null | undefined;
+  committedModelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  draftModelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+}): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const selected =
+    input.optionChangeBlocked &&
+    input.selectedInstanceId === input.committedModelSelectionInstanceId &&
+    input.selectedModel === input.committedModel
+      ? input.committedModelOptions
+      : input.draftModelOptions;
+  return selected ?? undefined;
+}
+
+/**
+ * Build the ModelSelection used for metadata updates and turn dispatch.
+ *
+ * When the selected instance and model are session-option locked, return the
+ * exact committed thread selection wholesale so pre-feature threads with
+ * absent `options` stay absent (descriptor normalization for display may still
+ * show menu defaults and must not be written back). Handoffs and model changes
+ * use the selected draft so they cannot be silently substituted at dispatch.
+ */
+export function resolveDispatchedModelSelection(input: {
+  optionChangeBlocked: boolean;
+  committedModelSelection: ModelSelection | null | undefined;
+  selectedInstanceId: ModelSelection["instanceId"];
+  selectedModel: string;
+  selectedModelOptionsForDispatch: ReadonlyArray<ProviderOptionSelection> | undefined;
+}): ModelSelection {
+  const committed = input.committedModelSelection;
+  if (
+    input.optionChangeBlocked &&
+    committed != null &&
+    input.selectedInstanceId === committed.instanceId &&
+    input.selectedModel === committed.model
+  ) {
+    return committed;
+  }
+  return createModelSelection(
+    input.selectedInstanceId,
+    input.selectedModel,
+    input.selectedModelOptionsForDispatch,
+  );
 }
 
 export async function waitForStartedServerThread(

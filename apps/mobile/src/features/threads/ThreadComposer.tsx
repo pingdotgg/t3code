@@ -19,6 +19,7 @@ import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   Pressable,
@@ -111,6 +112,8 @@ export interface ThreadComposerProps {
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
+  readonly optionChangeBlocked?: boolean;
+  readonly optionChangeBlockedInstanceId?: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftImages: () => Promise<void>;
@@ -639,8 +642,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       selectedModel: currentModelSelection,
       onSelectModel: (option) => props.onUpdateModelSelection(option.selection),
       optionDescriptors: providerOptionDescriptors,
-      onUpdateOptionSelections: (options) =>
-        props.onUpdateModelSelection({ ...currentModelSelection, options }),
+      onUpdateOptionSelections: (options) => {
+        const optionsLocked =
+          props.optionChangeBlocked === true &&
+          props.optionChangeBlockedInstanceId === currentModelSelection.instanceId;
+        if (optionsLocked) {
+          Alert.alert(
+            "Start a new chat to change options",
+            "This provider applies these options when a conversation starts.",
+          );
+          return;
+        }
+        props.onUpdateModelSelection({ ...currentModelSelection, options });
+      },
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
     }),

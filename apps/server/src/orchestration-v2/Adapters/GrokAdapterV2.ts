@@ -2,6 +2,7 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   defaultInstanceIdForDriver,
   GrokSettings,
+  type ModelCapabilities,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -17,8 +18,12 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import { ServerConfig } from "../../config.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import {
+  GROK_REASONING_EFFORT_OPTION_ID,
+  grokReasoningEffortConstraintsFromCapabilities,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  resolveGrokReasoningEffortForSpawn,
+  resolveGrokSpawnOptionValue,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import {
   extractXAiAcpBackgroundToolMutation,
@@ -42,6 +47,7 @@ import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
 import { ProviderAdapterV2 } from "../ProviderAdapter.ts";
+import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -98,6 +104,9 @@ export interface GrokAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
+  readonly getModelCapabilities?: (
+    model: string,
+  ) => Effect.Effect<ModelCapabilities | null | undefined>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly makeRuntime?: (
@@ -154,6 +163,71 @@ const registerGrokAskUserQuestionExtensions = ({
   );
 
 export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdapterV2Flavor {
+  const reasoningEffortConstraintsByModel = new Map<
+    string,
+    ReturnType<typeof grokReasoningEffortConstraintsFromCapabilities>
+  >();
+  const refreshReasoningEffortConstraints = (
+    selection: Parameters<typeof resolveGrokReasoningEffortForSpawn>[0],
+  ) => {
+    if (options.getModelCapabilities === undefined || selection == null) {
+      return Effect.void;
+    }
+    const modelId = resolveGrokAcpBaseModelId(selection.model);
+    return options.getModelCapabilities(modelId).pipe(
+      Effect.tap((capabilities) =>
+        capabilities === undefined
+          ? Effect.void
+          : Effect.sync(() => {
+              reasoningEffortConstraintsByModel.set(
+                modelId,
+                grokReasoningEffortConstraintsFromCapabilities(capabilities),
+              );
+            }),
+      ),
+      Effect.asVoid,
+    );
+  };
+  const refreshTransitionReasoningEffortConstraints = (
+    input: Parameters<NonNullable<AcpAdapterV2Flavor["planSelectionTransition"]>>[0],
+  ) =>
+    Effect.all(
+      [
+        refreshReasoningEffortConstraints(input.current),
+        refreshReasoningEffortConstraints(input.target),
+      ],
+      { discard: true },
+    );
+  const reasoningEffortConstraints = (
+    selection: Parameters<typeof resolveGrokReasoningEffortForSpawn>[0],
+  ) => {
+    if (selection == null) {
+      return undefined;
+    }
+    const modelId = resolveGrokAcpBaseModelId(selection.model);
+    return reasoningEffortConstraintsByModel.has(modelId)
+      ? reasoningEffortConstraintsByModel.get(modelId)
+      : undefined;
+  };
+  const resolveSpawnOptionValue: NonNullable<AcpAdapterV2Flavor["resolveSpawnOptionValue"]> = (
+    selection,
+    optionId,
+  ) => resolveGrokSpawnOptionValue(selection, optionId, reasoningEffortConstraints(selection));
+  const makeRuntime =
+    options.makeRuntime ??
+    ((input: AcpAdapterV2RuntimeInput) =>
+      makeGrokAcpRuntime({
+        ...input,
+        interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
+        grokSettings: options.settings,
+        environment: options.environment,
+        childProcessSpawner: options.childProcessSpawner,
+        reasoningEffort: resolveGrokReasoningEffortForSpawn(
+          input.modelSelection,
+          reasoningEffortConstraints(input.modelSelection),
+        ),
+      }));
+
   return {
     driver: GROK_PROVIDER,
     capabilities: GrokProviderCapabilitiesV2,
@@ -179,16 +253,24 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     // still accepts image content blocks (verified with real screenshots).
     supportsImagePrompts: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
-    makeRuntime:
-      options.makeRuntime ??
-      ((input) =>
-        makeGrokAcpRuntime({
-          ...input,
-          interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
-          grokSettings: options.settings,
-          environment: options.environment,
-          childProcessSpawner: options.childProcessSpawner,
-        })),
+    // Grok ACP does not implement session/set_config_option; effort is only
+    // honored as an agent spawn flag (probe: grok 0.2.117, 2026-07-31).
+    spawnOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
+    resolveSpawnOptionValue,
+    planSelectionTransition: (input) =>
+      refreshTransitionReasoningEffortConstraints(input).pipe(
+        Effect.map(() =>
+          acpSelectionTransition({
+            ...input,
+            spawnOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
+            resolveSpawnOptionValue,
+          }),
+        ),
+      ),
+    makeRuntime: (input) =>
+      refreshReasoningEffortConstraints(input.modelSelection).pipe(
+        Effect.flatMap(() => makeRuntime(input)),
+      ),
     registerExtensions: registerGrokAcpExtensions,
     extractSubagentUpdate: extractXAiAcpSubagentUpdate,
     extractSubagentEndNotice: extractXAiAcpSubagentEndNotice,
@@ -254,6 +336,9 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         fileSystem,
         idAllocator,
         serverConfig,
+        ...(input.getModelCapabilities === undefined
+          ? {}
+          : { getModelCapabilities: input.getModelCapabilities }),
         continuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({

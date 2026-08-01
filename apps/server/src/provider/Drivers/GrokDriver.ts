@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
 import {
@@ -107,24 +108,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         env: processEnv,
       });
 
-      const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
-        instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Grok orchestration adapter.",
-              cause,
-            }),
-        ),
-      );
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv).pipe(
@@ -157,6 +140,37 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
               driver: DRIVER_KIND,
               instanceId,
               detail: `Failed to build Grok snapshot: ${cause.message ?? String(cause)}`,
+              cause,
+            }),
+        ),
+      );
+
+      const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+        getModelCapabilities: (model) =>
+          snapshot.getSnapshot.pipe(
+            Effect.map((current) => {
+              if (current.status !== "ready") {
+                return undefined;
+              }
+              const modelId = resolveGrokAcpBaseModelId(model);
+              return current.models.find(
+                (candidate) => resolveGrokAcpBaseModelId(candidate.slug) === modelId,
+              )?.capabilities;
+            }),
+          ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build Grok orchestration adapter.",
               cause,
             }),
         ),
