@@ -93,7 +93,11 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
-import { LIVE_GATEWAY_COOKIE_NAME, LIVE_GATEWAY_HTTP_COOKIE_NAME } from "./preview/LiveGateway.ts";
+import {
+  LIVE_GATEWAY_COOKIE_NAME,
+  LIVE_GATEWAY_HTTP_COOKIE_NAME,
+  liveLayer as previewLiveGatewayLayer,
+} from "./preview/LiveGateway.ts";
 import { LIVE_GATEWAY_EXPIRED_STATUS, liveGatewayCookieName } from "./preview/LiveGatewayHttp.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
@@ -559,14 +563,17 @@ const buildAppUnderTest = (options?: {
       disableLogger: true,
     }).pipe(
       Layer.provide(
-        Layer.mock(Keybindings.Keybindings)({
-          loadConfigState: Effect.succeed({
-            keybindings: [],
-            issues: [],
+        Layer.mergeAll(
+          previewLiveGatewayLayer,
+          Layer.mock(Keybindings.Keybindings)({
+            loadConfigState: Effect.succeed({
+              keybindings: [],
+              issues: [],
+            }),
+            streamChanges: Stream.empty,
+            ...options?.layers?.keybindings,
           }),
-          streamChanges: Stream.empty,
-          ...options?.layers?.keybindings,
-        }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ProviderRegistry.ProviderRegistry)({

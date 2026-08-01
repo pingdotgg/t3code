@@ -19,7 +19,7 @@ import {
   httpCompressionLayer,
 } from "./http.ts";
 import { fixPath } from "./os-jank.ts";
-import { makeWebsocketRpcRouteLayer } from "./ws.ts";
+import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -46,8 +46,8 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PreviewLiveGateway from "./preview/LiveGateway.ts";
 import {
-  makeLiveGatewayBootstrapRouteLayer,
-  makeLiveGatewayProxyLayer,
+  liveGatewayBootstrapRouteLayer,
+  liveGatewayProxyLayer,
 } from "./preview/LiveGatewayHttp.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -86,7 +86,6 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import * as SessionStore from "./auth/SessionStore.ts";
 import {
   connectHttpApiLayer,
   reconcileDesiredCloudLink,
@@ -406,39 +405,28 @@ const RuntimeServicesLive = ServerRuntimeStartup.layer.pipe(
   Layer.provideMerge(RuntimeDependenciesLive),
 );
 
-export const makeRoutesLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const previewLiveGateway = yield* PreviewLiveGateway.makeLive;
-    const sessions = yield* SessionStore.SessionStore;
-    return Layer.mergeAll(
-      Layer.mergeAll(
-        HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
-          Layer.provide(authHttpApiLayer),
-          Layer.provide(connectHttpApiLayer),
-          Layer.provide(orchestrationHttpApiLayer),
-          Layer.provide(serverEnvironmentHttpApiLayer),
-          Layer.provide(environmentAuthenticatedAuthLayer),
-        ),
-        otlpTracesProxyRouteLayer,
-        assetRouteLayer,
-        makeLiveGatewayBootstrapRouteLayer(previewLiveGateway),
-        staticAndDevRouteLayer,
-        makeWebsocketRpcRouteLayer(previewLiveGateway),
-      ),
-      McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
-    ).pipe(
-      Layer.provide(PreviewAutomationBroker.layer),
-      Layer.provide(ServerSelfUpdate.layer),
-      Layer.provide(browserApiCorsLayer),
-      Layer.provide(httpCompressionLayer),
-      Layer.provide(
-        makeLiveGatewayProxyLayer({
-          gateway: previewLiveGateway,
-          environmentSessionCookieName: sessions.cookieName,
-        }),
-      ),
-    );
-  }),
+export const makeRoutesLayer = Layer.mergeAll(
+  Layer.mergeAll(
+    HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
+      Layer.provide(authHttpApiLayer),
+      Layer.provide(connectHttpApiLayer),
+      Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(serverEnvironmentHttpApiLayer),
+      Layer.provide(environmentAuthenticatedAuthLayer),
+    ),
+    otlpTracesProxyRouteLayer,
+    assetRouteLayer,
+    liveGatewayBootstrapRouteLayer,
+    staticAndDevRouteLayer,
+    websocketRpcRouteLayer,
+  ),
+  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+).pipe(
+  Layer.provide(PreviewAutomationBroker.layer),
+  Layer.provide(ServerSelfUpdate.layer),
+  Layer.provide(browserApiCorsLayer),
+  Layer.provide(httpCompressionLayer),
+  Layer.provide(liveGatewayProxyLayer),
 );
 
 export const makeServerLayer = Layer.unwrap(
@@ -597,6 +585,7 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
+      Layer.provide(PreviewLiveGateway.liveLayer),
       Layer.provideMerge(RuntimeServicesLive),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpResponseCompressionLive),

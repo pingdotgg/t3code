@@ -21,6 +21,7 @@ import {
 } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
+import * as SessionStore from "../auth/SessionStore.ts";
 import {
   LIVE_GATEWAY_BOOTSTRAP_PREFIX,
   LIVE_GATEWAY_COOKIE_NAME,
@@ -53,11 +54,6 @@ const bootstrapResponseHeaders = {
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
 } as const;
-
-export interface LiveGatewayHttpOptions {
-  readonly gateway: PreviewLiveGateway["Service"];
-  readonly environmentSessionCookieName: string;
-}
 
 export function isLiveGatewayControlCookie(
   name: string,
@@ -528,100 +524,100 @@ function expiredGatewayResponse(): HttpServerResponse.HttpServerResponse {
   });
 }
 
-export const makeLiveGatewayBootstrapRouteLayer = (gateway: PreviewLiveGateway["Service"]) =>
-  HttpRouter.add(
-    "GET",
-    `${LIVE_GATEWAY_BOOTSTRAP_PREFIX}/*`,
+export const liveGatewayBootstrapRouteLayer = HttpRouter.add(
+  "GET",
+  `${LIVE_GATEWAY_BOOTSTRAP_PREFIX}/*`,
+  Effect.gen(function* () {
+    const gateway = yield* PreviewLiveGateway;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const requestUrl = HttpServerRequest.toURL(request);
+    if (Option.isNone(requestUrl)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+    const token = requestUrl.value.pathname.slice(`${LIVE_GATEWAY_BOOTSTRAP_PREFIX}/`.length);
+    if (!BOOTSTRAP_TOKEN_PATTERN.test(token)) {
+      return expiredGatewayResponse();
+    }
+    const consumed = yield* gateway.consumeBootstrap(token);
+    if (consumed === null) {
+      return expiredGatewayResponse();
+    }
+    const cookieName = liveGatewayCookieName(requestUrl.value);
+    const cookie = yield* Effect.fromResult(
+      Cookies.set(Cookies.empty, cookieName, consumed.cookieValue, {
+        path: "/",
+        secure: cookieName === LIVE_GATEWAY_COOKIE_NAME,
+        httpOnly: true,
+        sameSite: "strict",
+        expires: DateTime.toDate(DateTime.makeUnsafe(consumed.lease.expiresAt)),
+      }),
+    ).pipe(Effect.orDie);
+    return HttpServerResponse.redirect(consumed.lease.target.redirectPath, {
+      status: 302,
+      headers: bootstrapResponseHeaders,
+      cookies: cookie,
+    });
+  }),
+);
+
+export const liveGatewayProxyLayer = HttpRouter.middleware(
+  (httpEffect) =>
     Effect.gen(function* () {
+      const gateway = yield* PreviewLiveGateway;
+      const sessions = yield* SessionStore.SessionStore;
       const request = yield* HttpServerRequest.HttpServerRequest;
       const requestUrl = HttpServerRequest.toURL(request);
-      if (Option.isNone(requestUrl)) {
-        return HttpServerResponse.text("Bad Request", { status: 400 });
+      if (
+        Option.isNone(requestUrl) ||
+        requestUrl.value.pathname.startsWith(`${LIVE_GATEWAY_BOOTSTRAP_PREFIX}/`)
+      ) {
+        return yield* httpEffect;
       }
-      const token = requestUrl.value.pathname.slice(`${LIVE_GATEWAY_BOOTSTRAP_PREFIX}/`.length);
-      if (!BOOTSTRAP_TOKEN_PATTERN.test(token)) {
-        return expiredGatewayResponse();
-      }
-      const consumed = yield* gateway.consumeBootstrap(token);
-      if (consumed === null) {
-        return expiredGatewayResponse();
-      }
-      const cookieName = liveGatewayCookieName(requestUrl.value);
-      const cookie = yield* Effect.fromResult(
-        Cookies.set(Cookies.empty, cookieName, consumed.cookieValue, {
-          path: "/",
-          secure: cookieName === LIVE_GATEWAY_COOKIE_NAME,
-          httpOnly: true,
-          sameSite: "strict",
-          expires: DateTime.toDate(DateTime.makeUnsafe(consumed.lease.expiresAt)),
-        }),
-      ).pipe(Effect.orDie);
-      return HttpServerResponse.redirect(consumed.lease.target.redirectPath, {
-        status: 302,
-        headers: bootstrapResponseHeaders,
-        cookies: cookie,
-      });
-    }),
-  );
+      const cookieValue =
+        request.cookies[LIVE_GATEWAY_COOKIE_NAME] ?? request.cookies[LIVE_GATEWAY_HTTP_COOKIE_NAME];
+      if (!cookieValue) return yield* httpEffect;
 
-export const makeLiveGatewayProxyLayer = (options: LiveGatewayHttpOptions) =>
-  HttpRouter.middleware(
-    (httpEffect) =>
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const requestUrl = HttpServerRequest.toURL(request);
-        if (
-          Option.isNone(requestUrl) ||
-          requestUrl.value.pathname.startsWith(`${LIVE_GATEWAY_BOOTSTRAP_PREFIX}/`)
-        ) {
-          return yield* httpEffect;
-        }
-        const cookieValue =
-          request.cookies[LIVE_GATEWAY_COOKIE_NAME] ??
-          request.cookies[LIVE_GATEWAY_HTTP_COOKIE_NAME];
-        if (!cookieValue) return yield* httpEffect;
+      const lease = yield* gateway.resolveLease(cookieValue);
+      if (lease === null) return expiredGatewayResponse();
 
-        const lease = yield* options.gateway.resolveLease(cookieValue);
-        if (lease === null) return expiredGatewayResponse();
-
-        if (request.headers.upgrade?.toLowerCase() === "websocket") {
-          return yield* proxyWebSocketRequest(
-            request,
-            requestUrl.value,
-            lease,
-            options.environmentSessionCookieName,
-          ).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Live preview gateway websocket failed", {
-                cause,
-                threadId: lease.threadId,
-                tabId: lease.tabId,
-                upstreamOrigin: lease.target.origin,
-              }).pipe(Effect.as(HttpServerResponse.empty())),
-            ),
-          );
-        }
-
-        return yield* Effect.raceFirst(
-          proxyHttpRequest(request, requestUrl.value, lease, options.environmentSessionCookieName),
-          lease.invalidated.pipe(Effect.as(expiredGatewayResponse())),
+      if (request.headers.upgrade?.toLowerCase() === "websocket") {
+        return yield* proxyWebSocketRequest(
+          request,
+          requestUrl.value,
+          lease,
+          sessions.cookieName,
         ).pipe(
           Effect.catchCause((cause) =>
-            Effect.logWarning("Live preview gateway upstream request failed", {
+            Effect.logWarning("Live preview gateway websocket failed", {
               cause,
               threadId: lease.threadId,
               tabId: lease.tabId,
               upstreamOrigin: lease.target.origin,
-            }).pipe(
-              Effect.as(
-                HttpServerResponse.text("Live preview upstream is unavailable.", {
-                  status: 502,
-                  headers: bootstrapResponseHeaders,
-                }),
-              ),
-            ),
+            }).pipe(Effect.as(HttpServerResponse.empty())),
           ),
         );
-      }),
-    { global: true },
-  );
+      }
+
+      return yield* Effect.raceFirst(
+        proxyHttpRequest(request, requestUrl.value, lease, sessions.cookieName),
+        lease.invalidated.pipe(Effect.as(expiredGatewayResponse())),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Live preview gateway upstream request failed", {
+            cause,
+            threadId: lease.threadId,
+            tabId: lease.tabId,
+            upstreamOrigin: lease.target.origin,
+          }).pipe(
+            Effect.as(
+              HttpServerResponse.text("Live preview upstream is unavailable.", {
+                status: 502,
+                headers: bootstrapResponseHeaders,
+              }),
+            ),
+          ),
+        ),
+      );
+    }),
+  { global: true },
+);

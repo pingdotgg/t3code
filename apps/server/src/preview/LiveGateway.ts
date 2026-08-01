@@ -359,8 +359,6 @@ export const make = Effect.gen(function* PreviewLiveGatewayMake() {
   });
 });
 
-export const layer = Layer.effect(PreviewLiveGateway, make);
-
 export const makeLive = Effect.gen(function* PreviewLiveGatewayMakeLive() {
   const gateway = yield* make;
   const sessions = yield* SessionStore.SessionStore;
