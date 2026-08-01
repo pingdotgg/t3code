@@ -287,6 +287,29 @@ describe("terminalUiStateStore actions", () => {
     expect(readIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
   });
 
+  it("abandons a pending terminal whose open request failed", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+
+    store.abandonPendingTerminal(THREAD_REF, "terminal-2");
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    // Not suppressed: a session that did get created after all may still be
+    // adopted, and the id must no longer be immune to reconcile.
+    const threadKey = scopedThreadKey(THREAD_REF);
+    expect(
+      useTerminalUiStateStore.getState().suppressedTerminalIdsByThreadKey[threadKey] ?? [],
+    ).not.toContain("terminal-2");
+    expect(
+      useTerminalUiStateStore.getState().pendingTerminalIdsByThreadKey[threadKey] ?? [],
+    ).not.toContain("terminal-2");
+  });
+
   it("creates new terminals in a separate group", () => {
     useTerminalUiStateStore.getState().newTerminal(THREAD_REF, "terminal-2");
 

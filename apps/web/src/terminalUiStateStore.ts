@@ -630,6 +630,7 @@ interface TerminalUiStateStoreState {
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   unsuppressTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  abandonPendingTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   reconcileTerminalIds: (threadRef: ScopedThreadRef, nextIds: string[]) => void;
   clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeTerminalUiState: (threadRef: ScopedThreadRef) => void;
@@ -764,6 +765,16 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
         // the rest of the session.
         unsuppressTerminal: (threadRef, terminalId) =>
           updateTerminal(threadRef, (state) => state, { terminalId, suppressed: false }),
+        // Rollback for an open the server rejected. Pending ids are immune to
+        // reconcile, so without this the never-created terminal would sit in the
+        // drawer as a phantom tab forever. Not suppressed: if the session did
+        // get created after all, reconcile is free to adopt it back.
+        abandonPendingTerminal: (threadRef, terminalId) =>
+          updateTerminal(threadRef, (state) => closeThreadTerminal(state, terminalId), {
+            terminalId,
+            suppressed: false,
+            pending: false,
+          }),
         // Takes the raw server session list. The decision lives here because it
         // needs the pending set, which is what tells a local open the server has
         // not registered yet apart from a session that ended server-side.

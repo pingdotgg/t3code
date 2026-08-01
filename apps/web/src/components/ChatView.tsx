@@ -691,6 +691,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const storeUnsuppressTerminal = useTerminalUiStateStore((state) => state.unsuppressTerminal);
+  const storeAbandonPendingTerminal = useTerminalUiStateStore(
+    (state) => state.abandonPendingTerminal,
+  );
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
   // The store owns the merge: it holds the pending set that separates a local
@@ -742,6 +745,36 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [storeSetTerminalHeight, threadRef],
   );
 
+  // A rejected open leaves no server session behind, so the optimistic id must
+  // not linger: pending ids are deliberately immune to reconcile.
+  const openTerminalSession = useCallback(
+    (terminalId: string, sessionCwd: string) => {
+      void (async () => {
+        const result = await openTerminal({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId,
+            terminalId,
+            cwd: sessionCwd,
+            ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
+            env: runtimeEnv,
+          },
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          storeAbandonPendingTerminal(threadRef, terminalId);
+        }
+      })();
+    },
+    [
+      effectiveWorktreePath,
+      openTerminal,
+      runtimeEnv,
+      storeAbandonPendingTerminal,
+      threadId,
+      threadRef,
+    ],
+  );
+
   const splitTerminal = useCallback(() => {
     if (!cwd) {
       return;
@@ -749,26 +782,14 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     const terminalId = nextTerminalId(allocatableTerminalIds);
     storeSplitTerminal(threadRef, terminalId);
     bumpFocusRequestId();
-    void openTerminal({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
-      },
-    });
+    openTerminalSession(terminalId, cwd);
   }, [
     allocatableTerminalIds,
     bumpFocusRequestId,
     cwd,
-    effectiveWorktreePath,
-    runtimeEnv,
+    openTerminalSession,
     storeSplitTerminal,
-    threadId,
     threadRef,
-    openTerminal,
   ]);
   const splitTerminalVertical = useCallback(() => {
     if (!cwd) {
@@ -777,25 +798,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     const terminalId = nextTerminalId(allocatableTerminalIds);
     storeSplitTerminalVertical(threadRef, terminalId);
     bumpFocusRequestId();
-    void openTerminal({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
-      },
-    });
+    openTerminalSession(terminalId, cwd);
   }, [
     allocatableTerminalIds,
     bumpFocusRequestId,
     cwd,
-    effectiveWorktreePath,
-    openTerminal,
-    runtimeEnv,
+    openTerminalSession,
     storeSplitTerminalVertical,
-    threadId,
     threadRef,
   ]);
 
@@ -806,26 +815,14 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     const terminalId = nextTerminalId(allocatableTerminalIds);
     storeNewTerminal(threadRef, terminalId);
     bumpFocusRequestId();
-    void openTerminal({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
-      },
-    });
+    openTerminalSession(terminalId, cwd);
   }, [
     bumpFocusRequestId,
     cwd,
-    effectiveWorktreePath,
     allocatableTerminalIds,
-    runtimeEnv,
+    openTerminalSession,
     storeNewTerminal,
-    threadId,
     threadRef,
-    openTerminal,
   ]);
 
   const activateTerminal = useCallback(
@@ -1339,6 +1336,7 @@ function ChatViewContent(props: ChatViewProps) {
   const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const storeUnsuppressTerminal = useTerminalUiStateStore((s) => s.unsuppressTerminal);
+  const storeAbandonPendingTerminal = useTerminalUiStateStore((s) => s.abandonPendingTerminal);
   const serverThreadRefs = useThreadRefs();
   const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
@@ -2599,6 +2597,40 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, storeSetTerminalOpen],
   );
+  // A rejected open leaves no server session behind, so the optimistic id must
+  // not linger: pending ids are deliberately immune to reconcile.
+  const openThreadTerminalSession = useCallback(
+    (terminalId: string, sessionCwd: string, workspaceRoot: string) => {
+      if (!activeThreadRef || !activeThreadId) return;
+      const threadRef = activeThreadRef;
+      void (async () => {
+        const result = await openTerminal({
+          environmentId,
+          input: {
+            threadId: activeThreadId,
+            terminalId,
+            cwd: sessionCwd,
+            ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+            env: projectScriptRuntimeEnv({
+              project: { cwd: workspaceRoot },
+              worktreePath: activeThreadWorktreePath,
+            }),
+          },
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          storeAbandonPendingTerminal(threadRef, terminalId);
+        }
+      })();
+    },
+    [
+      activeThreadId,
+      activeThreadRef,
+      activeThreadWorktreePath,
+      environmentId,
+      openTerminal,
+      storeAbandonPendingTerminal,
+    ],
+  );
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadRef) return;
     const nextOpen = !terminalUiState.terminalOpen;
@@ -2612,19 +2644,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
-      void openTerminal({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId,
-          cwd: cwdForOpen,
-          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
-        },
-      });
+      openThreadTerminalSession(terminalId, cwdForOpen, activeProject.workspaceRoot);
       return;
     }
     setTerminalOpen(nextOpen);
@@ -2632,11 +2652,9 @@ function ChatViewContent(props: ChatViewProps) {
     activeProject,
     activeThreadId,
     activeThreadRef,
-    activeThreadWorktreePath,
     allocatableActiveTerminalIds,
-    environmentId,
     gitCwd,
-    openTerminal,
+    openThreadTerminalSession,
     setTerminalOpen,
     storeEnsureTerminal,
     terminalUiState.terminalIds.length,
@@ -2658,30 +2676,16 @@ function ChatViewContent(props: ChatViewProps) {
         storeSplitTerminal(activeThreadRef, terminalId);
       }
       setTerminalFocusRequestId((value) => value + 1);
-      void openTerminal({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId,
-          cwd: cwdForOpen,
-          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
-        },
-      });
+      openThreadTerminalSession(terminalId, cwdForOpen, activeProject.workspaceRoot);
     },
     [
       activeProject,
       activeThreadId,
       allocatableActiveTerminalIds,
       activeThreadRef,
-      openTerminal,
-      activeThreadWorktreePath,
-      environmentId,
       gitCwd,
       hasReachedSplitLimit,
+      openThreadTerminalSession,
       storeSplitTerminal,
       storeSplitTerminalVertical,
     ],
@@ -2697,26 +2701,13 @@ function ChatViewContent(props: ChatViewProps) {
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId,
-      input: {
-        threadId: activeThreadId,
-        terminalId,
-        cwd: cwdForOpen,
-        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-        env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
-          worktreePath: activeThreadWorktreePath,
-        }),
-      },
-    });
+    openThreadTerminalSession(terminalId, cwdForOpen, activeProject.workspaceRoot);
   }, [
     activeProject,
     activeThreadId,
     allocatableActiveTerminalIds,
     activeThreadRef,
-    openTerminal,
-    activeThreadWorktreePath,
+    openThreadTerminalSession,
     environmentId,
     gitCwd,
     storeNewTerminal,
@@ -2729,6 +2720,7 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId,
           input: { threadId: activeThreadId, terminalId, data: "exit\n" },
         });
+      const threadRef = activeThreadRef;
       void (async () => {
         const closeResult = await closeTerminalMutation({
           environmentId,
@@ -2738,9 +2730,12 @@ function ChatViewContent(props: ChatViewProps) {
             deleteHistory: true,
           },
         });
-        if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
-          await fallbackExitWrite();
-        }
+        if (closeResult._tag !== "Failure" || isAtomCommandInterrupted(closeResult)) return;
+        const exitResult = await fallbackExitWrite();
+        if (exitResult._tag !== "Failure" || isAtomCommandInterrupted(exitResult)) return;
+        // Neither path reached the session, so it is still running. Undo the
+        // optimistic suppression or reconcile would hide a live terminal.
+        storeUnsuppressTerminal(threadRef, terminalId);
       })();
       storeCloseTerminal(activeThreadRef, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
@@ -2751,6 +2746,7 @@ function ChatViewContent(props: ChatViewProps) {
       closeTerminalMutation,
       environmentId,
       storeCloseTerminal,
+      storeUnsuppressTerminal,
       writeTerminal,
     ],
   );
@@ -2828,6 +2824,11 @@ function ChatViewContent(props: ChatViewProps) {
       const openResult = await openTerminal({ environmentId, input: openTerminalInput });
       if (openResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(openResult)) {
+          if (shouldCreateNewTerminal) {
+            // Nothing was created, so the optimistic id must not survive
+            // reconcile as a phantom tab.
+            storeAbandonPendingTerminal(activeThreadRef, targetTerminalId);
+          }
           const error = squashAtomCommandFailure(openResult);
           setThreadError(
             activeThreadId,
