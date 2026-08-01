@@ -37,7 +37,7 @@ jobs:
       ALCHEMY_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           sparse-checkout: |
             /*
@@ -65,7 +65,7 @@ jobs:
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
 
       - name: Publish relay deploy commit status
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const result = "${{ steps.deploy.outputs.result }}";

@@ -42,7 +42,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Default pull_request checkout is the merge commit (PR applied on
           # top of base), so the "head" fingerprint is the state main would
@@ -117,7 +117,7 @@ jobs:
         # advisory there (summary only). This workflow must not move to
         # pull_request_target — it installs and runs PR code.
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           CHANGED_PLATFORMS: ${{ steps.compare.outputs.changed_platforms }}
         with:

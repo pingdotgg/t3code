@@ -35,7 +35,7 @@ jobs:
       has_changes: ${{ steps.check.outputs.has_changes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -85,7 +85,7 @@ jobs:
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -197,7 +197,7 @@ jobs:
       CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -278,7 +278,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -373,7 +373,7 @@ jobs:
           #   arch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -416,7 +416,7 @@ jobs:
 
       - name: Download WSL node-pty prebuild
         if: matrix.platform == 'win'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild
@@ -678,7 +678,7 @@ jobs:
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -751,7 +751,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -886,7 +886,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -994,14 +994,14 @@ jobs:
     steps:
       - id: app_token
         name: Mint release app token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -1078,7 +1078,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
