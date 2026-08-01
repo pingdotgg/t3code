@@ -78,8 +78,12 @@ Wakeup handling differs by phase, in [supervisor.ts][supervisor]:
 - Once connected, `monitorConnectedLease` handles plain activation by probing
   the existing session (`lease.session.probe`, with a shorter timeout for
   mobile's `application-active-probe`) rather than reconnecting; a healthy
-  session survives foregrounding. `application-active-reconnect` skips the probe
-  and replaces the lease outright.
+  session survives foregrounding. Android emits `application-active-preserved`
+  when its foreground service and Headless JS runtime both report ready. That
+  reason uses the same bounded mobile probe, preserves the session generation on
+  success, and replaces the lease immediately if the probe fails. It does not
+  force shell or thread subscriptions to restart. `application-active-reconnect`
+  skips the probe and replaces the lease outright.
 
 The UI derives `available`, `offline`, `connecting`, `reconnecting`,
 `connected`, and `error` from supervisor state plus explicit data-sync state.
@@ -156,6 +160,55 @@ ownership.
 Application code must not construct RPC clients, retry loops, or raw
 orchestration commands. Persistence paths belong to the platform registration
 and cache stores, with explicit migration or invalidation policy.
+
+### Android background ownership
+
+Android can add a second application-root owner without adding a second
+connection runtime. The opt-in **Keep connected in background** setting starts a
+`remoteMessaging` foreground service in the normal application process. React
+Native Headless JS cold-starts the existing mobile runtime and acquires
+reference-counted leases against the same process-wide `appAtomRegistry` used by
+the UI. Mounting the UI and background task together therefore still produces
+one supervisor and one transport per saved environment.
+
+The headless root retains:
+
+- the environment catalog, server configurations, and shell state for every
+  saved environment;
+- aggregate thread-shell state;
+- full detail for the last-opened thread and threads whose sessions are
+  `starting` or `running`; and
+- the shared, reference-counted thread-outbox drain worker.
+
+It does not retain every historical thread body. Once running work settles and
+is not the last-opened thread, the existing idle lifetime and persistence rules
+remain authoritative.
+
+T3 Connect authentication has matching `ui` and `background` owners. UI
+ownership wins while the app is visible. A cold headless start loads the
+persisted Clerk session and installs its token provider into the existing
+`managedRelaySessionAtom`; direct and Tailscale startup is not blocked when
+Clerk is signed out, unconfigured, or temporarily unavailable. There is no
+background-only relay transport or authentication path.
+
+The service is deliberately opt-in and defaults off. While enabled, Android
+requires a silent ongoing notification. React Native owns a partial CPU wake
+lock for the headless task, and the native service holds a best-effort
+high-performance Wi-Fi lock. These locks and the continuously active network
+connections have an intentional battery and data cost. A battery-optimization
+exemption improves survival under device power management, but declining it
+does not silently turn the feature off.
+
+The service uses sticky restart behavior and restores an enabled preference
+after package replacement or boot once credential-protected storage is
+available. Android force-stop remains absolute: no receiver or service may
+restart the app until the user launches it again. The app also cannot restart a
+separately stopped Tailscale VPN.
+
+At introduction, the direct/Tailscale path was exercised on a physical Android
+device across lock, Doze, task removal, network transitions, package replacement,
+and reboot. Cold T3 Connect ownership and token refresh have automated coverage,
+but were not live-validated against a configured relay account on that device.
 
 ## Verification
 
