@@ -215,7 +215,11 @@ import {
   subscribePendingPanelCloses,
 } from "../lib/terminalPendingPanelCloses";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
+import {
+  useKnownTerminalSessions,
+  useTerminalMetadataLoaded,
+  useThreadRunningTerminalIds,
+} from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import {
@@ -1564,11 +1568,14 @@ function ChatViewContent(props: ChatViewProps) {
     subscribePendingPanelCloses,
     pendingPanelCloseVersion,
   );
+  const activeTerminalMetadataLoaded = useTerminalMetadataLoaded(environmentId);
   useEffect(() => {
     if (!activeThreadRef) return;
     const restored = resolvePendingPanelCloses(
       scopedThreadKey(activeThreadRef),
       activeServerOrderedTerminalIds,
+      Date.now(),
+      activeTerminalMetadataLoaded,
     );
     for (const { terminalId, snapshot } of restored) {
       useRightPanelStore.getState().restoreTerminal(activeThreadRef, snapshot, terminalId);
@@ -1577,6 +1584,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activePendingPanelCloseVersion,
     activeServerOrderedTerminalIds,
+    activeTerminalMetadataLoaded,
     activeThreadRef,
     storeUnsuppressTerminal,
   ]);
@@ -2685,7 +2693,7 @@ function ChatViewContent(props: ChatViewProps) {
   // same rollback — it is not confirmation either way, and if the session was
   // created after all, reconcile re-adopts it from server metadata.
   const openThreadTerminalSession = useCallback(
-    (terminalId: string, sessionCwd: string, workspaceRoot: string) => {
+    (terminalId: string, sessionCwd: string, workspaceRoot: string, onUncreated?: () => void) => {
       if (!activeThreadRef || !activeThreadId) return;
       const threadRef = activeThreadRef;
       const threadKey = scopedThreadKey(threadRef);
@@ -2709,6 +2717,9 @@ function ChatViewContent(props: ChatViewProps) {
           });
           if (result._tag === "Failure") {
             storeAbandonPendingTerminal(threadRef, terminalId);
+            // Optimistic UI outside the drawer store (right-panel surfaces)
+            // must be rolled back by its owner too.
+            onUncreated?.();
           }
         } finally {
           releaseTerminalOpen(threadKey, terminalId);
@@ -3256,9 +3267,13 @@ function ChatViewContent(props: ChatViewProps) {
       ...allocatableActiveTerminalIds,
       ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
     ]);
-    useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
+    const threadRef = activeThreadRef;
+    useRightPanelStore.getState().openTerminal(threadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-    openThreadTerminalSession(terminalId, cwd, activeProject.workspaceRoot);
+    openThreadTerminalSession(terminalId, cwd, activeProject.workspaceRoot, () => {
+      // No session was created, so the optimistic panel surface must go too.
+      useRightPanelStore.getState().closeTerminal(threadRef, `terminal:${terminalId}`, terminalId);
+    });
   }, [
     activeProject,
     activeThreadId,
@@ -3283,11 +3298,14 @@ function ChatViewContent(props: ChatViewProps) {
         ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
       ]);
       const cwd = gitCwd ?? activeProject.workspaceRoot;
-      useRightPanelStore
-        .getState()
-        .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
+      const threadRef = activeThreadRef;
+      const surfaceId = activeRightPanelSurface.id;
+      useRightPanelStore.getState().splitTerminal(threadRef, surfaceId, terminalId, direction);
       setTerminalFocusRequestId((value) => value + 1);
-      openThreadTerminalSession(terminalId, cwd, activeProject.workspaceRoot);
+      openThreadTerminalSession(terminalId, cwd, activeProject.workspaceRoot, () => {
+        // No session was created, so the optimistic split pane must go too.
+        useRightPanelStore.getState().closeTerminal(threadRef, surfaceId, terminalId);
+      });
     },
     [
       activeProject,

@@ -381,6 +381,7 @@ export class GhosttyTerminalSurface {
   private focused = false;
   private resizeRequestedOnce = false;
   private resizeSettledOnce = false;
+  private resizeRetryTimer: number | null = null;
   private desiredCols = 0;
   private desiredRows = 0;
   private resizeRequestActive = false;
@@ -639,17 +640,16 @@ export class GhosttyTerminalSurface {
         // The first-settle exception keeps mount bookkeeping honest exactly
         // once: the core was constructed at the first measured grid, so a
         // failed initial request must still align this.cols with it rather
-        // than stay at the 1x1 sentinel. Later failures never move the grid.
+        // than stay at the 1x1 sentinel. Later failures never move the grid,
+        // and the retry below keeps re-requesting until the PTY grants — a
+        // failed or interrupted request has an unknown server outcome, so
+        // convergence needs an authoritative answer, not a guess.
         this.applyGridSize(cols, rows);
-      } else if (!hasNewerMeasurement) {
-        // The PTY kept its old size. Keep the grid with it, and align the
-        // desired size with the applied one so a future fit at the failed
-        // size re-requests instead of being skipped.
-        this.desiredCols = this.cols;
-        this.desiredRows = this.rows;
       }
       if (hasNewerMeasurement) {
         this.requestResize();
+      } else if (!granted) {
+        this.scheduleResizeRetry();
       }
     };
     const acknowledgement = this.options.onResize(cols, rows);
@@ -661,6 +661,14 @@ export class GhosttyTerminalSurface {
     } else {
       settle(true);
     }
+  }
+
+  private scheduleResizeRetry(): void {
+    if (this.disposed || this.resizeRetryTimer !== null) return;
+    this.resizeRetryTimer = window.setTimeout(() => {
+      this.resizeRetryTimer = null;
+      if (!this.disposed) this.requestResize();
+    }, 1000);
   }
 
   private applyGridSize(cols: number, rows: number): void {
@@ -742,6 +750,7 @@ export class GhosttyTerminalSurface {
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
+    if (this.resizeRetryTimer !== null) window.clearTimeout(this.resizeRetryTimer);
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {

@@ -48,6 +48,22 @@ export function useAttachedTerminalSession(input: {
   }, [attach.data, attach.error, input.environmentId, input.terminal, metadata.data]);
 }
 
+/**
+ * Whether the environment's terminal metadata has loaded at least once.
+ * Distinguishes an authoritative empty session list from one not yet fetched.
+ */
+export function useTerminalMetadataLoaded(environmentId: EnvironmentId | null): boolean {
+  const metadata = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId,
+          input: null,
+        }),
+  );
+  return metadata.data !== null;
+}
+
 export function useKnownTerminalSessions(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;

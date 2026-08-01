@@ -70,6 +70,36 @@ describe("terminalPendingPanelCloses", () => {
     ).toEqual([{ terminalId: "terminal-2", snapshot }]);
   });
 
+  it("settles a close as real against an authoritative empty list", () => {
+    // The closed terminal was the last session: loaded [] must settle the
+    // entry as closed, or the snapshot survives until the id is reused and
+    // resurrects a stale surface.
+    recordPendingPanelClose("thread-a", "terminal-2", snapshot, RECORDED_AT);
+
+    expect(resolvePendingPanelCloses("thread-a", [], AFTER_GRACE, true)).toEqual([]);
+    expect(resolvePendingPanelCloses("thread-a", ["terminal-2"], AFTER_GRACE, true)).toEqual([]);
+  });
+
+  it("restores surviving snapshots in reverse close order", () => {
+    // Nested closes of panes 2 then 3: LIFO restore reproduces [1,2,3];
+    // insertion order would land on [1,3,2].
+    recordPendingPanelClose("thread-a", "terminal-2", snapshot, RECORDED_AT);
+    recordPendingPanelClose(
+      "thread-a",
+      "terminal-3",
+      { ...snapshot, terminalIds: ["terminal-1", "terminal-3"] },
+      RECORDED_AT,
+    );
+
+    const restored = resolvePendingPanelCloses(
+      "thread-a",
+      ["terminal-1", "terminal-2", "terminal-3"],
+      AFTER_GRACE,
+      true,
+    );
+    expect(restored.map((entry) => entry.terminalId)).toEqual(["terminal-3", "terminal-2"]);
+  });
+
   it("notifies subscribers when a recorded close becomes eligible", () => {
     vi.useFakeTimers();
     try {

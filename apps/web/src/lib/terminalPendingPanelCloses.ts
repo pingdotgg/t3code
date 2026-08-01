@@ -66,21 +66,24 @@ export function recordPendingPanelClose(
 }
 
 /**
- * Settles every pending close for a thread against the server's session list,
- * returning the ones whose session survived so the caller can restore them.
- * Ids the server no longer reports were really closed and are simply dropped.
+ * Settles every eligible pending close for a thread against the server's
+ * session list, returning the ones whose session survived so the caller can
+ * restore them — in reverse close order, so nested split closes reinsert at
+ * their original pane positions. Ids the server no longer reports were really
+ * closed and are simply dropped.
  *
- * `serverTerminalIds` must be a loaded, non-empty list: an empty one is
- * indistinguishable from metadata that has not arrived, and would resolve every
- * entry as "closed".
+ * `listLoaded` distinguishes an authoritative empty list (the closed terminal
+ * was the last session — the entry must settle as closed) from metadata that
+ * has not arrived yet, which must never settle anything.
  */
 export function resolvePendingPanelCloses(
   threadKey: string,
   serverTerminalIds: readonly string[],
   now: number = Date.now(),
+  listLoaded: boolean = serverTerminalIds.length > 0,
 ): Array<{ terminalId: string; snapshot: TerminalSurfaceSnapshot }> {
   const pending = pendingByThreadKey.get(threadKey);
-  if (!pending || serverTerminalIds.length === 0) return [];
+  if (!pending || !listLoaded) return [];
 
   const serverIds = new Set(serverTerminalIds);
   const survived: Array<{ terminalId: string; snapshot: TerminalSurfaceSnapshot }> = [];
@@ -94,7 +97,7 @@ export function resolvePendingPanelCloses(
   if (pending.size === 0) {
     pendingByThreadKey.delete(threadKey);
   }
-  return survived;
+  return survived.reverse();
 }
 
 export function clearPendingPanelCloses(threadKey: string): void {

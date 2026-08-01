@@ -541,6 +541,33 @@ it.layer(
     }),
   );
 
+  it.effect("orders the resize reply behind output queued at the old width", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Queued but not yet drained: produced at the pre-resize width.
+      process.emitData("old-width bytes\n");
+
+      yield* manager.resize({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        cols: 42,
+        rows: 20,
+      });
+
+      // By the time the resize reply lands, the old-width output must already
+      // be published — the client applies its grid on this reply.
+      const events = yield* getEvents;
+      const outputEvent = events.find((event) => event.type === "output");
+      expect(outputEvent).toBeDefined();
+      expect(process.resizeCalls).toEqual([{ cols: 42, rows: 20 }]);
+    }),
+  );
+
   it.effect("preserves structured context and causes for PTY I/O failures", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
