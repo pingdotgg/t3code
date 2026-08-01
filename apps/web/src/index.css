@@ -1667,9 +1667,18 @@ label:has(> select#reasoning-effort) select {
   list-style-type: disc;
 }
 
+/* --chat-markdown-ol-marker-extra: digits beyond two in the list's widest
+   marker, set inline by ChatMarkdown so long or high-`start` lists don't clip
+   their numbers. */
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  padding-left: calc(1.25rem + var(--chat-markdown-ol-marker-extra, 0) * 1ch);
   list-style-type: decimal;
+}
+
+/* Markers right-align against the text edge, so proportional digits leave
+   narrow numbers ("101.") starting further right than wide ones ("100."). */
+.chat-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-markdown ul ul {
