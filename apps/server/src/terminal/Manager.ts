@@ -2597,9 +2597,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     // The client applies its grid when this reply lands, so the reply must
     // order itself behind every output byte queued before the resize — those
     // were produced at the old width. A flush sentinel through the same drain
-    // queue provides that ordering without a wire-protocol change.
+    // queue provides that ordering without a wire-protocol change. A running
+    // drain counts even when the queue looks empty: dequeue compacts the queue
+    // before the dequeued chunk is published, and an ack in that window would
+    // arrive ahead of the old-width bytes. The sentinel is picked up when the
+    // drain loop re-enters, behind the in-flight publication.
     const pid = session.value.pid;
-    if (pid !== null && session.value.pendingProcessEvents.length > 0) {
+    if (
+      pid !== null &&
+      (session.value.pendingProcessEvents.length > 0 || session.value.processEventDrainRunning)
+    ) {
       const flushed = yield* Deferred.make<void>();
       session.value.pendingProcessEvents.push({ type: "flush", deferred: flushed });
       if (!session.value.processEventDrainRunning) {
