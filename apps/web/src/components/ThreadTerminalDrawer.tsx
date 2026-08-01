@@ -97,6 +97,25 @@ export function resolveDrawerResizeStartHeight(
   return Math.round(renderedHeight);
 }
 
+/**
+ * Height a finished drag should persist.
+ *
+ * While the chat area's composer reserve squeezes the drawer, the divider sits
+ * below the stored height. A drag that ends above where it started is the user
+ * asking for more room, so persisting the dragged value would quietly discard
+ * the taller height they had already chosen — and they cannot see the
+ * difference, because the squeeze caps what renders either way. Only a drag
+ * that ends below its starting point is a request to shrink.
+ */
+export function resolveDrawerResizeStoredHeight(input: {
+  draggedHeight: number;
+  dragStartHeight: number;
+  storedHeight: number;
+}): number {
+  if (input.draggedHeight <= input.dragStartHeight) return input.draggedHeight;
+  return Math.max(input.draggedHeight, input.storedHeight);
+}
+
 function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
@@ -939,6 +958,7 @@ export default function ThreadTerminalDrawer({
     pointerId: number;
     startY: number;
     startHeight: number;
+    storedHeight: number;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
 
@@ -1135,6 +1155,7 @@ export default function ThreadTerminalDrawer({
         drawerElementRef.current?.getBoundingClientRect().height ?? null,
         drawerHeightRef.current,
       ),
+      storedHeight: drawerHeightRef.current,
     };
   }, []);
 
@@ -1167,10 +1188,17 @@ export default function ThreadTerminalDrawer({
       if (!didResizeDuringDragRef.current) {
         return;
       }
-      syncHeight(drawerHeightRef.current);
+      const settledHeight = resolveDrawerResizeStoredHeight({
+        draggedHeight: drawerHeightRef.current,
+        dragStartHeight: resizeState.startHeight,
+        storedHeight: resizeState.storedHeight,
+      });
+      drawerHeightRef.current = settledHeight;
+      setDrawerHeight(settledHeight);
+      syncHeight(settledHeight);
       setResizeEpoch((value) => value + 1);
     },
-    [syncHeight],
+    [setDrawerHeight, syncHeight],
   );
 
   useEffect(() => {

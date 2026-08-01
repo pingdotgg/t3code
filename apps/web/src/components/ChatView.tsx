@@ -2439,7 +2439,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (headlineElement) observer.observe(headlineElement);
     if (bannersElement) observer.observe(bannersElement);
     return () => observer.disconnect();
-  }, [composerOverlayElement, isDraftHeroState]);
+    // The overlay node is reused across threads, so the thread key is what
+    // re-measures on navigation. Leaving it to the observer would reserve the
+    // previous thread's composer for a frame, and a taller one would spill.
+  }, [composerOverlayElement, isDraftHeroState, activeThreadKey]);
 
   useLayoutEffect(() => {
     if (!chatAreaElement) return;
