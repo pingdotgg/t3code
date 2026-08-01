@@ -177,6 +177,11 @@ export function extractPastedImagePath(
     const pathEnd = extensionMatch.index + extensionMatch[0].length;
     const rawPath = pastedText.slice(pathStart, pathEnd);
     if (rawPath.includes("\n") || rawPath.includes("\0")) continue;
+    // The extension search runs forward from the path start, so prose like
+    // "/home/user/Pictures and latest.png" would otherwise span whitespace
+    // into later words and misread the sentence as one path.
+    if (platform !== "win32" && hasUnescapedWhitespace(rawPath)) continue;
+    if (platform === "win32" && /\s/u.test(rawPath)) continue;
     const imagePath = resolvePastedImagePath(rawPath, workspaceRoot, homeDirectory, platform);
     if (!imagePath) continue;
 

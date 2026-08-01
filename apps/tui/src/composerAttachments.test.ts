@@ -129,6 +129,17 @@ describe("composer image attachments", () => {
     });
   });
 
+  it("Given prose where an absolute directory precedes an unrelated image word, when extracted, then nothing is treated as a path", () => {
+    expect(
+      extractPastedImagePath(
+        "screenshots are in /home/user/Pictures and latest.png is missing",
+        "/workspace/project",
+        "/home/olafura",
+        "linux",
+      ),
+    ).toBeNull();
+  });
+
   it("Given editor content with path-only image lines, when recognized, then successful attachments can be removed without changing prose", () => {
     const prompt =
       "Compare these screenshots:\n~/Pictures/before.png\n\n./docs/after.webp\nKeep this line.";
