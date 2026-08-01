@@ -552,6 +552,25 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("dedupes tailnet addresses reported with numeric family values", () =>
+    withHarness(
+      { tailscale0: [{ address: "100.90.1.2", family: 4, internal: false }] },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        const matches = endpoints.filter(
+          (endpoint) => endpoint.httpBaseUrl === "http://100.90.1.2:4173/",
+        );
+        assert.equal(matches.length, 1);
+        assert.isTrue(matches[0]!.id.startsWith("tailscale-ip:"));
+        assert.equal(matches[0]!.isDefault, true);
+      }),
+    ),
+  );
+
   it.effect("dedupes an address reported by multiple interfaces", () =>
     withHarness(
       {

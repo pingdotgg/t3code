@@ -73,13 +73,6 @@ interface LanAdvertisedHost {
   readonly interfaceName: string | null;
 }
 
-// Some Node builds report the address family as the number 4/6 instead of
-// "IPv4"/"IPv6" (see DesktopBackendConfiguration.isLocalHostIpv4).
-const isIpv4Family = (family: string | number): boolean => {
-  const normalized = String(family);
-  return normalized === "IPv4" || normalized === "4";
-};
-
 const isHttpsEndpointUrl = (value: string): boolean => {
   try {
     return new URL(value).protocol === "https:";
@@ -106,7 +99,7 @@ const resolveLanAdvertisedHosts = (
 
     for (const address of interfaceAddresses) {
       if (address.internal) continue;
-      if (!isIpv4Family(address.family)) continue;
+      if (!DesktopNetworkInterfaces.isIpv4Family(address.family)) continue;
       if (!isUsableLanIpv4Address(address.address)) continue;
       if (seenAddresses.has(address.address)) continue;
       seenAddresses.add(address.address);
