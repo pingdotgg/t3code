@@ -698,9 +698,25 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
   // The store owns the merge: it holds the pending set that separates a local
   // open the server has not registered yet from a session that ended remotely.
+  // Suppression and pending membership feed that decision, so subscribe to both
+  // — a failed close rolls back suppression without any server-list change, and
+  // the unsuppressed terminal must resurface without waiting for one.
+  const threadKey = scopedThreadKey(threadRef);
+  const suppressedTerminalIds = useTerminalUiStateStore(
+    (state) => state.suppressedTerminalIdsByThreadKey[threadKey],
+  );
+  const pendingTerminalIds = useTerminalUiStateStore(
+    (state) => state.pendingTerminalIdsByThreadKey[threadKey],
+  );
   useEffect(() => {
     reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
-  }, [reconcileTerminalIds, serverOrderedTerminalIds, threadRef]);
+  }, [
+    pendingTerminalIds,
+    reconcileTerminalIds,
+    serverOrderedTerminalIds,
+    suppressedTerminalIds,
+    threadRef,
+  ]);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = useMemo(() => {
@@ -3217,8 +3233,10 @@ function ChatViewContent(props: ChatViewProps) {
           input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
         });
         if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-        // The session survived the failed close, so let reconcile surface it
-        // again instead of suppressing a live terminal forever.
+        // The session survived the failed close. Put it back where it lived —
+        // the right panel — and roll back the drawer-store suppression, so it
+        // neither vanishes nor resurfaces in the wrong surface.
+        useRightPanelStore.getState().openTerminal(threadRef, terminalId);
         storeUnsuppressTerminal(threadRef, terminalId);
       })();
       storeCloseTerminal(activeThreadRef, terminalId);
