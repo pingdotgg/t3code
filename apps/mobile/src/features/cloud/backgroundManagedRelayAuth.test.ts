@@ -94,6 +94,27 @@ describe("background managed relay authentication", () => {
     expect(acquireSession).not.toHaveBeenCalled();
   });
 
+  it("does not report active when a stale background owner is rejected", async () => {
+    const result = await bootstrapBackgroundManagedRelayAuth({
+      resolveConfig: () => configuredPublicConfig,
+      createClerk: () => ({
+        loaded: true,
+        load: vi.fn(),
+        session: {
+          user: { id: "stale-account" },
+          getToken: vi.fn(async () => "stale-token"),
+        },
+      }),
+      resolveTokenOptions: vi.fn(() => ({
+        template: "relay-template",
+        skipCache: true as const,
+      })),
+      acquireSession: vi.fn(() => null),
+    });
+
+    expect(result).toEqual({ state: { status: "superseded" } });
+  });
+
   it("returns immediately for missing public configuration", async () => {
     const createClerk = vi.fn();
     const result = await bootstrapBackgroundManagedRelayAuth({

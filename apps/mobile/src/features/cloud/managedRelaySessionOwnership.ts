@@ -16,7 +16,7 @@ export interface ManagedRelaySessionOwnership {
   readonly setOwner: (
     owner: ManagedRelaySessionOwner,
     session: ManagedRelaySessionInput,
-  ) => () => void;
+  ) => (() => void) | null;
   readonly releaseOwner: (owner: ManagedRelaySessionOwner) => void;
   readonly clear: () => void;
 }
@@ -66,7 +66,7 @@ export function createManagedRelaySessionOwnership(
         // A headless bootstrap may finish after the user switches accounts in
         // the UI. Never retain that stale result for a later UI unmount.
         if (ui && ui.accountId !== session.accountId) {
-          return () => undefined;
+          return null;
         }
         background = lease;
       }
@@ -93,6 +93,6 @@ export const managedRelaySessionOwnership = createManagedRelaySessionOwnership(a
 
 export function acquireBackgroundManagedRelaySession(
   session: ManagedRelaySessionInput,
-): () => void {
+): (() => void) | null {
   return managedRelaySessionOwnership.setOwner("background", session);
 }
