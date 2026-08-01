@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -17,6 +18,7 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
   readonly versionDir: string;
@@ -73,41 +75,65 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedErrorClass<
  * extracts files before running native builds (node-pty), so a killed
  * install leaves a plausible-looking but broken tree behind.
  */
-export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensure_installed")(
-  function* (input: {
-    readonly baseDir: string;
-    readonly version: string;
-    readonly fs: FileSystem.FileSystem;
-    readonly path: Path.Path;
-    readonly runner: ProcessRunner.ProcessRunner["Service"];
-    readonly validate: (
-      paths: PinnedRuntimePaths,
-    ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
-  }) {
-    const { fs, runner } = input;
-    const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
-    const [entryExists, sentinel] = yield* Effect.all([
-      fs.exists(paths.entryPath),
-      fs.readFileString(paths.sentinelPath).pipe(Effect.option),
-    ]).pipe(
+interface PinnedRuntimeInstallInput {
+  readonly baseDir: string;
+  readonly version: string;
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly runner: ProcessRunner.ProcessRunner["Service"];
+  readonly validate: (
+    paths: PinnedRuntimePaths,
+  ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
+}
+
+const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
+  input: PinnedRuntimeInstallInput,
+) {
+  const { fs, runner } = input;
+  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
+  const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
+    fs.exists(paths.versionDir),
+    fs.exists(paths.entryPath),
+    fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+  ]).pipe(
+    Effect.mapError(
+      (cause) => new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
+    ),
+  );
+  const alreadyPinned =
+    entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
+  if (alreadyPinned) {
+    yield* input.validate(paths);
+    return paths;
+  }
+  if (versionDirExists) {
+    yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
       Effect.mapError(
-        (cause) => new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
+        (cause) =>
+          new PinnedRuntimeInstallError({
+            step: "removing an incomplete pinned runtime",
+            cause,
+          }),
       ),
     );
-    const alreadyPinned =
-      entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
-    if (alreadyPinned) {
-      const valid = yield* input.validate(paths).pipe(
-        Effect.as(true),
-        Effect.catchTags({
-          PinnedRuntimeInstallError: () => Effect.succeed(false),
-        }),
-      );
-      if (valid) return paths;
-    }
+  }
 
-    const versionsDir = input.path.dirname(paths.versionDir);
-    yield* fs.makeDirectory(versionsDir, { recursive: true }).pipe(
+  const versionsDir = input.path.dirname(paths.versionDir);
+  yield* fs.makeDirectory(versionsDir, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PinnedRuntimeInstallError({
+          step: "preparing the pinned runtime directory",
+          cause,
+        }),
+    ),
+  );
+  const stagingDir = yield* fs
+    .makeTempDirectory({
+      directory: versionsDir,
+      prefix: ".staging-",
+    })
+    .pipe(
       Effect.mapError(
         (cause) =>
           new PinnedRuntimeInstallError({
@@ -116,85 +142,78 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
           }),
       ),
     );
-    const stagingDir = yield* fs
-      .makeTempDirectory({
-        directory: versionsDir,
-        prefix: ".staging-",
+  const stagingPaths: PinnedRuntimePaths = {
+    versionDir: stagingDir,
+    entryPath: input.path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs"),
+    sentinelPath: input.path.join(stagingDir, ".install-complete"),
+  };
+
+  return yield* Effect.gen(function* () {
+    const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
+    yield* runner
+      .run({
+        command: "npm",
+        args: ["install", "--prefix", stagingDir, "--no-fund", "--no-audit", `t3@${input.version}`],
+        timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
       })
       .pipe(
-        Effect.mapError(
-          (cause) =>
+        Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
+        Effect.filterOrFail(
+          (result) => result.code === 0,
+          (result) =>
             new PinnedRuntimeInstallError({
-              step: "preparing the pinned runtime directory",
-              cause,
+              step: installStep,
+              exitCode: Number(result.code),
+              stdoutLength: result.stdout.length,
+              stderrLength: result.stderr.length,
             }),
         ),
       );
-    const stagingPaths: PinnedRuntimePaths = {
-      versionDir: stagingDir,
-      entryPath: input.path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs"),
-      sentinelPath: input.path.join(stagingDir, ".install-complete"),
-    };
 
-    return yield* Effect.gen(function* () {
-      const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
-      yield* runner
-        .run({
-          command: "npm",
-          args: [
-            "install",
-            "--prefix",
-            stagingDir,
-            "--no-fund",
-            "--no-audit",
-            `t3@${input.version}`,
-          ],
-          timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
-        })
-        .pipe(
-          Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
-          Effect.filterOrFail(
-            (result) => result.code === 0,
-            (result) =>
+    yield* input.validate(stagingPaths);
+    yield* fs
+      .writeFileString(stagingPaths.sentinelPath, `${input.version}\n`)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
+        ),
+      );
+    const published = yield* fs.rename(stagingDir, paths.versionDir).pipe(
+      Effect.as(true),
+      Effect.catch((cause) =>
+        Effect.all([
+          fs.exists(paths.entryPath),
+          fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+        ]).pipe(
+          Effect.mapError(
+            (checkCause) =>
               new PinnedRuntimeInstallError({
-                step: installStep,
-                exitCode: Number(result.code),
-                stdoutLength: result.stdout.length,
-                stderrLength: result.stderr.length,
+                step: "checking a concurrently published pinned runtime",
+                cause: checkCause,
               }),
           ),
-        );
-
-      yield* input.validate(stagingPaths);
-      yield* fs
-        .writeFileString(stagingPaths.sentinelPath, `${input.version}\n`)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
+          Effect.flatMap(([publishedEntryExists, publishedSentinel]) =>
+            publishedEntryExists &&
+            Option.isSome(publishedSentinel) &&
+            publishedSentinel.value.trim() === input.version
+              ? Effect.succeed(false)
+              : Effect.fail(
+                  new PinnedRuntimeInstallError({
+                    step: "publishing the pinned runtime",
+                    cause,
+                  }),
+                ),
           ),
-        );
-      // Keep the old path intact until its replacement is ready. Concurrent
-      // publishers may replace each other, but never leave no valid runtime.
-      yield* fs
-        .remove(paths.versionDir, { recursive: true, force: true })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "replacing the pinned runtime", cause }),
-          ),
-        );
-      yield* fs
-        .rename(stagingDir, paths.versionDir)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "publishing the pinned runtime", cause }),
-          ),
-        );
-      return paths;
-    }).pipe(
-      Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
+        ),
+      ),
     );
-  },
-);
+    if (!published) yield* input.validate(paths);
+    return paths;
+  }).pipe(
+    Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
+  );
+});
+
+export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
+  pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));

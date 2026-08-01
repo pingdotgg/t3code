@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect("reinstalls an invalid completed runtime", () =>
+  it.effect("preserves a completed runtime when validation fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -140,10 +140,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
               return yield* new PinnedRuntimeInstallError({ step: "validating the runtime" });
             }
           }),
-      });
+      }).pipe(Effect.flip);
 
-      assert.equal(validations, 2);
-      assert.equal(yield* fs.readFileString(finalPaths.entryPath), "export {};\n");
+      assert.equal(validations, 1);
+      assert.equal(yield* fs.readFileString(finalPaths.entryPath), "broken\n");
     }),
   );
 

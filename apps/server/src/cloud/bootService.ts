@@ -14,8 +14,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as NodeCrypto from "node:crypto";
-import * as NodeFSP from "node:fs/promises";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -142,34 +140,6 @@ export interface BootServiceHost {
   readonly launcherSourcePath?: string;
 }
 
-const writeDurably = (filePath: string, contents: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const directory = filePath.slice(0, Math.max(filePath.lastIndexOf("/"), 1));
-      await NodeFSP.mkdir(directory, { recursive: true });
-      const tempPath = `${filePath}.${process.pid}.${NodeCrypto.randomUUID()}.tmp`;
-      try {
-        const file = await NodeFSP.open(tempPath, "w", 0o600);
-        try {
-          await file.writeFile(contents, "utf8");
-          await file.sync();
-        } finally {
-          await file.close();
-        }
-        await NodeFSP.rename(tempPath, filePath);
-        const directoryHandle = await NodeFSP.open(directory, "r");
-        try {
-          await directoryHandle.sync();
-        } finally {
-          await directoryHandle.close();
-        }
-      } finally {
-        await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
-      }
-    },
-    catch: (cause) => new BootServiceInstallError({ cause }),
-  });
-
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -196,6 +166,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const launcherSourcePath =
     host.launcherSourcePath ?? path.join(path.dirname(host.cliEntryPath), SERVICE_LAUNCHER_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
+  const writeDurably = (filePath: string, contents: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const directory = path.dirname(filePath);
+        yield* fs.makeDirectory(directory, { recursive: true });
+        const tempPath = yield* fs.makeTempFileScoped({ directory, prefix: ".service-write-" });
+        yield* fs.writeFileString(tempPath, contents, { mode: 0o600 });
+        yield* (yield* fs.open(tempPath, { flag: "r" })).sync;
+        yield* fs.rename(tempPath, filePath);
+        yield* (yield* fs.open(directory, { flag: "r" })).sync;
+      }),
+    ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {
     nodePath: host.execPath,
     launcherPath,
@@ -283,7 +265,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
                   );
             }),
           ),
-    }).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "PinnedRuntimeInstallError"
+          ? new BootServiceCommandError({
+              step: error.step,
+              exitCode: error.exitCode,
+              stdoutLength: error.stdoutLength,
+              stderrLength: error.stderrLength,
+              cause: error,
+            })
+          : new BootServiceInstallError({ cause: error }),
+      ),
+    );
     const launcherSource = yield* fs
       .readFileString(launcherSourcePath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
