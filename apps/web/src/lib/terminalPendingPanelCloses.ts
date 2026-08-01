@@ -9,7 +9,21 @@ import type { TerminalSurfaceSnapshot } from "../rightPanelStore";
  * has no reconcile pass to remove. Holding the pre-close snapshot until
  * authoritative session metadata arrives lets the outcome decide.
  */
-const pendingByThreadKey = new Map<string, Map<string, TerminalSurfaceSnapshot>>();
+interface PendingPanelClose {
+  readonly snapshot: TerminalSurfaceSnapshot;
+  /**
+   * Earliest time the cached session list may settle this entry. The cached
+   * list can predate the close attempt (a close that succeeded server-side but
+   * reported interruption before the pruned metadata arrived), and restoring
+   * from it would pin a dead pane the panel cannot reconcile away. Metadata
+   * that arrives after the grace window has had time to reflect the close.
+   */
+  readonly readyAt: number;
+}
+
+const SETTLE_GRACE_MS = 1500;
+
+const pendingByThreadKey = new Map<string, Map<string, PendingPanelClose>>();
 
 // Recording can happen after the metadata that would settle it has already
 // arrived (the close promise reports interruption late, or the session survived
@@ -41,11 +55,14 @@ export function recordPendingPanelClose(
   threadKey: string,
   terminalId: string,
   snapshot: TerminalSurfaceSnapshot,
+  now: number = Date.now(),
 ): void {
-  const pending = pendingByThreadKey.get(threadKey) ?? new Map<string, TerminalSurfaceSnapshot>();
-  pending.set(terminalId, snapshot);
+  const pending = pendingByThreadKey.get(threadKey) ?? new Map<string, PendingPanelClose>();
+  pending.set(terminalId, { snapshot, readyAt: now + SETTLE_GRACE_MS });
   pendingByThreadKey.set(threadKey, pending);
-  notifyPendingPanelCloses();
+  // One notification when the entry becomes eligible; metadata changes in the
+  // meantime re-run the settling effect on their own but skip unready entries.
+  setTimeout(notifyPendingPanelCloses, SETTLE_GRACE_MS);
 }
 
 /**
@@ -60,18 +77,23 @@ export function recordPendingPanelClose(
 export function resolvePendingPanelCloses(
   threadKey: string,
   serverTerminalIds: readonly string[],
+  now: number = Date.now(),
 ): Array<{ terminalId: string; snapshot: TerminalSurfaceSnapshot }> {
   const pending = pendingByThreadKey.get(threadKey);
   if (!pending || serverTerminalIds.length === 0) return [];
 
   const serverIds = new Set(serverTerminalIds);
   const survived: Array<{ terminalId: string; snapshot: TerminalSurfaceSnapshot }> = [];
-  for (const [terminalId, snapshot] of pending) {
+  for (const [terminalId, entry] of pending) {
+    if (entry.readyAt > now) continue;
+    pending.delete(terminalId);
     if (serverIds.has(terminalId)) {
-      survived.push({ terminalId, snapshot });
+      survived.push({ terminalId, snapshot: entry.snapshot });
     }
   }
-  pendingByThreadKey.delete(threadKey);
+  if (pending.size === 0) {
+    pendingByThreadKey.delete(threadKey);
+  }
   return survived;
 }
 

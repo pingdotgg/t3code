@@ -380,7 +380,7 @@ export class GhosttyTerminalSurface {
   private composing = false;
   private focused = false;
   private resizeRequestedOnce = false;
-  private resizeGranted = false;
+  private resizeSettledOnce = false;
   private desiredCols = 0;
   private desiredRows = 0;
   private resizeRequestActive = false;
@@ -632,13 +632,14 @@ export class GhosttyTerminalSurface {
     const settle = (granted: boolean) => {
       if (this.disposed) return;
       this.resizeRequestActive = false;
+      const firstSettle = !this.resizeSettledOnce;
+      this.resizeSettledOnce = true;
       const hasNewerMeasurement = this.desiredCols !== cols || this.desiredRows !== rows;
-      if (granted || !this.resizeGranted) {
-        // The pre-grant exception keeps mount bookkeeping honest: the core was
-        // constructed at the first measured grid, so a failed initial request
-        // must still align this.cols with it rather than stay at the 1x1
-        // sentinel.
-        this.resizeGranted = this.resizeGranted || granted;
+      if (granted || firstSettle) {
+        // The first-settle exception keeps mount bookkeeping honest exactly
+        // once: the core was constructed at the first measured grid, so a
+        // failed initial request must still align this.cols with it rather
+        // than stay at the 1x1 sentinel. Later failures never move the grid.
         this.applyGridSize(cols, rows);
       } else if (!hasNewerMeasurement) {
         // The PTY kept its old size. Keep the grid with it, and align the

@@ -2528,6 +2528,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
     const process = session.value.process;
     if (!process || session.value.status !== "running") {
+      // Still authoritative for the next spawn: restart falls back to
+      // session.cols/rows, and the client grid follows the acknowledged size.
+      session.value.cols = input.cols;
+      session.value.rows = input.rows;
+      session.value.updatedAt = yield* nowIso;
       return;
     }
     yield* resizePtyProcess(session.value, process, input.cols, input.rows);
