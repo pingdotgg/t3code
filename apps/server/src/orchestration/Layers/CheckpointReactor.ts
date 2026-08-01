@@ -8,6 +8,7 @@ import {
   TurnId,
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
+  type VcsStatusLocalResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -534,15 +536,92 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
+    const local = yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to refresh local git status after turn completion", {
           threadId: event.threadId,
           turnId: event.turnId ?? null,
           cwd: sessionRuntime.value.cwd,
           detail: error.message,
-        }),
+        }).pipe(Effect.as(null)),
       ),
+    );
+    if (local !== null) {
+      yield* followWorktreeBranchDrift({
+        threadId: event.threadId,
+        cwd: sessionRuntime.value.cwd,
+        local,
+      });
+    }
+  });
+
+  // A `git checkout` run inside a thread's dedicated worktree (by an agent or
+  // the user) bypasses T3's commands, so the thread's recorded branch goes
+  // stale. Since #4460 the client only attributes PR state to a thread when
+  // the checked-out branch equals the recorded one, so stale metadata silently
+  // orphans the thread's PR. Follow the drift here: adopt the checked-out
+  // branch as the thread's branch, but only when the worktree belongs to
+  // exactly this thread — for shared cwds the strict matching is the point.
+  const followWorktreeBranchDrift = Effect.fn("followWorktreeBranchDrift")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly cwd: string;
+    readonly local: VcsStatusLocalResult;
+  }) {
+    // Detached HEAD has no branch to adopt; a temporary placeholder checkout
+    // means the first-turn auto-rename is still in flight — don't race it.
+    const checkedOutBranch = input.local.refName;
+    if (checkedOutBranch === null || isTemporaryWorktreeBranch(checkedOutBranch)) {
+      return;
+    }
+
+    yield* Effect.gen(function* () {
+      const thread = yield* projectionSnapshotQuery
+        .getThreadShellById(input.threadId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      if (
+        !thread ||
+        thread.branch === null ||
+        thread.branch === checkedOutBranch ||
+        thread.worktreePath === null ||
+        thread.worktreePath !== input.cwd ||
+        isTemporaryWorktreeBranch(thread.branch)
+      ) {
+        return;
+      }
+
+      const shell = yield* projectionSnapshotQuery.getShellSnapshot();
+      const worktreeIsShared = shell.threads.some(
+        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
+      );
+      if (worktreeIsShared) {
+        return;
+      }
+
+      // expectedBranch makes this a compare-and-swap in the decider: if the
+      // recorded branch moved between our read and the dispatch (rename,
+      // concurrent drift-follow), the stale update is dropped.
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("worktree-branch-drift"),
+        threadId: thread.id,
+        branch: checkedOutBranch,
+        expectedBranch: thread.branch,
+      });
+      yield* Effect.logInfo("thread branch followed worktree checkout", {
+        threadId: thread.id,
+        previousBranch: thread.branch,
+        branch: checkedOutBranch,
+      });
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("failed to follow worktree branch drift", {
+          threadId: input.threadId,
+          cause: Cause.pretty(cause),
+        });
+      }),
     );
   });
 
