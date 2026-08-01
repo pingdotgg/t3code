@@ -672,15 +672,37 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   // Every client-side id source participates in allocation: the server list
   // lags fresh opens, and panel terminals are filtered out of the drawer's
   // sessions — an id collision attaches two viewports to one PTY session.
+  // Suppression and pending membership feed the store's reconcile decision and
+  // id allocation, so subscribe to both — a failed close rolls back suppression
+  // without any server-list change, and the unsuppressed terminal must
+  // resurface without waiting for one.
+  const threadKey = scopedThreadKey(threadRef);
+  const suppressedTerminalIds = useTerminalUiStateStore(
+    (state) => state.suppressedTerminalIdsByThreadKey[threadKey],
+  );
+  const pendingTerminalIds = useTerminalUiStateStore(
+    (state) => state.pendingTerminalIdsByThreadKey[threadKey],
+  );
+  // Suppressed ids stay reserved: a just-closed optimistic id may have an open
+  // request still in flight, and reusing it would let that request's failure
+  // handler tear down the wrong terminal.
   const allocatableTerminalIds = useMemo(
     () => [
       ...new Set([
         ...serverOrderedTerminalIds,
         ...terminalUiState.terminalIds,
         ...panelTerminalIds,
+        ...(suppressedTerminalIds ?? []),
+        ...(pendingTerminalIds ?? []),
       ]),
     ],
-    [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
+    [
+      panelTerminalIds,
+      pendingTerminalIds,
+      serverOrderedTerminalIds,
+      suppressedTerminalIds,
+      terminalUiState.terminalIds,
+    ],
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
@@ -698,16 +720,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
   // The store owns the merge: it holds the pending set that separates a local
   // open the server has not registered yet from a session that ended remotely.
-  // Suppression and pending membership feed that decision, so subscribe to both
-  // — a failed close rolls back suppression without any server-list change, and
-  // the unsuppressed terminal must resurface without waiting for one.
-  const threadKey = scopedThreadKey(threadRef);
-  const suppressedTerminalIds = useTerminalUiStateStore(
-    (state) => state.suppressedTerminalIdsByThreadKey[threadKey],
-  );
-  const pendingTerminalIds = useTerminalUiStateStore(
-    (state) => state.pendingTerminalIdsByThreadKey[threadKey],
-  );
   useEffect(() => {
     reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
   }, [
@@ -1513,9 +1525,30 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [rightPanelState.surfaces],
   );
+  const activeSuppressedTerminalIds = useTerminalUiStateStore((state) =>
+    activeThreadKey === null ? undefined : state.suppressedTerminalIdsByThreadKey[activeThreadKey],
+  );
+  const activePendingTerminalIds = useTerminalUiStateStore((state) =>
+    activeThreadKey === null ? undefined : state.pendingTerminalIdsByThreadKey[activeThreadKey],
+  );
+  // Suppressed ids stay reserved: a just-closed optimistic id may have an open
+  // request still in flight, and reusing it would let that request's failure
+  // handler tear down the wrong terminal.
   const allocatableActiveTerminalIds = useMemo(
-    () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
-    [activeKnownTerminalIds, panelTerminalIds],
+    () => [
+      ...new Set([
+        ...activeKnownTerminalIds,
+        ...panelTerminalIds,
+        ...(activeSuppressedTerminalIds ?? []),
+        ...(activePendingTerminalIds ?? []),
+      ]),
+    ],
+    [
+      activeKnownTerminalIds,
+      activePendingTerminalIds,
+      activeSuppressedTerminalIds,
+      panelTerminalIds,
+    ],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
