@@ -38,7 +38,7 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
-import { forkParked } from "../../serverActivation.ts";
+import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -1311,7 +1311,7 @@ const make = Effect.gen(function* () {
     processDomainEvent(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
+          return Effect.interrupt;
         }
         return Effect.logWarning("provider command reactor failed to process event", {
           eventType: event.type,
@@ -1322,14 +1322,17 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
-  const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* (activation) {
+  const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
           "provider command reactor failed to find interrupted title regenerations",
           { cause: Cause.pretty(cause) },
-        ).pipe(Effect.as([])),
-      ),
+        ).pipe(Effect.as([]));
+      }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
@@ -1345,10 +1348,7 @@ const make = Effect.gen(function* () {
       }
     });
 
-    yield* forkParked(
-      activation,
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
-    );
+    yield* forkParked(Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent));
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
@@ -1368,7 +1368,12 @@ const make = Effect.gen(function* () {
         );
       }),
     );
-    yield* activation === undefined ? clearInterrupted : forkParked(activation, clearInterrupted);
+    const activation = yield* ServerActivation;
+    if (activation === undefined) {
+      yield* clearInterrupted;
+    } else {
+      yield* forkParked(clearInterrupted);
+    }
   });
 
   return {

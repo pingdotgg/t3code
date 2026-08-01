@@ -33,7 +33,7 @@ Every write uses same-directory replacement plus file and directory fsync.
 3. The staging directory is renamed to its immutable version path only after preflight succeeds.
 4. The active child sends `request-update`. The launcher validates the child and target, writes
    pending state, generates the update ID, then replies `update-accepted`.
-5. After the RPC response has time to flush, the child exits with code 75.
+5. After a short response-flush grace period, the launcher stops the active child.
 6. The launcher starts the target as a trial and gives it the pending update over IPC.
 7. The trial acquires dependencies, binds HTTP, starts every long-running root fiber, and verifies
    that each root is parked at the activation gate. It does not run migrations.
@@ -44,10 +44,9 @@ Every write uses same-directory replacement plus file and directory fsync.
 Post-commit startup does not call service `start`, `initialize`, `connect`, `load`, or `acquire`
 operations. It only opens prepared gates and publishes prepared lifecycle state.
 
-The launcher serializes child exits, IPC messages, and timers. An accepted request must hand off
-within 30 seconds. A trial must report prepared within 120 seconds. If the trial exits or times out
-before prepared, the launcher records rollback and starts A. After commit, B is active and normal
-systemd restart policy applies.
+The launcher serializes child exits, IPC messages, and timers. A trial must report prepared within
+120 seconds. If the trial exits or times out before prepared, the launcher records rollback and
+starts A. After commit, B is active and normal systemd restart policy applies.
 
 ## Migration Boundary
 

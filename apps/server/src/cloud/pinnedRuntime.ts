@@ -196,37 +196,14 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
               new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
           ),
         );
-      const published = yield* fs.rename(stagingDir, paths.versionDir).pipe(
-        Effect.as(true),
-        Effect.catch((cause) =>
-          Effect.all([
-            fs.exists(paths.entryPath),
-            fs.readFileString(paths.sentinelPath).pipe(Effect.option),
-          ]).pipe(
-            Effect.mapError(
-              (checkCause) =>
-                new PinnedRuntimeInstallError({
-                  step: "checking a concurrently published pinned runtime",
-                  cause: checkCause,
-                }),
-            ),
-            Effect.flatMap(([entryExists, sentinel]) =>
-              entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version
-                ? Effect.succeed(false)
-                : Effect.fail(
-                    new PinnedRuntimeInstallError({
-                      step: "publishing the pinned runtime",
-                      cause,
-                    }),
-                  ),
-            ),
+      yield* fs
+        .rename(stagingDir, paths.versionDir)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({ step: "publishing the pinned runtime", cause }),
           ),
-        ),
-      );
-      if (!published) {
-        yield* fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
-        yield* input.validate(paths);
-      }
+        );
       return paths;
     }).pipe(
       Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),

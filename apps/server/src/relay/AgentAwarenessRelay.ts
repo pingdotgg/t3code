@@ -50,7 +50,7 @@ export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
   {
     readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
-    readonly start: (activation?: Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>;
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/relay/AgentAwarenessRelay") {}
 
@@ -576,7 +576,7 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.asVoid);
 
   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
-    function* (activation) {
+    function* () {
       const [relayConfig, publishEnabled] = yield* Effect.all([
         readRelayConfig.pipe(Effect.orElseSucceed(() => null)),
         readPublishAgentActivityEnabled.pipe(Effect.orElseSucceed(() => false)),
@@ -601,13 +601,11 @@ export const make = Effect.gen(function* () {
           break;
       }
       yield* forkParked(
-        activation,
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
         ),
       );
       yield* forkParked(
-        activation,
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
           const threadId = eventThreadId(event);
           if (threadId === null) {

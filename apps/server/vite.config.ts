@@ -32,10 +32,7 @@ export default mergeConfig(
       },
     },
     pack: {
-      entry: {
-        bin: "src/bin.ts",
-        "service-launcher": "src/serviceLauncher.ts",
-      },
+      entry: ["src/bin.ts"],
       outDir: "dist",
       sourcemap: true,
       clean: true,

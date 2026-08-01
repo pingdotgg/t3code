@@ -36,7 +36,6 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
-import * as ServerShutdown from "./serverShutdown.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -291,7 +290,10 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<void> }) =>
+export const make = (options?: {
+  readonly activate?: Effect.Effect<void>;
+  readonly awaitAuxiliaryParked?: Effect.Effect<void>;
+}) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     const keybindings = yield* Keybindings.Keybindings;
@@ -302,8 +304,6 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-    const shutdown = yield* ServerShutdown.ServerShutdown;
-    const awaitActivation = launcher.awaitActivation.pipe(Effect.orDie);
 
     const commandGate = yield* makeCommandGate;
     const httpListening = yield* Deferred.make<void>();
@@ -346,8 +346,8 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
       yield* runStartupPhase(
         "reactors.start",
         Effect.gen(function* () {
-          yield* orchestrationReactor.start(awaitActivation).pipe(Scope.provide(reactorScope));
-          yield* providerSessionReaper.start(awaitActivation).pipe(Scope.provide(reactorScope));
+          yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+          yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
         }),
       );
 
@@ -357,7 +357,6 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
 
       if (serverConfig.autoBootstrapProjectFromCwd) {
         yield* forkParked(
-          awaitActivation,
           runStartupPhase(
             "welcome.autobootstrap",
             Effect.gen(function* () {
@@ -395,9 +394,7 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
         );
       }
 
-      const readyPublished = yield* Deferred.make<void>();
       yield* forkParked(
-        Deferred.await(readyPublished),
         Effect.gen(function* () {
           yield* Effect.logDebug("startup phase: recording startup heartbeat");
           yield* recordStartupHeartbeat.pipe(
@@ -433,6 +430,7 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
       // This is the prepared boundary. Every dependency has been acquired and
       // every runtime root has confirmed that it is parked before this request.
       const updateOutcome = yield* launcher.prepareTrial;
+      yield* options?.activate ?? Effect.void;
 
       yield* Effect.logDebug("Accepting commands");
       yield* commandGate.signalCommandReady;
@@ -452,11 +450,10 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
           payload: {
             at: DateTime.formatIso(yield* DateTime.now),
             environment,
-            ...(Option.isSome(updateOutcome) ? { updateOutcome: updateOutcome.value } : {}),
+            ...(updateOutcome === undefined ? {} : { updateOutcome }),
           },
         }),
       );
-      yield* Deferred.succeed(readyPublished, undefined).pipe(Effect.orDie);
       yield* Effect.logDebug("startup phase: complete");
     }).pipe(
       Effect.annotateSpans({
@@ -479,10 +476,7 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
           });
           return Effect.logError("server runtime startup failed", {
             cause: startupExit.cause,
-          }).pipe(
-            Effect.andThen(commandGate.failCommandReady(error)),
-            Effect.andThen(launcher.trial ? shutdown.request(1) : Effect.void),
-          );
+          }).pipe(Effect.andThen(commandGate.failCommandReady(error)));
         }),
       ),
     );
@@ -495,6 +489,7 @@ export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<v
   });
 
 export const layerWithOptions = (options?: {
+  readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
 }) => Layer.effect(ServerRuntimeStartup, make(options));
 

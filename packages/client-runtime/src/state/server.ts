@@ -111,8 +111,8 @@ export class ServerUpdateTerminalError extends Schema.TaggedErrorClass<ServerUpd
   }
 }
 
-// Covers the launcher's 30-second handoff, 120-second trial deadline, and a
-// final restart of the previous version when the trial rolls back.
+// Covers the 120-second trial deadline and a final restart of the previous
+// version when the trial rolls back.
 const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(4);
 
 export function matchesServerUpdateReadyEvent(

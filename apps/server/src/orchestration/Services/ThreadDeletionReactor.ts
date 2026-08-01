@@ -20,7 +20,7 @@ export interface ThreadDeletionReactorShape {
    * The returned effect must be run in a scope so all worker fibers can be
    * finalized on shutdown.
    */
-  readonly start: (activation?: Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>;
+  readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
    * Resolves when the internal processing queue is empty and idle.

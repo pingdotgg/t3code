@@ -14,10 +14,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
-import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import * as ServerShutdown from "../serverShutdown.ts";
 import {
   ensurePinnedRuntimeInstalled,
   PinnedRuntimeInstallError,
@@ -25,20 +23,15 @@ import {
 } from "./pinnedRuntime.ts";
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import {
-  isExactServiceVersion,
-  SERVICE_HANDOFF_EXIT_CODE,
-  SERVICE_LAUNCHER_PROTOCOL,
-} from "./serviceProtocol.ts";
+import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
 const PREFLIGHT_TIMEOUT = Duration.seconds(30);
-const HANDOFF_DELAY = Duration.seconds(2);
 
 export const resolveServerSelfUpdateCapability = Effect.fn(
   "cloud.server_self_update.resolve_capability",
 )(function* (input: { readonly desktopManaged: boolean }) {
   if (input.desktopManaged) return "desktop-managed" as const;
-  return (yield* ServiceLauncherClient.isServiceLauncherManaged())
+  return (yield* ServiceLauncherClient.ServiceLauncherClient).managed
     ? ("boot-service" as const)
     : null;
 });
@@ -60,7 +53,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
-  const shutdown = yield* ServerShutdown.ServerShutdown;
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -178,30 +170,25 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       );
 
       yield* reportProgress("installing");
-      const pending = yield* launcher
-        .requestUpdate({ fromVersion: packageJson.version, targetVersion })
+      const updateId = yield* launcher
+        .requestUpdate({ targetVersion })
         .pipe(
           Effect.mapError((error) =>
             failWith(
-              error.operation === "rejected" && error.detail !== undefined
-                ? error.detail
+              error.operation === "rejected"
+                ? error.reason
                 : "Could not ask the service launcher to activate the prepared update.",
               error,
             ),
           ),
         );
 
-      yield* Effect.sleep(HANDOFF_DELAY).pipe(
-        Effect.andThen(shutdown.request(SERVICE_HANDOFF_EXIT_CODE)),
-        Effect.forkDetach({ startImmediately: true }),
-      );
-
       yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
-        updateId: pending.id,
+        updateId,
         targetVersion,
         runtimePath: paths.entryPath,
       });
-      return { targetVersion, method: "boot-service" as const, updateId: pending.id };
+      return { targetVersion, method: "boot-service" as const, updateId };
     }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
   });
 

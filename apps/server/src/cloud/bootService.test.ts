@@ -15,13 +15,12 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ProcessRunner from "../processRunner.ts";
 import { make, renderBootServiceUnit } from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
+import { parseServiceState } from "./serviceProtocol.ts";
 
 it("keeps systemd pinned to the stable launcher rather than a versioned server", () => {
   const unit = renderBootServiceUnit({
     nodePath: "/usr/bin/node",
     launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
-    statePath: "/home/theo/.t3/runtime/service-state.json",
-    activeVersion: "1.2.3",
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
     unitPath: "/home/theo/.config/systemd/user/t3code.service",
@@ -84,10 +83,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       );
 
       const plan = yield* service.install;
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserting the launcher document bytes.
-      expect(JSON.parse(yield* fs.readFileString(plan.statePath))).toEqual({
-        schemaVersion: 1,
-        launcherProtocol: 1,
+      expect(
+        parseServiceState(
+          yield* fs.readFileString(path.join(baseDir, "runtime", "service-state.json")),
+        ),
+      ).toEqual({
+        protocol: 1,
         activeVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.launcherPath)).toBe("export {};\n");

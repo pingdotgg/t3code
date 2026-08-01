@@ -55,8 +55,7 @@ export function formatServiceStatus(
   }
   return [
     "T3 Code service",
-    `  Status: ${status.current ? `installed · t3@${status.activeVersion ?? cliVersion}` : "needs an update or repair"}`,
-    ...(status.updateStatus === undefined ? [] : [`  Last update: ${status.updateStatus}`]),
+    `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),

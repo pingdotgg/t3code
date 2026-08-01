@@ -5,9 +5,9 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
-import { assertMigrationManifest, runMigrations } from "../Migrations.ts";
+import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
-import { ServiceLauncherTrial } from "../../cloud/serviceLauncherClient.ts";
+import { ServiceLauncherClient } from "../../cloud/serviceLauncherClient.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -36,16 +36,10 @@ const setup = (trial: boolean) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA foreign_keys = ON;`;
-      if (trial) {
-        yield* sql`PRAGMA query_only = ON;`;
-        yield* assertMigrationManifest();
-        // All durable workers are still parked. Restore the connection before
-        // prepared so activation itself cannot fail on database setup.
-        yield* sql`PRAGMA query_only = OFF;`;
-        return;
+      if (!trial) {
+        yield* sql`PRAGMA journal_mode = WAL;`;
+        yield* runMigrations();
       }
-      yield* sql`PRAGMA journal_mode = WAL;`;
-      yield* runMigrations();
     }),
   );
 
@@ -77,7 +71,7 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;
-    const trial = yield* ServiceLauncherTrial;
-    return makeSqlitePersistenceLive(dbPath, { trial });
+    const launcher = yield* ServiceLauncherClient;
+    return makeSqlitePersistenceLive(dbPath, { trial: launcher.trial });
   }),
 );

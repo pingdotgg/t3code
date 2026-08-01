@@ -27,8 +27,7 @@ import {
   SERVICE_LAUNCHER_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
-  SERVICE_STATE_SCHEMA_VERSION,
-  isExactServiceVersion,
+  parseServiceState,
   type ServiceState,
 } from "./serviceProtocol.ts";
 
@@ -50,8 +49,6 @@ export function quoteSystemdValue(value: string): string {
 export interface BootServicePlan {
   readonly nodePath: string;
   readonly launcherPath: string;
-  readonly statePath: string;
-  readonly activeVersion: string;
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
@@ -128,8 +125,6 @@ export interface BootServiceStatus {
   readonly current: boolean;
   readonly unitPath: string;
   readonly logPath: string;
-  readonly activeVersion?: string;
-  readonly updateStatus?: "pending" | "committed" | "rolled-back" | "failed";
 }
 
 export class BootService extends Context.Service<
@@ -175,98 +170,6 @@ const writeDurably = (filePath: string, contents: string) =>
     catch: (cause) => new BootServiceInstallError({ cause }),
   });
 
-function readState(value: string): ServiceState | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("schemaVersion" in parsed) ||
-    parsed.schemaVersion !== SERVICE_STATE_SCHEMA_VERSION ||
-    !("launcherProtocol" in parsed) ||
-    parsed.launcherProtocol !== SERVICE_LAUNCHER_PROTOCOL ||
-    !("activeVersion" in parsed) ||
-    typeof parsed.activeVersion !== "string" ||
-    !isExactServiceVersion(parsed.activeVersion)
-  ) {
-    return undefined;
-  }
-  const update = "update" in parsed ? parsed.update : undefined;
-  if (update === undefined) {
-    return {
-      schemaVersion: SERVICE_STATE_SCHEMA_VERSION,
-      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-      activeVersion: parsed.activeVersion,
-    };
-  }
-  if (
-    typeof update !== "object" ||
-    update === null ||
-    !("id" in update) ||
-    typeof update.id !== "string" ||
-    !("fromVersion" in update) ||
-    typeof update.fromVersion !== "string" ||
-    !isExactServiceVersion(update.fromVersion) ||
-    !("targetVersion" in update) ||
-    typeof update.targetVersion !== "string" ||
-    !isExactServiceVersion(update.targetVersion) ||
-    !("status" in update) ||
-    (update.status !== "pending" &&
-      update.status !== "committed" &&
-      update.status !== "rolled-back" &&
-      update.status !== "failed")
-  ) {
-    return undefined;
-  }
-  if (update.status === "pending") {
-    if (
-      !("requestedAt" in update) ||
-      typeof update.requestedAt !== "string" ||
-      update.fromVersion !== parsed.activeVersion
-    )
-      return undefined;
-    return {
-      schemaVersion: SERVICE_STATE_SCHEMA_VERSION,
-      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-      activeVersion: parsed.activeVersion,
-      update: {
-        id: update.id,
-        fromVersion: update.fromVersion,
-        targetVersion: update.targetVersion,
-        status: "pending",
-        requestedAt: update.requestedAt,
-      },
-    };
-  }
-  const reason = "reason" in update ? update.reason : undefined;
-  if (
-    !("completedAt" in update) ||
-    typeof update.completedAt !== "string" ||
-    (reason !== undefined && typeof reason !== "string") ||
-    (update.status === "committed"
-      ? update.targetVersion !== parsed.activeVersion
-      : update.fromVersion !== parsed.activeVersion)
-  )
-    return undefined;
-  return {
-    schemaVersion: SERVICE_STATE_SCHEMA_VERSION,
-    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-    activeVersion: parsed.activeVersion,
-    update: {
-      id: update.id,
-      fromVersion: update.fromVersion,
-      targetVersion: update.targetVersion,
-      status: update.status,
-      completedAt: update.completedAt,
-      ...(typeof reason === "string" ? { reason } : {}),
-    },
-  };
-}
-
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -296,8 +199,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const plan: BootServicePlan = {
     nodePath: host.execPath,
     launcherPath,
-    statePath,
-    activeVersion: input.cliVersion,
     baseDir: input.baseDir,
     logPath,
     unitPath,
@@ -387,21 +288,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       .readFileString(launcherSourcePath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
-    const readPrevious = (filePath: string) =>
-      fs.exists(filePath).pipe(
-        Effect.flatMap((exists) =>
-          exists
-            ? fs.readFileString(filePath).pipe(Effect.map(Option.some))
-            : Effect.succeed(Option.none<string>()),
-        ),
-        Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-      );
-    const previous = yield* Effect.all({
-      unit: readPrevious(unitPath),
-      launcher: readPrevious(launcherPath),
-      state: readPrevious(statePath),
-    });
-    const installed = Option.isSome(previous.unit);
+    const installed = yield* fs
+      .exists(unitPath)
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     if (installed) {
       yield* runStep("stopping the installed service", "systemctl", [
         "--user",
@@ -410,72 +299,37 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
     }
 
-    const restoreFile = (filePath: string, contents: Option.Option<string>) =>
-      Option.isSome(contents)
-        ? writeDurably(filePath, contents.value).pipe(Effect.ignore)
-        : fs.remove(filePath, { force: true }).pipe(Effect.ignore);
-    const rollback = Effect.gen(function* () {
-      yield* runStep("stopping the failed service update", "systemctl", [
-        "--user",
-        "stop",
-        BOOT_SERVICE_UNIT_FILE,
-      ]).pipe(Effect.ignore);
-      yield* restoreFile(launcherPath, previous.launcher);
-      yield* restoreFile(statePath, previous.state);
-      yield* restoreFile(unitPath, previous.unit);
-      yield* runStep("reloading restored systemd user units", "systemctl", [
-        "--user",
-        "daemon-reload",
-      ]).pipe(Effect.ignore);
-      if (installed) {
-        yield* runStep("restarting the restored service", "systemctl", [
-          "--user",
-          "restart",
-          BOOT_SERVICE_UNIT_FILE,
-        ]).pipe(Effect.ignore);
-      } else {
-        yield* runStep("removing the failed service enablement", "systemctl", [
-          "--user",
-          "disable",
-          BOOT_SERVICE_UNIT_FILE,
-        ]).pipe(Effect.ignore);
-      }
-    });
+    yield* fs
+      .makeDirectory(unitDir, { recursive: true })
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    yield* writeDurably(launcherPath, launcherSource);
+    yield* writeDurably(
+      statePath,
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
+      `${JSON.stringify(
+        {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: input.cliVersion,
+        } satisfies ServiceState,
+        null,
+        2,
+      )}\n`,
+    );
+    yield* writeDurably(unitPath, renderBootServiceUnit(plan));
 
-    yield* Effect.gen(function* () {
-      yield* fs
-        .makeDirectory(unitDir, { recursive: true })
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* writeDurably(launcherPath, launcherSource);
-      yield* writeDurably(
-        statePath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
-        `${JSON.stringify(
-          {
-            schemaVersion: SERVICE_STATE_SCHEMA_VERSION,
-            launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-            activeVersion: input.cliVersion,
-          } satisfies ServiceState,
-          null,
-          2,
-        )}\n`,
-      );
-      yield* writeDurably(unitPath, renderBootServiceUnit(plan));
-
-      yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
-      yield* runStep("enabling the service", "systemctl", [
-        "--user",
-        "enable",
-        BOOT_SERVICE_UNIT_FILE,
-      ]);
-      yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
-      // Start last. No administrative state write occurs after this succeeds.
-      yield* runStep("starting the service", "systemctl", [
-        "--user",
-        "restart",
-        BOOT_SERVICE_UNIT_FILE,
-      ]);
-    }).pipe(Effect.tapError(() => rollback));
+    yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
+    yield* runStep("enabling the service", "systemctl", [
+      "--user",
+      "enable",
+      BOOT_SERVICE_UNIT_FILE,
+    ]);
+    yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
+    // Start last. No administrative state write occurs after this succeeds.
+    yield* runStep("starting the service", "systemctl", [
+      "--user",
+      "restart",
+      BOOT_SERVICE_UNIT_FILE,
+    ]);
     return plan;
   }).pipe(Effect.withSpan("cloud.boot_service.install"));
 
@@ -515,7 +369,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
         fs.readFileString(statePath).pipe(Effect.option),
       ]);
-    const state = Option.isSome(stateText) ? readState(stateText.value) : undefined;
+    const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     return {
       supported: true,
       installed: true,
@@ -529,8 +383,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         state?.update?.status !== "pending",
       unitPath,
       logPath,
-      ...(state === undefined ? {} : { activeVersion: state.activeVersion }),
-      ...(state?.update === undefined ? {} : { updateStatus: state.update.status }),
     };
   }).pipe(
     Effect.mapError((cause) => new BootServiceInstallError({ cause })),

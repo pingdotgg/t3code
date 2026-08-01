@@ -104,10 +104,9 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       }
     });
 
-    const start: ProviderSessionReaperShape["start"] = (activation) =>
+    const start: ProviderSessionReaperShape["start"] = () =>
       Effect.gen(function* () {
         yield* forkParked(
-          activation,
           sweep.pipe(
             Effect.catch((error: unknown) =>
               Effect.logWarning("provider.session.reaper.sweep-failed", {

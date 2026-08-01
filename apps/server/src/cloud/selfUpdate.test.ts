@@ -3,13 +3,11 @@ import { expect, it } from "@effect/vitest";
 import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import * as ServerShutdown from "../serverShutdown.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { make } from "./selfUpdate.ts";
 
@@ -58,25 +56,16 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
         managed: true,
         trial: false,
-        awaitActivation: Effect.void,
-        requestUpdate: (input) =>
+        requestUpdate: () =>
           Effect.sync(() => {
             order.push("accept");
-            return {
-              id: "launcher-id",
-              ...input,
-              status: "pending" as const,
-              requestedAt: "2026-08-01T00:00:00.000Z",
-            };
+            return "launcher-id";
           }),
-        prepareTrial: Effect.succeed(Option.none()),
-        latestOutcome: Effect.succeed(Option.none()),
+        prepareTrial: Effect.sync((): undefined => undefined),
       });
-      const shutdown = yield* ServerShutdown.make;
       const selfUpdate = yield* make().pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
         Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
-        Effect.provideService(ServerShutdown.ServerShutdown, shutdown),
         Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
       );

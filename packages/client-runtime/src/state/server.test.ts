@@ -196,7 +196,6 @@ describe("server state projection", () => {
               targetVersion: "0.0.31",
               status,
               ...(status === "rolled-back" ? { reason: "prepared-timeout" } : {}),
-              completedAt: "2026-08-01T00:00:00.000Z",
             },
           },
         }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];

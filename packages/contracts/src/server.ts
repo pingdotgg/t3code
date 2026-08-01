@@ -521,21 +521,13 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
-export const ServerSelfUpdateOutcomeStatus = Schema.Literals([
-  "committed",
-  "rolled-back",
-  "failed",
-]);
-export type ServerSelfUpdateOutcomeStatus = typeof ServerSelfUpdateOutcomeStatus.Type;
-
 /** Terminal selection recorded by the service launcher for one update. */
 export const ServerSelfUpdateOutcome = Schema.Struct({
   id: TrimmedNonEmptyString,
   fromVersion: TrimmedNonEmptyString,
   targetVersion: TrimmedNonEmptyString,
-  status: ServerSelfUpdateOutcomeStatus,
+  status: Schema.Literals(["committed", "rolled-back", "failed"]),
   reason: Schema.optionalKey(TrimmedNonEmptyString),
-  completedAt: IsoDateTime,
 });
 export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
 

@@ -2,7 +2,6 @@ import { expect, it } from "@effect/vitest";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Option from "effect/Option";
 
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -48,20 +47,17 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provideService(HostProcessEnvironment, host.env),
   );
 
-it.effect("parks a trial until the launcher durably commits its update ID", () =>
+it.effect("waits for the launcher to durably commit the trial update ID", () =>
   Effect.gen(function* () {
     const pending = {
       id: "update-1",
       fromVersion: "1.0.0",
       targetVersion: "1.1.0",
       status: "pending" as const,
-      requestedAt: "2026-08-01T00:00:00.000Z",
     };
     const host = new FakeLauncherProcess({
       protocol: 1,
-      activeVersion: "1.0.0",
       childVersion: "1.1.0",
-      trial: true,
       update: pending,
     });
     const client = yield* makeClient(host, "1.1.0");
@@ -74,11 +70,9 @@ it.effect("parks a trial until the launcher durably commits its update ID", () =
       fromVersion: pending.fromVersion,
       targetVersion: pending.targetVersion,
       status: "committed" as const,
-      completedAt: "2026-08-01T00:00:01.000Z",
     };
-    host.emit({ type: "committed", update: committed });
-    expect(Option.getOrThrow(yield* Fiber.join(prepared))).toEqual(committed);
-    yield* client.awaitActivation;
+    host.emit({ type: "committed", updateId: committed.id });
+    expect(yield* Fiber.join(prepared)).toEqual(committed);
   }),
 );
 
@@ -86,27 +80,18 @@ it.effect("returns the launcher-generated ID only after update acceptance", () =
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
       protocol: 1,
-      activeVersion: "1.0.0",
       childVersion: "1.0.0",
-      trial: false,
     });
     const client = yield* makeClient(host, "1.0.0");
-    const requested = yield* Effect.forkChild(
-      client.requestUpdate({ fromVersion: "1.0.0", targetVersion: "1.1.0" }),
-      { startImmediately: true },
-    );
+    const requested = yield* Effect.forkChild(client.requestUpdate({ targetVersion: "1.1.0" }), {
+      startImmediately: true,
+    });
     yield* Effect.yieldNow;
     host.emit({
       type: "update-accepted",
-      update: {
-        id: "launcher-id",
-        fromVersion: "1.0.0",
-        targetVersion: "1.1.0",
-        status: "pending",
-        requestedAt: "2026-08-01T00:00:00.000Z",
-      },
+      updateId: "launcher-id",
     });
-    expect((yield* Fiber.join(requested)).id).toBe("launcher-id");
+    expect(yield* Fiber.join(requested)).toBe("launcher-id");
   }),
 );
 
@@ -114,9 +99,13 @@ it.effect("rejects contradictory trial context instead of leaving activation clo
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
       protocol: 1,
-      activeVersion: "1.0.0",
       childVersion: "1.1.0",
-      trial: true,
+      update: {
+        id: "update-1",
+        fromVersion: "1.0.0",
+        targetVersion: "1.2.0",
+        status: "pending",
+      },
     });
     const error = yield* makeClient(host, "1.1.0").pipe(Effect.flip);
     expect(error.message).toBe("The service launcher supplied invalid startup context.");

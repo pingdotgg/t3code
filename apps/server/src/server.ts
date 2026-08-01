@@ -111,7 +111,7 @@ import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
-import { forkParked } from "./serverActivation.ts";
+import { forkParked, ServerActivation } from "./serverActivation.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -434,13 +434,16 @@ export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const launcherClient = yield* ServiceLauncherClient.make();
+    const activation = yield* Deferred.make<void>();
+    const awaitActivation = Deferred.await(activation);
+    const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
-    const launcherLayer = Layer.mergeAll(
-      Layer.succeed(ServiceLauncherClient.ServiceLauncherClient, launcherClient),
-      Layer.succeed(ServiceLauncherClient.ServiceLauncherTrial, launcherClient.trial),
+    const launcherLayer = Layer.succeed(
+      ServiceLauncherClient.ServiceLauncherClient,
+      launcherClient,
     );
 
     yield* fixPath();
@@ -455,7 +458,6 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeStateLayer = Layer.effectDiscard(
       Effect.acquireRelease(
         Effect.gen(function* () {
-          const awaitActivation = launcherClient.awaitActivation.pipe(Effect.orDie);
           yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
           yield* awaitActivation;
           const server = yield* HttpServer.HttpServer;
@@ -494,7 +496,6 @@ export const makeServerLayer = Layer.unwrap(
       ? Layer.effectDiscard(
           Effect.acquireRelease(
             Effect.gen(function* () {
-              const awaitActivation = launcherClient.awaitActivation.pipe(Effect.orDie);
               yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
               yield* awaitActivation;
               const server = yield* HttpServer.HttpServer;
@@ -550,9 +551,7 @@ export const makeServerLayer = Layer.unwrap(
           yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
           return;
         }
-        const awaitActivation = launcherClient.awaitActivation.pipe(Effect.orDie);
         yield* forkParked(
-          awaitActivation,
           Effect.gen(function* () {
             // Only an activated runtime owns the tunnel cleanup finalizer.
             yield* Effect.addFinalizer(() =>
@@ -604,6 +603,7 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
+      activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       awaitAuxiliaryParked: Effect.all(
         [
           Deferred.await(runtimeStateParked),
@@ -628,6 +628,7 @@ export const makeServerLayer = Layer.unwrap(
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
+      Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpResponseCompressionLive),
       Layer.provideMerge(HttpServerLive),
@@ -639,5 +640,5 @@ export const makeServerLayer = Layer.unwrap(
   }),
 );
 
-// The CLI supplies configuration and the controlled-shutdown service.
+// The CLI supplies configuration.
 export const runServer = Layer.launch(makeServerLayer);
