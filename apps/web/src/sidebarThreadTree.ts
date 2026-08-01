@@ -1,5 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import { ThreadId } from "@t3tools/contracts";
+import { type OrchestrationThreadActivity, ThreadId } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { sortThreads } from "./lib/threadSort";
 import {
@@ -7,7 +7,7 @@ import {
   isActiveThreadStatus,
   type ThreadStatusPill,
 } from "./components/Sidebar.logic";
-import type { AgentRun } from "./session-logic";
+import { deriveAgentRuns, type AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
 
 /**
@@ -69,6 +69,25 @@ export function expandSidebarThreadsWithAgentRuns(input: {
         }),
       ),
     ];
+  });
+}
+
+export function deriveSidebarThreadsWithAgentRuns(input: {
+  threads: readonly SidebarThreadSummary[];
+  threadActivities: ReadonlyArray<readonly OrchestrationThreadActivity[]>;
+  dismissedAgentRunKeys?: Record<string, true>;
+}): SidebarThreadSummary[] {
+  const agentRunsByThreadKey = new Map<string, ReturnType<typeof deriveAgentRuns>>();
+  for (const [index, thread] of input.threads.entries()) {
+    const agentRuns = deriveAgentRuns(input.threadActivities[index] ?? [], undefined);
+    if (agentRuns.length > 0) {
+      agentRunsByThreadKey.set(getThreadKey(thread), agentRuns);
+    }
+  }
+  return expandSidebarThreadsWithAgentRuns({
+    threads: input.threads,
+    agentRunsByThreadKey,
+    ...(input.dismissedAgentRunKeys ? { dismissedAgentRunKeys: input.dismissedAgentRunKeys } : {}),
   });
 }
 

@@ -1,10 +1,17 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  EventId,
+  type OrchestrationThreadActivity,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { ThreadStatusPill } from "./components/Sidebar.logic";
 import {
   agentRunDismissKey,
   buildSidebarThreadRows,
+  deriveSidebarThreadsWithAgentRuns,
   expandSidebarThreadsWithAgentRuns,
   selectVisibleSidebarThreads,
 } from "./sidebarThreadTree";
@@ -48,6 +55,19 @@ const workingStatus: ThreadStatusPill = {
   dotClass: "bg-sky-500",
   pulse: true,
 };
+
+function activity(
+  overrides: Omit<
+    Pick<OrchestrationThreadActivity, "id" | "createdAt" | "kind" | "summary" | "tone">,
+    "id"
+  > & { id: string; payload: Record<string, unknown> },
+): OrchestrationThreadActivity {
+  return {
+    ...overrides,
+    id: EventId.make(overrides.id),
+    turnId: null,
+  };
+}
 
 describe("buildSidebarThreadRows", () => {
   it("renders inactive background agents through the normal nested-chat tree", () => {
@@ -108,6 +128,40 @@ describe("buildSidebarThreadRows", () => {
     });
 
     expect(threads.map((candidate) => candidate.title)).toEqual([parent.title, visibleRun.name]);
+  });
+
+  it("derives and dismisses background-agent runs from sidebar activities", () => {
+    const parent = thread("thread-1");
+    const start = activity({
+      id: "agent-start",
+      createdAt: "2026-01-01T00:00:02.000Z",
+      kind: "task.started",
+      summary: "Repository explorer",
+      tone: "info",
+      payload: {
+        taskId: "agent-1",
+        taskType: "background-agent",
+        name: "Repository explorer",
+      },
+    });
+
+    const visible = deriveSidebarThreadsWithAgentRuns({
+      threads: [parent],
+      threadActivities: [[start]],
+    });
+    const dismissed = deriveSidebarThreadsWithAgentRuns({
+      threads: [parent],
+      threadActivities: [[start]],
+      dismissedAgentRunKeys: {
+        [agentRunDismissKey(parent.id, "agent-1")]: true,
+      },
+    });
+
+    expect(visible.map((candidate) => candidate.title)).toEqual([
+      parent.title,
+      "Repository explorer",
+    ]);
+    expect(dismissed).toEqual([parent]);
   });
 
   it("does not resurrect agent runs from archived parent threads", () => {

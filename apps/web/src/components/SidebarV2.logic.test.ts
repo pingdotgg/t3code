@@ -7,11 +7,13 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  classifySidebarV2Shelves,
   compactSidebarTimeLabel,
   formatWorkingDurationLabel,
   latestTurnDiffStats,
   resolveSidebarV2Status,
   resolveSidebarV2StatusLabel,
+  resolveSidebarV2ThreadRouteTarget,
   resolveThreadLifecycleSupport,
   resolveWorkingStartedAt,
   selectSnoozeShelfBulkTargets,
@@ -129,6 +131,62 @@ describe("selectSnoozeShelfBulkTargets", () => {
 
     expect(targets.wakeable).toEqual([queued]);
     expect(targets.reschedulable).toEqual([]);
+  });
+});
+
+describe("classifySidebarV2Shelves", () => {
+  it("excludes descendants of archived parents before shelf classification", () => {
+    const archivedParent = thread({
+      id: ThreadId.make("archived-parent"),
+      archivedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const archivedChild = thread({
+      id: ThreadId.make("archived-child"),
+      parentThreadId: archivedParent.id,
+      settledOverride: "settled",
+    });
+    const archivedGrandchild = thread({
+      id: ThreadId.make("archived-grandchild"),
+      parentThreadId: archivedChild.id,
+      snoozedUntil: "2026-01-02T00:00:00.000Z",
+    });
+    const visibleThread = thread({ id: ThreadId.make("visible") });
+
+    const shelves = classifySidebarV2Shelves({
+      threads: [archivedParent, archivedChild, archivedGrandchild, visibleThread],
+      now,
+    });
+
+    expect(shelves.active).toEqual([visibleThread]);
+    expect(shelves.snoozed).toEqual([]);
+    expect(shelves.settled).toEqual([]);
+  });
+});
+
+describe("resolveSidebarV2ThreadRouteTarget", () => {
+  it("routes a virtual agent row to its parent and selects the agent run", () => {
+    const parentThreadId = ThreadId.make("parent-thread");
+    const target = resolveSidebarV2ThreadRouteTarget(
+      thread({
+        id: ThreadId.make("agent-run:parent-thread:agent-1"),
+        virtualAgentRun: {
+          parentThreadId,
+          taskId: "agent-1",
+          status: "completed",
+        },
+      }),
+    );
+
+    expect(target).toEqual({ threadId: parentThreadId, agentTaskId: "agent-1" });
+  });
+
+  it("routes a real thread without an agent selection", () => {
+    const realThread = thread({ id: ThreadId.make("real-thread") });
+
+    expect(resolveSidebarV2ThreadRouteTarget(realThread)).toEqual({
+      threadId: realThread.id,
+      agentTaskId: null,
+    });
   });
 });
 

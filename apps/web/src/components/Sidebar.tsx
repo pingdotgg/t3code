@@ -56,7 +56,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import {
-  parseScopedThreadKey,
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
@@ -100,8 +99,7 @@ import { openPullRequestLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import { retainThreadDetailSubscription } from "../environments/runtime/service";
-import { deriveAgentRuns, isThreadActivelyWorking } from "../session-logic";
+import { isThreadActivelyWorking } from "../session-logic";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
@@ -154,8 +152,6 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
-  createSidebarHoverPrewarmController,
-  SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -197,12 +193,13 @@ import {
 } from "../sidebarProjectGrouping";
 import {
   agentRunDismissKey,
-  expandSidebarThreadsWithAgentRuns,
+  deriveSidebarThreadsWithAgentRuns,
   buildSidebarThreadRows,
   selectVisibleSidebarThreads,
   selectVisibleThreadRows,
   type SidebarThreadRowView,
 } from "../sidebarThreadTree";
+import { SidebarHoverThreadPrewarmer } from "./SidebarThreadPrewarmer";
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -220,43 +217,6 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 const EMPTY_THREAD_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 type ContextMenuPosition = { x: number; y: number };
-
-function SidebarThreadDetailPrewarmer({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
-  useEffect(
-    () => retainThreadDetailSubscription(threadRef.environmentId, threadRef.threadId),
-    [threadRef.environmentId, threadRef.threadId],
-  );
-  return null;
-}
-
-function SidebarHoverThreadPrewarmer() {
-  const [threadKey, setThreadKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    const controller = createSidebarHoverPrewarmController({
-      delayMs: SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
-      onPrewarmTargetChange: setThreadKey,
-    });
-    const onPointerOver = (event: globalThis.PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      controller.hover(
-        target?.closest("[data-thread-prewarm-key]")?.getAttribute("data-thread-prewarm-key") ??
-          null,
-      );
-    };
-    window.addEventListener("pointerover", onPointerOver, { passive: true });
-    return () => {
-      window.removeEventListener("pointerover", onPointerOver);
-      controller.dispose();
-    };
-  }, []);
-
-  const threadRef = useMemo(
-    () => (threadKey === null ? null : parseScopedThreadKey(threadKey)),
-    [threadKey],
-  );
-  return threadRef ? <SidebarThreadDetailPrewarmer threadRef={threadRef} /> : null;
-}
 
 function resolveContextMenuPosition(event: React.MouseEvent): ContextMenuPosition | undefined {
   if (window.desktopBridge) {
@@ -1549,26 +1509,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
   const dismissedAgentRunKeys = useUiStateStore((state) => state.dismissedAgentRunKeys);
   const setAgentRunDismissed = useUiStateStore((state) => state.setAgentRunDismissed);
-  const projectThreads = useMemo(() => {
-    const agentRunsByThreadKey = new Map<string, ReturnType<typeof deriveAgentRuns>>();
-    for (const [index, thread] of sidebarThreads.entries()) {
-      const agentRuns = deriveAgentRuns(
-        sidebarThreadActivities[index] ?? EMPTY_THREAD_ACTIVITIES,
-        undefined,
-      );
-      if (agentRuns.length > 0) {
-        agentRunsByThreadKey.set(
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          agentRuns,
-        );
-      }
-    }
-    return expandSidebarThreadsWithAgentRuns({
-      threads: sidebarThreads,
-      agentRunsByThreadKey,
-      dismissedAgentRunKeys,
-    });
-  }, [dismissedAgentRunKeys, sidebarThreadActivities, sidebarThreads]);
+  const projectThreads = useMemo(
+    () =>
+      deriveSidebarThreadsWithAgentRuns({
+        threads: sidebarThreads,
+        threadActivities: sidebarThreadActivities,
+        dismissedAgentRunKeys,
+      }),
+    [dismissedAgentRunKeys, sidebarThreadActivities, sidebarThreads],
+  );
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );

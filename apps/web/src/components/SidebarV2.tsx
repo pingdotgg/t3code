@@ -7,9 +7,9 @@ import {
   QUEUED_TURN_START_GRACE_MS,
   canSettle,
   canSnooze,
-  effectiveSettled,
   effectiveSnoozed,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { type OrchestrationThreadActivity } from "@t3tools/contracts";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -20,35 +20,36 @@ import { shortcutLabelForCommand } from "../keybindings";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
+  selectThreadByRef,
   useStore,
 } from "../store";
-import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import {
+  buildThreadRouteParams,
+  clearAgentRunRouteSearch,
+  parseAgentRunRouteSearch,
+  resolveThreadRouteRef,
+} from "../threadRoutes";
 import type { Project, SidebarThreadSummary } from "../types";
 import { buildProviderEntriesByEnvironment, scopedProviderInstanceKey } from "../providerInstances";
 import { useServerKeybindings, useServerProviders } from "../rpc/serverState";
+import { agentRunDismissKey, deriveSidebarThreadsWithAgentRuns } from "../sidebarThreadTree";
+import { useUiStateStore } from "../uiStateStore";
 import {
+  classifySidebarV2Shelves,
   resolveThreadLifecycleSupport,
+  resolveSidebarV2ThreadRouteTarget,
   selectSnoozeShelfBulkTargets,
   shouldReserveMacSidebarChrome,
 } from "./SidebarV2.logic";
 import { SidebarV2Row } from "./SidebarV2Row";
+import { SidebarHoverThreadPrewarmer } from "./SidebarThreadPrewarmer";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu } from "./ui/sidebar";
 import { SidebarTopActions } from "./SidebarTopActions";
 
 const SETTLED_PAGE_SIZE = 25;
-
-function sortByRecent(left: SidebarThreadSummary, right: SidebarThreadSummary): number {
-  const leftAt = left.updatedAt ?? left.createdAt;
-  const rightAt = right.updatedAt ?? right.createdAt;
-  // ISO-8601 UTC timestamps sort lexicographically, so a plain comparison is
-  // both correct and far cheaper than locale-aware collation.
-  if (leftAt !== rightAt) {
-    return leftAt < rightAt ? 1 : -1;
-  }
-  return left.title.localeCompare(right.title);
-}
+const EMPTY_THREAD_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 
 function projectByScopedKey(projects: readonly Project[]): Map<string, Project> {
   return new Map(
@@ -126,11 +127,36 @@ export default function SidebarV2() {
   const activeThreadKey = activeThreadRef
     ? `${activeThreadRef.environmentId}:${activeThreadRef.threadId}`
     : null;
+  const activeAgentTaskId = parseAgentRunRouteSearch(params).agent ?? null;
   const { projects, threads } = useStore(
     useShallow((state) => ({
       projects: selectProjectsAcrossEnvironments(state),
       threads: selectSidebarThreadsAcrossEnvironments(state),
     })),
+  );
+  const threadActivities = useStore(
+    useShallow(
+      useMemo(
+        () => (state: import("../store").AppState) =>
+          threads.map(
+            (thread) =>
+              selectThreadByRef(state, scopeThreadRef(thread.environmentId, thread.id))
+                ?.activities ?? EMPTY_THREAD_ACTIVITIES,
+          ),
+        [threads],
+      ),
+    ),
+  );
+  const dismissedAgentRunKeys = useUiStateStore((state) => state.dismissedAgentRunKeys);
+  const setAgentRunDismissed = useUiStateStore((state) => state.setAgentRunDismissed);
+  const threadsWithAgentRuns = useMemo(
+    () =>
+      deriveSidebarThreadsWithAgentRuns({
+        threads,
+        threadActivities,
+        dismissedAgentRunKeys,
+      }),
+    [dismissedAgentRunKeys, threadActivities, threads],
   );
   const primaryDescriptor = usePrimaryEnvironmentDescriptor();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -209,29 +235,10 @@ export default function SidebarV2() {
   );
 
   // Classifies the store's own thread objects rather than rebuilt copies, so
-  // rows that did not change keep their identity and stay memoized.
+  // real rows that did not change keep their identity and stay memoized.
   const shelves = useMemo(() => {
-    const active: SidebarThreadSummary[] = [];
-    const snoozed: SidebarThreadSummary[] = [];
-    const settled: SidebarThreadSummary[] = [];
-    for (const thread of threads) {
-      if (thread.archivedAt !== null) {
-        continue;
-      }
-      if (effectiveSnoozed(thread, { now })) {
-        snoozed.push(thread);
-      } else if (effectiveSettled(thread, { now })) {
-        settled.push(thread);
-      } else {
-        active.push(thread);
-      }
-    }
-    return {
-      active: active.toSorted(sortByRecent),
-      snoozed: snoozed.toSorted(sortByRecent),
-      settled: settled.toSorted(sortByRecent),
-    };
-  }, [now, threads]);
+    return classifySidebarV2Shelves({ threads: threadsWithAgentRuns, now });
+  }, [now, threadsWithAgentRuns]);
 
   // Snoozed rows the shelf's bulk buttons may actually target.
   const bulkSnoozeTargets = useMemo(
@@ -255,12 +262,26 @@ export default function SidebarV2() {
 
   const openThread = useCallback(
     (thread: SidebarThreadSummary) => {
+      const target = resolveSidebarV2ThreadRouteTarget(thread);
       void router.navigate({
         to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, target.threadId)),
+        search: target.agentTaskId
+          ? (previous) => ({ ...previous, agent: target.agentTaskId ?? undefined })
+          : clearAgentRunRouteSearch,
       });
     },
     [router],
+  );
+  const handleDismissAgentRun = useCallback(
+    (thread: SidebarThreadSummary) => {
+      const agentRun = thread.virtualAgentRun;
+      if (!agentRun || agentRun.status === "running") {
+        return;
+      }
+      setAgentRunDismissed(agentRunDismissKey(agentRun.parentThreadId, agentRun.taskId), true);
+    },
+    [setAgentRunDismissed],
   );
   const runAction = useCallback((action: () => Promise<void>, actionLabel: string) => {
     void action().catch((error: unknown) => {
@@ -356,6 +377,8 @@ export default function SidebarV2() {
   const renderThread = useCallback(
     (thread: SidebarThreadSummary, variant: "card" | "slim") => {
       const threadKey = `${thread.environmentId}:${thread.id}`;
+      const routeTarget = resolveSidebarV2ThreadRouteTarget(thread);
+      const isVirtualAgentRun = thread.virtualAgentRun !== undefined;
       const project = projectsByKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -364,7 +387,13 @@ export default function SidebarV2() {
       return (
         <SidebarV2Row
           key={threadKey}
-          active={threadKey === activeThreadKey}
+          active={
+            `${thread.environmentId}:${routeTarget.threadId}` === activeThreadKey &&
+            (routeTarget.agentTaskId === null
+              ? activeAgentTaskId === null
+              : routeTarget.agentTaskId === activeAgentTaskId)
+          }
+          onDismissAgentRun={handleDismissAgentRun}
           onOpen={openThread}
           onSettle={handleSettle}
           onSnooze={handleSnooze}
@@ -383,9 +412,13 @@ export default function SidebarV2() {
           // Reopening is always allowed; only the settle direction has
           // preconditions.
           settleBlocked={!settled && !canSettle(thread, { now })}
-          settlementSupported={lifecycleSupport.get(thread.environmentId)?.settlement === true}
+          settlementSupported={
+            !isVirtualAgentRun && lifecycleSupport.get(thread.environmentId)?.settlement === true
+          }
           snoozeBlocked={!canSnooze(thread, { now })}
-          snoozeSupported={lifecycleSupport.get(thread.environmentId)?.snooze === true}
+          snoozeSupported={
+            !isVirtualAgentRun && lifecycleSupport.get(thread.environmentId)?.snooze === true
+          }
           snoozed={effectiveSnoozed(thread, { now })}
           thread={thread}
           variant={variant}
@@ -394,6 +427,8 @@ export default function SidebarV2() {
     },
     [
       activeThreadKey,
+      activeAgentTaskId,
+      handleDismissAgentRun,
       handleSettle,
       handleSnooze,
       handleUnsettle,
@@ -422,6 +457,7 @@ export default function SidebarV2() {
       {hasMacSidebarChrome ? (
         <SidebarHeader aria-hidden className="drag-region h-8 shrink-0 p-0 wco:h-8" />
       ) : null}
+      <SidebarHoverThreadPrewarmer />
       <SidebarContent className="gap-1 pt-1">
         <SidebarTopActions
           commandPaletteShortcutLabel={commandPaletteShortcutLabel}

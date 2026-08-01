@@ -1,4 +1,5 @@
 import {
+  ArchiveIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
   Clock3Icon,
@@ -36,6 +37,7 @@ import {
   resolveSidebarV2StatusLabel,
   resolveWorkingStartedAt,
 } from "./SidebarV2.logic";
+import { getSidebarThreadPrewarmKey } from "./SidebarThreadPrewarmer";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import {
@@ -70,6 +72,7 @@ export interface SidebarV2RowProps {
   // Same contract for thread.snooze/unsnooze.
   readonly snoozeSupported: boolean;
   readonly providerEntry: ProviderInstanceEntry | null;
+  readonly onDismissAgentRun: (thread: SidebarThreadSummary) => void;
   readonly onOpen: (thread: SidebarThreadSummary) => void;
   readonly onSettle: (thread: SidebarThreadSummary) => void;
   readonly onUnsettle: (thread: SidebarThreadSummary) => void;
@@ -198,12 +201,14 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   settlementSupported,
   snoozeSupported,
   providerEntry,
+  onDismissAgentRun,
   onOpen,
   onSettle,
   onUnsettle,
   onSnooze,
   onUnsnooze,
 }: SidebarV2RowProps) {
+  const prewarmThreadKey = getSidebarThreadPrewarmKey(thread);
   const raisedHand = threadRaisedHandWhileSnoozed(thread);
   const lastVisitedAt = useUiStateStore(
     (state) =>
@@ -256,6 +261,18 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   const pill = resolveThreadStatusPill({ thread });
 
   const handleOpen = useCallback(() => onOpen(thread), [onOpen, thread]);
+  const agentRun = thread.virtualAgentRun;
+  const isVirtualAgentRun = agentRun !== undefined;
+  const dismissibleAgentRun = agentRun !== undefined && agentRun.status !== "running";
+  const handleDismissAgentRun = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      if (dismissibleAgentRun) {
+        onDismissAgentRun(thread);
+      }
+    },
+    [dismissibleAgentRun, onDismissAgentRun, thread],
+  );
   const handleSnooze = useCallback(
     (event: React.MouseEvent) => {
       event.stopPropagation();
@@ -303,7 +320,17 @@ export const SidebarV2Row = memo(function SidebarV2Row({
 
   const hoverActions = (
     <div className="absolute right-2 top-1.5 hidden items-center gap-0.5 group-hover/thread:flex group-focus-within/thread:flex">
-      {snoozed ? (
+      {dismissibleAgentRun ? (
+        <Button
+          aria-label={`Archive ${thread.title}`}
+          onClick={handleDismissAgentRun}
+          size="icon-xs"
+          title="Archive run"
+          variant="ghost"
+        >
+          <ArchiveIcon />
+        </Button>
+      ) : isVirtualAgentRun ? null : snoozed ? (
         snoozeSupported ? (
           <Button
             aria-label={`Wake ${thread.title}`}
@@ -389,7 +416,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
 
   if (variant === "slim") {
     return (
-      <SidebarMenuItem className="group/thread">
+      <SidebarMenuItem className="group/thread" data-thread-prewarm-key={prewarmThreadKey}>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -435,7 +462,10 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   }
 
   return (
-    <SidebarMenuItem className="group/thread [contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]">
+    <SidebarMenuItem
+      className="group/thread [contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]"
+      data-thread-prewarm-key={prewarmThreadKey}
+    >
       <Tooltip>
         <TooltipTrigger
           render={

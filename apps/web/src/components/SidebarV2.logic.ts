@@ -1,8 +1,13 @@
-import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { type ExecutionEnvironmentDescriptor, type ThreadId } from "@t3tools/contracts";
+import {
+  canSnooze,
+  effectiveSettled,
+  effectiveSnoozed,
+} from "@t3tools/client-runtime/state/thread-settled";
 
 import { isMacPlatform } from "../lib/utils";
 import { isThreadActivelyWorking } from "../session-logic";
+import { selectVisibleSidebarThreads } from "../sidebarThreadTree";
 import type { SidebarThreadSummary, TurnDiffSummary } from "../types";
 
 export type ThreadLifecycleSupport = {
@@ -64,6 +69,56 @@ export function selectSnoozeShelfBulkTargets({
   return {
     wakeable,
     reschedulable: wakeable.filter((thread) => canSnooze(thread, { now })),
+  };
+}
+
+function sortByRecent(left: SidebarThreadSummary, right: SidebarThreadSummary): number {
+  const leftAt = left.updatedAt ?? left.createdAt;
+  const rightAt = right.updatedAt ?? right.createdAt;
+  if (leftAt !== rightAt) {
+    return leftAt < rightAt ? 1 : -1;
+  }
+  return left.title.localeCompare(right.title);
+}
+
+export interface SidebarV2Shelves {
+  readonly active: readonly SidebarThreadSummary[];
+  readonly snoozed: readonly SidebarThreadSummary[];
+  readonly settled: readonly SidebarThreadSummary[];
+}
+
+export function resolveSidebarV2ThreadRouteTarget(
+  thread: Pick<SidebarThreadSummary, "id" | "virtualAgentRun">,
+): {
+  readonly threadId: ThreadId;
+  readonly agentTaskId: string | null;
+} {
+  const agentRun = thread.virtualAgentRun;
+  return agentRun
+    ? { threadId: agentRun.parentThreadId, agentTaskId: agentRun.taskId }
+    : { threadId: thread.id, agentTaskId: null };
+}
+
+export function classifySidebarV2Shelves(input: {
+  readonly threads: readonly SidebarThreadSummary[];
+  readonly now: string;
+}): SidebarV2Shelves {
+  const active: SidebarThreadSummary[] = [];
+  const snoozed: SidebarThreadSummary[] = [];
+  const settled: SidebarThreadSummary[] = [];
+  for (const thread of selectVisibleSidebarThreads(input.threads)) {
+    if (effectiveSnoozed(thread, { now: input.now })) {
+      snoozed.push(thread);
+    } else if (effectiveSettled(thread, { now: input.now })) {
+      settled.push(thread);
+    } else {
+      active.push(thread);
+    }
+  }
+  return {
+    active: active.toSorted(sortByRecent),
+    snoozed: snoozed.toSorted(sortByRecent),
+    settled: settled.toSorted(sortByRecent),
   };
 }
 
