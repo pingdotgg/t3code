@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import type { ConnectionAttemptError } from "../connection/model.ts";
 
@@ -42,6 +43,16 @@ export class ClientPresentation extends Context.Service<
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/ClientPresentation") {}
+
+/**
+ * Emits the current and subsequent focus state for a desktop T3 Code surface.
+ * Non-desktop clients use the empty default and never report desktop focus.
+ */
+export class DesktopFocus extends Context.Reference<{
+  readonly changes: Stream.Stream<boolean>;
+}>("@t3tools/client-runtime/platform/capabilities/DesktopFocus", {
+  defaultValue: () => ({ changes: Stream.empty }),
+}) {}
 
 export class PrimaryEnvironmentAuth extends Context.Service<
   PrimaryEnvironmentAuth,

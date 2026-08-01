@@ -22,14 +22,18 @@ import { RELAY_ACTIVITY_PUBLISH_TYP, verifyRelayJwt } from "@t3tools/shared/rela
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as FocusedDesktopClients from "../presence/FocusedDesktopClients.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -244,6 +248,34 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ).toHaveLength(160);
   });
 
+  it("restores only non-terminal activity after desktop focus ends", () => {
+    expect(
+      AgentAwarenessRelay.isAgentAwarenessResumableAfterDesktopFocus({
+        ...state,
+        phase: "running",
+      }),
+    ).toBe(true);
+    expect(
+      AgentAwarenessRelay.isAgentAwarenessResumableAfterDesktopFocus({
+        ...state,
+        phase: "waiting_for_approval",
+      }),
+    ).toBe(true);
+    expect(
+      AgentAwarenessRelay.isAgentAwarenessResumableAfterDesktopFocus({
+        ...state,
+        phase: "completed",
+      }),
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.isAgentAwarenessResumableAfterDesktopFocus({
+        ...state,
+        phase: "failed",
+      }),
+    ).toBe(false);
+    expect(AgentAwarenessRelay.isAgentAwarenessResumableAfterDesktopFocus(null)).toBe(false);
+  });
+
   it("resolves a null publish state when a thread or project snapshot disappeared", () => {
     const environmentId = "env-1" as EnvironmentId;
     const threadId = "thread-1" as ThreadId;
@@ -411,6 +443,214 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ).rejects.toBeDefined();
   });
 
+  it.effect("does not inspect or publish thread activity while a desktop client is focused", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const originalFetch = globalThis.fetch;
+        let fetchCount = 0;
+        let snapshotReadCount = 0;
+        const secrets = makeMemorySecretStore();
+        const environmentId = "env-1" as EnvironmentId;
+        const threadId = "thread-1" as ThreadId;
+        const descriptor = {
+          environmentId,
+          label: "Test Desktop",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        } satisfies ExecutionEnvironmentDescriptor;
+
+        globalThis.fetch = (() => {
+          fetchCount += 1;
+          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
+        }) as unknown as typeof fetch;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            globalThis.fetch = originalFetch;
+          }),
+        );
+        yield* secrets.setString(RELAY_URL_SECRET, "https://transport.example.test");
+        yield* secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential");
+        yield* secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
+
+        const dependencies = Layer.mergeAll(
+          Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: Effect.succeed(environmentId),
+            getDescriptor: Effect.succeed(descriptor),
+          }),
+          Layer.succeed(OrchestrationEngineService, {
+            readEvents: () => Stream.empty,
+            dispatch: () => Effect.succeed({ sequence: 1 }),
+            streamDomainEvents: Stream.empty,
+            latestSequence: Effect.succeed(0),
+          } satisfies OrchestrationEngineShape),
+          Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadShellById: () =>
+              Effect.sync(() => {
+                snapshotReadCount += 1;
+                return Option.none();
+              }),
+          } as unknown as ProjectionSnapshotQueryShape),
+          Layer.succeed(
+            FocusedDesktopClients.FocusedDesktopClients,
+            FocusedDesktopClients.FocusedDesktopClients.of({
+              anyFocused: Effect.succeed(true),
+              changes: Stream.empty,
+              acquire: Effect.void,
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+          yield* relay.publishThread(threadId);
+        }).pipe(
+          Effect.provide(
+            AgentAwarenessRelay.layer.pipe(
+              Layer.provide(dependencies),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        );
+
+        expect(snapshotReadCount).toBe(0);
+        expect(fetchCount).toBe(0);
+      }),
+    ),
+  );
+
+  it.effect("rechecks desktop focus immediately before publishing agent activity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const originalFetch = globalThis.fetch;
+        let fetchCount = 0;
+        let focusReadCount = 0;
+        let snapshotReadCount = 0;
+        const secrets = makeMemorySecretStore();
+        const now = "2026-05-25T00:00:00.000Z";
+        const environmentId = "env-1" as EnvironmentId;
+        const projectId = "project-1" as ProjectId;
+        const threadId = "thread-1" as ThreadId;
+        const project = {
+          id: projectId,
+          title: "T3 Code",
+          workspaceRoot: "/workspace",
+          repositoryIdentity: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        } satisfies OrchestrationProjectShell;
+        const thread = {
+          id: threadId,
+          projectId,
+          title: "Run remote agent",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          latestTurn: {
+            turnId: "turn-1" as TurnId,
+            state: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-1" as TurnId,
+            lastError: null,
+            updatedAt: now,
+          },
+          latestUserMessageAt: now,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        } satisfies OrchestrationThreadShell;
+        const descriptor = {
+          environmentId,
+          label: "Test Desktop",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        } satisfies ExecutionEnvironmentDescriptor;
+
+        globalThis.fetch = (() => {
+          fetchCount += 1;
+          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
+        }) as unknown as typeof fetch;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            globalThis.fetch = originalFetch;
+          }),
+        );
+        yield* secrets.setString(RELAY_URL_SECRET, "https://transport.example.test");
+        yield* secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential");
+        yield* secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
+
+        const dependencies = Layer.mergeAll(
+          Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: Effect.succeed(environmentId),
+            getDescriptor: Effect.succeed(descriptor),
+          }),
+          Layer.succeed(OrchestrationEngineService, {
+            readEvents: () => Stream.empty,
+            dispatch: () => Effect.succeed({ sequence: 1 }),
+            streamDomainEvents: Stream.empty,
+            latestSequence: Effect.succeed(0),
+          } satisfies OrchestrationEngineShape),
+          Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadShellById: () =>
+              Effect.sync(() => {
+                snapshotReadCount += 1;
+                return Option.some(thread);
+              }),
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+          } as unknown as ProjectionSnapshotQueryShape),
+          Layer.succeed(
+            FocusedDesktopClients.FocusedDesktopClients,
+            FocusedDesktopClients.FocusedDesktopClients.of({
+              anyFocused: Effect.sync(() => {
+                focusReadCount += 1;
+                return focusReadCount > 1;
+              }),
+              changes: Stream.empty,
+              acquire: Effect.void,
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+          yield* relay.publishThread(threadId);
+        }).pipe(
+          Effect.provide(
+            AgentAwarenessRelay.layer.pipe(
+              Layer.provide(dependencies),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        );
+
+        expect(focusReadCount).toBe(2);
+        expect(snapshotReadCount).toBe(1);
+        expect(fetchCount).toBe(0);
+      }),
+    ),
+  );
+
   it.effect("keeps the orchestration listener armed until relay config is installed", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -552,14 +792,18 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ),
   );
 
-  it.effect("publishes agent activity to the relay transport URL, not the relay issuer", () =>
+  it.effect("publishes to the relay transport and clears activity when desktop focus arrives", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const originalFetch = globalThis.fetch;
         const context = yield* Effect.context<never>();
         const runFork = Effect.runForkWith(context);
         const events = yield* Queue.unbounded<OrchestrationEvent>();
-        const fetchSeen = yield* Deferred.make<URL>();
+        const missingRelayCredentialRead = yield* Deferred.make<void>();
+        const fetches = yield* Queue.unbounded<{
+          readonly url: URL;
+          readonly state: RelayAgentActivityState | null;
+        }>();
         const userSpans: Array<string> = [];
         const productSpans: Array<string> = [];
         const collectingTracer = (spans: Array<string>) =>
@@ -640,16 +884,48 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             repositoryIdentity: true,
           },
         } satisfies ExecutionEnvironmentDescriptor;
+        let snapshotThreads: Array<OrchestrationThreadShell> = [thread];
+        const focusedDesktopClients = yield* FocusedDesktopClients.make;
+        const observedSecretStore = ServerSecretStore.ServerSecretStore.of({
+          ...secrets.store,
+          get: (name) =>
+            secrets.store
+              .get(name)
+              .pipe(
+                Effect.tap((value) =>
+                  name === RELAY_ENVIRONMENT_CREDENTIAL_SECRET && Option.isNone(value)
+                    ? Deferred.succeed(missingRelayCredentialRead, undefined)
+                    : Effect.void,
+                ),
+              ),
+        });
 
-        globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+        let tombstoneAttempts = 0;
+        globalThis.fetch = (async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ) => {
           const url = new URL(
             typeof input === "string" || input instanceof URL
               ? input
               : (input as unknown as { readonly url: string }).url,
           );
-          runFork(Deferred.succeed(fetchSeen, url));
-          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
-        }) as unknown as typeof fetch;
+          const request =
+            input instanceof Request
+              ? input
+              : new Request(typeof input === "string" ? input : input.toString(), init);
+          const payload = (await request.json()) as {
+            readonly state: RelayAgentActivityState | null;
+          };
+          if (payload.state === null) {
+            tombstoneAttempts += 1;
+            if (tombstoneAttempts === 1) {
+              throw new Error("transient tombstone publish failure");
+            }
+          }
+          runFork(Queue.offer(fetches, { url, state: payload.state }));
+          return Response.json({ ok: true, deliveries: [] });
+        }) as typeof fetch;
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             globalThis.fetch = originalFetch;
@@ -657,7 +933,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         );
 
         const layer = Layer.mergeAll(
-          Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
+          Layer.succeed(ServerSecretStore.ServerSecretStore, observedSecretStore),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
@@ -673,12 +949,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               Effect.succeed({
                 snapshotSequence: 1,
                 projects: [project],
-                threads: [thread],
+                threads: snapshotThreads,
                 updatedAt: now,
               } satisfies OrchestrationShellSnapshot),
             getThreadShellById: () => Effect.succeed(Option.some(thread)),
             getProjectShellById: () => Effect.succeed(Option.some(project)),
           } as unknown as ProjectionSnapshotQueryShape),
+          Layer.succeed(FocusedDesktopClients.FocusedDesktopClients, focusedDesktopClients),
         );
 
         yield* Effect.gen(function* () {
@@ -705,10 +982,35 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             occurredAt: now,
           } as unknown as OrchestrationEvent);
 
-          const url = yield* Deferred.await(fetchSeen).pipe(Effect.timeout("2 seconds"));
-          expect(url.origin).toBe("https://transport.example.test");
+          const firstPublish = yield* Queue.take(fetches).pipe(Effect.timeout("2 seconds"));
+          expect(firstPublish.url.origin).toBe("https://transport.example.test");
+          expect(firstPublish.state?.phase).toBe("running");
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");
+
+          yield* TestClock.adjust("1 second");
+          yield* secrets.store.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+          const desktopFocusScope = yield* Scope.make();
+          yield* focusedDesktopClients.acquire.pipe(Scope.provide(desktopFocusScope));
+          yield* Deferred.await(missingRelayCredentialRead).pipe(Effect.timeout("2 seconds"));
+          yield* secrets.setString(
+            RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+            "relay-credential-restored",
+          );
+          for (let iteration = 0; iteration < 10; iteration++) {
+            if (tombstoneAttempts >= 2) {
+              break;
+            }
+            yield* TestClock.adjust("1 second");
+            yield* Effect.yieldNow;
+          }
+          const focusedPublish = yield* Queue.take(fetches).pipe(Effect.timeout("2 seconds"));
+          expect(focusedPublish.url.origin).toBe("https://transport.example.test");
+          expect(focusedPublish.state).toBeNull();
+          expect(tombstoneAttempts).toBe(2);
+
+          snapshotThreads = [];
+          yield* Scope.close(desktopFocusScope, Exit.void);
         }).pipe(
           Effect.provide(
             AgentAwarenessRelay.layer.pipe(

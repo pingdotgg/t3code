@@ -63,6 +63,7 @@ export interface AuthenticatedSession {
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly client: AuthClientMetadata;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
 }
@@ -583,6 +584,7 @@ export const make = Effect.gen(function* () {
         subject: session.subject,
         method: session.method,
         scopes: session.scopes,
+        client: session.client,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
       })),
@@ -950,6 +952,7 @@ export const make = Effect.gen(function* () {
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
+              client: session.client,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
             })),
             mapSessionVerificationErrors,

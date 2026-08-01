@@ -245,6 +245,9 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
+  // Client presence
+  clientReportDesktopFocus: "client.reportDesktopFocus",
+
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -783,6 +786,18 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+/**
+ * The desktop keeps this stream open only while its T3 Code window/tab is
+ * visible and focused. The server binds the focus lease to the stream scope,
+ * so blur, navigation, transport loss, and process exit all release it.
+ */
+export const WsClientReportDesktopFocusRpc = Rpc.make(WS_METHODS.clientReportDesktopFocus, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -856,6 +871,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsClientReportDesktopFocusRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

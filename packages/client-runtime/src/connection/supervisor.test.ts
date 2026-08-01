@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import { DesktopFocus } from "../platform/capabilities.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -115,6 +116,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   readonly ready?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
   readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
+  readonly rpcClient?: WsRpcProtocolClient;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -161,7 +163,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 
     const session = yield* Effect.acquireRelease(
       Effect.succeed({
-        client: TEST_RPC_CLIENT,
+        client: options?.rpcClient ?? TEST_RPC_CLIENT,
         initialConfig: Effect.die(new Error("Initial config is not used by supervisor tests.")),
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
@@ -283,6 +285,85 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
       expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }),
+  );
+
+  it.effect("keeps the desktop focus RPC stream scoped to focus and the live connection", () =>
+    Effect.gen(function* () {
+      const focused = yield* SubscriptionRef.make(true);
+      const activeReports = yield* Ref.make(0);
+      const reportAttempts = yield* Ref.make(0);
+      const focusRpc = () =>
+        Stream.fromEffect(Ref.updateAndGet(reportAttempts, (count) => count + 1)).pipe(
+          Stream.flatMap((attempt) =>
+            attempt === 1
+              ? Stream.fail(new Error("Transient focus report failure."))
+              : Stream.fromEffect(Ref.update(activeReports, (count) => count + 1)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.never),
+                  Stream.ensuring(Ref.update(activeReports, (count) => count - 1)),
+                ),
+          ),
+        );
+      const rpcClient = {
+        [WS_METHODS.clientReportDesktopFocus]: focusRpc,
+      } as unknown as WsRpcProtocolClient;
+      const harness = yield* makeHarness({ rpcClient });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(
+        Effect.provide(harness.dependencies),
+        Effect.provideService(
+          DesktopFocus,
+          DesktopFocus.of({
+            changes: SubscriptionRef.changes(focused).pipe(Stream.changes),
+          }),
+        ),
+      );
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      for (
+        let iteration = 0;
+        iteration < 100 && (yield* Ref.get(reportAttempts)) !== 1;
+        iteration++
+      ) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(reportAttempts)).toBe(1);
+      yield* TestClock.adjust("1 second");
+      for (
+        let iteration = 0;
+        iteration < 100 && (yield* Ref.get(activeReports)) !== 1;
+        iteration++
+      ) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(activeReports)).toBe(1);
+      expect(yield* Ref.get(reportAttempts)).toBe(2);
+
+      yield* SubscriptionRef.set(focused, false);
+      for (
+        let iteration = 0;
+        iteration < 100 && (yield* Ref.get(activeReports)) !== 0;
+        iteration++
+      ) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(activeReports)).toBe(0);
+
+      yield* SubscriptionRef.set(focused, true);
+      for (
+        let iteration = 0;
+        iteration < 100 && (yield* Ref.get(activeReports)) !== 1;
+        iteration++
+      ) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(activeReports)).toBe(1);
+
+      yield* supervisor.disconnect;
+      yield* awaitState(supervisor.state, (state) => state.phase === "available");
+      expect(yield* Ref.get(activeReports)).toBe(0);
     }),
   );
 

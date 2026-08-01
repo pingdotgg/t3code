@@ -1,6 +1,7 @@
 import {
   ClientPresentation,
   CloudSession,
+  DesktopFocus,
   EnvironmentOwnedDataCleanup,
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
@@ -57,6 +58,7 @@ import {
   readDesktopSecondaryBootstrapsResult,
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
+import { desktopFocusChanges } from "./desktopFocus";
 import { connectionStorageLayer } from "./storage";
 
 let nextObservedRpcRequestId = 0;
@@ -278,6 +280,10 @@ const capabilitiesLayer = Layer.effectContext(
       Context.add(PrimaryEnvironmentAuth, primaryAuth),
       Context.add(RelayDeviceIdentity, identity),
       Context.add(ClientPresentation, presentation),
+      Context.add(
+        DesktopFocus,
+        DesktopFocus.of({ changes: desktopFocusChanges(window, document) }),
+      ),
       Context.add(SshEnvironmentGateway, ssh),
     );
   }),
