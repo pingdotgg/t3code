@@ -51,3 +51,13 @@ export const loadRecentThreadShortcuts = () =>
 export const saveRecentThreadShortcuts = (
   threads: ReadonlyArray<MobileStorage.RecentThreadShortcut>,
 ) => runStorage((storage) => storage.saveRecentThreadShortcuts(threads));
+
+export const loadBackgroundConnectionRetainedThread = () =>
+  runStorage((storage) => storage.loadBackgroundConnectionRetainedThread);
+export const saveBackgroundConnectionRetainedThread = (
+  thread: Parameters<
+    MobileStorage.MobileStorage["Service"]["saveBackgroundConnectionRetainedThread"]
+  >[0],
+) => runStorage((storage) => storage.saveBackgroundConnectionRetainedThread(thread));
+export const clearBackgroundConnectionRetainedThread = () =>
+  runStorage((storage) => storage.clearBackgroundConnectionRetainedThread);
