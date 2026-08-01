@@ -1965,7 +1965,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
       yield* evictInactiveSessionsIfNeeded();
 
-      const message = error.message;
+      // The outer spawn error only says which shells were tried. When the real
+      // culprit is diagnosed further down the chain, publish that instead so the
+      // user sees the fix rather than a generic failure.
+      const message = (PtyAdapter.findSpawnHelperNotExecutableCause(error) ?? error).message;
       yield* publishEvent({
         type: "error",
         threadId: session.threadId,

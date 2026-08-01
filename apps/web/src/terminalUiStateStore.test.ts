@@ -48,6 +48,25 @@ describe("reconcilableServerTerminalIds", () => {
     expect(reconcilableServerTerminalIds(["terminal-1"], [], [])).toEqual(["terminal-1"]);
   });
 
+  it("keeps a fresh local split when the same update carries an unknown server id", () => {
+    // Mixed set: terminal-2 was just split locally and the server has not caught
+    // up, while terminal-3 appeared server-side. Adopting the server list
+    // wholesale would drop the split and re-add it later as its own group.
+    expect(
+      reconcilableServerTerminalIds(["terminal-1", "terminal-3"], ["terminal-1", "terminal-2"], []),
+    ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
+  });
+
+  it("drops suppressed ids from both sides of a merge", () => {
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-stale", "terminal-3"],
+        ["terminal-1", "terminal-2", "terminal-stale"],
+        ["terminal-stale"],
+      ),
+    ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
+  });
+
   it("filters suppressed ids out of an adopted server list", () => {
     expect(
       reconcilableServerTerminalIds(
@@ -167,6 +186,35 @@ describe("terminalUiStateStore actions", () => {
         terminalIds: ["terminal-2", "terminal-3", "terminal-4", "terminal-5"],
       },
     ]);
+  });
+
+  it("restores a terminal whose close request failed", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.closeTerminal(THREAD_REF, "terminal-2");
+
+    const threadKey = scopedThreadKey(THREAD_REF);
+    expect(
+      useTerminalUiStateStore.getState().suppressedTerminalIdsByThreadKey[threadKey],
+    ).toContain("terminal-2");
+
+    store.unsuppressTerminal(THREAD_REF, "terminal-2");
+
+    // Suppression cleared, so the next reconcile can surface the still-live
+    // session instead of hiding it for the rest of the session.
+    expect(
+      useTerminalUiStateStore.getState().suppressedTerminalIdsByThreadKey[threadKey] ?? [],
+    ).not.toContain("terminal-2");
+    useTerminalUiStateStore
+      .getState()
+      .reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
   });
 
   it("creates new terminals in a separate group", () => {

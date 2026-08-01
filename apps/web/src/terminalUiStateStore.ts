@@ -504,15 +504,15 @@ export function selectSuppressedThreadTerminalIds(
 }
 
 /**
- * Decides whether a client surface should adopt the server's session list,
- * returning the ids to reconcile with or null when reconciling would destroy
- * local state the server merely has not caught up with yet.
+ * Decides which terminal ids a client surface should reconcile with, or null
+ * when reconciling would destroy local state the server merely has not caught
+ * up with yet.
  *
- * Suppressed ids are removed before comparing, matching what
- * `reconcileTerminalIds` persists. Comparing raw ids instead would let one
- * stale server session (a close the server has not processed) defeat the lag
- * guard on every local change — dropping a freshly split terminal and later
- * re-adding it as its own group.
+ * Suppressed ids are removed first, matching what `reconcileTerminalIds`
+ * persists. Comparing raw ids instead would let one stale server session (a
+ * close the server has not processed) defeat the lag guard on every local
+ * change — dropping a freshly split terminal and later re-adding it as its own
+ * group.
  */
 export function reconcilableServerTerminalIds(
   serverTerminalIds: readonly string[],
@@ -525,17 +525,20 @@ export function reconcilableServerTerminalIds(
       ? [...serverTerminalIds]
       : serverTerminalIds.filter((terminalId) => !suppressed.has(terminalId));
 
-  // Server knows about the same sessions, or fewer sessions than the client
-  // with every server id still present locally. The latter is typical right
-  // after `terminal.open`: the known-session list lags the local store;
-  // reconciling would drop the new id and later re-add it as a separate group
-  // (no split layout).
   const clientIdSet = new Set(clientTerminalIds);
-  const everyServerIdKnown = visibleServerIds.every((terminalId) => clientIdSet.has(terminalId));
-  if (everyServerIdKnown && visibleServerIds.length <= clientTerminalIds.length) {
+  const unknownServerIds = visibleServerIds.filter((terminalId) => !clientIdSet.has(terminalId));
+  // The client already shows every session the server reports. Typical right
+  // after `terminal.open`, when the known-session list still lags the local
+  // store; there is nothing to adopt.
+  if (unknownServerIds.length === 0) {
     return null;
   }
-  return visibleServerIds;
+
+  // Adopt the sessions the client has not seen, but keep local ids the server
+  // has not caught up with. Replacing the list wholesale would drop a split
+  // opened moments ago whenever the same update also carries a new server id.
+  const pendingClientIds = clientTerminalIds.filter((terminalId) => !suppressed.has(terminalId));
+  return [...pendingClientIds, ...unknownServerIds];
 }
 
 function updateTerminalUiStateByThreadKey(
@@ -625,6 +628,7 @@ interface TerminalUiStateStoreState {
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  unsuppressTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   reconcileTerminalIds: (threadRef: ScopedThreadRef, nextIds: string[]) => void;
   clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeTerminalUiState: (threadRef: ScopedThreadRef) => void;
@@ -736,6 +740,11 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
+        // Rollback for an optimistic close the server rejected: the session is
+        // still alive, and staying suppressed would hide it from reconcile for
+        // the rest of the session.
+        unsuppressTerminal: (threadRef, terminalId) =>
+          updateTerminal(threadRef, (state) => state, { terminalId, suppressed: false }),
         reconcileTerminalIds: (threadRef, nextIds) =>
           updateTerminal(threadRef, (state, suppressedTerminalIds) => {
             if (suppressedTerminalIds.length === 0) {

@@ -1262,7 +1262,7 @@ it.layer(
 
   it.effect("does not retry other shells when spawn-helper is not executable", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
       ptyAdapter.spawnFailures.push(
         new PtyAdapter.SpawnHelperNotExecutableError({
           helperPath: "/pkg/spawn-helper",
@@ -1274,6 +1274,12 @@ it.layer(
 
       assert.equal(snapshot.status, "error");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+      // The user must see the fix, not the generic "tried these shells" wrapper.
+      const events = yield* getEvents;
+      const errorEvent = events.find((event) => event.type === "error");
+      assert.isDefined(errorEvent);
+      assert.include(errorEvent?.message ?? "", 'chmod +x "/pkg/spawn-helper"');
     }),
   );
 

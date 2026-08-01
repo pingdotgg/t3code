@@ -50,17 +50,22 @@ export class SpawnHelperNotExecutableError extends Schema.TaggedErrorClass<Spawn
 const isSpawnHelperNotExecutableError = Schema.is(SpawnHelperNotExecutableError);
 
 /** Walks the cause chain so wrapping a diagnosed failure never hides the tag. */
-export const hasSpawnHelperNotExecutableCause = (error: unknown): boolean => {
+export const findSpawnHelperNotExecutableCause = (
+  error: unknown,
+): SpawnHelperNotExecutableError | null => {
   let current: unknown = error;
   const seen = new Set<unknown>();
   while (current !== null && current !== undefined && !seen.has(current)) {
     seen.add(current);
-    if (isSpawnHelperNotExecutableError(current)) return true;
-    if (typeof current !== "object") return false;
+    if (isSpawnHelperNotExecutableError(current)) return current;
+    if (typeof current !== "object") return null;
     current = (current as { cause?: unknown }).cause;
   }
-  return false;
+  return null;
 };
+
+export const hasSpawnHelperNotExecutableCause = (error: unknown): boolean =>
+  findSpawnHelperNotExecutableCause(error) !== null;
 
 export interface PtyExitEvent {
   exitCode: number;

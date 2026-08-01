@@ -141,7 +141,11 @@ import {
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  isTerminalCloseShortcut,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -694,6 +698,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const storeNewTerminal = useTerminalUiStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
+  const storeUnsuppressTerminal = useTerminalUiStateStore((state) => state.unsuppressTerminal);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
   useEffect(() => {
@@ -868,9 +873,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
             deleteHistory: true,
           },
         });
-        if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
-          await fallbackExitWrite();
-        }
+        if (closeResult._tag !== "Failure" || isAtomCommandInterrupted(closeResult)) return;
+        const exitResult = await fallbackExitWrite();
+        if (exitResult._tag !== "Failure" || isAtomCommandInterrupted(exitResult)) return;
+        // Neither path reached the session, so it is still running. Undo the
+        // optimistic suppression or reconcile would hide a live terminal.
+        storeUnsuppressTerminal(threadRef, terminalId);
       })();
 
       storeCloseTerminal(threadRef, terminalId);
@@ -879,6 +887,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [
       bumpFocusRequestId,
       storeCloseTerminal,
+      storeUnsuppressTerminal,
       threadId,
       threadRef,
       closeTerminalMutation,
@@ -1349,6 +1358,7 @@ function ChatViewContent(props: ChatViewProps) {
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
+  const storeUnsuppressTerminal = useTerminalUiStateStore((s) => s.unsuppressTerminal);
   const serverThreadRefs = useThreadRefs();
   const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
@@ -3219,17 +3229,30 @@ function ChatViewContent(props: ChatViewProps) {
   const closePanelTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-      void closeTerminalMutation({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-      });
+      const threadRef = activeThreadRef;
+      void (async () => {
+        const result = await closeTerminalMutation({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
+        });
+        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+        // The session survived the failed close, so let reconcile surface it
+        // again instead of suppressing a live terminal forever.
+        storeUnsuppressTerminal(threadRef, terminalId);
+      })();
       storeCloseTerminal(activeThreadRef, terminalId);
       useRightPanelStore
         .getState()
         .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
+    [
+      activeRightPanelSurface,
+      activeThreadRef,
+      closeTerminalMutation,
+      storeCloseTerminal,
+      storeUnsuppressTerminal,
+    ],
   );
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
@@ -4329,6 +4352,21 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      // Closing the last terminal unmounts its focus owner, so a held close
+      // chord stops resolving mid-hold and its auto-repeats fall through to the
+      // browser's tab-close default. Swallow repeats before any early return;
+      // deliberate presses always arrive with repeat=false. Evaluated with
+      // terminalFocus forced on, because by now focus may already be gone.
+      if (
+        event.repeat &&
+        isTerminalCloseShortcut(event, keybindings, {
+          context: { terminalFocus: true, terminalOpen: true },
+        })
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
