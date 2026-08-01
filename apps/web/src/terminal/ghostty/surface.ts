@@ -604,13 +604,23 @@ export class GhosttyTerminalSurface {
   }
 
   /**
-   * The local grid reflows immediately, but the PTY only hears about settled
-   * dimensions: notifying on every drag step makes the shell reprint its
-   * prompt mid-drag, which reads as jitter.
+   * The local grid reflows on every step, so the PTY hears the start of a
+   * resize immediately and the settled size once the burst ends.
+   *
+   * Trailing-only notification let the shell keep its old width across the
+   * whole drag: the grid rewrapped the already-printed prompt while the shell
+   * redrew at the end, stranding the rewrapped fragments above the live prompt.
+   * That is only visible when a line wraps, which is why narrow panes with long
+   * prompts showed it. Intermediate steps stay coalesced so the shell does not
+   * reprint per frame, which reads as jitter.
    */
   private notifyResize(): void {
     this.resizeNotified = true;
-    if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
+    if (this.resizeNotifyTimer === null) {
+      this.options.onResize(this.cols, this.rows);
+    } else {
+      window.clearTimeout(this.resizeNotifyTimer);
+    }
     this.resizeNotifyTimer = window.setTimeout(() => {
       this.resizeNotifyTimer = null;
       if (!this.disposed) this.options.onResize(this.cols, this.rows);

@@ -207,6 +207,10 @@ import {
   reservedTerminalOpenIds,
   reserveTerminalOpen,
 } from "../lib/terminalOpenReservations";
+import {
+  recordPendingPanelClose,
+  resolvePendingPanelCloses,
+} from "../lib/terminalPendingPanelCloses";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
@@ -1547,6 +1551,20 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [rightPanelState.surfaces],
   );
+  // Settles right-panel closes whose result never arrived. Only the server list
+  // is authoritative here, so a still-reported session is put back exactly where
+  // it was and one the server dropped stays closed.
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    const restored = resolvePendingPanelCloses(
+      scopedThreadKey(activeThreadRef),
+      activeServerOrderedTerminalIds,
+    );
+    for (const { terminalId, snapshot } of restored) {
+      useRightPanelStore.getState().restoreTerminal(activeThreadRef, snapshot, terminalId);
+      storeUnsuppressTerminal(activeThreadRef, terminalId);
+    }
+  }, [activeServerOrderedTerminalIds, activeThreadRef, storeUnsuppressTerminal]);
   const allocatableActiveTerminalIds = useMemo(
     () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
     [activeKnownTerminalIds, panelTerminalIds],
@@ -3215,30 +3233,24 @@ function ChatViewContent(props: ChatViewProps) {
   const addTerminalSurface = useCallback(() => {
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+    // Panel opens go through the shared helper so their ids are reserved for the
+    // request window too: closing a panel terminal mid-open drops it from
+    // panelTerminalIds, and an unreserved id could be handed straight to the
+    // next panel open while the first request is still unresolved.
+    const terminalId = nextTerminalId([
+      ...allocatableActiveTerminalIds,
+      ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
+    ]);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId: activeThreadRef.environmentId,
-      input: {
-        threadId: activeThreadId,
-        terminalId,
-        cwd,
-        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-        env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
-          worktreePath: activeThreadWorktreePath,
-        }),
-      },
-    });
+    openThreadTerminalSession(terminalId, cwd, activeProject.workspaceRoot);
   }, [
     activeProject,
     activeThreadId,
     activeThreadRef,
-    activeThreadWorktreePath,
     allocatableActiveTerminalIds,
     gitCwd,
-    openTerminal,
+    openThreadTerminalSession,
   ]);
   const splitPanelTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
@@ -3251,35 +3263,25 @@ function ChatViewContent(props: ChatViewProps) {
       ) {
         return;
       }
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const terminalId = nextTerminalId([
+        ...allocatableActiveTerminalIds,
+        ...reservedTerminalOpenIds(scopedThreadKey(activeThreadRef)),
+      ]);
       const cwd = gitCwd ?? activeProject.workspaceRoot;
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
       setTerminalFocusRequestId((value) => value + 1);
-      void openTerminal({
-        environmentId: activeThreadRef.environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId,
-          cwd,
-          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
-        },
-      });
+      openThreadTerminalSession(terminalId, cwd, activeProject.workspaceRoot);
     },
     [
       activeProject,
       activeRightPanelSurface,
       activeThreadId,
       activeThreadRef,
-      activeThreadWorktreePath,
       allocatableActiveTerminalIds,
       gitCwd,
-      openTerminal,
+      openThreadTerminalSession,
     ],
   );
   const splitPanelTerminalVertical = useCallback(() => {
@@ -3316,10 +3318,11 @@ function ChatViewContent(props: ChatViewProps) {
         });
         if (result._tag !== "Failure") return;
         if (isAtomCommandInterrupted(result)) {
-          // Unknown outcome: only roll back the suppression. If the session
-          // survived, drawer reconcile resurfaces it; restoring the panel
-          // surface here could pin a dead pane no reconcile pass would remove.
-          storeUnsuppressTerminal(threadRef, terminalId);
+          // Unknown outcome. Hold the snapshot instead of guessing: unsuppressing
+          // now would let drawer reconcile adopt a surviving split terminal into
+          // the wrong surface, and restoring now could pin a dead pane the panel
+          // has no reconcile pass to remove. Metadata settles it.
+          recordPendingPanelClose(scopedThreadKey(threadRef), terminalId, surfaceSnapshot);
           return;
         }
         // The session survived the failed close. Put it back where it lived —
