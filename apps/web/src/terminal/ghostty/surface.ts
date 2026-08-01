@@ -314,7 +314,12 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
   readonly onData: (data: string) => void;
-  readonly onResize: (cols: number, rows: number) => void;
+  /**
+   * Requests a PTY resize. When it returns a promise, the grid is resized only
+   * once it settles, so output keeps being interpreted at the width it was
+   * generated for (see `fit`).
+   */
+  readonly onResize: (cols: number, rows: number) => Promise<unknown> | void;
   readonly onSelectionChange: () => void;
   readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
@@ -374,6 +379,9 @@ export class GhosttyTerminalSurface {
   private composing = false;
   private focused = false;
   private resizeNotified = false;
+  private requestedCols = 0;
+  private requestedRows = 0;
+  private resizeSeq = 0;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
@@ -584,16 +592,35 @@ export class GhosttyTerminalSurface {
     }
     const grid = terminalGridSize(width, height, this.metrics, CONTENT_PADDING);
     this.mountHeight = height;
-    // onResize is the only PTY resize channel, so the first successful fit must
-    // notify even when the measured grid equals the 1x1 construction sentinel.
-    if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
-      this.cols = grid.cols;
-      this.rows = grid.rows;
-      this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
-      this.notifyResize();
-      this.forceFullRender = true;
-      this.scrollbarDirty = true;
-      shouldRender = true;
+    // The PTY and the grid must agree on width for every byte, or the shell's
+    // redraw sequences get interpreted at a width they were not computed for —
+    // each such redraw orphans the previous prompt as a stranded fragment that
+    // survives above the shell's edit region. A native terminal gets this for
+    // free because VT resize and SIGWINCH are synchronous; here the PTY lives
+    // across an RPC, so request the resize first and apply the grid change only
+    // once the request settles: the acknowledgement arrives on the same socket
+    // after all old-width output, so bytes keep being interpreted at the width
+    // they were generated for. The first successful fit must request even when
+    // the measured grid equals the 1x1 construction sentinel, because onResize
+    // is the only PTY resize channel.
+    if (
+      grid.cols !== this.requestedCols ||
+      grid.rows !== this.requestedRows ||
+      !this.resizeNotified
+    ) {
+      this.resizeNotified = true;
+      this.requestedCols = grid.cols;
+      this.requestedRows = grid.rows;
+      const seq = ++this.resizeSeq;
+      const apply = () => this.applyGridSize(seq, grid.cols, grid.rows);
+      const acknowledgement = this.options.onResize(grid.cols, grid.rows);
+      if (acknowledgement && typeof acknowledgement.then === "function") {
+        // Applied even when the request fails: a stuck grid is worse than a
+        // transient width mismatch, and the next fit re-requests anyway.
+        void acknowledgement.then(apply, apply);
+      } else {
+        apply();
+      }
     }
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
@@ -602,20 +629,16 @@ export class GhosttyTerminalSurface {
     return true;
   }
 
-  /**
-   * The PTY must track every grid change, like a native terminal's SIGWINCH.
-   *
-   * Debouncing let the grid and the shell disagree on width for the length of
-   * a drag: the shell's redraw sequences were computed for one width but
-   * interpreted at another, so its cursor-up arithmetic missed and each redraw
-   * orphaned the previous prompt as a stranded fragment — permanently, once it
-   * scrolled out of the shell's edit region. Per-step notification keeps the
-   * widths in lockstep; `fit()` already coalesces to one call per changed grid
-   * size, so a drag produces at most one notify per crossed cell boundary.
-   */
-  private notifyResize(): void {
-    this.resizeNotified = true;
-    this.options.onResize(this.cols, this.rows);
+  /** Applies a granted grid size, ignoring superseded acknowledgements. */
+  private applyGridSize(seq: number, cols: number, rows: number): void {
+    if (this.disposed || seq !== this.resizeSeq) return;
+    if (cols === this.cols && rows === this.rows) return;
+    this.cols = cols;
+    this.rows = rows;
+    this.core.resize(cols, rows, this.metrics.width, this.metrics.height);
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.renderFrame();
   }
 
   focus(): void {

@@ -381,7 +381,10 @@ export function TerminalViewport({
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
         onData: (data) => handleData(data),
-        onResize: (cols, rows) => void resizeTerminal(cols, rows),
+        // Returns the request promise: the surface holds its grid at the old
+        // width until the PTY acknowledges, keeping bytes interpreted at the
+        // width they were generated for.
+        onResize: (cols, rows) => resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
         onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
