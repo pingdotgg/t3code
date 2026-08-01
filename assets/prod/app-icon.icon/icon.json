@@ -9,7 +9,7 @@
           "image-name": "text.svg",
           "name": "Text",
           "position": {
-            "scale": 10,
+            "scale": 8.5,
             "translation-in-points": [0, 0]
           }
         }
