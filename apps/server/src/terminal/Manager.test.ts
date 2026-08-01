@@ -1018,6 +1018,34 @@ it.layer(
     }),
   );
 
+  it.effect("strips mode, version, and DCS query traffic that reopening would replay", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // The families behind the reopen gibberish from the field reports:
+      // DECRQM query + DECRPM replies, DECRQSS/XTGETTCAP query + reply, and
+      // XTVERSION/kitty-keyboard queries.
+      process.emitData("prompt ");
+      process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[?2027;0$y");
+      process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
+      process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
+      process.emitData("\u001b[>q\u001b[?u\u001b[?31u");
+      // Setters that share final bytes with the stripped queries must survive:
+      // DECSCUSR (cursor style) and restore-cursor.
+      process.emitData("\u001b[4 q\u001b[umid ");
+      process.emitData("done\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "prompt \u001b[4 q\u001b[umid done\n");
+    }),
+  );
+
   it.effect(
     "preserves clear and style control sequences while dropping chunk-split query traffic",
     () =>
