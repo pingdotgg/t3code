@@ -197,6 +197,12 @@ export function HomeRouteScreen() {
               params: { screen: "Settings" },
             })
           }
+          onOpenArchivedThreads={() =>
+            navigation.navigate("SettingsSheet", {
+              screen: "SettingsContent",
+              params: { screen: "SettingsArchive" },
+            })
+          }
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={(thread) => {

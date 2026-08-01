@@ -685,6 +685,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         compact ? undefined : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
       }
       enableTrackpadSwipe
+      fullSwipeAction="primary"
       fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
       onDelete={handleDelete}
       onSwipeableClose={props.onSwipeableClose}
