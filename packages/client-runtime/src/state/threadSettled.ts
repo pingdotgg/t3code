@@ -16,6 +16,21 @@ export function updateChangeRequestSettlementState(
   return next;
 }
 
+/** Selects a bounded circular window so every lookup target is eventually revisited. */
+export function selectChangeRequestLookupWindow<T>(input: {
+  readonly targets: ReadonlyArray<T>;
+  readonly windowIndex: number;
+  readonly limit: number;
+}): ReadonlyArray<T> {
+  const count = Math.min(input.limit, input.targets.length);
+  if (count === 0) return [];
+  const start = (input.windowIndex * input.limit) % input.targets.length;
+  return Array.from(
+    { length: count },
+    (_, index) => input.targets[(start + index) % input.targets.length]!,
+  );
+}
+
 export function threadChangeRequestStateKey(
   thread: Pick<OrchestrationThreadShell, "id" | "branch"> & { readonly environmentId: string },
 ): string {

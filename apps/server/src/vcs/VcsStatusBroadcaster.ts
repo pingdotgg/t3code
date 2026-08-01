@@ -532,8 +532,15 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
           yield* Ref.set(needsInitialRefreshRef, !exit.value.loaded);
-          yield* Ref.set(consecutiveFailuresRef, 0);
-          return activeInterval;
+          if (exit.value.loaded) {
+            yield* Ref.set(consecutiveFailuresRef, 0);
+            return activeInterval;
+          }
+          const unresolvedAttempts = yield* Ref.updateAndGet(
+            consecutiveFailuresRef,
+            (count) => count + 1,
+          );
+          return remoteRefreshFailureDelay(unresolvedAttempts, activeInterval);
         }
 
         const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);

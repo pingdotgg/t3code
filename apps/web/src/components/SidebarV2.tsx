@@ -6,6 +6,7 @@ import {
   effectiveSettled,
   effectiveSnoozed,
   resolveChangeRequestSettlementState,
+  selectChangeRequestLookupWindow,
   threadChangeRequestStateKey,
   threadWokeAt,
   updateChangeRequestSettlementState,
@@ -97,7 +98,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
-import { vcsEnvironment } from "../state/vcs";
+import { threadVcsEnvironment, vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -171,6 +172,8 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const CHANGE_REQUEST_LOOKUP_LIMIT = 16;
+const CHANGE_REQUEST_LOOKUP_WINDOW_MS = 30_000;
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -387,6 +390,43 @@ function SnoozePopoverButton(props: {
   );
 }
 
+function useSidebarV2ChangeRequestState(
+  thread: SidebarThreadSummary,
+  projectCwd: string | null,
+  onChangeRequestState: (stateKey: string, state: ChangeRequestSettlementState) => void,
+) {
+  const gitCwd = thread.worktreePath ?? projectCwd;
+  const gitStatus = useEnvironmentQuery(
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+      ? threadVcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const changeRequestState = resolveChangeRequestSettlementState({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    gitStatusError: gitStatus.error,
+  });
+  const stateKey = threadChangeRequestStateKey(thread);
+  useEffect(() => {
+    onChangeRequestState(stateKey, changeRequestState);
+  }, [changeRequestState, onChangeRequestState, stateKey]);
+  return gitStatus;
+}
+
+const SidebarV2ChangeRequestStateReporter = memo(
+  function SidebarV2ChangeRequestStateReporter(props: {
+    thread: SidebarThreadSummary;
+    projectCwd: string | null;
+    onChangeRequestState: (stateKey: string, state: ChangeRequestSettlementState) => void;
+  }) {
+    useSidebarV2ChangeRequestState(props.thread, props.projectCwd, props.onChangeRequestState);
+    return null;
+  },
+);
+
 const SidebarV2Row = memo(function SidebarV2Row(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -423,7 +463,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
-  onChangeRequestState: (threadKey: string, state: ChangeRequestSettlementState) => void;
+  onChangeRequestState: (stateKey: string, state: ChangeRequestSettlementState) => void;
 }) {
   const {
     isRenaming,
@@ -526,15 +566,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   }
                 : null;
 
-  const gitCwd = thread.worktreePath ?? props.projectCwd;
-  const gitStatus = useEnvironmentQuery(
-    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
-        })
-      : null,
-  );
+  const gitStatus = useSidebarV2ChangeRequestState(thread, props.projectCwd, onChangeRequestState);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
@@ -547,18 +579,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
-  // Report the PR state up: the parent partitions rows with effectiveSettled,
-  // and a merged/closed PR auto-settles a thread — data only rows have.
-  const changeRequestState = resolveChangeRequestSettlementState({
-    threadBranch: thread.branch,
-    gitStatus: gitStatus.data,
-    gitStatusError: gitStatus.error,
-  });
-  const changeRequestStateCacheKey = threadChangeRequestStateKey(thread);
-  useEffect(() => {
-    onChangeRequestState(changeRequestStateCacheKey, changeRequestState);
-  }, [changeRequestState, changeRequestStateCacheKey, onChangeRequestState]);
-
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const driverKind = providerEntry?.driverKind ?? null;
@@ -1362,9 +1382,9 @@ export default function SidebarV2() {
     ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: ChangeRequestSettlementState) => {
+    (stateKey: string, state: ChangeRequestSettlementState) => {
       setChangeRequestStateByKey((current) =>
-        updateChangeRequestSettlementState(current, threadKey, state),
+        updateChangeRequestSettlementState(current, stateKey, state),
       );
     },
     [],
@@ -1736,6 +1756,35 @@ export default function SidebarV2() {
   const orderedThreads = useMemo(
     () => [...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
     [activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+  );
+  // Collapsed and paged shelf rows unmount, so revisit their PR state in a
+  // bounded pool instead of letting a cached no-PR/closed result live forever.
+  const backgroundChangeRequestThreads = useMemo(() => {
+    const renderedStateKeys = new Set(
+      (isSearchingThreads ? [] : orderedThreads).map(threadChangeRequestStateKey),
+    );
+    return [...activeThreads, ...snoozedThreads, ...settledThreads].filter(
+      (thread) =>
+        thread.branch !== null && !renderedStateKeys.has(threadChangeRequestStateKey(thread)),
+    );
+  }, [activeThreads, isSearchingThreads, orderedThreads, settledThreads, snoozedThreads]);
+  const [changeRequestLookupWindowIndex, setChangeRequestLookupWindowIndex] = useState(0);
+  useEffect(() => {
+    if (backgroundChangeRequestThreads.length <= CHANGE_REQUEST_LOOKUP_LIMIT) return;
+    const interval = window.setInterval(
+      () => setChangeRequestLookupWindowIndex((current) => current + 1),
+      CHANGE_REQUEST_LOOKUP_WINDOW_MS,
+    );
+    return () => window.clearInterval(interval);
+  }, [backgroundChangeRequestThreads.length]);
+  const backgroundChangeRequestLookupThreads = useMemo(
+    () =>
+      selectChangeRequestLookupWindow({
+        targets: backgroundChangeRequestThreads,
+        windowIndex: changeRequestLookupWindowIndex,
+        limit: CHANGE_REQUEST_LOOKUP_LIMIT,
+      }),
+    [backgroundChangeRequestThreads, changeRequestLookupWindowIndex],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2587,6 +2636,14 @@ export default function SidebarV2() {
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
+      {backgroundChangeRequestLookupThreads.map((thread) => (
+        <SidebarV2ChangeRequestStateReporter
+          key={threadChangeRequestStateKey(thread)}
+          thread={thread}
+          projectCwd={projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
+          onChangeRequestState={handleChangeRequestState}
+        />
+      ))}
       <SidebarContent
         className="gap-0"
         fixedHeader={

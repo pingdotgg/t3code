@@ -815,14 +815,22 @@ describe("VcsStatusBroadcaster", () => {
         remote: lookupFallback,
         remoteLoaded: false,
       } satisfies VcsStatusStreamEvent);
+      assert.equal(state.remoteStatusCalls, 1);
 
-      state.currentRemoteStatus = baseRemoteStatus;
       yield* TestClock.adjust(Duration.seconds(30));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 2);
+      state.currentRemoteStatus = baseRemoteStatus;
+      yield* TestClock.adjust(Duration.seconds(59));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 2);
+      yield* TestClock.adjust(Duration.seconds(1));
       assert.deepStrictEqual(yield* Deferred.await(recoveredDeferred), {
         _tag: "remoteUpdated",
         remote: baseRemoteStatus,
         remoteLoaded: true,
       } satisfies VcsStatusStreamEvent);
+      assert.equal(state.remoteStatusCalls, 3);
     }).pipe(Effect.provide(Layer.merge(makeTestLayer(state), TestClock.layer())));
   });
 

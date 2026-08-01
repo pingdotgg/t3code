@@ -8,6 +8,7 @@ import {
   type ChangeRequestSettlementState,
   resolveChangeRequestSettlementState,
   resolveSnoozePresets,
+  selectChangeRequestLookupWindow,
   threadChangeRequestStateKey,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -40,7 +41,6 @@ import {
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
-  selectThreadListV2ChangeRequestLookupWindow,
   THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT,
   THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_WINDOW_MS,
   type ThreadListV2ChangeRequestLookupTarget,
@@ -376,7 +376,12 @@ export const ThreadListV2ChangeRequestLookupPool = memo(
       return () => clearInterval(interval);
     }, [targets.length]);
     const activeTargets = useMemo(
-      () => selectThreadListV2ChangeRequestLookupWindow({ targets, windowIndex }),
+      () =>
+        selectChangeRequestLookupWindow({
+          targets,
+          windowIndex,
+          limit: THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT,
+        }),
       [targets, windowIndex],
     );
 

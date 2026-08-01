@@ -243,21 +243,6 @@ export function buildThreadListV2ChangeRequestLookupTargets(input: {
   return [...groups].map(([key, group]) => ({ key, ...group }));
 }
 
-export function selectThreadListV2ChangeRequestLookupWindow(input: {
-  readonly targets: ReadonlyArray<ThreadListV2ChangeRequestLookupTarget>;
-  readonly windowIndex: number;
-  readonly limit?: number;
-}): ReadonlyArray<ThreadListV2ChangeRequestLookupTarget> {
-  const limit = input.limit ?? THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT;
-  const count = Math.min(limit, input.targets.length);
-  if (count === 0) return [];
-  const start = (input.windowIndex * limit) % input.targets.length;
-  return Array.from(
-    { length: count },
-    (_, index) => input.targets[(start + index) % input.targets.length]!,
-  );
-}
-
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";

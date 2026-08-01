@@ -2,6 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   resolveSnoozePresets,
+  selectChangeRequestLookupWindow,
   threadChangeRequestStateKey,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -25,7 +26,6 @@ import {
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
-  selectThreadListV2ChangeRequestLookupWindow,
   sortThreadsForListV2,
 } from "./threadListV2";
 
@@ -533,15 +533,17 @@ describe("buildThreadListV2Items", () => {
       projectCwdByKey: new Map(),
       settlementEnvironmentIds: new Set([environmentId]),
     });
-    const firstBatch = selectThreadListV2ChangeRequestLookupWindow({
+    const firstBatch = selectChangeRequestLookupWindow({
       targets,
       windowIndex: 0,
+      limit: 16,
     });
 
     expect(firstBatch).toHaveLength(16);
-    const secondBatch = selectThreadListV2ChangeRequestLookupWindow({
+    const secondBatch = selectChangeRequestLookupWindow({
       targets,
       windowIndex: 1,
+      limit: 16,
     });
     expect(secondBatch.slice(0, 2).map((target) => target.key)).toEqual(
       targets.slice(16).map((target) => target.key),
