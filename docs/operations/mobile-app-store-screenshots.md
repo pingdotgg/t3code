@@ -1,5 +1,7 @@
 # Mobile app-store screenshot harness
 
+> For maintainers. Using T3 Code? See [docs/user](../user/).
+
 The screenshot harness runs the real mobile application against three disposable local T3
 environments. It creates an isolated base directory and server for each environment, real Git
 projects with deterministic content, seeded orchestration projections, and persisted terminal
@@ -41,41 +43,51 @@ Captures wait for the real environment snapshot to hydrate and for the requested
 active. Both platforms record readiness in the simulator/emulator app container. A final settle
 delay allows native terminal and Git review data to finish rendering.
 
-A full capture regenerates the selected native project with Expo's clean development prebuild before
+A full capture regenerates the selected native project with Expo's clean production prebuild before
 building it. Use --skip-build for repeated captures after the first build.
 
-The harness uses its own Metro port (8199 by default), so an ordinary mobile server or another
-worktree cannot accidentally provide the bundle being photographed.
+The harness uses fixed Metro port `8199`, which separates it from Expo's normal default port but is
+shared across every checkout. The readiness check only verifies that the port is open; it does not
+verify process ownership. Concurrent screenshot harnesses in different worktrees can therefore
+collide or attach to the wrong Metro process.
+
+Every configured device defaults to dark appearance, so plain `pnpm screenshots:mobile` produces
+30 dark PNGs. Pass `--appearance light`, `--appearance dark`, or `--appearance both` to override the
+configured appearance; `both` produces 60 PNGs.
 
 The default matrix is:
 
-| Output folder                         | Capture target            | Upload dimensions | Store slot                                |
-| ------------------------------------- | ------------------------- | ----------------- | ----------------------------------------- |
-| `apple/iphone-6.9/{light,dark}/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
-| `apple/iphone-6.5/{light,dark}/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
-| `apple/ipad-13/{light,dark}/`         | iPad Pro 13-inch (M5)     | 2064×2752         | App Store Connect iPad 13-inch            |
-| `google-play/phone/{light,dark}/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
-| `google-play/tablet-7/{light,dark}/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
-| `google-play/tablet-10/{light,dark}/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
+| Output folder                 | Capture target            | Upload dimensions | Store slot                                |
+| ----------------------------- | ------------------------- | ----------------- | ----------------------------------------- |
+| `apple/iphone-6.9/dark/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
+| `apple/iphone-6.5/dark/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
+| `apple/ipad-13/dark/`         | iPad Pro 13-inch (M5)     | 2752×2064         | App Store Connect iPad 13-inch, landscape |
+| `google-play/phone/dark/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
+| `google-play/tablet-7/dark/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
+| `google-play/tablet-10/dark/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
 
-Each target captures thread, terminal, review, thread list, and environments, producing 30 PNG
-files for one appearance or 60 for both. Each appearance folder's five screenshots satisfy the configured Apple limit of 1–10, Google
+Each target captures thread, terminal, review, thread list, and environments. Each appearance
+folder's five screenshots satisfy the configured Apple limit of 1–10, Google
 phone requirement of 2–8, and Google tablet recommendation/slot minimum of 4 with a maximum of 8.
 
 The generated tree is deliberately aligned with the store upload fields:
 
     artifacts/app-store/screenshots/
     ├── apple/
-    │   ├── iphone-6.9/{light,dark}/{thread,terminal,review,threads,environments}.png
-    │   ├── iphone-6.5/{light,dark}/{thread,terminal,review,threads,environments}.png
-    │   └── ipad-13/{light,dark}/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.9/dark/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.5/dark/{thread,terminal,review,threads,environments}.png
+    │   └── ipad-13/dark/{thread,terminal,review,threads,environments}.png
     └── google-play/
-        ├── phone/{light,dark}/{thread,terminal,review,threads,environments}.png
-        ├── tablet-7/{light,dark}/{thread,terminal,review,threads,environments}.png
-        └── tablet-10/{light,dark}/{thread,terminal,review,threads,environments}.png
+        ├── phone/dark/{thread,terminal,review,threads,environments}.png
+        ├── tablet-7/dark/{thread,terminal,review,threads,environments}.png
+        └── tablet-10/dark/{thread,terminal,review,threads,environments}.png
+
+A light-only run writes the same tree under `light/`; `--appearance both` writes both appearance
+folders.
 
 Edit [mobile-showcase.config.ts](../../scripts/mobile-showcase.config.ts) to change simulator or AVD
-names, light/dark appearance, scenes, output directory, capture delay, Android ABI, or viewport.
+names, light/dark appearance, iOS orientation, scenes, output directory, capture delay, Android ABI,
+or viewport.
 
 ## Capture in GitHub Actions
 
@@ -85,10 +97,11 @@ runs iOS and Android concurrently: iPhone and iPad capture on a
 12-vCPU Blacksmith macOS runner, while Android phone, 7-inch tablet, and 10-inch tablet capture on a
 16-vCPU Blacksmith Linux runner with a KVM-accelerated x86_64 emulator.
 
-Every job uploads its PNGs even when a later capture fails, which makes partial runs useful for
-diagnosis. Download `app-store-connect-screenshots` and `google-play-screenshots` from the workflow
-run's Artifacts section. Each job runs validation again immediately before upload. Artifacts are
-retained for 14 days.
+Every job uploads its PNGs even when capture fails, which makes partial runs useful for diagnosis.
+The separate validation step is success-gated: it runs before upload only when capture succeeds. If
+capture fails, the `always()` upload still publishes partial PNGs without re-validating them.
+Download `app-store-connect-screenshots` and `google-play-screenshots` from the workflow run's
+Artifacts section. Artifacts are retained for 14 days.
 
 The workflow uses the same checked-in device and scene matrix as local capture. Android remains
 ARM64 by default for local Apple Silicon development; CI sets `T3_SHOWCASE_ANDROID_ABI=x86_64` so the
@@ -111,10 +124,18 @@ Reuse the native build and retain the disposable environment:
 
     pnpm screenshots:mobile --device ipad-13 --skip-build --keep-running
 
-Run Metro separately:
+By default, let the screenshot runner start Metro on port `8199`. To keep Metro in a separate
+terminal, start it with the same showcase environment and explicit harness port:
 
-    pnpm --filter @t3tools/mobile showcase
+    cd apps/mobile
+    APP_VARIANT=development EXPO_PUBLIC_SHOWCASE=1 pnpm exec expo start --dev-client --port 8199
+
+Then run the capture from the repository root:
+
     pnpm screenshots:mobile --skip-build --skip-metro --device iphone-6.9
+
+`pnpm --filter @t3tools/mobile showcase` starts Expo on its normal port, so it is not compatible with
+the harness's `--skip-metro` mode.
 
 List the matrix and flags:
 
@@ -151,7 +172,9 @@ remote-first while the harness retains reliable loopback connections to its ephe
 ## Local prerequisites
 
 - iOS: Xcode command-line tools, the configured simulator runtimes, and installed CocoaPods.
-- Android: ANDROID_HOME (or the default macOS SDK path), adb, emulator, and the configured AVD.
+- Android: SDK resolution checks `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then defaults to
+  `$HOME/Library/Android/sdk` on macOS or `$HOME/Android/Sdk` on other platforms. The resolved SDK
+  must provide `adb` and `emulator`, and the configured AVD must exist.
 
 The harness is the source of truth for upload dimensions; do not resize its output. If store rules
 change, update the target's `storeAsset` specification. Capture fails when a PNG is the wrong size,

@@ -28,7 +28,7 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
 
 **Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well. The desktop app can also be used as the host server, allowing remote connections from app.t3.codes or the mobile app.
 
-**Mobile** is a React native app for both iOS and Android. The mobile app allows for connecting to any T3 Code server to control work remotely. It is still in early access (Testflight), but it is pretty close to shipping globally.
+**Mobile** is a React Native app for both iOS and Android, available on the App Store and Google Play. The mobile app allows for connecting to any T3 Code server to control work remotely.
 
 ## A note from Theo
 
@@ -59,7 +59,7 @@ We need to be on the same page with terminology. When communicating, use this la
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
-2. **Touching the live install.** `~/.t3/userdata` is the developer's real T3 Code database, in use while you work. Read-only inspection is fine. Never start a server against it, never open it read-write, never clean it up.
+2. **Writing to the live install.** `~/.t3/userdata` is the developer's real T3 Code database, in use while you work. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
 ## Hit every surface
@@ -72,7 +72,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
-- **Docs.** `docs/` mirrors this structure. Behavior changes that a user would notice belong in `docs/user/`; architecture changes in `docs/architecture/`; new vocabulary in `docs/reference/encyclopedia.md`.
+- **Docs.** `docs/` splits by audience. Behavior changes that a user would notice belong in `docs/user/` (shipped-product voice, no repo tooling or source paths); architecture and contributor changes in `docs/internals/`; runbooks in `docs/operations/`; new vocabulary in `docs/internals/glossary.md`.
 
 ## Dev servers
 
@@ -85,10 +85,19 @@ The most common defect in this repo is a change that works on the path you teste
 
 ## Test data
 
-An empty database is a bad test. Seed your worktree's `.t3` instead of pointing at live state:
+An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
-- Copy from `~/.t3/dev`, never from `~/.t3/userdata`.
-- Copy `state.sqlite` together with its `-wal` and `-shm` siblings, and only while no server has the source open. A live copy is a corrupt copy.
+- Copy from `~/.t3/userdata` (the developer's real data, the most realistic test set) or `~/.t3/dev`. Worktree state lives at `<worktree>/.t3/userdata`.
+- Snapshot the database with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file:
+
+  ```bash
+  mkdir -p .t3/userdata
+  rm -f .t3/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
+  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.t3/userdata/state.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/state.sqlite'\")"
+  ```
+
+  A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
+
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
@@ -114,13 +123,13 @@ An empty database is a bad test. Seed your worktree's `.t3` instead of pointing 
 
 Clients send typed WebSocket requests. The server turns them into _commands_, a pure _decider_ turns commands into persisted _events_, and a _projector_ derives the read model the UI renders. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Side effects run in queue-backed _reactors_ that emit _receipts_ when milestones land. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
 
-Full glossary with file links: `docs/reference/encyclopedia.md`
+Full glossary with file links: `docs/internals/glossary.md`
 
 ## Where code lives
 
-- `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` and `docs/operations/effect-fn-checklist.md` before writing Effect code.
+- `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
-- `packages/contracts` - Effect/Schema contracts. Schema only, no runtime logic.
+- `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client code shared by web and mobile.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.

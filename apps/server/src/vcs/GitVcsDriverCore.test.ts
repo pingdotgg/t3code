@@ -153,6 +153,51 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+
+    const before = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(before.hasOriginRemote, false);
+
+    yield* driver.ensureRemote({ cwd, preferredName: "origin", url: remote });
+
+    const after = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(after.hasOriginRemote, true);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("re-reads origin remote status after cache TTL expiry and bypassed invalidation", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+
+    // First call caches hasOriginRemote = false (5-min TTL)
+    assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, false);
+
+    // Add origin via raw git (bypasses invalidation hook)
+    yield* git(cwd, ["remote", "add", "origin", remote]);
+
+    // Cache still has the stale false (TTL not yet expired)
+    const stillCached = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(stillCached.hasOriginRemote, false);
+
+    // Advance past the 5-minute TTL so the cache entry expires
+    yield* TestClock.adjust("6 minutes");
+
+    // After expiry, the next call re-executes and picks up the remote
+    const afterExpiry = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(afterExpiry.hasOriginRemote, true);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -995,6 +1040,52 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadCount, 1);
         assert.equal(status.behindCount, 0);
         assert.equal(status.aheadOfDefaultCount, 1);
+      }),
+    );
+
+    it.effect("reports combined staged and unstaged edits to the same file", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n");
+        yield* git(cwd, ["add", "feature.ts"]);
+        yield* git(cwd, ["commit", "-m", "add feature"]);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n// line two\n");
+        yield* git(cwd, ["add", "feature.ts"]);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n// line two\n// line three\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.hasWorkingTreeChanges, true);
+        const file = status.workingTree.files.find((f) => f.path === "feature.ts");
+        assert.ok(file);
+        // HEAD has 1 line. Staged has 2 lines (+1). Unstaged has 3 lines (+2 from HEAD).
+        // Combined net from HEAD: +2 insertions.
+        assert.equal(file.insertions, 2);
+        assert.equal(file.deletions, 0);
+      }),
+    );
+
+    it.effect("reports staged file counts on unborn HEAD without failing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* writeTextFile(cwd, "initial.ts", "// first file\n");
+        yield* git(cwd, ["add", "initial.ts"]);
+
+        const status = yield* driver.statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.workingTree.files.length, 1);
+        const file = status.workingTree.files[0];
+        if (file) {
+          assert.equal(file.path, "initial.ts");
+          assert.equal(file.insertions, 1);
+        }
       }),
     );
   });

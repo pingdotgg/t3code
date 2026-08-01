@@ -6,6 +6,7 @@ import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
+  type ServerSelfUpdateProgressStage,
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
 import {
@@ -147,6 +148,7 @@ export class ServerSelfUpdate extends Context.Service<
   {
     readonly update: (
       input: ServerSelfUpdateInput,
+      reportProgress?: (stage: ServerSelfUpdateProgressStage) => Effect.Effect<void, never, never>,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
   }
 >()("t3/cloud/selfUpdate/ServerSelfUpdate") {}
@@ -227,7 +229,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
 
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
-  )(function* (input) {
+  )(function* (input, reportProgress = () => Effect.void) {
     if (capability === "desktop-managed") {
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
@@ -250,6 +252,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
     }
 
     return yield* Effect.gen(function* () {
+      yield* reportProgress("downloading");
       const runtimePaths = yield* ensurePinnedRuntimeInstalled({
         baseDir: serverConfig.baseDir,
         version: targetVersion,
@@ -260,6 +263,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         Effect.mapError((error) => failWith("Could not install the requested t3 version.", error)),
       );
 
+      yield* reportProgress("installing");
       // A broken artifact (failed native build, incompatible node) must be
       // caught while the current server is still alive to report it.
       const preflight = yield* runner
@@ -349,37 +353,53 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         yield* Effect.logInfo("Server self-update installed; restarting boot service.", {
           targetVersion,
         });
-        // A successful systemd restart stops this process, so the RPC is
-        // interrupted and the reconnecting client observes the new version.
-        // A rejected restart returns while the old process is still alive;
-        // restore the previous unit and report that failure through the RPC.
-        yield* Effect.gen(function* () {
-          const restart = yield* runner
-            .run({
-              command: "systemctl",
-              args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
-            })
-            .pipe(
-              Effect.mapError((cause) =>
-                failWith("Could not restart the systemd boot service.", cause),
+        // Restart after the acknowledgement has had time to cross any relay
+        // hop. --no-block queues the restart job and exits before systemd
+        // stops this unit: a blocking restart's SIGTERM reaches the systemctl
+        // child (it shares this service's cgroup), which read as a restart
+        // failure and rolled the new unit back while the old server finished
+        // shutting down. With the handoff race gone, a non-zero exit or spawn
+        // error means systemd genuinely rejected the job while this process is
+        // still alive, so restoring the previous unit below stays correct.
+        yield* scheduleRestart(
+          Effect.gen(function* () {
+            const restart = yield* runner
+              .run({
+                command: "systemctl",
+                args: ["--user", "restart", "--no-block", BOOT_SERVICE_UNIT_FILE],
+              })
+              .pipe(
+                Effect.mapError((cause) =>
+                  failWith("Could not restart the systemd boot service.", cause),
+                ),
+              );
+            if (restart.code !== 0) {
+              return yield* failWith(
+                `Restarting the systemd boot service failed (exit code ${String(restart.code)}).`,
+              );
+            }
+          }).pipe(
+            Effect.catch((restartError) =>
+              writeUnitAtomically(unitPath, previousUnit).pipe(
+                Effect.andThen(reloadSystemd()),
+                Effect.mapError((rollbackError) =>
+                  failWith("Could not restore the previous systemd unit.", {
+                    restartError,
+                    rollbackError,
+                  }),
+                ),
+                Effect.andThen(Effect.fail(restartError)),
               ),
-            );
-          if (restart.code !== 0) {
-            return yield* failWith(
-              `Restarting the systemd boot service failed (exit code ${String(restart.code)}).`,
-            );
-          }
-        }).pipe(
-          Effect.catch((restartError) =>
-            writeUnitAtomically(unitPath, previousUnit).pipe(
-              Effect.andThen(reloadSystemd()),
-              Effect.mapError((rollbackError) =>
-                failWith("Could not restore the previous systemd unit.", {
-                  restartError,
-                  rollbackError,
-                }),
+            ),
+            Effect.catch((error) =>
+              Effect.logError("Server self-update could not restart the boot service.").pipe(
+                Effect.annotateLogs({ targetVersion, error: error.reason }),
+                // Permit a retry only after the failed handoff was rolled
+                // back. A queued restart returns while this process is still
+                // shutting down; releasing the lock then would let a second
+                // update rewrite the unit mid-teardown.
+                Effect.andThen(Ref.set(inFlight, false)),
               ),
-              Effect.andThen(Effect.fail(restartError)),
             ),
           ),
         );

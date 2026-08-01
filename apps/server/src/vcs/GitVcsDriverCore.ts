@@ -61,6 +61,8 @@ const LIST_REFS_SNAPSHOT_CACHE_CAPACITY = 64;
 const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
+const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
+const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -414,6 +416,12 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
 
 function isNonRepositoryGitStderr(stderr: string): boolean {
   return stderr.toLowerCase().includes("not a git repository");
+}
+function isUnbornHeadStderr(stderr: string): boolean {
+  return (
+    stderr.toLowerCase().includes("unknown revision") &&
+    stderr.toLowerCase().includes("path not in the working tree")
+  );
 }
 
 interface Trace2Monitor {
@@ -1113,6 +1121,63 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
 
+  const defaultBranchCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* executeGit(
+          "GitVcsDriver.statusDetails.defaultBranch",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "symbolic-ref", "refs/remotes/origin/HEAD"],
+          { allowNonZeroExit: true },
+        ).pipe(
+          Effect.map((result) => {
+            if (result.exitCode !== 0) return null;
+            return parseDefaultBranchFromRemoteHeadRef(result.stdout, "origin");
+          }),
+        );
+      }),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        onSuccess: () => STATUS_DEFAULT_BRANCH_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const originExistsCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* executeGit(
+          "GitVcsDriver.statusDetails.originExists",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "remote", "get-url", "origin"],
+          { allowNonZeroExit: true },
+        ).pipe(Effect.map((result) => result.exitCode === 0));
+      }),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        onSuccess: () => STATUS_ORIGIN_EXISTS_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const invalidateStatusStaticCaches = (cwd: string) =>
+    Effect.gen(function* () {
+      const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
+        Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+      );
+      const cacheKey = repositoryPaths?.gitCommonDir ?? normalizeRepositoryPathsCacheKey(cwd);
+      yield* Cache.invalidate(defaultBranchCache, cacheKey);
+      yield* Cache.invalidate(originExistsCache, cacheKey);
+    });
+
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const repositoryPaths = yield* resolveRepositoryPaths(cwd);
     if (repositoryPaths !== null) {
@@ -1511,32 +1576,77 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    const [unstagedNumstatStdout, stagedNumstatStdout, defaultRefResult, hasPrimaryRemote] =
-      yield* Effect.all(
-        [
-          runGitStdout("GitVcsDriver.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
-          runGitStdout("GitVcsDriver.statusDetails.stagedNumstat", cwd, [
-            "diff",
-            "--cached",
-            "--numstat",
-          ]),
-          executeGit(
-            "GitVcsDriver.statusDetails.defaultRef",
-            cwd,
-            ["symbolic-ref", "refs/remotes/origin/HEAD"],
-            {
-              allowNonZeroExit: true,
-            },
-          ),
-          originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
-        ],
-        { concurrency: "unbounded" },
-      );
+    const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
+      Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+    );
+    const statusCacheKey = repositoryPaths?.gitCommonDir;
+    const [numstatStdout, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
+      [
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.statusDetails.numstat",
+          cwd,
+          ["diff", "HEAD", "--numstat"],
+          { allowNonZeroExit: true },
+        ).pipe(
+          Effect.flatMap((result) => {
+            if (result.exitCode === 0) return Effect.succeed(result.stdout);
+            if (isUnbornHeadStderr(result.stderr)) {
+              return Effect.map(
+                Effect.all([
+                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
+                    "diff",
+                    "--numstat",
+                  ]),
+                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
+                    "diff",
+                    "--cached",
+                    "--numstat",
+                  ]),
+                ]),
+                ([unstagedStdout, stagedStdout]) => {
+                  const staged = parseNumstatEntries(stagedStdout);
+                  const unstaged = parseNumstatEntries(unstagedStdout);
+                  const map = new Map<string, { insertions: number; deletions: number }>();
+                  for (const entry of [...staged, ...unstaged]) {
+                    const existing = map.get(entry.path) ?? {
+                      insertions: 0,
+                      deletions: 0,
+                    };
+                    existing.insertions += entry.insertions;
+                    existing.deletions += entry.deletions;
+                    map.set(entry.path, existing);
+                  }
+                  return Array.from(map.entries())
+                    .map(([p, s]) => `${s.insertions}\t${s.deletions}\t${p}`)
+                    .join("\n");
+                },
+              );
+            }
+            return Effect.fail(
+              new GitCommandError({
+                ...gitCommandContext({
+                  operation: "GitVcsDriver.statusDetails.numstat",
+                  cwd,
+                  args: ["diff", "HEAD", "--numstat"],
+                }),
+                detail: "git diff HEAD --numstat failed.",
+                exitCode: result.exitCode,
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+            );
+          }),
+        ),
+        statusCacheKey
+          ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
+          : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
+        statusCacheKey
+          ? Cache.get(originExistsCache, statusCacheKey).pipe(Effect.orElseSucceed(() => false))
+          : originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
+      ],
+      { concurrency: "unbounded" },
+    );
     const statusStdout = statusResult.stdout;
-    const defaultBranch =
-      defaultRefResult.exitCode === 0
-        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
-        : null;
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
@@ -1592,14 +1702,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : yield* computeAheadCountAgainstBase(cwd, refName).pipe(Effect.orElseSucceed(() => 0));
     }
 
-    const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
-    const unstagedEntries = parseNumstatEntries(unstagedNumstatStdout);
+    const numstatEntries = parseNumstatEntries(numstatStdout);
     const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
-    for (const entry of [...stagedEntries, ...unstagedEntries]) {
-      const existing = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
-      existing.insertions += entry.insertions;
-      existing.deletions += entry.deletions;
-      fileStatMap.set(entry.path, existing);
+    for (const entry of numstatEntries) {
+      fileStatMap.set(entry.path, { insertions: entry.insertions, deletions: entry.deletions });
     }
 
     let insertions = 0;
@@ -2001,7 +2107,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.readUntrackedReviewDiffs.diff",
           cwd,
-          ["diff", "--no-index", "--patch", "--minimal", "--", "/dev/null", relativePath],
+          [
+            "diff",
+            "--no-index",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            "--",
+            "/dev/null",
+            relativePath,
+          ],
           {
             allowNonZeroExit: true,
             maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
@@ -2046,6 +2163,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [
         "diff",
         "--patch",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
         "--minimal",
         ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
         "HEAD",
@@ -2079,6 +2199,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             [
               "diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
               `${baseRef}...HEAD`,
@@ -2744,7 +2867,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> =>
-    effect.pipe(Effect.ensuring(invalidateListRefsSnapshot(cwd).pipe(Effect.ignore)));
+    effect.pipe(
+      Effect.ensuring(
+        Effect.all([
+          invalidateListRefsSnapshot(cwd).pipe(Effect.ignore),
+          invalidateStatusStaticCaches(cwd).pipe(Effect.ignore),
+        ]),
+      ),
+    );
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>
