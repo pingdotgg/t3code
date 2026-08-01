@@ -1197,12 +1197,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
-  const [projectRenameTarget, setProjectRenameTarget] = useState<SidebarProjectGroupMember | null>(
-    null,
-  );
+  const [projectRenameDialog, setProjectRenameDialog] = useState<{
+    readonly open: boolean;
+    readonly target: SidebarProjectGroupMember;
+  } | null>(null);
+  const projectRenameTarget = projectRenameDialog?.target ?? null;
   const [projectRenameTitle, setProjectRenameTitle] = useState("");
-  const [projectGroupingTarget, setProjectGroupingTarget] =
-    useState<SidebarProjectGroupMember | null>(null);
+  const [projectGroupingDialog, setProjectGroupingDialog] = useState<{
+    readonly open: boolean;
+    readonly target: SidebarProjectGroupMember;
+  } | null>(null);
+  const projectGroupingTarget = projectGroupingDialog?.target ?? null;
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
     SidebarProjectGroupingMode | "inherit"
   >("inherit");
@@ -1409,14 +1414,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const openProjectRenameDialog = useCallback((member: SidebarProjectGroupMember) => {
-    setProjectRenameTarget(member);
+    setProjectRenameDialog({ open: true, target: member });
     setProjectRenameTitle(member.title);
   }, []);
 
   const openProjectGroupingDialog = useCallback(
     (member: SidebarProjectGroupMember) => {
       const overrideKey = deriveProjectGroupingOverrideKey(member);
-      setProjectGroupingTarget(member);
+      setProjectGroupingDialog({ open: true, target: member });
       setProjectGroupingSelection(
         projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
       );
@@ -2024,8 +2029,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const closeProjectRenameDialog = useCallback(() => {
-    setProjectRenameTarget(null);
-    setProjectRenameTitle("");
+    setProjectRenameDialog((current) => (current ? { ...current, open: false } : current));
   }, []);
 
   const submitProjectRename = useCallback(async () => {
@@ -2069,8 +2073,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle, updateProject]);
 
   const closeProjectGroupingDialog = useCallback(() => {
-    setProjectGroupingTarget(null);
-    setProjectGroupingSelection("inherit");
+    setProjectGroupingDialog((current) => (current ? { ...current, open: false } : current));
   }, []);
 
   const saveProjectGroupingPreference = useCallback(() => {
@@ -2358,11 +2361,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       />
 
       <Dialog
-        open={projectRenameTarget !== null}
+        open={projectRenameDialog?.open ?? false}
         onOpenChange={(open) => {
           if (!open) {
             closeProjectRenameDialog();
           }
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setProjectRenameDialog(null);
+          setProjectRenameTitle("");
         }}
       >
         <DialogPopup className="max-w-lg">
@@ -2405,11 +2413,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       </Dialog>
 
       <Dialog
-        open={projectGroupingTarget !== null}
+        open={projectGroupingDialog?.open ?? false}
         onOpenChange={(open) => {
           if (!open) {
             closeProjectGroupingDialog();
           }
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setProjectGroupingDialog(null);
+          setProjectGroupingSelection("inherit");
         }}
       >
         <DialogPopup className="max-w-lg">

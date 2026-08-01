@@ -1228,9 +1228,14 @@ export default function SidebarV2() {
       );
     },
   });
-  const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
-    null,
-  );
+  const [projectActionsDialog, setProjectActionsDialog] = useState<{
+    readonly open: boolean;
+    readonly target: SidebarProjectSnapshot;
+  } | null>(null);
+  const projectActionsTarget = projectActionsDialog?.target ?? null;
+  const closeProjectActionsDialog = useCallback(() => {
+    setProjectActionsDialog((current) => (current ? { ...current, open: false } : current));
+  }, []);
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
@@ -1547,7 +1552,9 @@ export default function SidebarV2() {
       event.preventDefault();
       event.stopPropagation();
       setProjectScopeMenuOpen(false);
-      window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
+      window.requestAnimationFrame(() =>
+        setProjectActionsDialog({ open: true, target: projectGroup }),
+      );
     },
     [],
   );
@@ -3023,9 +3030,12 @@ export default function SidebarV2() {
         </SidebarGroup>
       </SidebarContent>
       <Dialog
-        open={projectActionsTarget !== null}
+        open={projectActionsDialog?.open ?? false}
         onOpenChange={(open) => {
-          if (!open) setProjectActionsTarget(null);
+          if (!open) closeProjectActionsDialog();
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setProjectActionsDialog(null);
         }}
       >
         <DialogPopup className="max-w-xl">
@@ -3145,7 +3155,7 @@ export default function SidebarV2() {
                         className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground"
                         onClick={() => {
                           const projectGroup = projectActionsTarget;
-                          setProjectActionsTarget(null);
+                          closeProjectActionsDialog();
                           void handleRemoveProjectMembers(projectGroup, [member]);
                         }}
                       >
@@ -3173,7 +3183,7 @@ export default function SidebarV2() {
                   className="shrink-0"
                   onClick={() => {
                     const projectGroup = projectActionsTarget;
-                    setProjectActionsTarget(null);
+                    closeProjectActionsDialog();
                     void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
                   }}
                 >
@@ -3194,7 +3204,7 @@ export default function SidebarV2() {
                 variant="destructive-outline"
                 onClick={() => {
                   const projectGroup = projectActionsTarget;
-                  setProjectActionsTarget(null);
+                  closeProjectActionsDialog();
                   void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
                 }}
               >
@@ -3202,7 +3212,7 @@ export default function SidebarV2() {
                 Remove project
               </Button>
             ) : null}
-            <Button onClick={() => setProjectActionsTarget(null)}>Close</Button>
+            <Button onClick={closeProjectActionsDialog}>Close</Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>

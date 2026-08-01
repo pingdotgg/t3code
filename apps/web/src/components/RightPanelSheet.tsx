@@ -7,6 +7,7 @@ export function RightPanelSheet(props: {
   children: ReactNode;
   open: boolean;
   onClose: () => void;
+  onOpenChangeComplete: (open: boolean) => void;
 }) {
   return (
     <Sheet
@@ -16,6 +17,7 @@ export function RightPanelSheet(props: {
           props.onClose();
         }
       }}
+      onOpenChangeComplete={props.onOpenChangeComplete}
     >
       <SheetPopup
         side="right"

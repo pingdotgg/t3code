@@ -68,6 +68,7 @@ function ActiveSshPasswordPrompt({
   readonly onRemove: (requestId: string) => void;
 }) {
   const [password, setPassword] = useState("");
+  const [open, setOpen] = useState(true);
   const [isResponding, setIsResponding] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [responseError, setResponseError] = useState<string | null>(null);
@@ -120,10 +121,10 @@ function ActiveSshPasswordPrompt({
     setResponseError(null);
     try {
       await window.desktopBridge?.resolveSshPasswordPrompt(requestId, nextPassword);
-      onRemove(requestId);
+      setOpen(false);
     } catch (error) {
       if (nextPassword === null) {
-        onRemove(requestId);
+        setOpen(false);
       } else {
         setResponseError(getPromptErrorMessage(error));
       }
@@ -134,7 +135,7 @@ function ActiveSshPasswordPrompt({
   };
 
   const dismissExpiredPrompt = () => {
-    onRemove(request.requestId);
+    setOpen(false);
   };
 
   const cancelPrompt = () => {
@@ -142,6 +143,7 @@ function ActiveSshPasswordPrompt({
       dismissExpiredPrompt();
       return;
     }
+    setOpen(false);
     void respond(null);
   };
 
@@ -149,11 +151,14 @@ function ActiveSshPasswordPrompt({
 
   return (
     <Dialog
-      open
+      open={open}
       onOpenChange={(open) => {
         if (!open) {
           cancelPrompt();
         }
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) onRemove(request.requestId);
       }}
     >
       <DialogPopup className="max-w-md" showCloseButton={false}>

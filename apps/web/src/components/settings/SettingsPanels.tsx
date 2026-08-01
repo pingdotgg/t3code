@@ -2199,9 +2199,10 @@ export function ProviderSettingsPanel() {
         })}
       </SettingsSection>
 
-      {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
-      ) : null}
+      <AddProviderInstanceDialog
+        open={isAddInstanceDialogOpen}
+        onOpenChange={setIsAddInstanceDialogOpen}
+      />
     </SettingsPageContainer>
   );
 }
