@@ -505,29 +505,30 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
     }),
   );
 
-  it.effect("bounds entry inspection in a wide root containing no directories", () =>
+  it.effect("collects the current skill before bounding child inspection in a wide directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const fixture = yield* makeFixture();
+      const wideSkill = path.join(fixture.projectCursor, "wide-skill");
       const entryNames = Array.from(
         { length: MAX_ENTRIES_PER_ROOT + 50 },
         (_, index) => `file-${String(index).padStart(5, "0")}.txt`,
       );
       let entriesStatted = 0;
 
-      yield* fs.makeDirectory(fixture.projectCursor, { recursive: true });
-      const resolvedProjectCursor = yield* fs.realPath(fixture.projectCursor);
+      yield* writeSkill(wideSkill, frontmatter("wide-skill", "Found before traversal stops."));
+      const resolvedWideSkill = yield* fs.realPath(wideSkill);
       const instrumented = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.FileSystem.of({
           ...fs,
           readDirectory: (directory, options) =>
-            String(directory) === resolvedProjectCursor
-              ? Effect.succeed(entryNames)
+            String(directory) === resolvedWideSkill
+              ? Effect.succeed(["SKILL.md", ...entryNames])
               : fs.readDirectory(directory, options),
           stat: (filePath) => {
-            if (String(filePath).startsWith(`${resolvedProjectCursor}${path.sep}`)) {
+            if (String(filePath).startsWith(`${resolvedWideSkill}${path.sep}`)) {
               entriesStatted += 1;
             }
             return fs.stat(filePath);
@@ -539,7 +540,10 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
         Effect.provide(instrumented),
       );
 
-      assert.isEmpty(skills);
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.description]),
+        [["wide-skill", "Found before traversal stops."]],
+      );
       assert.equal(entriesStatted, 0);
     }),
   );

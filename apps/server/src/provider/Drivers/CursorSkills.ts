@@ -283,11 +283,7 @@ const collectSkillsInRoot = Effect.fn("collectSkillsInRoot")(function* (input: {
 
   const walk = (directory: string): Effect.Effect<void, never, FileSystem.FileSystem> =>
     Effect.gen(function* () {
-      if (
-        collected.length >= MAX_SKILLS_PER_ROOT ||
-        visited.size >= MAX_DIRECTORIES_PER_ROOT ||
-        entriesInspected >= MAX_ENTRIES_PER_ROOT
-      ) {
+      if (collected.length >= MAX_SKILLS_PER_ROOT || visited.size >= MAX_DIRECTORIES_PER_ROOT) {
         return;
       }
 
@@ -302,9 +298,6 @@ const collectSkillsInRoot = Effect.fn("collectSkillsInRoot")(function* (input: {
       const entries = yield* fileSystem
         .readDirectory(resolved)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      const remainingEntries = MAX_ENTRIES_PER_ROOT - entriesInspected;
-      if (entries.length > remainingEntries) return;
-      entriesInspected += entries.length;
 
       const skillPath = path.join(directory, "SKILL.md");
       if (entries.includes("SKILL.md")) {
@@ -329,6 +322,10 @@ const collectSkillsInRoot = Effect.fn("collectSkillsInRoot")(function* (input: {
           });
         }
       }
+
+      const remainingEntries = MAX_ENTRIES_PER_ROOT - entriesInspected;
+      if (entries.length > remainingEntries) return;
+      entriesInspected += entries.length;
 
       for (const entry of [...entries].sort()) {
         if (collected.length >= MAX_SKILLS_PER_ROOT || visited.size >= MAX_DIRECTORIES_PER_ROOT) {
