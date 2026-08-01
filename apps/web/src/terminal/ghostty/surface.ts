@@ -7,6 +7,7 @@ import {
   type GhosttyTheme,
 } from "./core";
 import {
+  cssColor,
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
@@ -445,6 +446,11 @@ export class GhosttyTerminalSurface {
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
+    // An opaque backing store starts out black and stays on screen through the
+    // font and WASM awaits below; prefill with the theme background so a
+    // brand-new terminal opens without a black flash.
+    context.fillStyle = cssColor(options.theme.background);
+    context.fillRect(0, 0, canvas.width, canvas.height);
     const fontFamily = terminalFontFamily(options.font?.family);
     const fontSize = terminalFontSize(options.font?.size);
     try {

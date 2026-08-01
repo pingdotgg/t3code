@@ -14,7 +14,7 @@ export interface GhosttyCellMetrics {
 
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 
-function cssColor(color: GhosttyColor): string {
+export function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
 }
 
