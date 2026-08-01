@@ -38,6 +38,7 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -899,19 +900,25 @@ const make = Effect.gen(function* () {
       ...(input.title !== undefined ? { title: input.title } : {}),
     });
   });
-  const clearInterruptedThreadTitleRegenerations = Effect.fn(
-    "clearInterruptedThreadTitleRegenerations",
+  const findInterruptedThreadTitleRegenerations = Effect.fn(
+    "findInterruptedThreadTitleRegenerations",
   )(function* () {
     const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+    return readModel.threads.flatMap((thread) => {
+      const requestId = thread.titleRegeneration?.requestId;
+      return requestId === undefined ? [] : [{ threadId: thread.id, requestId }];
+    });
+  });
+  const clearInterruptedThreadTitleRegenerations = Effect.fn(
+    "clearInterruptedThreadTitleRegenerations",
+  )(function* (
+    interrupted: ReadonlyArray<{ readonly threadId: ThreadId; readonly requestId: CommandId }>,
+  ) {
     yield* Effect.forEach(
-      readModel.threads,
-      (thread) => {
-        const requestId = thread.titleRegeneration?.requestId;
-        if (requestId === undefined) {
-          return Effect.void;
-        }
+      interrupted,
+      ({ threadId, requestId }) => {
         return dispatchThreadTitleRegenerationCompletion({
-          threadId: thread.id,
+          threadId,
           requestId,
         }).pipe(
           Effect.catchCause((cause) => {
@@ -921,7 +928,7 @@ const make = Effect.gen(function* () {
             return Effect.logWarning(
               "provider command reactor failed to clear interrupted title regeneration",
               {
-                threadId: thread.id,
+                threadId,
                 cause: Cause.pretty(cause),
               },
             );
@@ -1304,7 +1311,7 @@ const make = Effect.gen(function* () {
     processDomainEvent(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
+          return Effect.interrupt;
         }
         return Effect.logWarning("provider command reactor failed to process event", {
           eventType: event.type,
@@ -1316,6 +1323,17 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+    const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to find interrupted title regenerations",
+          { cause: Cause.pretty(cause) },
+        ).pipe(Effect.as([]));
+      }),
+    );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
@@ -1330,14 +1348,14 @@ const make = Effect.gen(function* () {
       }
     });
 
-    yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
-    );
+    yield* forkParked(Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent));
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
     // captured here, leaving any newer request untouched.
-    yield* clearInterruptedThreadTitleRegenerations().pipe(
+    const clearInterrupted = clearInterruptedThreadTitleRegenerations(
+      interruptedTitleRegenerations,
+    ).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
@@ -1350,6 +1368,12 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+    const activation = yield* ServerActivation;
+    if (activation === undefined) {
+      yield* clearInterrupted;
+    } else {
+      yield* forkParked(clearInterrupted);
+    }
   });
 
   return {
