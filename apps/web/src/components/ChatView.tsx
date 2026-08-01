@@ -1281,6 +1281,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [expandedImageDialog, setExpandedImageDialog] = useState<{
     readonly open: boolean;
     readonly preview: ExpandedImagePreview;
+    readonly generation: number;
   } | null>(null);
   const expandedImage = expandedImageDialog?.preview ?? null;
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -5605,7 +5606,11 @@ function ChatViewContent(props: ChatViewProps) {
   };
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
-    setExpandedImageDialog({ open: true, preview });
+    setExpandedImageDialog((current) => ({
+      open: true,
+      preview,
+      generation: (current?.generation ?? 0) + 1,
+    }));
   }, []);
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
@@ -6181,16 +6186,19 @@ function ChatViewContent(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
-      <ExpandedImageDialog
-        open={expandedImageDialog?.open ?? false}
-        preview={expandedImage}
-        onOpenChange={(open) => {
-          if (!open) closeExpandedImage();
-        }}
-        onOpenChangeComplete={(open) => {
-          if (!open) setExpandedImageDialog(null);
-        }}
-      />
+      {expandedImageDialog ? (
+        <ExpandedImageDialog
+          key={expandedImageDialog.generation}
+          open={expandedImageDialog.open}
+          preview={expandedImage}
+          onOpenChange={(open) => {
+            if (!open) closeExpandedImage();
+          }}
+          onOpenChangeComplete={(open) => {
+            if (!open) setExpandedImageDialog(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

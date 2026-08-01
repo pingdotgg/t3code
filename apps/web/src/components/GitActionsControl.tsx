@@ -1485,7 +1485,7 @@ export default function GitActionsControl({
   );
 
   const continuePendingDefaultBranchAction = () => {
-    if (!pendingDefaultBranchAction) return;
+    if (!pendingDefaultBranchAction?.open) return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction({ ...pendingDefaultBranchAction, open: false });
     void runGitActionWithToast({
@@ -1498,7 +1498,7 @@ export default function GitActionsControl({
   };
 
   const checkoutFeatureBranchAndContinuePendingAction = () => {
-    if (!pendingDefaultBranchAction) return;
+    if (!pendingDefaultBranchAction?.open) return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction({ ...pendingDefaultBranchAction, open: false });
     void runGitActionWithToast({

@@ -27,7 +27,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   }, []);
 
   useEffect(() => {
-    if (!preview) return;
+    if (!open || !preview) return;
 
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (preview.images.length <= 1) return;
@@ -44,7 +44,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateImage, preview]);
+  }, [navigateImage, open, preview]);
 
   const item = preview?.images[index];
 
