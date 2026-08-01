@@ -61,7 +61,7 @@ The default matrix is:
 | ----------------------------- | ------------------------- | ----------------- | ----------------------------------------- |
 | `apple/iphone-6.9/dark/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
 | `apple/iphone-6.5/dark/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
-| `apple/ipad-13/dark/`         | iPad Pro 13-inch (M5)     | 2064×2752         | App Store Connect iPad 13-inch            |
+| `apple/ipad-13/dark/`         | iPad Pro 13-inch (M5)     | 2752×2064         | App Store Connect iPad 13-inch, landscape |
 | `google-play/phone/dark/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
 | `google-play/tablet-7/dark/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
 | `google-play/tablet-10/dark/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
@@ -86,7 +86,8 @@ A light-only run writes the same tree under `light/`; `--appearance both` writes
 folders.
 
 Edit [mobile-showcase.config.ts](../../scripts/mobile-showcase.config.ts) to change simulator or AVD
-names, light/dark appearance, scenes, output directory, capture delay, Android ABI, or viewport.
+names, light/dark appearance, iOS orientation, scenes, output directory, capture delay, Android ABI,
+or viewport.
 
 ## Capture in GitHub Actions
 

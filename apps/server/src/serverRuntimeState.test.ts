@@ -33,6 +33,7 @@ describe("serverRuntimeState", () => {
         host: "127.0.0.1",
         port: 4_971,
         origin: "http://127.0.0.1:4971",
+        devUrl: "http://localhost:5733/",
         startedAt: "2026-06-20T00:00:00.000Z",
       };
 
@@ -41,6 +42,24 @@ describe("serverRuntimeState", () => {
 
       assert.deepEqual(Option.getOrThrow(restored), state);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("records the dev web URL when the server fronts a dev server", () =>
+    Effect.gen(function* () {
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: new URL("http://localhost:5733") },
+        port: 13_773,
+      });
+
+      assert.equal(state.devUrl, "http://localhost:5733/");
+      assert.equal(state.origin, "http://127.0.0.1:13773");
+
+      const withoutDev = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 13_773,
+      });
+      assert.isFalse("devUrl" in withoutDev);
+    }),
   );
 
   it.effect("treats a missing runtime state file as absent", () =>
