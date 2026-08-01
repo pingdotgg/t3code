@@ -5,7 +5,20 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
-import { compareExactServiceVersions, decodeServiceState } from "./cloud/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  decodeServiceState,
+  isExactServiceVersion,
+} from "./cloud/serviceProtocol.ts";
+
+it("accepts only exact semantic versions", () => {
+  for (const version of ["0.0.0", "1.2.3", "1.2.3-alpha.1", "1.2.3-0", "1.2.3+001"]) {
+    assert.isTrue(isExactServiceVersion(version), version);
+  }
+  for (const version of ["latest", "01.2.3", "1.2.3-01", "1.2.3-alpha..1", "1.2.3+."]) {
+    assert.isFalse(isExactServiceVersion(version), version);
+  }
+});
 
 it("orders exact semantic versions without treating build metadata as precedence", () => {
   assert.equal(compareExactServiceVersions("1.2.3", "1.2.3"), 0);

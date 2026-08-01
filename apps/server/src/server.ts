@@ -459,33 +459,28 @@ export const makeServerLayer = Layer.unwrap(
           const server = yield* HttpServer.HttpServer;
           const address = server.address;
           if (typeof address === "string" || !("port" in address)) {
-            return false;
+            return;
           }
 
           const state = yield* makePersistedServerRuntimeState({
             config,
             port: address.port,
           });
-          return yield* persistServerRuntimeState({
+          yield* persistServerRuntimeState({
             path: config.serverRuntimeStatePath,
             state,
           }).pipe(
-            Effect.as(true),
             Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to persist server runtime state", { cause }).pipe(
-                Effect.as(false),
-              ),
+              Effect.logWarning("Failed to persist server runtime state", { cause }),
             ),
           );
         }),
-        (persisted) =>
-          persisted
-            ? clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Failed to clear server runtime state", { cause }),
-                ),
-              )
-            : Effect.void,
+        () =>
+          clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to clear server runtime state", { cause }),
+            ),
+          ),
       ),
     );
     const tailscaleServeLayer = config.tailscaleServeEnabled
