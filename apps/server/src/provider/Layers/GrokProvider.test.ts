@@ -34,6 +34,23 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.requiresNewThreadForModelChange).toBe(true);
     }),
   );
+
+  it.effect("applies customModelLabels to custom models", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* buildInitialGrokProviderSnapshot(
+        decodeGrokSettings({
+          customModels: ["grok-custom"],
+          customModelLabels: { "grok-custom": "Friendly Grok" },
+        }),
+      );
+      expect(snapshot.models).toContainEqual({
+        slug: "grok-custom",
+        name: "Friendly Grok",
+        isCustom: true,
+        capabilities: expect.anything(),
+      });
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {

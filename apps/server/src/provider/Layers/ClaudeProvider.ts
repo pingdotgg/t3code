@@ -796,6 +796,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     BUILT_IN_MODELS,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    claudeSettings.customModelLabels ?? {},
   );
 
   if (!claudeSettings.enabled) {
@@ -886,6 +887,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     getBuiltInClaudeModelsForVersion(parsedVersion),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    claudeSettings.customModelLabels ?? {},
   );
   const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
     ? undefined
@@ -959,6 +961,7 @@ export const makePendingClaudeProvider = (
       BUILT_IN_MODELS,
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+      claudeSettings.customModelLabels ?? {},
     );
 
     if (!claudeSettings.enabled) {

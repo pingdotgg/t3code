@@ -33,6 +33,35 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("Claude custom model labels", () => {
+  it("keeps labels optional for old settings and accepts the patch field", () => {
+    expect(decodeServerSettings({}).providers.claudeAgent.customModelLabels).toBeUndefined();
+    expect(
+      decodeServerSettingsPatch({
+        providers: { claudeAgent: { customModelLabels: { "claude-sonnet-4-6": "Sonnet 4.6" } } },
+      }).providers?.claudeAgent?.customModelLabels,
+    ).toEqual({ "claude-sonnet-4-6": "Sonnet 4.6" });
+  });
+});
+
+describe("provider custom model labels round-trip", () => {
+  // Every provider that accepts customModelLabels on a PATCH must also keep
+  // the field on its full ServerSettings schema — otherwise the labels are
+  // stripped during normalizeServerSettings and never persist.
+  for (const provider of ["codex", "claudeAgent", "cursor", "grok", "opencode"] as const) {
+    it(`persists ${provider} labels through a full decode round-trip`, () => {
+      const decoded = decodeServerSettings({
+        providers: {
+          [provider]: { customModelLabels: { "model/a[1m]": "Display A" } },
+        },
+      } as typeof ServerSettings.Encoded);
+      expect(decoded.providers[provider].customModelLabels).toEqual({
+        "model/a[1m]": "Display A",
+      });
+    });
+  }
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

@@ -1,6 +1,18 @@
-import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as CodexErrors from "effect-codex-app-server/errors";
+import { CodexSettings } from "@t3tools/contracts";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  checkCodexProviderStatus,
+  makePendingCodexProvider,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -143,4 +155,59 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+describe("Codex custom model labels", () => {
+  it.effect("applies customModelLabels on the pending/disabled snapshot path", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* makePendingCodexProvider(
+        decodeCodexSettings({
+          enabled: false,
+          customModels: ["gpt-custom-ultra"],
+          customModelLabels: { "gpt-custom-ultra": "Ultra Preview" },
+        }),
+      );
+
+      expect(snapshot.models).toContainEqual({
+        slug: "gpt-custom-ultra",
+        name: "Ultra Preview",
+        isCustom: true,
+        capabilities: null,
+      });
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("checkCodexProviderStatus custom model labels", (it) => {
+  it.effect("forwards customModelLabels into the probe and keeps them on error fallbacks", () =>
+    Effect.gen(function* () {
+      let forwardedLabels: Readonly<Record<string, string>> | undefined;
+      const snapshot = yield* checkCodexProviderStatus(
+        decodeCodexSettings({
+          enabled: true,
+          binaryPath: "codex",
+          customModels: ["gpt-custom-ultra"],
+          customModelLabels: { "gpt-custom-ultra": "Ultra Preview" },
+        }),
+        (input) => {
+          forwardedLabels = input.customModelLabels;
+          return Effect.fail(
+            new CodexErrors.CodexAppServerSpawnError({
+              command: "codex app-server",
+              cause: new Error("spawn failed"),
+            }),
+          );
+        },
+      );
+
+      expect(forwardedLabels).toEqual({ "gpt-custom-ultra": "Ultra Preview" });
+      expect(snapshot.models).toContainEqual({
+        slug: "gpt-custom-ultra",
+        name: "Ultra Preview",
+        isCustom: true,
+        capabilities: null,
+      });
+      expect(snapshot.status).toBe("error");
+    }),
+  );
 });

@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { getCustomModelLabel } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -90,6 +91,18 @@ function readConfigStringArray(config: unknown, key: string): ReadonlyArray<stri
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function readConfigStringRecord(config: unknown, key: string): Readonly<Record<string, string>> {
+  if (config === null || typeof config !== "object") return {};
+  const value = (config as Record<string, unknown>)[key];
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === "string" && entry[1].trim().length > 0,
+    ),
+  );
+}
+
 /**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
  * provider settings field updates, does not drop empty-looking values — the
@@ -112,6 +125,7 @@ function nextConfigBlobWithValue(
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<string>;
+  readonly customModelLabels?: Readonly<Record<string, string>>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -119,15 +133,19 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      },
-  );
+  const customModels = input.customModels.map((slug) => {
+    const live = liveCustomModelsBySlug.get(slug);
+    const label = getCustomModelLabel(input.customModelLabels, slug);
+    if (live) {
+      return label ? { ...live, name: label } : live;
+    }
+    return {
+      slug,
+      name: label ?? slug,
+      isCustom: true,
+      capabilities: null,
+    };
+  });
   return [...serverModels, ...customModels];
 }
 
@@ -444,12 +462,14 @@ export function ProviderInstanceCard({
     : null;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
+  const customModelLabels = readConfigStringRecord(instance.config, "customModelLabels");
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
+    customModelLabels,
   });
 
   const updateDisplayName = (value: string) => {
@@ -487,6 +507,27 @@ export function ProviderInstanceCard({
 
   const updateCustomModels = (next: ReadonlyArray<string>) => {
     const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
+  const updateCustomModelLabels = (next: Readonly<Record<string, string>>) => {
+    const nextConfig = nextConfigBlobWithValue(instance.config, "customModelLabels", { ...next });
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
+  /**
+   * Atomically update both customModels and customModelLabels from the same
+   * base config. Sequential onChange + onLabelChange clobber each other
+   * because each rebuilds from stale `instance.config`.
+   */
+  const updateCustomModelsAndLabels = (
+    nextModels: ReadonlyArray<string>,
+    nextLabels: Readonly<Record<string, string>>,
+  ) => {
+    let nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...nextModels]);
+    nextConfig = nextConfigBlobWithValue(nextConfig, "customModelLabels", { ...nextLabels });
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
@@ -780,10 +821,13 @@ export function ProviderInstanceCard({
                 driverKind={driverKind}
                 models={modelsForDisplay}
                 customModels={customModels}
+                customModelLabels={customModelLabels}
                 hiddenModels={hiddenModels}
                 favoriteModels={favoriteModels}
                 modelOrder={modelOrder}
                 onChange={updateCustomModels}
+                onLabelChange={updateCustomModelLabels}
+                onModelsAndLabelsChange={updateCustomModelsAndLabels}
                 onHiddenModelsChange={onHiddenModelsChange}
                 onFavoriteModelsChange={onFavoriteModelsChange}
                 onModelOrderChange={onModelOrderChange}

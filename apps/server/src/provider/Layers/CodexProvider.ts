@@ -24,7 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, getCustomModelLabel } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -222,6 +222,7 @@ export function applyPreferredCodexDefaultModel(
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
+  customModelLabels: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<ServerProviderModel> {
   if (customModels.length === 0) {
     return models;
@@ -238,7 +239,7 @@ function appendCustomCodexModels(
     seen.add(slug);
     customEntries.push({
       slug,
-      name: slug,
+      name: getCustomModelLabel(customModelLabels, slug) ?? slug,
       isCustom: true,
       capabilities: fallbackCapabilities,
     });
@@ -319,6 +320,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly launchArgs?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
+  readonly customModelLabels?: Readonly<Record<string, string>>;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
@@ -384,7 +386,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     return {
       account: accountResponse,
       version,
-      models: appendCustomCodexModels([], input.customModels ?? []),
+      models: appendCustomCodexModels([], input.customModels ?? [], input.customModelLabels ?? {}),
       skills: [],
     } satisfies CodexAppServerProviderSnapshot;
   }
@@ -403,7 +405,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     version,
     models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
+      appendCustomCodexModels(models, input.customModels ?? [], input.customModelLabels ?? {}),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
@@ -411,6 +413,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
   const models = new Set<string>();
+  const labels = codexSettings.customModelLabels ?? {};
   for (const model of codexSettings.customModels) {
     const trimmed = model.trim();
     if (trimmed.length > 0) {
@@ -419,7 +422,7 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
   }
   return Array.from(models, (model) => ({
     slug: model,
-    name: model,
+    name: getCustomModelLabel(labels, model) ?? model,
     isCustom: true,
     capabilities: null,
   }));
@@ -502,6 +505,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly launchArgs?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
+    readonly customModelLabels?: Readonly<Record<string, string>>;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
@@ -541,6 +545,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
+    customModelLabels: codexSettings.customModelLabels ?? {},
     environment: resolvedEnvironment,
   }).pipe(
     Effect.scoped,

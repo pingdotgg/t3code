@@ -257,6 +257,20 @@ export function normalizeCustomModelSlug(model: string | null | undefined): stri
   return model.trim() || null;
 }
 
+/** Resolve a persisted display label using the same trimmed custom slug key. */
+export function getCustomModelLabel(
+  labels: Readonly<Record<string, string>> | null | undefined,
+  slug: string,
+): string | null {
+  const normalized = normalizeCustomModelSlug(slug);
+  if (!normalized || !labels) return null;
+  // Own-property only: bare `labels[slug]` can hit Object.prototype for
+  // hostile keys like `__proto__` / `constructor` and then crash on `.trim()`.
+  if (!Object.prototype.hasOwnProperty.call(labels, normalized)) return null;
+  const label = labels[normalized];
+  return typeof label === "string" && label.trim() ? label.trim() : null;
+}
+
 export function resolveSelectableModel(
   provider: ProviderDriverKind,
   value: string | null | undefined,

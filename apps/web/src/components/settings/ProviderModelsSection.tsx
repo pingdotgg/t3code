@@ -10,13 +10,13 @@ import {
   StarIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { getCustomModelLabel, normalizeCustomModelSlug } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import { sortModelsForProviderInstance } from "../../modelOrdering";
@@ -56,6 +56,7 @@ interface ProviderModelsSectionProps {
    * removed) via `onChange`.
    */
   readonly customModels: ReadonlyArray<string>;
+  readonly customModelLabels: Readonly<Record<string, string>>;
   /** Server-returned model slugs hidden from the model picker. */
   readonly hiddenModels: ReadonlyArray<string>;
   /** Model slugs favorited for this provider instance. */
@@ -68,9 +69,65 @@ interface ProviderModelsSectionProps {
    * `providerInstances[id].config`).
    */
   readonly onChange: (next: ReadonlyArray<string>) => void;
+  readonly onLabelChange: (next: Readonly<Record<string, string>>) => void;
+  /**
+   * Atomic models+labels update. Prefer this over sequential onChange +
+   * onLabelChange so both fields are written from the same base config.
+   */
+  readonly onModelsAndLabelsChange?: (
+    nextModels: ReadonlyArray<string>,
+    nextLabels: Readonly<Record<string, string>>,
+  ) => void;
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
+}
+
+/**
+ * Build the next custom-model label map for a single slug edit.
+ * Pure helper so sequential blur handlers can compose from a write-through
+ * cache instead of a stale prop snapshot.
+ */
+export function nextCustomModelLabels(
+  labels: Readonly<Record<string, string>>,
+  slug: string,
+  label: string,
+): Record<string, string> {
+  const nextLabels = { ...labels };
+  const trimmed = label.trim();
+  if (trimmed) nextLabels[slug] = trimmed;
+  else delete nextLabels[slug];
+  return nextLabels;
+}
+
+/**
+ * Content equality for label maps. Parent often rebuilds a new object with
+ * the same entries (e.g. `Object.fromEntries` on every render); identity
+ * alone must not reset the write-through label cache.
+ */
+export function areCustomModelLabelMapsEqual(
+  a: Readonly<Record<string, string>>,
+  b: Readonly<Record<string, string>>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key) || a[key] !== b[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Primary row text for a model entry. Custom rows always show the API slug
+ * because the optional display label is edited in a sibling input.
+ */
+export function modelRowPrimaryText(
+  model: Pick<ServerProviderModel, "slug" | "name" | "isCustom">,
+): string {
+  return model.isCustom ? model.slug : model.name;
 }
 
 /**
@@ -89,10 +146,13 @@ export function ProviderModelsSection({
   driverKind,
   models,
   customModels,
+  customModelLabels,
   hiddenModels,
   favoriteModels,
   modelOrder,
   onChange,
+  onLabelChange,
+  onModelsAndLabelsChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
@@ -100,6 +160,20 @@ export function ProviderModelsSection({
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Keep a write-through cache so sequential label blurs before the parent
+  // re-renders do not clobber each other by spreading a stale prop snapshot.
+  // Only adopt the prop when its *content* changes — parents often rebuild a
+  // new object reference with identical entries, which must not wipe local
+  // edits that have not landed in parent state yet.
+  const labelsRef = useRef(customModelLabels);
+  const lastPropLabelsRef = useRef(customModelLabels);
+  useEffect(() => {
+    if (areCustomModelLabelMapsEqual(lastPropLabelsRef.current, customModelLabels)) {
+      return;
+    }
+    lastPropLabelsRef.current = customModelLabels;
+    labelsRef.current = customModelLabels;
+  }, [customModelLabels]);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
   const favoriteModelSet = useMemo(() => new Set(favoriteModels), [favoriteModels]);
   const orderedModels = useMemo(() => {
@@ -150,9 +224,23 @@ export function ProviderModelsSection({
   };
 
   const handleRemove = (slug: string) => {
-    onChange(customModels.filter((model) => model !== slug));
+    const nextModels = customModels.filter((model) => model !== slug);
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
+
+    const hasOwnLabel = Object.prototype.hasOwnProperty.call(labelsRef.current, slug);
+    if (hasOwnLabel) {
+      const nextLabels = nextCustomModelLabels(labelsRef.current, slug, "");
+      labelsRef.current = nextLabels;
+      if (onModelsAndLabelsChange) {
+        onModelsAndLabelsChange(nextModels, nextLabels);
+      } else {
+        onChange(nextModels);
+        onLabelChange(nextLabels);
+      }
+    } else {
+      onChange(nextModels);
+    }
     setError(null);
   };
 
@@ -232,13 +320,32 @@ export function ProviderModelsSection({
               )}
             >
               <div className="flex min-w-0 items-center gap-1">
+                {model.isCustom ? (
+                  <Input
+                    className="h-6 min-w-0 max-w-44 text-xs"
+                    defaultValue={getCustomModelLabel(customModelLabels, model.slug) ?? ""}
+                    placeholder="Display label (optional)"
+                    aria-label={`Display label for ${model.slug}`}
+                    onBlur={(event) => {
+                      const nextLabels = nextCustomModelLabels(
+                        labelsRef.current,
+                        model.slug,
+                        event.currentTarget.value,
+                      );
+                      labelsRef.current = nextLabels;
+                      onLabelChange(nextLabels);
+                    }}
+                  />
+                ) : null}
                 <span
                   className={cn(
                     "min-w-0 truncate text-xs",
                     isHidden ? "text-muted-foreground line-through" : "text-foreground/90",
                   )}
                 >
-                  {model.name}
+                  {/* Custom rows already have a label editor; keep the API slug
+                      visible so labels never hide which model they map to. */}
+                  {modelRowPrimaryText(model)}
                 </span>
                 {hasDetails ? (
                   <Tooltip>

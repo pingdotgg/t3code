@@ -13,7 +13,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { getCustomModelLabel, normalizeCustomModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -142,8 +142,17 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
   customModelCapabilities: ModelCapabilities,
+  customModelLabels: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<ServerProviderModel> {
-  const resolvedBuiltInModels = [...builtInModels];
+  const customSlugs = new Set(customModels.map(normalizeCustomModelSlug).filter(Boolean));
+  const resolvedBuiltInModels = builtInModels.map((model) => {
+    if (!customSlugs.has(model.slug)) return model;
+    return {
+      ...model,
+      name: getCustomModelLabel(customModelLabels, model.slug) ?? model.name,
+      isCustom: true,
+    };
+  });
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
   const customEntries: ServerProviderModel[] = [];
 
@@ -153,9 +162,10 @@ export function providerModelsFromSettings(
       continue;
     }
     seen.add(normalized);
+    const label = getCustomModelLabel(customModelLabels, normalized);
     customEntries.push({
       slug: normalized,
-      name: normalized,
+      name: typeof label === "string" && label.trim().length > 0 ? label.trim() : normalized,
       isCustom: true,
       capabilities: customModelCapabilities,
     });

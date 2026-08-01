@@ -70,6 +70,30 @@ describe("providerModelsFromSettings", () => {
     expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
     expect(models[1]?.isCustom).toBe(true);
   });
+
+  it("uses trimmed labels only for configured custom slugs", () => {
+    const capabilities = createModelCapabilities({ optionDescriptors: [] });
+    expect(
+      providerModelsFromSettings([], ["openai/gpt-5", "other"], capabilities, {
+        "openai/gpt-5": "  GPT 5  ",
+        absent: "ignored",
+        other: "   ",
+      }),
+    ).toMatchObject([
+      { slug: "openai/gpt-5", name: "GPT 5" },
+      { slug: "other", name: "other" },
+    ]);
+  });
+
+  it("does not crash when a custom slug collides with Object.prototype keys", () => {
+    const capabilities = createModelCapabilities({ optionDescriptors: [] });
+    expect(
+      providerModelsFromSettings([], ["__proto__", "constructor"], capabilities, {}),
+    ).toMatchObject([
+      { slug: "__proto__", name: "__proto__", isCustom: true },
+      { slug: "constructor", name: "constructor", isCustom: true },
+    ]);
+  });
 });
 
 describe("ProviderCommandNotFoundError", () => {

@@ -215,6 +215,23 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("applies customModelLabels to custom models on the success path", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({
+          customModels: ["anthropic/claude-sonnet-4-6"],
+          customModelLabels: { "anthropic/claude-sonnet-4-6": "Sonnet 4.6" },
+        }),
+        process.cwd(),
+      );
+
+      const custom = snapshot.models.find((entry) => entry.slug === "anthropic/claude-sonnet-4-6");
+      NodeAssert.ok(custom);
+      NodeAssert.equal(custom.isCustom, true);
+      NodeAssert.equal(custom.name, "Sonnet 4.6");
+    }),
+  );
+
   it.effect("reports local model inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventoryError = new Error("opencode models failed");

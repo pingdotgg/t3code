@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   createModelSelection,
+  getCustomModelLabel,
   normalizeCustomModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -67,6 +68,41 @@ function readInstanceCustomModels(
     { readonly customModels: ReadonlyArray<string> } | undefined
   >;
   return legacyProviders[driverKind]?.customModels ?? [];
+}
+
+function readInstanceCustomModelLabels(
+  settings: UnifiedSettings,
+  instanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+): Readonly<Record<string, string>> {
+  const instance = settings.providerInstances?.[instanceId];
+  const config = instance?.config;
+  if (config !== null && typeof config === "object") {
+    const value = (config as Record<string, unknown>).customModelLabels;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[0] === "string" &&
+            typeof entry[1] === "string" &&
+            entry[1].trim().length > 0,
+        ),
+      );
+    }
+  }
+  const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
+  if (instanceId !== defaultInstanceId) return {};
+  const legacy = (settings.providers as Record<string, unknown>)[driverKind];
+  if (!legacy || typeof legacy !== "object") return {};
+  const labels = (legacy as Record<string, unknown>).customModelLabels;
+  return labels && typeof labels === "object" && !Array.isArray(labels)
+    ? Object.fromEntries(
+        Object.entries(labels).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[1] === "string" && entry[1].trim().length > 0,
+        ),
+      )
+    : {};
 }
 
 export interface AppModelOption {
@@ -144,6 +180,43 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
+/**
+ * Merge persisted display labels into already-present options, and append any
+ * custom slugs that are not yet in the list. Built-in slugs listed in
+ * `customModels` are treated as custom rows when a label is applied.
+ */
+function applyCustomModelLabelsToOptions(
+  options: AppModelOption[],
+  labels: Readonly<Record<string, string>>,
+  customModels: ReadonlyArray<string>,
+  builtInModelSlugs: ReadonlySet<string>,
+  seen: Set<string>,
+): void {
+  // First pass: override names for options already present (server snapshot)
+  // when the user has a persisted label for that slug.
+  for (const option of options) {
+    const label = getCustomModelLabel(labels, option.slug);
+    if (!label) continue;
+    option.name = label;
+    if (customModels.some((candidate) => normalizeCustomModelSlug(candidate) === option.slug)) {
+      option.isCustom = true;
+    }
+  }
+
+  for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
+    if (seen.has(slug)) {
+      continue;
+    }
+
+    seen.add(slug);
+    options.push({
+      slug,
+      name: getCustomModelLabel(labels, slug) ?? slug,
+      isCustom: true,
+    });
+  }
+}
+
 export function getAppModelOptions(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
@@ -164,18 +237,8 @@ export function getAppModelOptions(
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
   const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
-  for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
-    if (seen.has(slug)) {
-      continue;
-    }
-
-    seen.add(slug);
-    options.push({
-      slug,
-      name: slug,
-      isCustom: true,
-    });
-  }
+  const labels = readInstanceCustomModelLabels(settings, defaultInstanceId, provider);
+  applyCustomModelLabelsToOptions(options, labels, customModels, builtInModelSlugs, seen);
 
   return applyInstanceModelPreferences(
     options,
@@ -207,14 +270,8 @@ export function getAppModelOptionsForInstance(
   );
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
-  for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
-    if (seen.has(slug)) {
-      continue;
-    }
-
-    seen.add(slug);
-    options.push({ slug, name: slug, isCustom: true });
-  }
+  const labels = readInstanceCustomModelLabels(settings, entry.instanceId, entry.driverKind);
+  applyCustomModelLabelsToOptions(options, labels, customModels, builtInModelSlugs, seen);
 
   return applyInstanceModelPreferences(
     options,
