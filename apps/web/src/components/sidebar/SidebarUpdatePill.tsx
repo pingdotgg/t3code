@@ -1,8 +1,6 @@
 import { DownloadIcon, RotateCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import * as Schema from "effect/Schema";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { isElectron } from "../../env";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -20,9 +18,6 @@ import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-const DISMISSED_DESKTOP_UPDATE_VERSION_STORAGE_KEY = "t3code:dismissed-desktop-update-version:v1";
-const DismissedDesktopUpdateVersion = Schema.NullOr(Schema.String);
 
 function SidebarUpdateReleaseNotesTooltip({
   state,
@@ -65,13 +60,9 @@ function SidebarUpdateReleaseNotesTooltip({
 
 export function SidebarUpdatePill() {
   const state = useDesktopUpdateState();
-  const [dismissedVersion, setDismissedVersion] = useLocalStorage(
-    DISMISSED_DESKTOP_UPDATE_VERSION_STORAGE_KEY,
-    null,
-    DismissedDesktopUpdateVersion,
-  );
+  const [dismissed, setDismissed] = useState(false);
 
-  const visible = isElectron && shouldShowDesktopUpdateButton(state, dismissedVersion);
+  const visible = isElectron && shouldShowDesktopUpdateButton(state) && !dismissed;
   const tooltip = state ? getDesktopUpdateButtonTooltip(state) : "Update available";
   const disabled = isDesktopUpdateButtonDisabled(state);
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
@@ -79,11 +70,6 @@ export function SidebarUpdatePill() {
   const showArm64Warning = isElectron && shouldShowArm64IntelBuildWarning(state);
   const arm64Description =
     state && showArm64Warning ? getArm64IntelBuildWarningDescription(state) : null;
-
-  const handleDismiss = useCallback(() => {
-    if (!state?.availableVersion) return;
-    setDismissedVersion(state.availableVersion);
-  }, [setDismissedVersion, state?.availableVersion]);
 
   const handleAction = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -228,13 +214,13 @@ export function SidebarUpdatePill() {
                     type="button"
                     aria-label="Dismiss update"
                     className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
-                    onClick={handleDismiss}
+                    onClick={() => setDismissed(true)}
                   >
                     <XIcon className="size-3.5" />
                   </button>
                 }
               />
-              <TooltipPopup side="top">Dismiss this version</TooltipPopup>
+              <TooltipPopup side="top">Dismiss until next launch</TooltipPopup>
             </Tooltip>
           )}
         </div>

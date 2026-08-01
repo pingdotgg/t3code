@@ -247,7 +247,7 @@ describe("DesktopUpdates", () => {
     );
   });
 
-  it.effect("configures the updater and runs startup and hourly checks on the test clock", () => {
+  it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();
 
     return Effect.gen(function* () {
@@ -267,12 +267,6 @@ describe("DesktopUpdates", () => {
 
           yield* TestClock.adjust(Duration.millis(15_000));
           assert.equal(harness.checkCount(), 1);
-
-          yield* TestClock.adjust(Duration.minutes(59));
-          assert.equal(harness.checkCount(), 1);
-
-          yield* TestClock.adjust(Duration.seconds(45));
-          assert.equal(harness.checkCount(), 2);
         }),
       );
 

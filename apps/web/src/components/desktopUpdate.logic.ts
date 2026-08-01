@@ -38,25 +38,14 @@ export function resolveDesktopUpdateButtonAction(
   return "none";
 }
 
-export function shouldShowDesktopUpdateButton(
-  state: DesktopUpdateState | null,
-  dismissedVersion: string | null = null,
-): boolean {
+export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null): boolean {
   if (!state || !state.enabled) {
     return false;
   }
   if (state.status === "downloading") {
     return true;
   }
-  const action = resolveDesktopUpdateButtonAction(state);
-  if (
-    action === "download" &&
-    dismissedVersion !== null &&
-    state.availableVersion === dismissedVersion
-  ) {
-    return false;
-  }
-  return action !== "none";
+  return resolveDesktopUpdateButtonAction(state) !== "none";
 }
 
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {

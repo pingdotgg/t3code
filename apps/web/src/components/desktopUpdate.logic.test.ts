@@ -44,48 +44,6 @@ describe("desktop update button state", () => {
     expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
   });
 
-  it("keeps a versionless available state visible", () => {
-    expect(shouldShowDesktopUpdateButton({ ...baseState, status: "available" })).toBe(true);
-  });
-
-  it("hides a dismissed update until a newer version is available", () => {
-    const state: DesktopUpdateState = {
-      ...baseState,
-      status: "available",
-      availableVersion: "1.1.0",
-    };
-
-    expect(shouldShowDesktopUpdateButton(state, "1.1.0")).toBe(false);
-    expect(shouldShowDesktopUpdateButton({ ...state, availableVersion: "1.1.1" }, "1.1.0")).toBe(
-      true,
-    );
-  });
-
-  it("keeps download progress and install actions visible for a dismissed version", () => {
-    expect(
-      shouldShowDesktopUpdateButton(
-        {
-          ...baseState,
-          status: "downloading",
-          availableVersion: "1.1.0",
-          downloadPercent: 42,
-        },
-        "1.1.0",
-      ),
-    ).toBe(true);
-    expect(
-      shouldShowDesktopUpdateButton(
-        {
-          ...baseState,
-          status: "downloaded",
-          availableVersion: "1.1.0",
-          downloadedVersion: "1.1.0",
-        },
-        "1.1.0",
-      ),
-    ).toBe(true);
-  });
-
   it("keeps retry action available after a download error", () => {
     const state: DesktopUpdateState = {
       ...baseState,

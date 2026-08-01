@@ -43,7 +43,7 @@ import {
 } from "./updateMachine.ts";
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "1 hour";
+const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
