@@ -25,10 +25,35 @@ export class ServiceLauncherClientError extends Schema.TaggedErrorClass<ServiceL
       "send",
       "disconnect",
       "timeout",
-      "rejected",
     ]),
-    reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "decode-context":
+        return "The service launcher supplied invalid startup context.";
+      case "version-mismatch":
+        return "The service launcher started a different t3 version.";
+      case "ipc-unavailable":
+        return "The service launcher IPC channel is unavailable.";
+      case "unmanaged":
+        return "This server is not managed by the launcher.";
+      case "send":
+        return "Could not send a request to the service launcher.";
+      case "disconnect":
+        return "The service launcher disconnected before acknowledging the request.";
+      case "timeout":
+        return "The service launcher did not respond within 30 seconds.";
+    }
+  }
+}
+
+export class ServiceLauncherRejectedError extends Schema.TaggedErrorClass<ServiceLauncherRejectedError>()(
+  "ServiceLauncherRejectedError",
+  {
+    targetVersion: Schema.String,
+    reason: Schema.String,
   },
 ) {
   override get message(): string {
@@ -78,22 +103,13 @@ export class ServiceLauncherClient extends Context.Service<
     readonly trial: boolean;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
-    }) => Effect.Effect<string, ServiceLauncherClientError>;
+    }) => Effect.Effect<string, ServiceLauncherClientError | ServiceLauncherRejectedError>;
     readonly prepareTrial: Effect.Effect<
       ServerSelfUpdateOutcome | undefined,
       ServiceLauncherClientError
     >;
   }
 >()("t3/cloud/serviceLauncherClient") {}
-
-const fail = (
-  operation: ServiceLauncherClientError["operation"],
-  reason: string,
-  cause?: unknown,
-) =>
-  cause === undefined
-    ? new ServiceLauncherClientError({ operation, reason })
-    : new ServiceLauncherClientError({ operation, reason, cause });
 
 const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup")(
   function* (options?: { readonly currentVersion?: string }) {
@@ -104,21 +120,15 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
 
     if (rawContext !== undefined && context === undefined) {
-      return yield* fail(
-        "decode-context",
-        "The service launcher supplied invalid startup context.",
-      );
+      return yield* new ServiceLauncherClientError({ operation: "decode-context" });
     }
     if (context !== undefined && context.childVersion !== currentVersion) {
-      return yield* fail(
-        "version-mismatch",
-        `The service launcher started t3@${context.childVersion}, but the child reports t3@${currentVersion}.`,
-      );
+      return yield* new ServiceLauncherClientError({ operation: "version-mismatch" });
     }
 
     const managed = context !== undefined && host.connected;
     if (context !== undefined && !managed) {
-      return yield* fail("ipc-unavailable", "The service launcher IPC channel is unavailable.");
+      return yield* new ServiceLauncherClientError({ operation: "ipc-unavailable" });
     }
 
     return { host, context, managed };
@@ -143,7 +153,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
   ) =>
     Effect.callback<ServiceLauncherParentMessage, ServiceLauncherClientError>((resume) => {
       if (!managed) {
-        resume(Effect.fail(fail("unmanaged", "This server is not managed by the launcher.")));
+        resume(Effect.fail(new ServiceLauncherClientError({ operation: "unmanaged" })));
         return;
       }
 
@@ -165,14 +175,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         if (reply !== undefined && accept(reply)) settle(Effect.succeed(reply));
       };
       const onDisconnect = () =>
-        settle(
-          Effect.fail(
-            fail(
-              "disconnect",
-              "The service launcher disconnected before acknowledging the request.",
-            ),
-          ),
-        );
+        settle(Effect.fail(new ServiceLauncherClientError({ operation: "disconnect" })));
 
       host.on("message", onMessage);
       host.on("disconnect", onDisconnect);
@@ -180,22 +183,19 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         host.send(message, (error) => {
           if (error !== null) {
             settle(
-              Effect.fail(fail("send", "Could not send a request to the service launcher.", error)),
+              Effect.fail(new ServiceLauncherClientError({ operation: "send", cause: error })),
             );
           }
         });
       } catch (cause) {
-        settle(
-          Effect.fail(fail("send", "Could not send a request to the service launcher.", cause)),
-        );
+        settle(Effect.fail(new ServiceLauncherClientError({ operation: "send", cause })));
       }
 
       return Effect.sync(cleanup);
     }).pipe(
       Effect.timeoutOrElse({
         duration: "30 seconds",
-        orElse: () =>
-          Effect.fail(fail("timeout", "The service launcher did not respond within 30 seconds.")),
+        orElse: () => Effect.fail(new ServiceLauncherClientError({ operation: "timeout" })),
       }),
     );
 
@@ -208,7 +208,12 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         reply.type === "update-accepted"
           ? Effect.succeed(reply.updateId)
           : reply.type === "update-rejected"
-            ? Effect.fail(fail("rejected", reply.reason))
+            ? Effect.fail(
+                new ServiceLauncherRejectedError({
+                  targetVersion: input.targetVersion,
+                  reason: reply.reason,
+                }),
+              )
             : Effect.die("service launcher returned an impossible update response"),
       ),
     );

@@ -174,7 +174,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         .pipe(
           Effect.mapError((error) =>
             failWith(
-              error.operation === "rejected"
+              error._tag === "ServiceLauncherRejectedError"
                 ? error.reason
                 : "Could not ask the service launcher to activate the prepared update.",
               error,

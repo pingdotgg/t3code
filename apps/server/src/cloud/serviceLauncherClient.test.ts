@@ -95,6 +95,23 @@ it.effect("returns the launcher-generated ID only after update acceptance", () =
   }),
 );
 
+it.effect("preserves a launcher rejection as a distinct error", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess({ protocol: 1, childVersion: "1.0.0" });
+    const client = yield* makeClient(host, "1.0.0");
+    const requested = yield* Effect.forkChild(client.requestUpdate({ targetVersion: "1.1.0" }), {
+      startImmediately: true,
+    });
+    yield* Effect.yieldNow;
+    host.emit({ type: "update-rejected", reason: "requires local update" });
+    expect(yield* Fiber.join(requested).pipe(Effect.flip)).toMatchObject({
+      _tag: "ServiceLauncherRejectedError",
+      targetVersion: "1.1.0",
+      reason: "requires local update",
+    });
+  }),
+);
+
 it.effect("rejects contradictory trial context instead of leaving activation closed", () =>
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
