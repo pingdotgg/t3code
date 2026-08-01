@@ -532,7 +532,6 @@ describe("buildThreadListV2Items", () => {
       environmentId: null,
       projectCwdByKey: new Map(),
       settlementEnvironmentIds: new Set([environmentId]),
-      changeRequestStateByKey: new Map(),
     });
     const firstBatch = selectThreadListV2ChangeRequestLookupWindow({
       targets,
@@ -569,7 +568,6 @@ describe("buildThreadListV2Items", () => {
       environmentId: null,
       projectCwdByKey: new Map(),
       settlementEnvironmentIds: new Set([environmentId]),
-      changeRequestStateByKey: new Map(),
     });
 
     expect(targets).toHaveLength(1);

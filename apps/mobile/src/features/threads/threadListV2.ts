@@ -185,7 +185,6 @@ export interface ThreadListV2ChangeRequestLookupTarget {
   readonly key: string;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
-  readonly hasUnknownState: boolean;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
@@ -205,7 +204,6 @@ export function buildThreadListV2ChangeRequestLookupTargets(input: {
   }> | null;
   readonly projectCwdByKey: ReadonlyMap<string, string>;
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
-  readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestSettlementState>;
 }): ReadonlyArray<ThreadListV2ChangeRequestLookupTarget> {
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
@@ -215,43 +213,34 @@ export function buildThreadListV2ChangeRequestLookupTargets(input: {
     {
       environmentId: EnvironmentId;
       cwd: string;
-      hasUnknownState: boolean;
       threads: EnvironmentThreadShell[];
     }
   >();
 
+  // Keep confirmed states in the rotation: a branch can gain a PR later, and
+  // a closed PR can reopen while its thread remains off-screen.
   for (const thread of sortThreadsForListV2(input.threads)) {
     if (thread.archivedAt !== null || thread.branch === null) continue;
     if (!input.settlementEnvironmentIds.has(thread.environmentId)) continue;
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     const projectKey = `${thread.environmentId}:${thread.projectId}`;
     if (projectKeys !== null && !projectKeys.has(projectKey)) continue;
-    const state = input.changeRequestStateByKey.get(threadChangeRequestStateKey(thread));
-    if (state !== undefined && state !== "unknown" && state !== "open") continue;
     const cwd = thread.worktreePath ?? input.projectCwdByKey.get(projectKey) ?? null;
     if (cwd === null) continue;
     const key = threadChangeRequestLookupTargetKey(thread.environmentId, cwd);
     const current = groups.get(key);
     if (current) {
       current.threads.push(thread);
-      current.hasUnknownState ||= state === undefined || state === "unknown";
     } else {
       groups.set(key, {
         environmentId: thread.environmentId,
         cwd,
-        hasUnknownState: state === undefined || state === "unknown",
         threads: [thread],
       });
     }
   }
 
-  return [...groups]
-    .map(([key, group]) => ({ key, ...group }))
-    .sort(
-      (left, right) =>
-        Number(right.hasUnknownState) - Number(left.hasUnknownState) ||
-        left.key.localeCompare(right.key),
-    );
+  return [...groups].map(([key, group]) => ({ key, ...group }));
 }
 
 export function selectThreadListV2ChangeRequestLookupWindow(input: {

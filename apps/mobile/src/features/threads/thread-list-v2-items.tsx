@@ -345,7 +345,6 @@ export const ThreadListV2ChangeRequestLookupPool = memo(
     }> | null;
     readonly projectCwdByKey: ReadonlyMap<string, string>;
     readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
-    readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestSettlementState>;
     readonly onChangeRequestState: (stateKey: string, state: ChangeRequestSettlementState) => void;
   }) {
     const {
@@ -354,7 +353,6 @@ export const ThreadListV2ChangeRequestLookupPool = memo(
       projectRefs,
       projectCwdByKey,
       settlementEnvironmentIds,
-      changeRequestStateByKey,
       onChangeRequestState,
     } = props;
     const targets = useMemo(
@@ -365,16 +363,8 @@ export const ThreadListV2ChangeRequestLookupPool = memo(
           projectRefs,
           projectCwdByKey,
           settlementEnvironmentIds,
-          changeRequestStateByKey,
         }),
-      [
-        changeRequestStateByKey,
-        environmentId,
-        projectCwdByKey,
-        projectRefs,
-        settlementEnvironmentIds,
-        threads,
-      ],
+      [environmentId, projectCwdByKey, projectRefs, settlementEnvironmentIds, threads],
     );
     const [windowIndex, setWindowIndex] = useState(0);
     useEffect(() => {

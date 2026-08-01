@@ -1132,7 +1132,6 @@ function ThreadNavigationSidebarPane(
       projectRefs={selectedProjectScope?.projectRefs ?? null}
       projectCwdByKey={projectCwdByKey}
       settlementEnvironmentIds={settlementEnvironmentIds}
-      changeRequestStateByKey={changeRequestStateByKey}
       onChangeRequestState={handleChangeRequestState}
     />
   ) : null;

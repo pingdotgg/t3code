@@ -1051,7 +1051,6 @@ export function HomeScreen(props: HomeScreenProps) {
           projectRefs={v2ScopedProjectGroup?.projectRefs ?? null}
           projectCwdByKey={projectCwdByKey}
           settlementEnvironmentIds={settlementEnvironmentIds}
-          changeRequestStateByKey={changeRequestStateByKey}
           onChangeRequestState={handleChangeRequestState}
         />
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
