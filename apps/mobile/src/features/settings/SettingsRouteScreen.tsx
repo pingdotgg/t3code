@@ -47,6 +47,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import { BackgroundConnectionSettingsSection } from "../background-connection/BackgroundConnectionSettingsSection";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -126,6 +127,8 @@ function LocalSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+
+        <BackgroundConnectionSettingsSection />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
@@ -512,6 +515,8 @@ function ConfiguredSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+
+        <BackgroundConnectionSettingsSection />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
