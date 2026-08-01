@@ -907,7 +907,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("drops a full refresh result when the local ref changes in flight", () => {
+  it.effect("returns cached status when a full refresh is dropped after a ref change", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -939,13 +939,11 @@ describe("VcsStatusBroadcaster", () => {
 
       state.remoteStatusStarted = yield* Deferred.make<void>();
       state.remoteStatusRelease = yield* Deferred.make<void>();
-      const refreshDone = yield* Deferred.make<void>();
-      yield* broadcaster
-        .refreshStatus("/repo")
-        .pipe(
-          Effect.ensuring(Deferred.succeed(refreshDone, undefined).pipe(Effect.ignore)),
-          Effect.forkIn(scope),
-        );
+      const refreshResult = yield* Deferred.make<VcsStatusResult>();
+      yield* broadcaster.refreshStatus("/repo").pipe(
+        Effect.flatMap((status) => Deferred.succeed(refreshResult, status)),
+        Effect.forkIn(scope),
+      );
       yield* Deferred.await(state.remoteStatusStarted);
 
       state.currentLocalStatus = {
@@ -954,7 +952,10 @@ describe("VcsStatusBroadcaster", () => {
       };
       yield* broadcaster.refreshLocalStatus("/repo");
       yield* Deferred.succeed(state.remoteStatusRelease, undefined);
-      yield* Deferred.await(refreshDone);
+      assert.deepStrictEqual(yield* Deferred.await(refreshResult), {
+        ...state.currentLocalStatus,
+        ...baseRemoteStatus,
+      } satisfies VcsStatusResult);
 
       const latestSnapshot = yield* Stream.runHead(
         broadcaster.streamStatus(

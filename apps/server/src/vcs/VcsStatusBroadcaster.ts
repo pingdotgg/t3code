@@ -355,13 +355,21 @@ export const make = Effect.gen(function* () {
       value: remote,
     } satisfies CachedValue<VcsStatusRemoteResult | null>;
     const remoteLoaded = remote?.prLookupFailed !== true;
-    const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
+    const update = yield* Ref.modify(cacheRef, (cache) => {
       const previous = cache.get(cwd) ?? EMPTY_CACHED_VCS_STATUS;
       if (
         options?.expectedRefGeneration !== undefined &&
         previous.refGeneration !== options.expectedRefGeneration
       ) {
-        return [false, cache] as const;
+        return [
+          {
+            shouldPublish: false,
+            status: previous.local
+              ? mergeGitStatusParts(previous.local.value, previous.remote?.value ?? null)
+              : mergeGitStatusParts(local, remote),
+          },
+          cache,
+        ] as const;
       }
       const refChanged = previous.local?.value.refName !== local.refName;
       const nextCache = new Map(cache);
@@ -372,14 +380,18 @@ export const make = Effect.gen(function* () {
         refGeneration: refChanged ? previous.refGeneration + 1 : previous.refGeneration,
       });
       return [
-        previous.local?.fingerprint !== nextLocal.fingerprint ||
-          previous.remote?.fingerprint !== nextRemote.fingerprint ||
-          previous.remoteLoaded !== remoteLoaded,
+        {
+          shouldPublish:
+            previous.local?.fingerprint !== nextLocal.fingerprint ||
+            previous.remote?.fingerprint !== nextRemote.fingerprint ||
+            previous.remoteLoaded !== remoteLoaded,
+          status: mergeGitStatusParts(local, remote),
+        },
         nextCache,
       ] as const;
     });
 
-    if (options?.publish && shouldPublish) {
+    if (options?.publish && update.shouldPublish) {
       yield* PubSub.publish(changesPubSub, {
         cwd,
         event: {
@@ -391,7 +403,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    return mergeGitStatusParts(local, remote);
+    return update.status;
   });
 
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
