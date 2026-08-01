@@ -5745,6 +5745,66 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("runs the Sidebar V2 top actions", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarV2Enabled: true,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-v2-top-actions" as MessageId,
+        targetText: "sidebar v2 top actions",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await openCommandPaletteFromTrigger();
+      await expect.element(page.getByTestId("command-palette")).toBeInTheDocument();
+
+      useCommandPaletteStore.getState().setOpen(false);
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector('[data-testid="command-palette"]')).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByText("Skills", { exact: true }).click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/skills",
+        "Skills should navigate to the skills route.",
+      );
+
+      await mounted.router.navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          threadId: THREAD_ID,
+        },
+      });
+      await expect.element(page.getByText("New thread", { exact: true })).toBeInTheDocument();
+      await page.getByText("New thread", { exact: true }).click();
+
+      const draftPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "New thread should create a draft from the default project.",
+      );
+      const draft = useComposerDraftStore.getState().getDraftSession(draftIdFromPath(draftPath));
+      expect(draft?.projectId).toBe(PROJECT_ID);
+    } finally {
+      localStorage.removeItem("t3code:client-settings:v1");
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a fresh draft after the previous draft thread is promoted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

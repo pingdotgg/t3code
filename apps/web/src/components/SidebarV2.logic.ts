@@ -1,6 +1,7 @@
 import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 
+import { isMacPlatform } from "../lib/utils";
 import { isThreadActivelyWorking } from "../session-logic";
 import type { SidebarThreadSummary, TurnDiffSummary } from "../types";
 
@@ -8,6 +9,16 @@ export type ThreadLifecycleSupport = {
   readonly settlement: boolean;
   readonly snooze: boolean;
 };
+
+export function shouldReserveMacSidebarChrome({
+  isElectron,
+  platform,
+}: {
+  readonly isElectron: boolean;
+  readonly platform: string;
+}): boolean {
+  return isElectron && isMacPlatform(platform);
+}
 
 /**
  * Lifecycle capabilities are resolved per environment rather than reduced to a

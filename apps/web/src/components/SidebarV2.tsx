@@ -1,11 +1,4 @@
-import {
-  ArchiveIcon,
-  BellOffIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  InboxIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ArchiveIcon, BellOffIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { scopedProjectKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
@@ -22,6 +15,8 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { usePrimaryEnvironmentDescriptor, usePrimaryEnvironmentId } from "../environments/primary";
 import { useSavedEnvironmentRuntimeStore } from "../environments/runtime";
+import { isElectron } from "../env";
+import { shortcutLabelForCommand } from "../keybindings";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
@@ -30,12 +25,17 @@ import {
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import type { Project, SidebarThreadSummary } from "../types";
 import { buildProviderEntriesByEnvironment, scopedProviderInstanceKey } from "../providerInstances";
-import { useServerProviders } from "../rpc/serverState";
-import { resolveThreadLifecycleSupport, selectSnoozeShelfBulkTargets } from "./SidebarV2.logic";
+import { useServerKeybindings, useServerProviders } from "../rpc/serverState";
+import {
+  resolveThreadLifecycleSupport,
+  selectSnoozeShelfBulkTargets,
+  shouldReserveMacSidebarChrome,
+} from "./SidebarV2.logic";
 import { SidebarV2Row } from "./SidebarV2Row";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { SidebarContent, SidebarGroup, SidebarMenu } from "./ui/sidebar";
+import { SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu } from "./ui/sidebar";
+import { SidebarTopActions } from "./SidebarTopActions";
 
 const SETTLED_PAGE_SIZE = 25;
 
@@ -134,7 +134,23 @@ export default function SidebarV2() {
   );
   const primaryDescriptor = usePrimaryEnvironmentDescriptor();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const keybindings = useServerKeybindings();
   const remoteEnvironmentDescriptors = useSavedEnvironmentRuntimeStore((state) => state.byId);
+  const commandPaletteShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "commandPalette.toggle",
+    {
+      platform: navigator.platform,
+      context: {
+        terminalFocus: false,
+        terminalOpen: false,
+      },
+    },
+  );
+  const hasMacSidebarChrome = shouldReserveMacSidebarChrome({
+    isElectron,
+    platform: navigator.platform,
+  });
   const lifecycleSupport = useMemo(
     () =>
       resolveThreadLifecycleSupport([
@@ -397,30 +413,26 @@ export default function SidebarV2() {
     (thread: SidebarThreadSummary) => renderThread(thread, "slim"),
     [renderThread],
   );
+  const handleNewThreadClick = useCallback(() => {
+    if (defaultProjectRef) void handleNewThread(defaultProjectRef);
+  }, [defaultProjectRef, handleNewThread]);
 
   return (
     <>
+      {hasMacSidebarChrome ? (
+        <SidebarHeader aria-hidden className="drag-region h-8 shrink-0 p-0 wco:h-8" />
+      ) : null}
       <SidebarContent className="gap-1 pt-1">
-        <Shelf
-          action={
-            <Button
-              disabled={defaultProjectRef === null}
-              onClick={() => {
-                if (defaultProjectRef) void handleNewThread(defaultProjectRef);
-              }}
-              size="icon-sm"
-              title="New thread"
-              variant="ghost"
-            >
-              <PlusIcon />
-            </Button>
-          }
-          count={shelves.active.length}
-          icon={<InboxIcon className="size-3.5" />}
-          title="Active"
-        >
+        <SidebarTopActions
+          commandPaletteShortcutLabel={commandPaletteShortcutLabel}
+          newThread={{
+            disabled: defaultProjectRef === null,
+            onClick: handleNewThreadClick,
+          }}
+        />
+        <SidebarGroup className="px-1 py-0">
           <SidebarMenu>{shelves.active.map(renderCardThread)}</SidebarMenu>
-        </Shelf>
+        </SidebarGroup>
         <Shelf
           count={shelves.snoozed.length}
           defaultOpen={false}

@@ -15,6 +15,7 @@ import {
   resolveThreadLifecycleSupport,
   resolveWorkingStartedAt,
   selectSnoozeShelfBulkTargets,
+  shouldReserveMacSidebarChrome,
 } from "./SidebarV2.logic";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -55,6 +56,14 @@ function thread(overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSum
     ...overrides,
   };
 }
+
+describe("shouldReserveMacSidebarChrome", () => {
+  it("reserves space for macOS Electron traffic lights only", () => {
+    expect(shouldReserveMacSidebarChrome({ isElectron: true, platform: "MacIntel" })).toBe(true);
+    expect(shouldReserveMacSidebarChrome({ isElectron: true, platform: "Win32" })).toBe(false);
+    expect(shouldReserveMacSidebarChrome({ isElectron: false, platform: "MacIntel" })).toBe(false);
+  });
+});
 
 describe("resolveThreadLifecycleSupport", () => {
   it("keeps each environment's capabilities independent", () => {
