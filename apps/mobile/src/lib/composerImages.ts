@@ -1,14 +1,29 @@
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type PreviewAnnotationPayload,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
 import { estimateBase64ByteSize } from "./base64";
 import { uuidv4 } from "./uuid";
 
+export { appendComposerImageAnnotationPrompts } from "./composerImageAnnotations";
+
+export interface DraftComposerImageMarkupOriginal {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly dataUrl: string;
+  readonly previewUri: string;
+}
+
 export interface DraftComposerImageAttachment extends UploadChatImageAttachment {
   readonly id: string;
   readonly previewUri: string;
+  readonly markup?: {
+    readonly annotation: PreviewAnnotationPayload;
+    readonly original: DraftComposerImageMarkupOriginal;
+  };
 }
 
 /** Wire shape for startTurn: pure uploads without client draft id / previewUri. */
@@ -22,6 +37,20 @@ export function toUploadChatImageAttachments(
     sizeBytes: attachment.sizeBytes,
     dataUrl: attachment.dataUrl,
   }));
+}
+
+export function restoreComposerImageOriginal(
+  attachment: DraftComposerImageAttachment,
+): DraftComposerImageAttachment {
+  if (!attachment.markup) {
+    return attachment;
+  }
+
+  return {
+    id: attachment.id,
+    type: "image",
+    ...attachment.markup.original,
+  };
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";

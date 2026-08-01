@@ -10,6 +10,7 @@ import {
   getComposerDraftSnapshot,
   mergeComposerDraftContentState,
   removeComposerDraftsForEnvironment,
+  replaceComposerDraftAttachmentState,
   restoreComposerDraftSnapshotState,
 } from "./use-composer-drafts";
 
@@ -223,6 +224,56 @@ describe("mobile composer drafts", () => {
     expect(merged[draftKey]?.attachments).toHaveLength(8);
     expect(merged[draftKey]?.attachments[0]).toEqual(existingImage);
     expect(merged[draftKey]?.attachments.at(-1)?.id).toBe("shared-6");
+  });
+
+  it("replaces one attachment in place without disturbing draft settings", () => {
+    const draftKey = "environment-1:thread-1";
+    const image = (id: string, name = `${id}.png`) => ({
+      id,
+      type: "image" as const,
+      name,
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: `file:///tmp/${name}`,
+    });
+    const first = image("first");
+    const second = image("second");
+    const replacement = image("first", "first-annotated.png");
+    const current: Record<string, ComposerDraft> = {
+      [draftKey]: {
+        text: "Keep this text",
+        attachments: [first, second],
+        runtimeMode: "approval-required",
+      },
+    };
+
+    expect(replaceComposerDraftAttachmentState(current, draftKey, replacement)).toEqual({
+      [draftKey]: {
+        text: "Keep this text",
+        attachments: [replacement, second],
+        runtimeMode: "approval-required",
+      },
+    });
+  });
+
+  it("does not create or rewrite a draft when the replacement id is missing", () => {
+    const draftKey = "environment-1:thread-1";
+    const current: Record<string, ComposerDraft> = {
+      [draftKey]: DRAFT,
+    };
+    const replacement = {
+      id: "missing",
+      type: "image" as const,
+      name: "missing.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: "file:///tmp/missing.png",
+    };
+
+    expect(replaceComposerDraftAttachmentState(current, draftKey, replacement)).toBe(current);
+    expect(replaceComposerDraftAttachmentState({}, draftKey, replacement)).toEqual({});
   });
 
   it("restores the exact draft captured before an interrupted share import", () => {

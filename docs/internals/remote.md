@@ -155,6 +155,69 @@ A T3-managed `tailscale serve` mapping exposes the server on the tailnet over HT
 resulting private-network endpoints are advertised for pairing. Connection then follows the ordinary
 bearer path.
 
+### Preview review versus preview browsing
+
+A preview browser session belongs to the desktop host that owns its Electron webview, cookies, and
+page state. Remote clients must not infer that reaching a T3 environment also makes arbitrary
+development ports reachable.
+
+Remote preview review therefore uses the environment WebSocket as a control path:
+
+```text
+mobile review request
+        ↓
+T3 server preview broker
+        ↓
+connected desktop preview host captures one frame
+        ↓
+compact PNG + visible interactive bounds
+        ↓
+mobile freezes and annotates the frame locally
+```
+
+This path works through direct, relay, and T3 Connect environment connections and does not expose a
+development server. The server authorizes the capture as an orchestration operation and routes it to
+the desktop host already assigned to that environment.
+
+Live mobile browsing is separate and client-rendered:
+
+```text
+public URL ───────────────────────────────→ mobile WebView
+desktop loopback + LAN/Tailscale endpoint → rewritten private host + same port
+desktop loopback + T3 Connect endpoint ───→ authenticated whole-origin gateway
+                                             ↓
+                                          exact loopback origin
+```
+
+The mobile WebView, not the T3 server, owns page rendering, navigation, cookies, storage, DOM
+inspection, and screenshot capture. LAN and Tailscale remain direct connections. T3 Connect exposes
+only the T3 server origin, so an operate-scoped RPC validates the selected server-owned preview tab
+and issues a one-use, 30-second bootstrap ticket. Consuming it creates a short-lived, HTTP-only
+gateway lease for that exact loopback origin.
+
+Gateway routing is whole-origin within an isolated iOS WebView session. This is intentional: a
+path-prefixed reverse proxy breaks root-relative assets, redirects, service-worker scope, and
+development-server WebSockets. The gateway strips environment authorization, DPoP, forwarding,
+Cloudflare, and hop-by-hop headers; filters T3 session cookies in both directions; does not follow
+upstream redirects; and revokes leases when the authenticated client is removed, its parent auth
+session expires, the preview tab closes, the lease expires, or the server restarts. Active HTTP
+streams and WebSockets terminate with the lease, and each WebSocket direction has bounded frame and
+byte buffering.
+
+Connect Live mode is iOS-only until the Android client can provide a genuinely isolated browser data
+store or on-device proxy. Android WebView's incognito mode clears a process-global cookie jar without
+creating an isolated one, so Android retains direct LAN/Tailscale browsing and the snapshot fallback.
+
+The gateway deliberately targets one loopback origin. Fully qualified localhost URLs are not
+rewritten and therefore still refer to the mobile device, even when they name the selected preview
+port; preview applications should use same-origin relative URLs or expose additional services through
+an explicit endpoint.
+
+The gateway is available on the normal Node-based server runtime used by `npx t3` and desktop. The
+Bun HTTP upgrade API cannot select the WebSocket subprotocol requested by a browser, so direct Bun
+launches report the Connect gateway as unavailable and retain Snapshot review rather than exposing a
+partially working live path.
+
 ### Desktop-managed SSH access
 
 SSH is an access and launch helper, not a separate environment type. `DesktopSshEnvironment`

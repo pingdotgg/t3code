@@ -71,6 +71,10 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import {
+  resolveThreadAuxiliaryRouteAction,
+  type ThreadAuxiliaryRoute,
+} from "./threadAuxiliaryRoute";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -79,8 +83,8 @@ interface ThreadInspectorSelection {
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
-function InspectorPaneRoleActivation() {
-  useAdaptiveWorkspacePaneRole("inspector");
+function InspectorPaneRoleActivation(props: { readonly role: "inspector" | "preview" }) {
+  useAdaptiveWorkspacePaneRole(props.role);
   return null;
 }
 
@@ -102,6 +106,7 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
 }>;
 
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
+  readonly auxiliaryRoute?: ThreadAuxiliaryRoute;
   readonly onReturnToThread?: () => void;
   readonly renderInspector?: (headerInset: number) => ReactNode;
 }
@@ -343,11 +348,25 @@ function ThreadRouteContent(
     if (selectedThread === null || selectedThreadCwd === null) {
       return;
     }
-    if (!fileInspector.supported) {
-      navigation.navigate("ThreadFiles", {
-        environmentId: String(selectedThread.environmentId),
-        threadId: String(selectedThread.id),
-      });
+    const action = resolveThreadAuxiliaryRouteAction({
+      current: props.auxiliaryRoute ?? null,
+      target: "files",
+      persistentFileInspector: fileInspector.supported,
+    });
+    if (action === "close") {
+      props.onReturnToThread?.();
+      return;
+    }
+    const params = {
+      environmentId: String(selectedThread.environmentId),
+      threadId: String(selectedThread.id),
+    };
+    if (action === "replace") {
+      navigation.dispatch(StackActions.replace("ThreadFiles", params));
+      return;
+    }
+    if (action === "navigate") {
+      navigation.navigate("ThreadFiles", params);
       return;
     }
     setInspectorSelection({
@@ -358,11 +377,42 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     navigation,
+    props.auxiliaryRoute,
+    props.onReturnToThread,
     props.renderInspector,
     routeThreadIdentity,
     selectedThread,
     selectedThreadCwd,
     showAuxiliaryPane,
+  ]);
+  const handleOpenPreview = useCallback(() => {
+    if (selectedThread === null) {
+      return;
+    }
+    const action = resolveThreadAuxiliaryRouteAction({
+      current: props.auxiliaryRoute ?? null,
+      target: "browser",
+      persistentFileInspector: fileInspector.supported,
+    });
+    if (action === "close") {
+      props.onReturnToThread?.();
+      return;
+    }
+    const params = {
+      environmentId: String(selectedThread.environmentId),
+      threadId: String(selectedThread.id),
+    };
+    if (action === "replace") {
+      navigation.dispatch(StackActions.replace("ThreadPreview", params));
+      return;
+    }
+    navigation.navigate("ThreadPreview", params);
+  }, [
+    fileInspector.supported,
+    navigation,
+    props.auxiliaryRoute,
+    props.onReturnToThread,
+    selectedThread,
   ]);
   const inspectorToggleActionRef = useRef({
     inspectorMode,
@@ -452,6 +502,8 @@ function ThreadRouteContent(
     [FilesInspector, GitInspector, RouteInspector, inspectorMode, props.renderInspector],
   );
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
+  const activeInspectorRole =
+    inspectorMode === "route" && props.auxiliaryRoute === "browser" ? "preview" : "inspector";
   // Hand the inspector to the workspace so it renders beside the navigator,
   // outside this screen's native header — the terminal/git/files toolbar
   // stays anchored to the chat pane instead of floating above the inspector.
@@ -611,6 +663,7 @@ function ThreadRouteContent(
     projectScripts: selectedThreadProject?.scripts ?? [],
     terminalSessions: terminalMenuSessions,
     showDirectFileControl: layout.usesSplitView,
+    onOpenPreview: handleOpenPreview,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -671,6 +724,11 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
+    actions.push({
+      accessibilityLabel: "Open browser",
+      icon: "globe",
+      onPress: handleOpenPreview,
+    });
     if (selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Open files",
@@ -701,6 +759,7 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     handleOpenFilesInspector,
+    handleOpenPreview,
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
@@ -778,6 +837,7 @@ function ThreadRouteContent(
           onPickDraftImages={composer.onPickDraftImages}
           onNativePasteImages={composer.onNativePasteImages}
           onRemoveDraftImage={composer.onRemoveDraftImage}
+          onReplaceDraftImage={composer.onReplaceDraftImage}
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
@@ -796,7 +856,7 @@ function ThreadRouteContent(
 
   return (
     <>
-      {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
+      {activeInspectorRenderer ? <InspectorPaneRoleActivation role={activeInspectorRole} /> : null}
       <NativeStackScreenOptions
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);

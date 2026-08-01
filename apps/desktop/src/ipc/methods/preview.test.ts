@@ -51,4 +51,41 @@ describe("preview IPC methods", () => {
       },
     ),
   );
+
+  effectIt.effect("forwards review mode while legacy snapshot calls stay full", () =>
+    Effect.gen(function* () {
+      const automationSnapshot = vi.fn(() =>
+        Effect.succeed({
+          url: "https://example.com",
+          title: "Example",
+          loading: false,
+          visibleText: "",
+          interactiveElements: [],
+          accessibilityTree: null,
+          consoleEntries: [],
+          networkEntries: [],
+          actionTimeline: [],
+          screenshot: {
+            mimeType: "image/png" as const,
+            data: "cG5n",
+            width: 1,
+            height: 1,
+          },
+        }),
+      );
+      const manager = { automationSnapshot } as never;
+
+      yield* PreviewIpc.automationSnapshot
+        .handler({ tabId: "tab-1", mode: "review" })
+        .pipe(Effect.provideService(PreviewManager.PreviewManager, manager));
+      yield* PreviewIpc.automationSnapshot
+        .handler({ tabId: "tab-1" })
+        .pipe(Effect.provideService(PreviewManager.PreviewManager, manager));
+
+      expect(automationSnapshot.mock.calls).toEqual([
+        ["tab-1", "review"],
+        ["tab-1", "full"],
+      ]);
+    }),
+  );
 });

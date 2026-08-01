@@ -17,12 +17,30 @@ export const previewAutomationHostFocusConcurrencyKey = (value: {
   };
 }): string => JSON.stringify([value.environmentId, value.input.clientId, value.input.connectionId]);
 
+export const previewReviewSnapshotConcurrencyKey = (value: {
+  readonly environmentId: string;
+  readonly input: {
+    readonly threadId: string;
+    readonly tabId: string;
+  };
+}): string => JSON.stringify([value.environmentId, value.input.threadId, value.input.tabId]);
+
+export const previewLiveGatewayConcurrencyKey = (value: {
+  readonly environmentId: string;
+  readonly input: {
+    readonly threadId: string;
+    readonly tabId: string;
+  };
+}): string => JSON.stringify([value.environmentId, value.input.threadId, value.input.tabId]);
+
 export function createPreviewEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const lifecycleScheduler = createAtomCommandScheduler();
   const statusScheduler = createAtomCommandScheduler();
   const automationScheduler = createAtomCommandScheduler();
+  const reviewScheduler = createAtomCommandScheduler();
+  const liveGatewayScheduler = createAtomCommandScheduler();
   const lifecycleConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
@@ -88,6 +106,24 @@ export function createPreviewEnvironmentAtoms<R, E>(
         mode: "latest",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
+    reviewSnapshot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:review-snapshot",
+      tag: WS_METHODS.previewReviewSnapshot,
+      scheduler: reviewScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: previewReviewSnapshotConcurrencyKey,
+      },
+    }),
+    openLiveGateway: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:open-live-gateway",
+      tag: WS_METHODS.previewOpenLiveGateway,
+      scheduler: liveGatewayScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: previewLiveGatewayConcurrencyKey,
       },
     }),
     respondToAutomation: createEnvironmentRpcCommand(runtime, {

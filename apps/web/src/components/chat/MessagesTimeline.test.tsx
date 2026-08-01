@@ -1,8 +1,15 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  TurnId,
+  type PreviewAnnotationPayload,
+} from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import { appendPreviewAnnotationPrompt } from "~/lib/previewAnnotation";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -488,6 +495,59 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("SubmitButton");
     expect(markup).not.toContain("&lt;element_context");
     expect(markup).not.toContain("<element_context");
+  });
+
+  it("renders compact numbered preview annotation callouts without exposing prompt markup", () => {
+    const calloutInstructions = [
+      "Increase contrast instruction",
+      "Reduce this gap instruction",
+      "Align the label instruction",
+      "Fourth instruction",
+      "Fifth instruction",
+    ];
+    const annotation: PreviewAnnotationPayload = {
+      id: "annotation-callouts",
+      pageUrl: "",
+      pageTitle: "Checkout screenshot",
+      comment: "Polish this flow.",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: MESSAGE_CREATED_AT,
+      callouts: calloutInstructions.map((comment, index) => ({
+        id: `callout-${index + 1}`,
+        number: index + 1,
+        comment,
+        anchor: {
+          kind: "point" as const,
+          point: { x: 0.1 * (index + 1), y: 0.5 },
+        },
+      })),
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(appendPreviewAnnotationPrompt("Update checkout", annotation)),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Polish this flow.");
+    expect(markup).toContain("Callout 1:");
+    expect(markup).toContain("Increase contrast instruction");
+    expect(markup).toContain("Reduce this gap instruction");
+    expect(markup).toContain("Align the label instruction");
+    expect(markup).toContain("+2 more callouts");
+    expect(markup.match(/data-preview-annotation-callout=/g)).toHaveLength(3);
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Show all 5 callouts");
+    expect(markup).not.toContain("Fourth instruction");
+    expect(markup).not.toContain("Fifth instruction");
+    expect(markup).not.toContain("&lt;preview_annotation&gt;");
+    expect(markup).not.toContain("&lt;/preview_annotation&gt;");
   });
 
   it("keeps the copy button for collapsed long user messages", () => {

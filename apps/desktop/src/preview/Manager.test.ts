@@ -36,6 +36,122 @@ describe("fitPictureInPictureContentSize", () => {
   });
 });
 
+describe("compactPreviewAutomationElements", () => {
+  it("clips semantics to the viewport and drops invalid or oversized entries", () => {
+    const oversizedSelector = `#${"x".repeat(2_048)}`;
+    const result = PreviewManager.compactPreviewAutomationElements(
+      [
+        {
+          tag: "BUTTON",
+          role: "  button  ",
+          name: `  Save\n${"now ".repeat(200)}`,
+          selector: "#save",
+          x: -10,
+          y: 20,
+          width: 30,
+          height: 40,
+        },
+        {
+          tag: "a",
+          role: null,
+          name: "Outside",
+          selector: "#outside",
+          x: 900,
+          y: 20,
+          width: 30,
+          height: 40,
+        },
+        {
+          tag: "input",
+          role: null,
+          name: "Invalid geometry",
+          selector: "#invalid",
+          x: 20,
+          y: 20,
+          width: Number.NaN,
+          height: 40,
+        },
+        {
+          tag: "div",
+          role: "button",
+          name: "Oversized selector",
+          selector: oversizedSelector,
+          x: 20,
+          y: 20,
+          width: 40,
+          height: 40,
+        },
+      ],
+      { width: 800, height: 600 },
+    );
+
+    expect(result).toEqual([
+      {
+        tag: "button",
+        role: "button",
+        name: expect.stringMatching(/^Save now /),
+        selector: "#save",
+        x: 0,
+        y: 20,
+        width: 20,
+        height: 40,
+      },
+    ]);
+    expect(result[0]?.name.length).toBe(512);
+  });
+
+  it("caps the number of semantic elements retained", () => {
+    const result = PreviewManager.compactPreviewAutomationElements(
+      Array.from({ length: 250 }, (_, index) => ({
+        tag: "button",
+        role: null,
+        name: `Button ${index}`,
+        selector: `#button-${index}`,
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+      })),
+      { width: 800, height: 600 },
+    );
+
+    expect(result).toHaveLength(200);
+    expect(result.at(-1)?.selector).toBe("#button-199");
+  });
+});
+
+describe("previewAutomationSnapshotResizeWidth", () => {
+  it("keeps the legacy snapshot path width-only", () => {
+    expect(
+      PreviewManager.previewAutomationSnapshotResizeWidth({ width: 1_000, height: 3_000 }, "full"),
+    ).toBeNull();
+    expect(
+      PreviewManager.previewAutomationSnapshotResizeWidth({ width: 2_400, height: 1_200 }, "full"),
+    ).toBe(1_280);
+  });
+
+  it("caps review snapshots by width and approximately two million pixels", () => {
+    expect(
+      PreviewManager.previewAutomationSnapshotResizeWidth(
+        { width: 1_000, height: 3_000 },
+        "review",
+      ),
+    ).toBe(816);
+    expect(
+      PreviewManager.previewAutomationSnapshotResizeWidth(
+        { width: 2_400, height: 1_200 },
+        "review",
+      ),
+    ).toBe(1_280);
+    expect(
+      PreviewManager.previewAutomationSnapshotResizeWidth(
+        { width: 1_000, height: 1_000 },
+        "review",
+      ),
+    ).toBeNull();
+  });
+});
+
 const {
   browserWindowConstructor,
   createFromPath,
@@ -762,6 +878,235 @@ describe("PreviewManager", () => {
           webContentsId: 42,
           cause: captureCause,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps legacy automation snapshots full", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("review-snapshot-png");
+        const resizedImage = {
+          getSize: () => ({ width: 1_280, height: 768 }),
+          toPNG: () => png,
+        };
+        const resize = vi.fn(() => resizedImage);
+        const capturePage = vi.fn(async () => ({
+          getSize: () => ({ width: 1_600, height: 960 }),
+          resize,
+          toPNG: () => Buffer.from("unscaled"),
+        }));
+        const accessibilityTree = {
+          nodes: [{ nodeId: "1", role: { value: "button" } }],
+        };
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method === "Runtime.evaluate") {
+            return {
+              result: {
+                value: {
+                  url: "https://example.com/review",
+                  title: "Review",
+                  loading: false,
+                  visibleText: "Save settings",
+                  viewport: {
+                    width: 1_000,
+                    height: 600,
+                    scrollX: 12,
+                    scrollY: 240,
+                    devicePixelRatio: 2,
+                  },
+                  interactiveElements: [
+                    {
+                      tag: "button",
+                      role: "button",
+                      name: "Save",
+                      selector: "#save",
+                      x: 990,
+                      y: 20,
+                      width: 40,
+                      height: 30,
+                    },
+                    {
+                      tag: "button",
+                      role: "button",
+                      name: "Below the frame",
+                      selector: "#below",
+                      x: 20,
+                      y: 700,
+                      width: 40,
+                      height: 30,
+                    },
+                  ],
+                },
+              },
+            };
+          }
+          if (method === "Accessibility.getFullAXTree") return accessibilityTree;
+          return undefined;
+        });
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/review",
+          getTitle: () => "Review",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+          capturePage,
+        } as never);
+
+        yield* manager.createTab("tab_review");
+        yield* manager.registerWebview("tab_review", 42);
+        const snapshot = yield* manager.automationSnapshot("tab_review");
+
+        expect(snapshot.viewport).toEqual({
+          width: 1_000,
+          height: 600,
+          scrollX: 12,
+          scrollY: 240,
+          devicePixelRatio: 2,
+        });
+        expect(snapshot.interactiveElements).toEqual([
+          {
+            tag: "button",
+            role: "button",
+            name: "Save",
+            selector: "#save",
+            x: 990,
+            y: 20,
+            width: 10,
+            height: 30,
+          },
+        ]);
+        expect(snapshot.visibleText).toBe("Save settings");
+        expect(snapshot.accessibilityTree).toEqual(accessibilityTree);
+        expect(snapshot.screenshot).toEqual({
+          mimeType: "image/png",
+          data: png.toString("base64"),
+          width: 1_280,
+          height: 768,
+          scale: 1.28,
+        });
+        expect(resize).toHaveBeenCalledWith({ width: 1_280 });
+        expect(capturePage).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("captures compact review snapshots without diagnostic context", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("compact-review-snapshot-png");
+        const resizedImage = {
+          getSize: () => ({ width: 816, height: 2_448 }),
+          toPNG: () => png,
+        };
+        const resize = vi.fn(() => resizedImage);
+        const capturePage = vi.fn(async () => ({
+          getSize: () => ({ width: 1_000, height: 3_000 }),
+          resize,
+          toPNG: () => Buffer.from("unscaled"),
+        }));
+        const sendCommand = vi.fn(
+          async (method: string, _commandParams?: Record<string, unknown>) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            return {
+              result: {
+                value: {
+                  url: "https://example.com/review",
+                  title: "Review",
+                  loading: false,
+                  visibleText: "Sensitive page text",
+                  viewport: {
+                    width: 1_000,
+                    height: 3_000,
+                    scrollX: 0,
+                    scrollY: 120,
+                    devicePixelRatio: 2,
+                  },
+                  interactiveElements: [
+                    {
+                      tag: "button",
+                      role: "button",
+                      name: "Save",
+                      selector: "#save",
+                      x: 20,
+                      y: 30,
+                      width: 80,
+                      height: 32,
+                    },
+                  ],
+                },
+              },
+            };
+          },
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/review",
+          getTitle: () => "Review",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+          capturePage,
+        } as never);
+
+        yield* manager.createTab("tab_review_compact");
+        yield* manager.registerWebview("tab_review_compact", 42);
+        const snapshot = yield* manager.automationSnapshot("tab_review_compact", "review");
+
+        expect(snapshot.visibleText).toBe("");
+        expect(snapshot.accessibilityTree).toBeNull();
+        expect(snapshot.consoleEntries).toEqual([]);
+        expect(snapshot.networkEntries).toEqual([]);
+        expect(snapshot.actionTimeline).toEqual([]);
+        expect(snapshot.interactiveElements).toHaveLength(1);
+        expect(snapshot.screenshot).toEqual({
+          mimeType: "image/png",
+          data: png.toString("base64"),
+          width: 816,
+          height: 2_448,
+          scale: 0.816,
+        });
+        expect(sendCommand).not.toHaveBeenCalledWith("Accessibility.getFullAXTree");
+        const evaluateExpression = sendCommand.mock.calls.find(
+          ([method]) => method === "Runtime.evaluate",
+        )?.[1]?.expression;
+        expect(evaluateExpression).toEqual(expect.any(String));
+        expect(evaluateExpression).not.toContain("document.body?.innerText");
+        expect(resize).toHaveBeenCalledWith({ width: 816 });
+        expect(capturePage).toHaveBeenCalledOnce();
       }),
     ),
   );

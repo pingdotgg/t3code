@@ -64,6 +64,7 @@ import {
   waitForNavigationReadiness,
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
+import { capturePreviewAutomationSnapshotResponse } from "./previewAutomationReviewSnapshot";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
   needsPreviewAutomationSessionSync,
@@ -577,7 +578,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "snapshot": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.snapshot(ready.runtimeTabId);
+            return await capturePreviewAutomationSnapshotResponse({
+              requestInput: request.input,
+              capture: (options) =>
+                options === undefined
+                  ? ready.bridge.automation.snapshot(ready.runtimeTabId)
+                  : ready.bridge.automation.snapshot(ready.runtimeTabId, options),
+            });
           }
           case "click": {
             const ready = await requireReadyTab();

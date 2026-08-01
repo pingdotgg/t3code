@@ -15,6 +15,7 @@ import {
   PreviewAutomationUnsupportedClientError,
   PreviewTabId,
   type PreviewAutomationError,
+  type PreviewAutomationClientId,
   type PreviewAutomationOperation,
   type PreviewAutomationHost,
   type PreviewAutomationHostFocus,
@@ -34,8 +35,21 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
+export interface PreviewAutomationClientInvokeScope {
+  readonly environmentId: McpInvocationContext.McpInvocationScope["environmentId"];
+  readonly threadId: McpInvocationContext.McpInvocationScope["threadId"];
+  /** Stable, caller-owned identity used only to pin this flow to one desktop host. */
+  readonly assignmentId: string;
+  /** Authenticated client identity copied into diagnostics without pretending it is a provider. */
+  readonly requesterId: PreviewAutomationClientId;
+}
+
+export type PreviewAutomationInvokeScope =
+  | McpInvocationContext.McpInvocationScope
+  | PreviewAutomationClientInvokeScope;
+
 export interface PreviewAutomationInvokeInput {
-  readonly scope: McpInvocationContext.McpInvocationScope;
+  readonly scope: PreviewAutomationInvokeScope;
   readonly operation: PreviewAutomationOperation;
   readonly input: unknown;
   readonly tabId?: PreviewTabId;
@@ -94,8 +108,9 @@ interface PreviewAutomationRequestErrorContext {
   readonly operation: PreviewAutomationOperation;
   readonly environmentId: McpInvocationContext.McpInvocationScope["environmentId"];
   readonly threadId: McpInvocationContext.McpInvocationScope["threadId"];
-  readonly providerSessionId: string;
-  readonly providerInstanceId: McpInvocationContext.McpInvocationScope["providerInstanceId"];
+  readonly providerSessionId?: string;
+  readonly providerInstanceId?: McpInvocationContext.McpInvocationScope["providerInstanceId"];
+  readonly requesterId?: string;
   readonly clientId: string;
   readonly connectionId: ClientConnection["connectionId"];
   readonly requestId: string;
@@ -150,8 +165,26 @@ const selectorDiagnosticsFromInput = (
   return {};
 };
 
-const hostAssignmentKey = (scope: McpInvocationContext.McpInvocationScope): string =>
-  `${scope.environmentId}\u0000${scope.providerSessionId}`;
+const invocationAssignmentId = (scope: PreviewAutomationInvokeScope): string =>
+  "assignmentId" in scope
+    ? `client\u0000${scope.assignmentId}`
+    : `provider\u0000${scope.providerSessionId}`;
+
+const invocationDiagnostics = (
+  scope: PreviewAutomationInvokeScope,
+): Pick<
+  PreviewAutomationRequestErrorContext,
+  "providerSessionId" | "providerInstanceId" | "requesterId"
+> =>
+  "assignmentId" in scope
+    ? { requesterId: scope.requesterId }
+    : {
+        providerSessionId: scope.providerSessionId,
+        providerInstanceId: scope.providerInstanceId,
+      };
+
+const hostAssignmentKey = (scope: PreviewAutomationInvokeScope): string =>
+  `${scope.environmentId}\u0000${invocationAssignmentId(scope)}`;
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 
@@ -491,8 +524,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         operation: input.operation,
         environmentId: input.scope.environmentId,
         threadId: input.scope.threadId,
-        providerSessionId: input.scope.providerSessionId,
-        providerInstanceId: input.scope.providerInstanceId,
+        ...invocationDiagnostics(input.scope),
         clientId: connection.clientId,
         connectionId: connection.connectionId,
         requestId,
@@ -512,8 +544,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         operation: input.operation,
         environmentId: input.scope.environmentId,
         threadId: input.scope.threadId,
-        providerSessionId: input.scope.providerSessionId,
-        providerInstanceId: input.scope.providerInstanceId,
+        ...invocationDiagnostics(input.scope),
       });
     }
     const { connection, requestId, requestContext, requestSequence } = route;

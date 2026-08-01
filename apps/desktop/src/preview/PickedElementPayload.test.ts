@@ -180,6 +180,69 @@ describe("isPreviewAnnotationPayload", () => {
     expect(isPreviewAnnotationPayload(validAnnotation())).toBe(true);
   });
 
+  it("accepts valid portable source, callout, and editable-vector extensions", () => {
+    expect(
+      isPreviewAnnotationPayload(
+        validAnnotation({
+          schemaVersion: 1,
+          source: {
+            kind: "preview",
+            url: "https://example.com/",
+            title: "Example",
+          },
+          callouts: [
+            {
+              id: "callout_point",
+              number: 1,
+              comment: "Move this.",
+              anchor: { kind: "point", point: { x: 0.2, y: 0.3 } },
+            },
+            {
+              id: "callout_region",
+              number: 2,
+              comment: "Reduce this space.",
+              anchor: {
+                kind: "region",
+                rect: { x: 0.4, y: 0.1, width: 0.3, height: 0.2 },
+              },
+            },
+            {
+              id: "callout_element",
+              number: 3,
+              comment: "Use the primary style.",
+              anchor: {
+                kind: "element",
+                targetId: "element_1",
+                rect: { x: 0.1, y: 0.7, width: 0.4, height: 0.2 },
+              },
+            },
+          ],
+          editable: {
+            version: 1,
+            coordinateSpace: "normalized",
+            strokes: [
+              {
+                id: "stroke_editable",
+                color: "#7c3aed",
+                width: 0.01,
+                points: [
+                  { x: 0.1, y: 0.2 },
+                  { x: 0.2, y: 0.3 },
+                ],
+                bounds: { x: 0.08, y: 0.18, width: 0.14, height: 0.14 },
+              },
+            ],
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isPreviewAnnotationPayload(
+        validAnnotation({ source: { kind: "image", name: "checkout.png" }, editable: null }),
+      ),
+    ).toBe(true);
+  });
+
   it("rejects screenshots supplied by the guest preload", () => {
     expect(isPreviewAnnotationPayload(validAnnotation({ screenshot: { dataUrl: "bad" } }))).toBe(
       false,
@@ -197,5 +260,87 @@ describe("isPreviewAnnotationPayload", () => {
         validAnnotation({ elements: [{ id: "element_1", element: {}, rect: {} }] }),
       ),
     ).toBe(false);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ["an unknown schema version", validAnnotation({ schemaVersion: 2 })],
+    ["a malformed image source", validAnnotation({ source: { kind: "image", name: 42 } })],
+    [
+      "a malformed preview source",
+      validAnnotation({ source: { kind: "preview", url: null, title: "Example" } }),
+    ],
+    ["a non-array callout collection", validAnnotation({ callouts: "not-an-array" })],
+    [
+      "an out-of-bounds callout point",
+      validAnnotation({
+        callouts: [
+          {
+            id: "callout_1",
+            number: 1,
+            comment: "",
+            anchor: { kind: "point", point: { x: 1.1, y: 0.5 } },
+          },
+        ],
+      }),
+    ],
+    [
+      "an overflowing callout region",
+      validAnnotation({
+        callouts: [
+          {
+            id: "callout_1",
+            number: 1,
+            comment: "",
+            anchor: {
+              kind: "region",
+              rect: { x: 0.8, y: 0.2, width: 0.3, height: 0.2 },
+            },
+          },
+        ],
+      }),
+    ],
+    [
+      "a non-positive callout number",
+      validAnnotation({
+        callouts: [
+          {
+            id: "callout_1",
+            number: 0,
+            comment: "",
+            anchor: { kind: "point", point: { x: 0.5, y: 0.5 } },
+          },
+        ],
+      }),
+    ],
+    [
+      "a malformed editable vector document",
+      validAnnotation({
+        editable: {
+          version: 2,
+          coordinateSpace: "pixels",
+          strokes: [],
+        },
+      }),
+    ],
+    [
+      "an out-of-bounds editable stroke",
+      validAnnotation({
+        editable: {
+          version: 1,
+          coordinateSpace: "normalized",
+          strokes: [
+            {
+              id: "stroke_1",
+              color: "#7c3aed",
+              width: 0.01,
+              points: [{ x: Number.NaN, y: 0.5 }],
+              bounds: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+            },
+          ],
+        },
+      }),
+    ],
+  ])("rejects %s", (_label, value) => {
+    expect(isPreviewAnnotationPayload(value)).toBe(false);
   });
 });

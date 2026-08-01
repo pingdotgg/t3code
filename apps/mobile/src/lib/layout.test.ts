@@ -2,10 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   constrainAuxiliaryPaneWidth,
+  constrainPreviewPaneWidth,
   constrainPrimarySidebarWidth,
   deriveCenteredContentHorizontalPadding,
   deriveFileInspectorPaneLayout,
   deriveLayout,
+  derivePreviewPaneLayout,
   deriveStableFormSheetDetent,
   deriveWorkspacePaneLayout,
   SPLIT_LAYOUT_MIN_HEIGHT,
@@ -23,6 +25,12 @@ describe("resizable pane constraints", () => {
     expect(constrainAuxiliaryPaneWidth({ preferredWidth: 440, availableWidth: 1_100 })).toBe(440);
     expect(constrainAuxiliaryPaneWidth({ preferredWidth: 440, availableWidth: 900 })).toBe(340);
     expect(constrainAuxiliaryPaneWidth({ preferredWidth: 100, availableWidth: 1_100 })).toBe(260);
+  });
+
+  it("lets preview use half the window while preserving a useful chat pane", () => {
+    expect(constrainPreviewPaneWidth({ preferredWidth: 597, availableWidth: 1_194 })).toBe(597);
+    expect(constrainPreviewPaneWidth({ preferredWidth: 700, availableWidth: 1_024 })).toBe(664);
+    expect(constrainPreviewPaneWidth({ preferredWidth: 100, availableWidth: 1_024 })).toBe(320);
   });
 });
 
@@ -107,6 +115,60 @@ describe("deriveLayout", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
+  it("opens preview as a half-width workspace and suppresses the thread sidebar", () => {
+    const layout = deriveLayout({ width: 1_194, height: 834 });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_194,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPaneRole: "preview",
+      }),
+    ).toEqual({
+      primarySidebarVisible: false,
+      primarySidebarSuppressedByAuxiliary: true,
+      contentPaneWidth: 1_194,
+      supportsAuxiliaryPane: true,
+      auxiliaryPaneVisible: true,
+      auxiliaryPaneWidth: 597,
+    });
+  });
+
+  it("lets preview take the full workspace width", () => {
+    const layout = deriveLayout({ width: 1_194, height: 834 });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_194,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPaneRole: "preview",
+        auxiliaryPaneFullscreen: true,
+      }).auxiliaryPaneWidth,
+    ).toBe(1_194);
+  });
+
+  it("restores the thread sidebar when preview is hidden", () => {
+    const layout = deriveLayout({ width: 1_194, height: 834 });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_194,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: false,
+        auxiliaryPaneRole: "preview",
+      }),
+    ).toMatchObject({
+      primarySidebarVisible: true,
+      primarySidebarSuppressedByAuxiliary: false,
+      auxiliaryPaneVisible: false,
+    });
+  });
+
   it("keeps the auxiliary pane out of a standard iPad detail column", () => {
     const layout = deriveLayout({ width: 1_194, height: 834 });
 
@@ -327,6 +389,24 @@ describe("deriveWorkspacePaneLayout", () => {
       supportsAuxiliaryPane: false,
       auxiliaryPaneVisible: false,
       auxiliaryPaneWidth: null,
+    });
+  });
+});
+
+describe("derivePreviewPaneLayout", () => {
+  it("supports review panes on iPad-sized windows", () => {
+    const layout = deriveLayout({ width: 1_024, height: 768 });
+    expect(derivePreviewPaneLayout({ layout, viewportWidth: 1_024 })).toEqual({
+      supported: true,
+      width: 512,
+    });
+  });
+
+  it("keeps preview on its own screen below the workspace breakpoint", () => {
+    const layout = deriveLayout({ width: 744, height: 1_133 });
+    expect(derivePreviewPaneLayout({ layout, viewportWidth: 744 })).toEqual({
+      supported: false,
+      width: null,
     });
   });
 });

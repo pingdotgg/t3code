@@ -90,6 +90,9 @@ const PersistedComposerDraftsSchema = Schema.Struct({
 const decodePersistedComposerDraftsDocument = Schema.decodeUnknownSync(
   PersistedComposerDraftsSchema,
 );
+const encodePersistedComposerDraftsDocument = Schema.encodeUnknownSync(
+  PersistedComposerDraftsSchema,
+);
 
 const EMPTY_DRAFT: ComposerDraft = {
   text: "",
@@ -186,7 +189,7 @@ async function writePersistedComposerDrafts(drafts: Record<string, ComposerDraft
       schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
       drafts: nonEmptyDrafts,
     } as const;
-    const encoded = JSON.stringify(document);
+    const encoded = JSON.stringify(encodePersistedComposerDraftsDocument(document));
     operation = "write";
     if (!file.exists) {
       file.create({ intermediates: true, overwrite: true });
@@ -327,6 +330,44 @@ export function replaceComposerDraftAttachments(
       [draftKey]: draft,
     };
   });
+}
+
+export function replaceComposerDraftAttachmentState(
+  current: Record<string, ComposerDraft>,
+  draftKey: string,
+  attachment: DraftComposerImageAttachment,
+): Record<string, ComposerDraft> {
+  const existing = current[draftKey];
+  if (!existing) {
+    return current;
+  }
+
+  const index = existing.attachments.findIndex((image) => image.id === attachment.id);
+  if (index < 0 || existing.attachments[index] === attachment) {
+    return current;
+  }
+
+  const attachments = [...existing.attachments];
+  attachments[index] = attachment;
+  return {
+    ...current,
+    [draftKey]: {
+      ...existing,
+      attachments,
+    },
+  };
+}
+
+export function replaceComposerDraftAttachment(
+  draftKey: string,
+  attachment: DraftComposerImageAttachment,
+): void {
+  const current = appAtomRegistry.get(composerDraftsAtom);
+  const next = replaceComposerDraftAttachmentState(current, draftKey, attachment);
+  if (next === current) {
+    return;
+  }
+  updateComposerDrafts(() => next);
 }
 
 export function removeComposerDraftAttachment(draftKey: string, imageId: string): void {

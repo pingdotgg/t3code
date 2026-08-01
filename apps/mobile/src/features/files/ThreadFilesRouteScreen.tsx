@@ -237,7 +237,6 @@ function FilesToolbarBottomFade() {
 }
 
 export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
-  useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
@@ -334,6 +333,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     if (fileInspector.supported) {
       return (
         <ThreadRouteScreen
+          auxiliaryRoute="files"
           onReturnToThread={handleReturnToThread}
           renderInspector={renderInspector}
           route={props.route}
@@ -350,6 +350,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   if (fileInspector.supported) {
     return (
       <ThreadRouteScreen
+        auxiliaryRoute="files"
         onReturnToThread={handleReturnToThread}
         renderInspector={renderInspector}
         route={props.route}

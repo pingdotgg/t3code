@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type PreviewAnnotationPayload,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 const files = new Map<string, { base64: string; deleted: boolean }>();
 
@@ -37,10 +41,26 @@ vi.mock("./uuid", () => ({
 }));
 
 import {
+  appendComposerImageAnnotationPrompts,
   convertPastedImagesToAttachments,
   isOwnedPastedImageUri,
+  restoreComposerImageOriginal,
   toUploadChatImageAttachments,
 } from "./composerImages";
+import { DraftComposerImageAttachmentSchema } from "./composer-image-schema";
+
+const annotation = (id: string, comment: string): PreviewAnnotationPayload => ({
+  id,
+  pageUrl: "",
+  pageTitle: "Attached screenshot",
+  comment,
+  elements: [],
+  regions: [],
+  strokes: [],
+  styleChanges: [],
+  screenshot: null,
+  createdAt: "2026-07-30T10:00:00.000Z",
+});
 
 describe("toUploadChatImageAttachments", () => {
   it("strips client draft id and previewUri for the startTurn wire shape", () => {
@@ -65,6 +85,128 @@ describe("toUploadChatImageAttachments", () => {
         dataUrl: "data:image/png;base64,AA==",
       },
     ]);
+  });
+
+  it("strips editable markup metadata from the startTurn wire shape", () => {
+    expect(
+      toUploadChatImageAttachments([
+        {
+          id: "client-draft-id",
+          type: "image",
+          name: "annotated.png",
+          mimeType: "image/png",
+          sizeBytes: 16,
+          dataUrl: "data:image/png;base64,YW5ub3RhdGVk",
+          previewUri: "data:image/png;base64,YW5ub3RhdGVk",
+          markup: {
+            annotation: annotation("annotation-1", "Move this button"),
+            original: {
+              name: "original.png",
+              mimeType: "image/png",
+              sizeBytes: 8,
+              dataUrl: "data:image/png;base64,b3JpZ2luYWw=",
+              previewUri: "file:///tmp/original.png",
+            },
+          },
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "image",
+        name: "annotated.png",
+        mimeType: "image/png",
+        sizeBytes: 16,
+        dataUrl: "data:image/png;base64,YW5ub3RhdGVk",
+      },
+    ]);
+  });
+});
+
+describe("composer image markup", () => {
+  const markedAttachment = {
+    id: "attachment-1",
+    type: "image" as const,
+    name: "annotated.png",
+    mimeType: "image/png",
+    sizeBytes: 16,
+    dataUrl: "data:image/png;base64,YW5ub3RhdGVk",
+    previewUri: "data:image/png;base64,YW5ub3RhdGVk",
+    markup: {
+      annotation: annotation("annotation-1", "Move this button"),
+      original: {
+        name: "original.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 8,
+        dataUrl: "data:image/jpeg;base64,b3JpZ2luYWw=",
+        previewUri: "file:///tmp/original.jpg",
+      },
+    },
+  };
+
+  it("persists annotation metadata and its restorable original image", () => {
+    const decode = Schema.decodeUnknownSync(DraftComposerImageAttachmentSchema);
+    expect(decode(markedAttachment)).toEqual(markedAttachment);
+  });
+
+  it("omits duplicate data-backed preview URIs when persisted and restores them on decode", () => {
+    const encode = Schema.encodeUnknownSync(DraftComposerImageAttachmentSchema);
+    const decode = Schema.decodeUnknownSync(DraftComposerImageAttachmentSchema);
+    const dataBackedOriginal = {
+      ...markedAttachment,
+      markup: {
+        ...markedAttachment.markup,
+        original: {
+          ...markedAttachment.markup.original,
+          previewUri: markedAttachment.markup.original.dataUrl,
+        },
+      },
+    };
+
+    const encoded = encode(dataBackedOriginal);
+    const persisted = JSON.parse(JSON.stringify(encoded)) as unknown;
+    expect(persisted).not.toHaveProperty("previewUri");
+    expect(persisted).not.toHaveProperty("markup.original.previewUri");
+    expect(decode(persisted)).toEqual(dataBackedOriginal);
+  });
+
+  it("appends attachment annotations in attachment order", () => {
+    const text = appendComposerImageAnnotationPrompts("Fix this screen", [
+      markedAttachment,
+      {
+        ...markedAttachment,
+        id: "attachment-2",
+        markup: {
+          ...markedAttachment.markup,
+          annotation: annotation("annotation-2", "Reduce this gap"),
+        },
+      },
+    ]);
+
+    expect(text).toContain("Fix this screen");
+    expect(text).not.toContain("<preview_annotation>\n<preview_annotation>");
+    expect(text.indexOf("Id: annotation-1")).toBeLessThan(text.indexOf("Id: annotation-2"));
+    expect(text.match(/<preview_annotation>/g)).toHaveLength(2);
+  });
+
+  it("restores the original image and removes markup metadata", () => {
+    expect(restoreComposerImageOriginal(markedAttachment)).toEqual({
+      id: "attachment-1",
+      type: "image",
+      ...markedAttachment.markup.original,
+    });
+  });
+
+  it("returns unmarked images unchanged", () => {
+    const plain = restoreComposerImageOriginal({
+      id: "attachment-plain",
+      type: "image",
+      name: "plain.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: "file:///tmp/plain.png",
+    });
+    expect(restoreComposerImageOriginal(plain)).toBe(plain);
   });
 });
 

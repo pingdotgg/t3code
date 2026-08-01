@@ -105,6 +105,9 @@ import {
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewLiveGatewayOpenInput,
+  PreviewLiveGatewayOpenResult,
+  PreviewLiveGatewayUnavailableError,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -120,6 +123,10 @@ import {
   PreviewAutomationHostFocus,
   PreviewAutomationResponse,
   PreviewAutomationStreamEvent,
+  PreviewReviewSnapshot,
+  PreviewReviewSnapshotInput,
+  PreviewReviewSnapshotMalformedError,
+  PreviewReviewSnapshotTooLargeError,
 } from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
@@ -215,6 +222,8 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewReviewSnapshot: "preview.reviewSnapshot",
+  previewOpenLiveGateway: "preview.openLiveGateway",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -644,6 +653,28 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsPreviewReviewSnapshotRpc = Rpc.make(WS_METHODS.previewReviewSnapshot, {
+  payload: PreviewReviewSnapshotInput,
+  success: PreviewReviewSnapshot,
+  error: Schema.Union([
+    PreviewError,
+    PreviewAutomationError,
+    PreviewReviewSnapshotMalformedError,
+    PreviewReviewSnapshotTooLargeError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsPreviewOpenLiveGatewayRpc = Rpc.make(WS_METHODS.previewOpenLiveGateway, {
+  payload: PreviewLiveGatewayOpenInput,
+  success: PreviewLiveGatewayOpenResult,
+  error: Schema.Union([
+    PreviewError,
+    PreviewLiveGatewayUnavailableError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -846,6 +877,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsPreviewReviewSnapshotRpc,
+  WsPreviewOpenLiveGatewayRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
