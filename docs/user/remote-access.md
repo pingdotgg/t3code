@@ -2,6 +2,26 @@
 
 Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
 
+## Quick Pairing for a Running Server
+
+If a server is already running on this machine, mint a fresh pairing token and QR code without restarting anything:
+
+```bash
+npx t3 pair
+```
+
+`t3 pair` finds the running server (the shared `~/.t3` install, or the current worktree's dev server when run inside one), issues a one-time pairing token, and prints the pairing URL as a QR code you can scan from your phone.
+
+If the server is only bound to loopback, the printed URL is not reachable from another device. Pair over your tailnet instead:
+
+```bash
+npx t3 pair --tailscale
+```
+
+This publishes the server over Tailscale Serve HTTPS (configuring the mapping if needed — it persists until you run `tailscale serve --https=443 off`) and pairs through the `https://machine.tailnet.ts.net/` URL. Use `--tailscale-serve-port` for a different HTTPS port, `--ttl` to change the token lifetime, and `--base-dir` to target a specific data directory.
+
+If no server is running, `t3 pair` says so and points you at `npx t3 serve` or `npx t3 connect`.
+
 ## Recommended Setup
 
 Use a trusted private network that meshes your devices together, such as a tailnet.
@@ -37,6 +57,8 @@ available. You can set another endpoint as the default from the expanded endpoin
 - Loopback-only endpoints are not useful for another device unless that device is the same machine.
 
 If the copied link points directly at `http://192.168.x.y:3773`, open it from a client that can reach that LAN address. If it points at `https://app.t3.codes/pair?...`, the hosted web app will save the environment and connect directly to the backend URL in the link.
+
+In the mobile app's **Add Environment** form, a numeric IP address without a scheme uses HTTP. Include `https://` explicitly when the backend is served over HTTPS.
 
 ### Tailscale Endpoints
 
