@@ -1,4 +1,4 @@
-import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
+import { type TerminalEvent, type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -47,6 +47,15 @@ export function createTerminalEnvironmentAtoms<R, E>(
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:events",
       tag: WS_METHODS.subscribeTerminalEvents,
+      // Accumulate `closed` events: a latest-value atom drops any close that is
+      // superseded by another terminal event (e.g. an output chunk) before the
+      // client commits it.
+      transform: (stream) =>
+        stream.pipe(
+          Stream.scan([] as ReadonlyArray<TerminalEvent>, (closedEvents, event) =>
+            event.type === "closed" ? [...closedEvents, event] : closedEvents,
+          ),
+        ),
     }),
     metadata: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:metadata",

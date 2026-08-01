@@ -38,13 +38,18 @@ export const TerminalEventSync = memo(function TerminalEventSync({
       input: {},
     }),
   );
-  const appliedEventRef = useRef<TerminalEvent | null>(null);
+  const appliedCountRef = useRef(0);
 
   useEffect(() => {
-    const event = terminalEvent.data;
-    if (!event || appliedEventRef.current === event) return;
-    appliedEventRef.current = event;
-    applyTerminalClosedEvent(environmentId, event);
+    const closedEvents = terminalEvent.data;
+    if (!closedEvents) return;
+    // The stream accumulates closed events so none are lost between commits; a
+    // shrinking array means the subscription restarted from scratch.
+    if (closedEvents.length < appliedCountRef.current) appliedCountRef.current = 0;
+    for (const event of closedEvents.slice(appliedCountRef.current)) {
+      applyTerminalClosedEvent(environmentId, event);
+    }
+    appliedCountRef.current = closedEvents.length;
   }, [environmentId, terminalEvent.data]);
 
   return null;
