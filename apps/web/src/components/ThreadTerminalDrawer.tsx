@@ -527,12 +527,19 @@ export function TerminalViewport({
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = keybindingsRef.current;
         const options = { context: { terminalFocus: true, terminalOpen: true } };
+        if (isTerminalCloseShortcut(event, currentKeybindings, options)) {
+          // The window-level handler owns the close action but can bail without
+          // preventDefault (palette open, no active thread). The browser or
+          // Electron default for this chord closes the whole tab/window, so it
+          // must never fire from inside the terminal.
+          event.preventDefault();
+          return false;
+        }
         if (
           isTerminalToggleShortcut(event, currentKeybindings, options) ||
           isTerminalSplitShortcut(event, currentKeybindings, options) ||
           isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
           isTerminalNewShortcut(event, currentKeybindings, options) ||
-          isTerminalCloseShortcut(event, currentKeybindings, options) ||
           isDiffToggleShortcut(event, currentKeybindings, options)
         ) {
           return false;
