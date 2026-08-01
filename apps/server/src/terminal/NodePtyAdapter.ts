@@ -3,6 +3,7 @@ import * as NodeModule from "node:module";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -72,14 +73,63 @@ const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
 }).pipe(Effect.orElseSucceed(() => null));
 
 /**
- * Whether the helper carries any exec bit, or `null` when the mode cannot be
- * read — some packaged modes hide fs metadata, and "unknown" means different
+ * Whether `mode` grants execute permission to the identified process.
+ *
+ * Effect's `FileSystem.access` cannot test `X_OK`, so executability is derived
+ * from the mode against the caller's identity: a bare `mode & 0o111` would call
+ * an owner-only binary (`0o100`) executable for every other user, skipping the
+ * repair and suppressing the diagnosis for exactly the users who need it.
+ */
+export const modeIsExecutableFor = (input: {
+  mode: number;
+  ownerUid: number | null;
+  ownerGid: number | null;
+  processUid: number | null;
+  processGids: readonly number[];
+}): boolean => {
+  const anyExecuteBit = (input.mode & 0o111) !== 0;
+  // Unknown identity, or root, which bypasses the permission bits entirely.
+  if (input.processUid === null || input.processUid === 0) return anyExecuteBit;
+  if (input.ownerUid !== null && input.ownerUid === input.processUid) {
+    return (input.mode & 0o100) !== 0;
+  }
+  if (input.ownerGid !== null && input.processGids.includes(input.ownerGid)) {
+    return (input.mode & 0o010) !== 0;
+  }
+  return (input.mode & 0o001) !== 0;
+};
+
+const currentProcessIdentity = (): {
+  processUid: number | null;
+  processGids: readonly number[];
+} => {
+  const processUid = process.getuid?.() ?? null;
+  const primaryGid = process.getgid?.() ?? null;
+  // getgroups() omits the primary gid on some platforms, so add it explicitly.
+  const supplementaryGids = process.getgroups?.() ?? [];
+  return {
+    processUid,
+    processGids: primaryGid === null ? supplementaryGids : [primaryGid, ...supplementaryGids],
+  };
+};
+
+/**
+ * Whether this process can execute the helper, or `null` when the mode cannot
+ * be read — some packaged modes hide fs metadata, and "unknown" means different
  * things to the repair path (try anyway) and the diagnosis path (do not blame).
  */
 const readSpawnHelperExecutable = Effect.fn(function* (helperPath: string) {
   const fs = yield* FileSystem.FileSystem;
+  const identity = currentProcessIdentity();
   return yield* fs.stat(helperPath).pipe(
-    Effect.map((info) => (info.mode & 0o111) !== 0),
+    Effect.map((info) =>
+      modeIsExecutableFor({
+        mode: info.mode,
+        ownerUid: Option.getOrNull(info.uid),
+        ownerGid: Option.getOrNull(info.gid),
+        ...identity,
+      }),
+    ),
     Effect.orElseSucceed(() => null),
   );
 });

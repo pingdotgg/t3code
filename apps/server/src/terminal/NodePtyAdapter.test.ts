@@ -92,6 +92,81 @@ it.effect("reports native module load failures as structured startup defects", (
   ),
 );
 
+it("resolves helper executability against the calling process, not any exec bit", () => {
+  const owned = { ownerUid: 501, ownerGid: 20 };
+
+  // Owner-only binary: executable for its owner, not for anyone else.
+  assert.isTrue(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o100,
+      ...owned,
+      processUid: 501,
+      processGids: [20],
+    }),
+  );
+  assert.isFalse(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o100,
+      ...owned,
+      processUid: 502,
+      processGids: [21],
+    }),
+  );
+
+  // Group and other bits are honoured independently of the owner bit.
+  assert.isTrue(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o010,
+      ...owned,
+      processUid: 502,
+      processGids: [20],
+    }),
+  );
+  assert.isFalse(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o600,
+      ...owned,
+      processUid: 501,
+      processGids: [20],
+    }),
+  );
+  assert.isTrue(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o001,
+      ...owned,
+      processUid: 502,
+      processGids: [21],
+    }),
+  );
+
+  // Root and unknown identities fall back to "somebody can execute this".
+  assert.isTrue(
+    NodePtyAdapter.modeIsExecutableFor({ mode: 0o100, ...owned, processUid: 0, processGids: [0] }),
+  );
+  assert.isFalse(
+    NodePtyAdapter.modeIsExecutableFor({ mode: 0o644, ...owned, processUid: 0, processGids: [0] }),
+  );
+  assert.isTrue(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o100,
+      ownerUid: null,
+      ownerGid: null,
+      processUid: null,
+      processGids: [],
+    }),
+  );
+
+  // The reported bug: a 0644 helper is never executable for anyone.
+  assert.isFalse(
+    NodePtyAdapter.modeIsExecutableFor({
+      mode: 0o644,
+      ...owned,
+      processUid: 501,
+      processGids: [20],
+    }),
+  );
+});
+
 it("leaves non-posix_spawnp failures untouched", () => {
   const cause = new Error("cwd does not exist");
   const described = NodePtyAdapter.describeSpawnFailure({

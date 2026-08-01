@@ -38,7 +38,8 @@ export class SpawnHelperNotExecutableError extends Schema.TaggedErrorClass<Spawn
   "SpawnHelperNotExecutableError",
   {
     helperPath: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    // Always the originating spawn failure, so the error chain is never lost.
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
