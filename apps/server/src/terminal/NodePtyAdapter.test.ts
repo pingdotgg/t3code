@@ -62,19 +62,34 @@ it.effect("spawns through the public adapter with the provided host references",
 it.effect("reports native module load failures as structured startup defects", () =>
   Effect.gen(function* () {
     const cause = new Error("native binding could not be loaded");
-    const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const previousExitCode = process.exitCode;
 
-    assert.isTrue(Exit.isFailure(exit));
-    if (Exit.isFailure(exit)) {
-      assert.isTrue(Cause.hasDies(exit.cause));
-      const error = Cause.squash(exit.cause);
-      assert.instanceOf(error, NodePtyAdapter.NodePtyModuleLoadError);
-      assert.deepInclude(error, {
-        _tag: "NodePtyModuleLoadError",
-        platform: "win32",
-        architecture: "x64",
-      });
-      assert.equal(error.message, "Failed to load node-pty for win32-x64.");
+    try {
+      const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.isTrue(Cause.hasDies(exit.cause));
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, NodePtyAdapter.NodePtyModuleLoadError);
+        assert.deepInclude(error, {
+          _tag: "NodePtyModuleLoadError",
+          platform: "win32",
+          architecture: "x64",
+        });
+        assert.equal(error.message, "Failed to load node-pty for win32-x64.");
+      }
+
+      // A broken install must never exit cleanly with no output.
+      assert.equal(process.exitCode, 1);
+      const written = stderrWrite.mock.calls.map((call) => String(call[0])).join("");
+      assert.include(written, "Failed to load node-pty for win32-x64.");
+      assert.include(written, "native binding could not be loaded");
+      assert.include(written, "reinstall t3");
+    } finally {
+      stderrWrite.mockRestore();
+      process.exitCode = previousExitCode;
     }
   }).pipe(
     Effect.provide(
@@ -86,3 +101,74 @@ it.effect("reports native module load failures as structured startup defects", (
     ),
   ),
 );
+
+it("leaves non-posix_spawnp failures untouched", () => {
+  const cause = new Error("cwd does not exist");
+  const described = NodePtyAdapter.describeSpawnFailure({
+    cause,
+    platform: "darwin",
+    helperPath: "/pkg/node-pty/build/Release/spawn-helper",
+    helperIsExecutable: false,
+  });
+  assert.equal(described, cause);
+});
+
+it("explains posix_spawnp failures caused by a non-executable spawn-helper", () => {
+  const cause = new Error("posix_spawnp failed.");
+  const described = NodePtyAdapter.describeSpawnFailure({
+    cause,
+    platform: "darwin",
+    helperPath: "/pkg/node-pty/build/Release/spawn-helper",
+    helperIsExecutable: false,
+  });
+  assert.instanceOf(described, Error);
+  const error = described as Error;
+  assert.include(error.message, "spawn-helper");
+  assert.include(error.message, 'chmod +x "/pkg/node-pty/build/Release/spawn-helper"');
+  assert.equal(error.cause, cause);
+});
+
+it("keeps posix_spawnp failures as-is when the helper is executable or missing", () => {
+  const cause = new Error("posix_spawnp failed.");
+  assert.equal(
+    NodePtyAdapter.describeSpawnFailure({
+      cause,
+      platform: "darwin",
+      helperPath: "/pkg/node-pty/build/Release/spawn-helper",
+      helperIsExecutable: true,
+    }),
+    cause,
+  );
+  assert.equal(
+    NodePtyAdapter.describeSpawnFailure({
+      cause,
+      platform: "darwin",
+      helperPath: null,
+      helperIsExecutable: false,
+    }),
+    cause,
+  );
+  assert.equal(
+    NodePtyAdapter.describeSpawnFailure({
+      cause,
+      platform: "win32",
+      helperPath: "/pkg/node-pty/build/Release/spawn-helper",
+      helperIsExecutable: false,
+    }),
+    cause,
+  );
+});
+
+it("finds posix_spawnp mentions through nested error causes", () => {
+  const nested = new Error("outer wrapper", {
+    cause: new Error("posix_spawnp failed."),
+  });
+  const described = NodePtyAdapter.describeSpawnFailure({
+    cause: nested,
+    platform: "darwin",
+    helperPath: "/pkg/spawn-helper",
+    helperIsExecutable: false,
+  });
+  assert.instanceOf(described, Error);
+  assert.include((described as Error).message, "chmod +x");
+});
