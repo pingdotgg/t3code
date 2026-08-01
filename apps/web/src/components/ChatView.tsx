@@ -201,12 +201,7 @@ import {
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
-import {
-  reconcilableServerTerminalIds,
-  selectSuppressedThreadTerminalIds,
-  selectThreadTerminalUiState,
-  useTerminalUiStateStore,
-} from "../terminalUiStateStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -607,9 +602,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
-  const suppressedTerminalIds = useTerminalUiStateStore((state) =>
-    selectSuppressedThreadTerminalIds(state.suppressedTerminalIdsByThreadKey, threadRef),
-  );
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId,
@@ -701,23 +693,11 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const storeUnsuppressTerminal = useTerminalUiStateStore((state) => state.unsuppressTerminal);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
+  // The store owns the merge: it holds the pending set that separates a local
+  // open the server has not registered yet from a session that ended remotely.
   useEffect(() => {
-    const nextTerminalIds = reconcilableServerTerminalIds(
-      serverOrderedTerminalIds,
-      terminalUiState.terminalIds,
-      suppressedTerminalIds,
-    );
-    if (nextTerminalIds === null) {
-      return;
-    }
-    reconcileTerminalIds(threadRef, nextTerminalIds);
-  }, [
-    reconcileTerminalIds,
-    serverOrderedTerminalIds,
-    suppressedTerminalIds,
-    terminalUiState.terminalIds,
-    threadRef,
-  ]);
+    reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
+  }, [reconcileTerminalIds, serverOrderedTerminalIds, threadRef]);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = useMemo(() => {

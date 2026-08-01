@@ -15,46 +15,83 @@ const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
 const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
 
 describe("reconcilableServerTerminalIds", () => {
-  it("skips when the server list matches the client list", () => {
-    expect(reconcilableServerTerminalIds(["terminal-1"], ["terminal-1"], [])).toBeNull();
+  it("skips when the client already reflects the server", () => {
+    expect(reconcilableServerTerminalIds(["terminal-1"], ["terminal-1"], [], [])).toBeNull();
+    // Ordering differences alone are not a reason to rewrite the list.
     expect(
-      reconcilableServerTerminalIds(["terminal-2", "terminal-1"], ["terminal-1", "terminal-2"], []),
+      reconcilableServerTerminalIds(
+        ["terminal-2", "terminal-1"],
+        ["terminal-1", "terminal-2"],
+        [],
+        [],
+      ),
     ).toBeNull();
   });
 
-  it("skips while the server list lags a freshly opened terminal", () => {
+  it("keeps a pending local open the server has not registered yet", () => {
     expect(
-      reconcilableServerTerminalIds(["terminal-1"], ["terminal-1", "terminal-2"], []),
+      reconcilableServerTerminalIds(
+        ["terminal-1"],
+        ["terminal-1", "terminal-2"],
+        [],
+        ["terminal-2"],
+      ),
     ).toBeNull();
   });
 
-  it("ignores suppressed stale server sessions instead of dropping a fresh split", () => {
-    // A closed terminal the server still reports must not defeat the lag
-    // guard: reconciling here would remove the just-split terminal-2 and
-    // later re-add it as its own group.
+  it("keeps a pending split when the same update carries an unknown server id", () => {
+    // Mixed set: terminal-2 was just split locally, terminal-3 appeared
+    // server-side. Adopting the server list wholesale would drop the split.
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-3"],
+        ["terminal-1", "terminal-2"],
+        [],
+        ["terminal-2"],
+      ),
+    ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
+  });
+
+  it("drops a confirmed terminal the server stopped reporting", () => {
+    // terminal-2 is not pending, so its absence is a real server-side close and
+    // must not linger as a dead tab.
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-3"],
+        ["terminal-1", "terminal-2"],
+        [],
+        [],
+      ),
+    ).toEqual(["terminal-1", "terminal-3"]);
+    expect(
+      reconcilableServerTerminalIds(["terminal-1"], ["terminal-1", "terminal-2"], [], []),
+    ).toEqual(["terminal-1"]);
+  });
+
+  it("never clears a populated list from an empty server response", () => {
+    // Indistinguishable from metadata that has not loaded yet.
+    expect(reconcilableServerTerminalIds([], ["terminal-1", "terminal-2"], [], [])).toBeNull();
+    expect(
+      reconcilableServerTerminalIds(["terminal-stale"], ["terminal-1"], ["terminal-stale"], []),
+    ).toBeNull();
+  });
+
+  it("ignores suppressed stale server sessions", () => {
     expect(
       reconcilableServerTerminalIds(
         ["terminal-1", "terminal-stale"],
         ["terminal-1", "terminal-2"],
         ["terminal-stale"],
+        ["terminal-2"],
       ),
     ).toBeNull();
   });
 
   it("adopts server sessions the client does not know", () => {
-    expect(reconcilableServerTerminalIds(["terminal-1", "terminal-2"], ["terminal-1"], [])).toEqual(
-      ["terminal-1", "terminal-2"],
-    );
-    expect(reconcilableServerTerminalIds(["terminal-1"], [], [])).toEqual(["terminal-1"]);
-  });
-
-  it("keeps a fresh local split when the same update carries an unknown server id", () => {
-    // Mixed set: terminal-2 was just split locally and the server has not caught
-    // up, while terminal-3 appeared server-side. Adopting the server list
-    // wholesale would drop the split and re-add it later as its own group.
     expect(
-      reconcilableServerTerminalIds(["terminal-1", "terminal-3"], ["terminal-1", "terminal-2"], []),
-    ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
+      reconcilableServerTerminalIds(["terminal-1", "terminal-2"], ["terminal-1"], [], []),
+    ).toEqual(["terminal-1", "terminal-2"]);
+    expect(reconcilableServerTerminalIds(["terminal-1"], [], [], [])).toEqual(["terminal-1"]);
   });
 
   it("drops suppressed ids from both sides of a merge", () => {
@@ -63,18 +100,9 @@ describe("reconcilableServerTerminalIds", () => {
         ["terminal-1", "terminal-stale", "terminal-3"],
         ["terminal-1", "terminal-2", "terminal-stale"],
         ["terminal-stale"],
+        ["terminal-2"],
       ),
     ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
-  });
-
-  it("filters suppressed ids out of an adopted server list", () => {
-    expect(
-      reconcilableServerTerminalIds(
-        ["terminal-1", "terminal-2", "terminal-stale"],
-        ["terminal-1"],
-        ["terminal-stale"],
-      ),
-    ).toEqual(["terminal-1", "terminal-2"]);
   });
 });
 
@@ -84,6 +112,7 @@ describe("terminalUiStateStore actions", () => {
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
+      pendingTerminalIdsByThreadKey: {},
     });
   });
 
@@ -215,6 +244,47 @@ describe("terminalUiStateStore actions", () => {
         THREAD_REF,
       ).terminalIds,
     ).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+  });
+
+  it("keeps a split alive across reconciles until the server confirms it", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+
+    const readIds = () =>
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds;
+
+    // Server has not registered the split yet: it must survive, still grouped.
+    useTerminalUiStateStore
+      .getState()
+      .reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+    expect(readIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalGroups,
+    ).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"],
+      },
+    ]);
+
+    // Once confirmed it stops being pending, so a later disappearance is a real
+    // close and the dead tab goes away.
+    useTerminalUiStateStore
+      .getState()
+      .reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+    expect(readIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+
+    useTerminalUiStateStore
+      .getState()
+      .reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+    expect(readIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
   });
 
   it("creates new terminals in a separate group", () => {
