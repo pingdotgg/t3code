@@ -3,6 +3,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerLifecycleStreamReadyEvent,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   WS_METHODS,
@@ -95,6 +96,57 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass
   override get message(): string {
     return `The t3@${this.targetVersion} update ended before the server accepted the restart.`;
   }
+}
+
+export class ServerUpdateTerminalError extends Schema.TaggedErrorClass<ServerUpdateTerminalError>()(
+  "ServerUpdateTerminalError",
+  {
+    targetVersion: Schema.String,
+    status: Schema.Literals(["committed", "rolled-back", "failed"]),
+    reason: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return this.reason ?? `The t3@${this.targetVersion} update ${this.status}.`;
+  }
+}
+
+// Covers the 120-second trial deadline and a final restart of the previous
+// version when the trial rolls back.
+const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(4);
+
+export function matchesServerUpdateReadyEvent(
+  result: ServerSelfUpdateResult,
+  event: ServerLifecycleStreamReadyEvent,
+): boolean {
+  return result.updateId === undefined
+    ? event.payload.environment.serverVersion === result.targetVersion
+    : event.payload.updateOutcome?.id === result.updateId;
+}
+
+export function validateServerUpdateReadyEvent(
+  result: ServerSelfUpdateResult,
+  event: ServerLifecycleStreamReadyEvent,
+): Effect.Effect<void, ServerUpdateTerminalError> {
+  if (result.updateId === undefined) return Effect.void;
+  const outcome = event.payload.updateOutcome;
+  if (
+    outcome?.id === result.updateId &&
+    outcome.status === "committed" &&
+    outcome.targetVersion === result.targetVersion &&
+    event.payload.environment.serverVersion === result.targetVersion
+  ) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    new ServerUpdateTerminalError({
+      targetVersion: result.targetVersion,
+      status: outcome?.status ?? "failed",
+      reason:
+        outcome?.reason ??
+        "The service launcher resumed without committing the requested server version.",
+    }),
+  );
 }
 
 export function serverUpdateStateForProgressEvent(
@@ -554,11 +606,11 @@ export function createServerEnvironmentAtoms<R, E>(
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
           .pipe(
             Stream.filter(
-              (event) =>
-                event.type === "ready" && event.payload.environment.serverVersion === targetVersion,
+              (event): event is ServerLifecycleStreamReadyEvent =>
+                event.type === "ready" && matchesServerUpdateReadyEvent(result, event),
             ),
             Stream.runHead,
-            Effect.timeoutOption(Duration.seconds(120)),
+            Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
             Effect.map(Option.flatten),
           );
         if (Option.isNone(resumed)) {
@@ -567,6 +619,7 @@ export function createServerEnvironmentAtoms<R, E>(
             targetVersion,
           });
         }
+        yield* validateServerUpdateReadyEvent(result, resumed.value);
 
         atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
         return result;
