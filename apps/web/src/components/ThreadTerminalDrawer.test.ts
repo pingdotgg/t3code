@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveDrawerResizeStartHeight,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
@@ -88,5 +89,17 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+});
+
+describe("resolveDrawerResizeStartHeight", () => {
+  it("starts the drag from the height the layout granted, not the stored one", () => {
+    expect(resolveDrawerResizeStartHeight(462.4, 700)).toBe(462);
+  });
+
+  it("falls back to the stored height when the drawer has not been measured", () => {
+    expect(resolveDrawerResizeStartHeight(null, 320)).toBe(320);
+    expect(resolveDrawerResizeStartHeight(0, 320)).toBe(320);
+    expect(resolveDrawerResizeStartHeight(Number.NaN, 320)).toBe(320);
   });
 });

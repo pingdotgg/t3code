@@ -79,6 +79,24 @@ function clampDrawerHeight(height: number): number {
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
 }
 
+/**
+ * Height a divider drag starts from.
+ *
+ * The chat area above the drawer reserves room for the composer, so flex layout
+ * can grant the drawer less than its stored height. Measuring the drag against
+ * the stored value would leave the divider trailing the pointer by the
+ * difference, so start from the height the layout actually granted.
+ */
+export function resolveDrawerResizeStartHeight(
+  renderedHeight: number | null,
+  storedHeight: number,
+): number {
+  if (renderedHeight === null || !Number.isFinite(renderedHeight) || renderedHeight <= 0) {
+    return storedHeight;
+  }
+  return Math.round(renderedHeight);
+}
+
 function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
@@ -913,6 +931,7 @@ export default function ThreadTerminalDrawer({
     setDrawerHeight(nextHeight);
   });
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const drawerElementRef = useRef<HTMLElement | null>(null);
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef(controlledDrawerHeight);
   const onHeightChangeRef = useRef(onHeightChange);
@@ -1112,7 +1131,10 @@ export default function ThreadTerminalDrawer({
     resizeStateRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
-      startHeight: drawerHeightRef.current,
+      startHeight: resolveDrawerResizeStartHeight(
+        drawerElementRef.current?.getBoundingClientRect().height ?? null,
+        drawerHeightRef.current,
+      ),
     };
   }, []);
 
@@ -1190,12 +1212,18 @@ export default function ThreadTerminalDrawer({
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
+        ref={drawerElementRef}
         data-terminal-owner={isPanel ? "right-panel" : "drawer"}
         className={cn(
           "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
-          isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
+          isPanel ? "h-full flex-1" : "border-t border-border/80",
         )}
-        style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+        style={
+          // Shrinkable so a tall drawer yields to the composer's reserved space
+          // instead of pushing it over the thread header; the floor keeps the
+          // resize handle reachable when it does.
+          isPanel ? undefined : { height: `${drawerHeight}px`, minHeight: `${MIN_DRAWER_HEIGHT}px` }
+        }
       >
         {!isPanel ? (
           <div
@@ -1224,12 +1252,18 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
+      ref={drawerElementRef}
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}
       className={cn(
         "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
-        isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
+        isPanel ? "h-full flex-1" : "border-t border-border/80",
       )}
-      style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+      style={
+        // Shrinkable so a tall drawer yields to the composer's reserved space
+        // instead of pushing it over the thread header; the floor keeps the
+        // resize handle reachable when it does.
+        isPanel ? undefined : { height: `${drawerHeight}px`, minHeight: `${MIN_DRAWER_HEIGHT}px` }
+      }
     >
       {!isPanel ? (
         <div
