@@ -195,12 +195,16 @@ export function buildModelMenuActions(
     );
 
     return [
-      {
-        id: `provider:${group.providerKey}`,
-        title: group.providerLabel,
-        subtitle: selected && !selected.isLegacy ? selected.label : undefined,
-        subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
-      },
+      ...(currentModels.length > 0
+        ? [
+            {
+              id: `provider:${group.providerKey}`,
+              title: group.providerLabel,
+              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
+              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
       ...(legacyModels.length > 0
         ? [
             {

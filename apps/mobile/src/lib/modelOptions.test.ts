@@ -54,6 +54,40 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("omits an empty provider menu when every model is legacy", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "GPT-5.4",
+              isCustom: false,
+              isLegacy: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(
+      buildModelMenuActions(groupByProvider(buildModelOptions(config, null)), null),
+    ).toMatchObject([
+      {
+        id: "legacy-models:codex",
+        title: "Codex legacy models",
+        subactions: [{ id: "model:codex:gpt-5.4" }],
+      },
+    ]);
+  });
+
   it("normalizes a legacy fallback selection against current capabilities", () => {
     const config = {
       providers: [
