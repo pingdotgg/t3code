@@ -71,62 +71,71 @@ export const ServiceLauncherHostProcess = Context.Reference<ServiceLauncherProce
   },
 );
 
-export class ServiceLauncherClient extends Context.Reference<{
-  readonly managed: boolean;
-  readonly trial: boolean;
-  readonly requestUpdate: (input: {
-    readonly targetVersion: string;
-  }) => Effect.Effect<string, ServiceLauncherClientError>;
-  readonly prepareTrial: Effect.Effect<
-    ServerSelfUpdateOutcome | undefined,
-    ServiceLauncherClientError
-  >;
-}>("t3/cloud/serviceLauncherClient", {
-  defaultValue: () => ({
-    managed: false,
-    trial: false,
-    requestUpdate: () =>
-      Effect.fail(
-        new ServiceLauncherClientError({
-          operation: "unmanaged",
-          reason: "This server is not managed by the launcher.",
-        }),
-      ),
-    prepareTrial: Effect.sync((): undefined => undefined),
-  }),
-}) {}
+export class ServiceLauncherClient extends Context.Service<
+  ServiceLauncherClient,
+  {
+    readonly managed: boolean;
+    readonly trial: boolean;
+    readonly requestUpdate: (input: {
+      readonly targetVersion: string;
+    }) => Effect.Effect<string, ServiceLauncherClientError>;
+    readonly prepareTrial: Effect.Effect<
+      ServerSelfUpdateOutcome | undefined,
+      ServiceLauncherClientError
+    >;
+  }
+>()("t3/cloud/serviceLauncherClient") {}
+
+const fail = (
+  operation: ServiceLauncherClientError["operation"],
+  reason: string,
+  cause?: unknown,
+) =>
+  cause === undefined
+    ? new ServiceLauncherClientError({ operation, reason })
+    : new ServiceLauncherClientError({ operation, reason, cause });
+
+const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup")(
+  function* (options?: { readonly currentVersion?: string }) {
+    const host = yield* ServiceLauncherHostProcess;
+    const environment = yield* HostProcessEnvironment;
+    const currentVersion = options?.currentVersion ?? packageJson.version;
+    const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
+    const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
+
+    if (rawContext !== undefined && context === undefined) {
+      return yield* fail(
+        "decode-context",
+        "The service launcher supplied invalid startup context.",
+      );
+    }
+    if (context !== undefined && context.childVersion !== currentVersion) {
+      return yield* fail(
+        "version-mismatch",
+        `The service launcher started t3@${context.childVersion}, but the child reports t3@${currentVersion}.`,
+      );
+    }
+
+    const managed = context !== undefined && host.connected;
+    if (context !== undefined && !managed) {
+      return yield* fail("ipc-unavailable", "The service launcher IPC channel is unavailable.");
+    }
+
+    return { host, context, managed };
+  },
+);
+
+export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_client.resolve_mode")(
+  function* () {
+    const { context, managed } = yield* resolveStartup();
+    return { managed, trial: context?.update?.status === "pending" };
+  },
+);
 
 export const make = Effect.fn("cloud.service_launcher_client.make")(function* (options?: {
   readonly currentVersion?: string;
 }) {
-  const host = yield* ServiceLauncherHostProcess;
-  const environment = yield* HostProcessEnvironment;
-  const currentVersion = options?.currentVersion ?? packageJson.version;
-  const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
-  const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
-  const fail = (
-    operation: ServiceLauncherClientError["operation"],
-    reason: string,
-    cause?: unknown,
-  ) =>
-    cause === undefined
-      ? new ServiceLauncherClientError({ operation, reason })
-      : new ServiceLauncherClientError({ operation, reason, cause });
-
-  if (rawContext !== undefined && context === undefined) {
-    return yield* fail("decode-context", "The service launcher supplied invalid startup context.");
-  }
-  if (context !== undefined && context.childVersion !== currentVersion) {
-    return yield* fail(
-      "version-mismatch",
-      `The service launcher started t3@${context.childVersion}, but the child reports t3@${currentVersion}.`,
-    );
-  }
-
-  const managed = context !== undefined && host.connected;
-  if (context !== undefined && !managed) {
-    return yield* fail("ipc-unavailable", "The service launcher IPC channel is unavailable.");
-  }
+  const { host, context, managed } = yield* resolveStartup(options);
 
   const exchange = (
     message: ServiceLauncherChildMessage,

@@ -27,14 +27,13 @@ import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProto
 
 const PREFLIGHT_TIMEOUT = Duration.seconds(30);
 
-export const resolveServerSelfUpdateCapability = Effect.fn(
-  "cloud.server_self_update.resolve_capability",
-)(function* (input: { readonly desktopManaged: boolean }) {
+export function resolveServerSelfUpdateCapability(input: {
+  readonly desktopManaged: boolean;
+  readonly launcherManaged: boolean;
+}): ServerSelfUpdateCapability | null {
   if (input.desktopManaged) return "desktop-managed" as const;
-  return (yield* ServiceLauncherClient.ServiceLauncherClient).managed
-    ? ("boot-service" as const)
-    : null;
-});
+  return input.launcherManaged ? ("boot-service" as const) : null;
+}
 
 export class ServerSelfUpdate extends Context.Service<
   ServerSelfUpdate,

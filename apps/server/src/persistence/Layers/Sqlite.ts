@@ -71,7 +71,7 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;
-    const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    const launcher = yield* ServiceLauncherClient.resolveServiceLauncherMode();
     return makeSqlitePersistenceLive(dbPath, { trial: launcher.trial });
   }),
 );
