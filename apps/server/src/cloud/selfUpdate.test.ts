@@ -9,7 +9,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import { make } from "./selfUpdate.ts";
+import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 it.layer(NodeServices.layer)("server self update", (it) => {
   it.effect("stages and preflights before asking the launcher for an update ID", () =>
@@ -63,7 +63,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
           }),
         prepareTrial: Effect.sync((): undefined => undefined),
       });
-      const selfUpdate = yield* make().pipe(
+      const selfUpdate = yield* ServerSelfUpdate.make().pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
         Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
         Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),

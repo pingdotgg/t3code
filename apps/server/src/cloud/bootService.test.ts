@@ -13,12 +13,12 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { make, renderBootServiceUnit } from "./bootService.ts";
+import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import { parseServiceState } from "./serviceProtocol.ts";
 
 it("keeps systemd pinned to the stable launcher rather than a versioned server", () => {
-  const unit = renderBootServiceUnit({
+  const unit = BootService.renderBootServiceUnit({
     nodePath: "/usr/bin/node",
     launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
     baseDir: "/home/theo/.t3",
@@ -61,7 +61,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             };
           }),
       });
-      const service = yield* make({
+      const service = yield* BootService.make({
         baseDir,
         logsDir,
         cliVersion: "1.2.3",

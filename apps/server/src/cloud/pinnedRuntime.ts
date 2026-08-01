@@ -86,8 +86,7 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
   }) {
     const { fs, runner } = input;
     const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
-    const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
-      fs.exists(paths.versionDir),
+    const [entryExists, sentinel] = yield* Effect.all([
       fs.exists(paths.entryPath),
       fs.readFileString(paths.sentinelPath).pipe(Effect.option),
     ]).pipe(
@@ -97,32 +96,11 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     );
     const alreadyPinned =
       entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
-    if (versionDirExists && !alreadyPinned) {
-      yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PinnedRuntimeInstallError({
-              step: "removing an incomplete pinned runtime",
-              cause,
-            }),
-        ),
-      );
-    }
     if (alreadyPinned) {
       const valid = yield* input.validate(paths).pipe(
         Effect.as(true),
         Effect.catchTags({
-          PinnedRuntimeInstallError: () =>
-            fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "removing an invalid pinned runtime",
-                    cause,
-                  }),
-              ),
-              Effect.as(false),
-            ),
+          PinnedRuntimeInstallError: () => Effect.succeed(false),
         }),
       );
       if (valid) return paths;
@@ -194,6 +172,16 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
           Effect.mapError(
             (cause) =>
               new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
+          ),
+        );
+      // Keep the old path intact until its replacement is ready. Concurrent
+      // publishers may replace each other, but never leave no valid runtime.
+      yield* fs
+        .remove(paths.versionDir, { recursive: true, force: true })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({ step: "replacing the pinned runtime", cause }),
           ),
         );
       yield* fs

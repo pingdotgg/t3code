@@ -8,7 +8,7 @@ import {
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
-import { make, ServiceLauncherHostProcess } from "./serviceLauncherClient.ts";
+import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
   readonly connected = true;
@@ -42,8 +42,8 @@ class FakeLauncherProcess {
 }
 
 const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
-  make({ currentVersion }).pipe(
-    Effect.provideService(ServiceLauncherHostProcess, host),
+  ServiceLauncherClient.make({ currentVersion }).pipe(
+    Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
     Effect.provideService(HostProcessEnvironment, host.env),
   );
 
