@@ -45,6 +45,9 @@ function pathForSection(lines: ReadonlyArray<string>): string {
   let newPath: string | null = null;
   let oldPath: string | null = null;
   for (const line of lines) {
+    // Headers only appear before the first hunk; content lines rendered as
+    // `++ …`/`-- …` additions/removals must not override the real path.
+    if (line.startsWith("@@")) break;
     if (line.startsWith("+++ ")) newPath = line.slice(4).trim();
     else if (line.startsWith("--- ")) oldPath = line.slice(4).trim();
     else if (line.startsWith("diff --git ")) {
@@ -55,7 +58,11 @@ function pathForSection(lines: ReadonlyArray<string>): string {
   }
   // Prefer the new path; for deletions (+++ /dev/null) use the old path.
   const chosen =
-    newPath && newPath !== "/dev/null" ? newPath : oldPath && oldPath !== "/dev/null" ? oldPath : newPath;
+    newPath && newPath !== "/dev/null"
+      ? newPath
+      : oldPath && oldPath !== "/dev/null"
+        ? oldPath
+        : newPath;
   return chosen ? stripGitPrefix(chosen) : "(unknown)";
 }
 

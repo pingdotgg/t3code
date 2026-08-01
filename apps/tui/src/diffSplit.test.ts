@@ -70,4 +70,28 @@ describe("splitUnifiedDiff", () => {
     expect(splitUnifiedDiff("")).toEqual([]);
     expect(splitUnifiedDiff("   \n  ")).toEqual([]);
   });
+
+  it("ignores hunk content lines that render as `+++ `/`--- ` when finding the path", () => {
+    const added = [
+      "diff --git a/notes.md b/notes.md",
+      "--- a/notes.md",
+      "+++ b/notes.md",
+      "@@ -1 +1,2 @@",
+      " existing",
+      "++ new bullet item",
+    ].join("\n");
+    expect(splitUnifiedDiff(added)[0]?.path).toBe("notes.md");
+    expect(splitUnifiedDiff(added)[0]?.filetype).toBe("markdown");
+
+    const deleted = [
+      "diff --git a/legacy.sql b/legacy.sql",
+      "deleted file mode 100644",
+      "--- a/legacy.sql",
+      "+++ /dev/null",
+      "@@ -1,2 +0,0 @@",
+      "-- legacy comment line",
+      "-DROP TABLE users;",
+    ].join("\n");
+    expect(splitUnifiedDiff(deleted)[0]?.path).toBe("legacy.sql");
+  });
 });
