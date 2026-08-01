@@ -6,7 +6,11 @@ import { testRender } from "@opentui/react/test-utils";
 import { installKittyImageExtension } from "@t3tools/opentui-image";
 
 import type { OrchestrationThread } from "../connection.ts";
-import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import {
+  MessagesTimeline,
+  resolveTimelineWindow,
+  TIMELINE_WINDOW_SIZE,
+} from "./MessagesTimeline.tsx";
 
 // Component spec for the conversation header's plan/build indicator (^B).
 
@@ -54,6 +58,52 @@ describe("MessagesTimeline header", () => {
 
   it("Given a thread in default mode, then the header shows 'build'", async () => {
     expect(await headerFrame("default")).toContain("build");
+  });
+});
+
+describe("MessagesTimeline windowing", () => {
+  it("bounds mounted history to the latest page and supports older pages", () => {
+    expect(resolveTimelineWindow(TIMELINE_WINDOW_SIZE + 25, null)).toEqual({
+      start: 25,
+      end: TIMELINE_WINDOW_SIZE + 25,
+    });
+    expect(resolveTimelineWindow(TIMELINE_WINDOW_SIZE + 25, 25)).toEqual({ start: 0, end: 25 });
+  });
+
+  it("mounts only the latest bounded page for a long conversation", async () => {
+    const messages = Array.from({ length: TIMELINE_WINDOW_SIZE + 5 }, (_, index) => ({
+      id: `message-${index}`,
+      role: "assistant",
+      text: `message body ${index}`,
+      createdAt: new Date(Date.parse("2026-06-19T00:00:00.000Z") + index * 1_000).toISOString(),
+      updatedAt: new Date(Date.parse("2026-06-19T00:00:00.000Z") + index * 1_000).toISOString(),
+      streaming: false,
+      attachments: [],
+    }));
+    const ref = React.createRef<ScrollBoxRenderable | null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={{ ...detail("default"), messages } as unknown as OrchestrationThread}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref}
+      />,
+      { width: 92, height: 24 },
+    );
+    await t.renderOnce();
+    await t.flush();
+
+    const column = ref.current
+      ?.getRenderable("timeline-column-shell")
+      ?.getRenderable("timeline-column");
+    expect(column?.getRenderable("timeline-row-message-4")).toBeUndefined();
+    expect(column?.getRenderable("timeline-row-message-5")).toBeDefined();
+    expect(column?.getRenderable(`timeline-row-message-${TIMELINE_WINDOW_SIZE + 4}`)).toBeDefined();
+    t.renderer.destroy();
   });
 });
 

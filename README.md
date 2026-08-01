@@ -76,7 +76,9 @@ then press `Enter` to send. Conversations render as Markdown and follow the
 latest reply; scroll with `PgUp`/`PgDn`. The TUI also lets you approve/deny tool
 prompts (`^A`/`^R`), interrupt a running turn (`^G`), start new threads (`^N`),
 and attach to a thread's terminal (`^E`; `Ctrl-Q` detaches). Start a server
-first with `t3 serve` if one isn't already running.
+first with `t3 serve` if one isn't already running. Long conversations stay
+responsive by showing a bounded page; use the earlier/newer rows to move through
+older history.
 
 ## Some notes
 

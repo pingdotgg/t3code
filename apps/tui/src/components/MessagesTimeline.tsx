@@ -29,7 +29,6 @@ import {
   type FoldableRow,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
-  workingStartedAt,
 } from "../timeline.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor, usePalette } from "../theme.ts";
 import {
@@ -44,6 +43,16 @@ import {
 // A sticky-to-bottom scrollbox interleaving streaming <markdown> messages with the
 // derived work log (tool calls / thinking), each message's changed-files summary,
 // and a live "Working…" indicator while a turn runs.
+
+export const TIMELINE_WINDOW_SIZE = 80;
+
+export function resolveTimelineWindow(
+  rowCount: number,
+  requestedEnd: number | null,
+): { readonly start: number; readonly end: number } {
+  const end = Math.min(rowCount, Math.max(0, requestedEnd ?? rowCount));
+  return { start: Math.max(0, end - TIMELINE_WINDOW_SIZE), end };
+}
 
 function statusLabel(thread: { session: OrchestrationThread["session"] }): string {
   return thread.session?.status ?? "idle";
@@ -687,13 +696,33 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   const bodyHeight = Math.max(1, height - headerHeight - metaHeight - approvalHeight - 2);
 
   const working = detail ? isWorking(detail) : false;
-  const startedAt = detail ? workingStartedAt(detail) : null;
-
   const timeline = React.useMemo(
     () =>
       messages && activities ? deriveTimelineEntries(messages, activities, latestTurn ?? null) : [],
     [messages, activities, latestTurn],
   );
+  const detailId = detail?.id ?? null;
+  const [windowState, setWindowState] = React.useState<{
+    readonly detailId: string | null;
+    readonly end: number | null;
+  }>(() => ({ detailId, end: null }));
+  const requestedWindowEnd = windowState.detailId === detailId ? windowState.end : null;
+  const timelineWindow = resolveTimelineWindow(timeline.length, requestedWindowEnd);
+  const visibleTimeline = timeline.slice(timelineWindow.start, timelineWindow.end);
+  const showingLatest = timelineWindow.end === timeline.length;
+  const showOlder = () => {
+    setWindowState({ detailId, end: timelineWindow.start });
+    queueMicrotask(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    });
+  };
+  const showNewer = () => {
+    const nextEnd = Math.min(timeline.length, timelineWindow.end + TIMELINE_WINDOW_SIZE);
+    setWindowState({ detailId, end: nextEnd === timeline.length ? null : nextEnd });
+    queueMicrotask(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    });
+  };
   React.useLayoutEffect(() => {
     const box = scrollRef.current;
     if (box && box.scrollLeft !== 0) box.scrollLeft = 0;
@@ -807,7 +836,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         width={contentWidth}
         height={bodyHeight}
         scrollX={false}
-        stickyScroll
+        stickyScroll={showingLatest}
         stickyStart="bottom"
         onMouseScroll={pauseImagesForScroll}
         style={{
@@ -830,7 +859,12 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
             flexShrink={0}
             overflow="hidden"
           >
-            {timeline.map((row) => {
+            {timelineWindow.start > 0 ? (
+              <box onMouseDown={showOlder} marginBottom={1}>
+                <text fg={palette.dim}>{`▴ ${timelineWindow.start} earlier entries`}</text>
+              </box>
+            ) : null}
+            {visibleTimeline.map((row) => {
               if (row.kind === "turn-fold") {
                 return (
                   <TurnFoldSection
@@ -843,10 +877,17 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
               }
               return <FoldableRowView key={row.id} row={row} ctx={rowCtx} />;
             })}
-            {proposedPlan ? (
+            {!showingLatest ? (
+              <box onMouseDown={showNewer} marginTop={1} marginBottom={1}>
+                <text
+                  fg={palette.dim}
+                >{`▾ ${timeline.length - timelineWindow.end} newer entries`}</text>
+              </box>
+            ) : null}
+            {showingLatest && proposedPlan ? (
               <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
             ) : null}
-            {working ? <WorkingIndicator startedAt={startedAt} /> : null}
+            {showingLatest && working ? <WorkingIndicator /> : null}
           </box>
         </box>
       </scrollbox>
