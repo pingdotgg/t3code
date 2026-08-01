@@ -117,5 +117,5 @@ export function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): stri
     // Keep the stored preference stable even if a custom endpoint is malformed.
   }
 
-  return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}`;
+  return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}:${endpointHostKey(endpoint)}`;
 }

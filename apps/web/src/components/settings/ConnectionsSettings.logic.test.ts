@@ -231,6 +231,25 @@ describe("endpointDefaultPreferenceKey", () => {
     );
   });
 
+  it("distinguishes manual endpoints that share a label by host", () => {
+    const makeManualEndpoint = (url: string): AdvertisedEndpoint => ({
+      id: `manual:${url}`,
+      label: "Custom HTTPS",
+      provider: { id: "manual", label: "Manual", kind: "manual", isAddon: false },
+      httpBaseUrl: `${url}/`,
+      wsBaseUrl: `${url.replace("https:", "wss:")}/`,
+      reachability: "public",
+      compatibility: { hostedHttpsApp: "compatible", desktopApp: "compatible" },
+      source: "user",
+      status: "unknown",
+      description: "User-configured HTTPS endpoint for this desktop backend.",
+    });
+    const first = makeManualEndpoint("https://one.example.test");
+    const second = makeManualEndpoint("https://two.example.test");
+
+    expect(endpointDefaultPreferenceKey(first)).not.toBe(endpointDefaultPreferenceKey(second));
+  });
+
   it("embeds the host in tailscale-ip preference keys", () => {
     const endpoint: AdvertisedEndpoint = {
       id: "tailscale-ip:http://100.90.1.2:4173",
