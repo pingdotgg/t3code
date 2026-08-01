@@ -323,9 +323,10 @@ export function clearMarkupDocument(document: MarkupDocument): MarkupDocument {
 function squaredDistance(
   left: PreviewAnnotationNormalizedPoint,
   right: PreviewAnnotationNormalizedPoint,
+  size: MarkupSize,
 ): number {
-  const dx = left.x - right.x;
-  const dy = left.y - right.y;
+  const dx = (left.x - right.x) * size.width;
+  const dy = (left.y - right.y) * size.height;
   return dx * dx + dy * dy;
 }
 
@@ -333,65 +334,89 @@ function squaredDistanceToSegment(
   point: PreviewAnnotationNormalizedPoint,
   start: PreviewAnnotationNormalizedPoint,
   end: PreviewAnnotationNormalizedPoint,
+  size: MarkupSize,
 ): number {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  if (dx === 0 && dy === 0) return squaredDistance(point, start);
+  const dx = (end.x - start.x) * size.width;
+  const dy = (end.y - start.y) * size.height;
+  if (dx === 0 && dy === 0) return squaredDistance(point, start, size);
   const progress = Math.max(
     0,
-    Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)),
+    Math.min(
+      1,
+      ((point.x - start.x) * size.width * dx + (point.y - start.y) * size.height * dy) /
+        (dx * dx + dy * dy),
+    ),
   );
-  return squaredDistance(point, {
-    x: start.x + progress * dx,
-    y: start.y + progress * dy,
-  });
+  return squaredDistance(
+    point,
+    {
+      x: start.x + progress * (end.x - start.x),
+      y: start.y + progress * (end.y - start.y),
+    },
+    size,
+  );
 }
 
 function pointTouchesRect(
   point: PreviewAnnotationNormalizedPoint,
   rect: PreviewAnnotationNormalizedRect,
-  tolerance: number,
+  horizontalTolerance: number,
+  verticalTolerance: number,
 ): boolean {
   return (
-    point.x >= rect.x - tolerance &&
-    point.x <= rect.x + rect.width + tolerance &&
-    point.y >= rect.y - tolerance &&
-    point.y <= rect.y + rect.height + tolerance
+    point.x >= rect.x - horizontalTolerance &&
+    point.x <= rect.x + rect.width + horizontalTolerance &&
+    point.y >= rect.y - verticalTolerance &&
+    point.y <= rect.y + rect.height + verticalTolerance
   );
 }
 
 export function hitTestMarkupObject(
   document: MarkupDocument,
   point: PreviewAnnotationNormalizedPoint,
+  size: MarkupSize,
   tolerance = 0.025,
 ): MarkupSelection | null {
+  if (size.width <= 0 || size.height <= 0) return null;
+  const shortSide = Math.min(size.width, size.height);
+  const tolerancePixels = tolerance * shortSide;
+  const horizontalTolerance = tolerancePixels / size.width;
+  const verticalTolerance = tolerancePixels / size.height;
   for (const callout of document.callouts.toReversed()) {
     if (callout.anchor.kind === "point") {
-      if (squaredDistance(point, callout.anchor.point) <= tolerance * tolerance) {
+      if (squaredDistance(point, callout.anchor.point, size) <= tolerancePixels * tolerancePixels) {
         return { kind: "callout", id: callout.id };
       }
       continue;
     }
-    if (pointTouchesRect(point, callout.anchor.rect, tolerance)) {
+    if (pointTouchesRect(point, callout.anchor.rect, horizontalTolerance, verticalTolerance)) {
       return { kind: "callout", id: callout.id };
     }
   }
 
   for (const stroke of document.strokes.toReversed()) {
-    if (!pointTouchesRect(point, stroke.bounds, tolerance + stroke.width / 2)) {
+    const strokeTolerancePixels = (tolerance + stroke.width / 2) * shortSide;
+    if (
+      !pointTouchesRect(
+        point,
+        stroke.bounds,
+        strokeTolerancePixels / size.width,
+        strokeTolerancePixels / size.height,
+      )
+    ) {
       continue;
     }
     const points = stroke.points;
     if (
       points.length === 1 &&
-      squaredDistance(point, points[0]!) <= (tolerance + stroke.width / 2) ** 2
+      squaredDistance(point, points[0]!, size) <= strokeTolerancePixels * strokeTolerancePixels
     ) {
       return { kind: "stroke", id: stroke.id };
     }
     for (let index = 1; index < points.length; index += 1) {
       if (
-        squaredDistanceToSegment(point, points[index - 1]!, points[index]!) <=
-        (tolerance + stroke.width / 2) ** 2
+        squaredDistanceToSegment(point, points[index - 1]!, points[index]!, size) <=
+        strokeTolerancePixels * strokeTolerancePixels
       ) {
         return { kind: "stroke", id: stroke.id };
       }
@@ -404,9 +429,10 @@ export function hitTestMarkupObject(
 export function eraseMarkupObjectAtPoint(
   document: MarkupDocument,
   point: PreviewAnnotationNormalizedPoint,
+  size: MarkupSize,
   tolerance = 0.035,
 ): MarkupDocument {
-  return deleteMarkupObject(document, hitTestMarkupObject(document, point, tolerance));
+  return deleteMarkupObject(document, hitTestMarkupObject(document, point, size, tolerance));
 }
 
 export function createMarkupHistory(document: MarkupDocument): MarkupHistory {

@@ -607,7 +607,7 @@ export function ImageMarkupModal(props: ImageMarkupModalProps) {
         setSelection({ kind: "callout", id });
         return;
       }
-      setSelection(hitTestMarkupObject(history.present, point));
+      setSelection(hitTestMarkupObject(history.present, point, fit));
     },
     [commitCurrentComment, commitDocument, fit, history.present, semanticElements, tool],
   );
@@ -645,7 +645,7 @@ export function ImageMarkupModal(props: ImageMarkupModalProps) {
       if (fit.width <= 0 || fit.height <= 0) return;
       const point = normalizedPoint({ x, y }, fit);
       commitCurrentComment();
-      commitDocument((document) => eraseMarkupObjectAtPoint(document, point));
+      commitDocument((document) => eraseMarkupObjectAtPoint(document, point, fit));
       setSelection(null);
     },
     [commitCurrentComment, commitDocument, fit],

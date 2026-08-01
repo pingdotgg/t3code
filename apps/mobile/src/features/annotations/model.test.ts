@@ -174,15 +174,17 @@ describe("annotation markup document", () => {
       id: "point-1",
       point: { x: 0.8, y: 0.2 },
     });
-    expect(hitTestMarkupObject(document, { x: 0.3, y: 0.4 })).toEqual({
+    expect(hitTestMarkupObject(document, { x: 0.3, y: 0.4 }, { width: 1, height: 1 })).toEqual({
       kind: "stroke",
       id: "stroke-1",
     });
-    expect(hitTestMarkupObject(document, { x: 0.8, y: 0.2 })).toEqual({
+    expect(hitTestMarkupObject(document, { x: 0.8, y: 0.2 }, { width: 1, height: 1 })).toEqual({
       kind: "callout",
       id: "point-1",
     });
-    expect(eraseMarkupObjectAtPoint(document, { x: 0.3, y: 0.4 }).strokes).toEqual([]);
+    expect(
+      eraseMarkupObjectAtPoint(document, { x: 0.3, y: 0.4 }, { width: 1, height: 1 }).strokes,
+    ).toEqual([]);
   });
 
   it("hit-tests a single-point stroke across its rendered width", () => {
@@ -195,10 +197,30 @@ describe("annotation markup document", () => {
     expect(stroke).not.toBeNull();
     const document = addStroke(EMPTY_MARKUP_DOCUMENT, stroke!);
 
-    expect(hitTestMarkupObject(document, { x: 0.56, y: 0.5 }, 0.02)).toEqual({
+    expect(
+      hitTestMarkupObject(document, { x: 0.56, y: 0.5 }, { width: 1, height: 1 }, 0.02),
+    ).toEqual({
       kind: "stroke",
       id: "dot-1",
     });
+  });
+
+  it("uses a circular pixel-space hit area on non-square images", () => {
+    const document = addPointCallout(EMPTY_MARKUP_DOCUMENT, {
+      id: "point-wide",
+      point: { x: 0.5, y: 0.5 },
+    });
+    const wideImage = { width: 4_000, height: 500 };
+
+    expect(hitTestMarkupObject(document, { x: 0.5025, y: 0.5 }, wideImage)).toEqual({
+      kind: "callout",
+      id: "point-wide",
+    });
+    expect(hitTestMarkupObject(document, { x: 0.5, y: 0.52 }, wideImage)).toEqual({
+      kind: "callout",
+      id: "point-wide",
+    });
+    expect(hitTestMarkupObject(document, { x: 0.51, y: 0.5 }, wideImage)).toBeNull();
   });
 
   it("supports undo, redo, delete, and clear without mutating snapshots", () => {
