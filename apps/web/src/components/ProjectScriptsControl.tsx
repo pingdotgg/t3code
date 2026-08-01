@@ -341,6 +341,7 @@ export default function ProjectScriptsControl({
                 <Button
                   size="xs"
                   variant="outline"
+                  className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
                   aria-label={`Run ${primaryScript.name}`}
                   onClick={() => onRunScript(primaryScript)}
                 />
@@ -441,7 +442,13 @@ export default function ProjectScriptsControl({
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button size="xs" variant="outline" aria-label="Add action" onClick={openAddDialog} />
+              <Button
+                size="xs"
+                variant="outline"
+                className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
+                aria-label="Add action"
+                onClick={openAddDialog}
+              />
             }
           >
             <PlusIcon className="size-3.5" />

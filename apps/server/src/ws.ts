@@ -28,6 +28,7 @@ import {
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
@@ -36,10 +37,13 @@ import {
   type ProjectFileOperation,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
+  type ServerSelfUpdateError,
+  type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -293,6 +297,13 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // past this gap a single O(active-threads) snapshot is cheaper and bounded.
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
+
+// Same bound for thread resume. The replay reads the *global* event range and
+// filters per-thread afterwards, so a stale cursor far behind the head would
+// otherwise decode every intervening event's payload — reconnects with cursors
+// hundreds of thousands of events behind have OOM-killed servers on large
+// databases. Past this gap the client is reset with a fresh thread snapshot.
+const THREAD_RESUME_MAX_GAP = 1_000;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -1101,6 +1112,20 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.searchThreads]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.searchThreads,
+            projectionSnapshotQuery.searchThreads(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationSearchThreadsError({
+                    message: "Failed to search threads",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
@@ -1263,38 +1288,50 @@ const makeWsRpcLayer = (
               // catch-up followed by the buffered/ongoing live events. Overlapping
               // events are deduped by sequence on the client.
               //
-              // Read the full range after the cursor (not the store's default
-              // page-bounded limit): the range is normally tiny (a fresh HTTP
-              // snapshot sequence) and the per-thread filter runs after reading,
-              // so a global cap could otherwise omit this thread's events.
+              // The replay is bounded to the projection head captured below. The
+              // catch-up range is normally tiny (a fresh HTTP snapshot sequence),
+              // but a stale cached cursor can sit hundreds of thousands of global
+              // events behind — replaying that decodes every intervening event
+              // (including every other thread's tool payloads) only to discard
+              // almost all of them, which has OOM-killed servers on large
+              // databases. A truncated replay would silently drop this thread's
+              // events, so past the gap cap we reset the client with a fresh
+              // thread snapshot instead, exactly like subscribeShell above.
               if (input.afterSequence !== undefined) {
                 const afterSequence = input.afterSequence;
-                const catchUpStream = orchestrationEngine
-                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
-                  .pipe(
-                    Stream.filter(isThisThreadDetailEvent),
-                    Stream.map((event) => ({
-                      kind: "event" as const,
-                      event: projectActivityEvent(event),
-                    })),
-                    Stream.mapError(
-                      (cause) =>
-                        new OrchestrationGetSnapshotError({
-                          message: `Failed to replay thread ${input.threadId} events`,
-                          cause,
-                        }),
-                    ),
-                  );
-                const afterCatchUp =
-                  input.requestCompletionMarker === true
-                    ? Stream.concat(
-                        Stream.fromEffect(
-                          Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                        ).pipe(Stream.drain),
-                        bufferedLiveStream,
-                      )
-                    : bufferedLiveStream;
-                return Stream.concat(catchUpStream, afterCatchUp);
+                const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
+                if (replayGap >= 0 && replayGap <= THREAD_RESUME_MAX_GAP) {
+                  const catchUpStream = orchestrationEngine
+                    .readEvents(afterSequence, replayGap)
+                    .pipe(
+                      Stream.filter(isThisThreadDetailEvent),
+                      Stream.map((event) => ({
+                        kind: "event" as const,
+                        event: projectActivityEvent(event),
+                      })),
+                      Stream.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to replay thread ${input.threadId} events`,
+                            cause,
+                          }),
+                      ),
+                    );
+                  const afterCatchUp =
+                    input.requestCompletionMarker === true
+                      ? Stream.concat(
+                          Stream.fromEffect(
+                            Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                          ).pipe(Stream.drain),
+                          bufferedLiveStream,
+                        )
+                      : bufferedLiveStream;
+                  return Stream.concat(catchUpStream, afterCatchUp);
+                }
+                // Gap too large (or cursor ahead of authoritative state): fall
+                // through to the snapshot path so the client converges from a
+                // fresh thread detail instead of an unbounded replay.
               }
 
               const snapshot = yield* projectionSnapshotQuery
@@ -1364,6 +1401,33 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverUpdateServer, serverSelfUpdate.update(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
+          observeRpcStream(
+            WS_METHODS.serverUpdateServerWithProgress,
+            Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
+              serverSelfUpdate
+                .update(input, (stage) =>
+                  Queue.offer(queue, {
+                    type: "progress",
+                    stage,
+                  }).pipe(Effect.asVoid),
+                )
+                .pipe(
+                  Effect.flatMap((result) =>
+                    Queue.offer(queue, {
+                      type: "complete",
+                      result,
+                    }),
+                  ),
+                  Effect.catchTags({
+                    ServerSelfUpdateError: (error) => Queue.fail(queue, error),
+                  }),
+                  Effect.andThen(Queue.end(queue)),
+                  Effect.forkScoped,
+                ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
           observeRpcEffect(
             WS_METHODS.serverUpsertKeybinding,
@@ -1543,6 +1607,23 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSearchContents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsSearchContents,
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
                     cwd: input.cwd,
                     queryLength: input.query.length,
                     limit: input.limit,
