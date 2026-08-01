@@ -2,7 +2,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - The CLI loopback OAuth callback is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -18,9 +17,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import {
   buildConnectAuthorizeRequestUrl,
   buildConnectClerkAuthorizeUrl,
@@ -82,7 +78,7 @@ function idTokenIdentity(idToken: string | undefined): string | null {
   );
 }
 
-const exchangeOAuthToken = Effect.fn("cloud.cli_token.exchange")(function* (
+export const exchangeOAuthToken = Effect.fn("cloud.cli_token.exchange")(function* (
   metadata: CloudCliOAuthConfig,
   params: Record<string, string>,
 ) {
@@ -183,6 +179,64 @@ function bytesToString(value: Uint8Array): string {
   return new TextDecoder().decode(value);
 }
 
+interface LoopbackAuthorizationCallback {
+  readonly awaitCode: Effect.Effect<string>;
+}
+
+export const withLoopbackAuthorizationCallback = <A, E, R>(
+  input: {
+    readonly redirectUri: string;
+    readonly state: string;
+  },
+  use: (callback: LoopbackAuthorizationCallback) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | Error, R> =>
+  Effect.acquireUseRelease(
+    Effect.gen(function* () {
+      const callback = yield* Deferred.make<string>();
+      const redirectUri = new URL(input.redirectUri);
+      const server = yield* Effect.tryPromise({
+        try: () =>
+          new Promise<NodeHttp.Server>((resolve, reject) => {
+            const listener = NodeHttp.createServer((request, response) => {
+              const url = new URL(request.url ?? "/", input.redirectUri);
+              const code = url.searchParams.get("code");
+              if (
+                request.method !== "GET" ||
+                url.pathname !== redirectUri.pathname ||
+                url.searchParams.get("state") !== input.state ||
+                !code
+              ) {
+                response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+                response.end("Invalid T3 Connect authorization callback.");
+                return;
+              }
+              Effect.runSync(Deferred.succeed(callback, code));
+              response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+              response.end("<h1>T3 Connect authorization complete</h1>");
+            });
+            listener.once("error", reject);
+            listener.listen(
+              {
+                host: redirectUri.hostname,
+                port: Number(redirectUri.port),
+              },
+              () => resolve(listener),
+            );
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+      return { callback, server };
+    }),
+    ({ callback }) => use({ awaitCode: Deferred.await(callback) }),
+    ({ server }) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          }),
+      ).pipe(Effect.orDie),
+  );
+
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -222,43 +276,6 @@ export const make = Effect.gen(function* () {
       yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
     );
     const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
-    const callback = yield* Deferred.make<string>();
-    const callbackRoute = HttpRouter.add(
-      "GET",
-      "/callback",
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const url = new URL(request.originalUrl, metadata.redirectUri);
-        const code = url.searchParams.get("code");
-        if (url.searchParams.get("state") !== state || !code) {
-          return HttpServerResponse.text("Invalid T3 Connect authorization callback.", {
-            status: 400,
-          });
-        }
-        yield* Deferred.succeed(callback, code);
-        return yield* HttpServerResponse.html`
-<html>
-  <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-    <h1>T3 Connect authorization complete</h1>
-    <p>You can close this window and return to your terminal.</p>
-  </body>
-</html>
-`;
-      }),
-    );
-    yield* HttpRouter.serve(callbackRoute, {
-      disableListenLog: true,
-      disableLogger: true,
-    }).pipe(
-      Layer.provide(
-        NodeHttpServer.layer(NodeHttp.createServer, {
-          host: "127.0.0.1",
-          port: 34338,
-          disablePreemptiveShutdown: true,
-        }),
-      ),
-      Layer.build,
-    );
     const authorizationUrl = buildConnectClerkAuthorizeUrl({
       authorizationEndpoint: metadata.authorizationEndpoint,
       clientId: metadata.clientId,
@@ -267,16 +284,23 @@ export const make = Effect.gen(function* () {
       state,
       challenge,
     });
-    yield* Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl}\n`);
-    const code = yield* Deferred.await(callback).pipe(
-      Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
-      Effect.catchTag("TimeoutError", (cause) =>
-        Effect.fail(
-          new CloudCliAuthorizationTimeoutError({
-            cause,
-          }),
+    const code = yield* withLoopbackAuthorizationCallback(
+      { redirectUri: metadata.redirectUri, state },
+      ({ awaitCode }) =>
+        Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl}\n`).pipe(
+          Effect.andThen(
+            awaitCode.pipe(
+              Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
+              Effect.catchTag("TimeoutError", (cause) =>
+                Effect.fail(
+                  new CloudCliAuthorizationTimeoutError({
+                    cause,
+                  }),
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
     );
     return (yield* exchangeOAuthToken(metadata, {
       grant_type: "authorization_code",

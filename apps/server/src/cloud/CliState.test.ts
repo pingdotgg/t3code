@@ -58,3 +58,36 @@ it.layer(NodeServices.layer)("CliState", (it) => {
     }).pipe(Effect.provide(makeTestLayer())),
   );
 });
+
+it.effect("keeps desired-link disabled when later metadata cleanup fails", () => {
+  const values = new Map<string, Uint8Array>();
+  values.set(RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test"));
+  const secrets = ServerSecretStore.ServerSecretStore.of({
+    get: (name) =>
+      Effect.sync(() => {
+        const value = values.get(name);
+        return value === undefined ? Option.none<Uint8Array>() : Option.some(value);
+      }),
+    set: (name, value) =>
+      Effect.sync(() => {
+        values.set(name, value);
+      }),
+    create: () => Effect.die("unused"),
+    getOrCreateRandom: () => Effect.die("unused"),
+    remove: (name) =>
+      name === RELAY_URL_SECRET
+        ? Effect.fail(new Error("secret store unavailable"))
+        : Effect.sync(() => {
+            values.delete(name);
+          }),
+    list: () => Effect.succeed([]),
+  });
+
+  return Effect.gen(function* () {
+    yield* CliState.setCliDesiredCloudLink(true);
+    yield* Effect.flip(CliState.clearPersistedCloudLink);
+
+    assert.isFalse(yield* CliState.readCliDesiredCloudLink);
+    assert.isTrue(values.has(RELAY_URL_SECRET));
+  }).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secrets));
+});

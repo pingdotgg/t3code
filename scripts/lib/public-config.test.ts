@@ -73,6 +73,7 @@ describe("loadRepoEnv", () => {
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
       T3CODE_HOSTED_APP_URL: "https://custom.example.test",
       VITE_HOSTED_APP_URL: "https://custom.example.test",
+      VITE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
       VITE_CLERK_PUBLISHABLE_KEY: "pk_ci",
       EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_ci",
       T3CODE_CLERK_JWT_TEMPLATE: "template_ci",

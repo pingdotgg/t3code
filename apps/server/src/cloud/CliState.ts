@@ -35,17 +35,20 @@ export const setCliDesiredCloudLink = Effect.fn("cloud.cli_state.set_desired")(f
 
 export const clearPersistedCloudLink = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  yield* Effect.all(
+  // Desired state is removed first. Remaining records are stale metadata once
+  // this succeeds and must never be treated as a restart instruction.
+  yield* Effect.forEach(
     [
-      secrets.remove(CLOUD_CLI_DESIRED_LINK_SECRET),
-      secrets.remove(CLOUD_LINKED_USER_ID),
-      secrets.remove(RELAY_URL_SECRET),
-      secrets.remove(RELAY_ISSUER_SECRET),
-      secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-      secrets.remove(CLOUD_MINT_PUBLIC_KEY),
-      secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
-      secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
+      CLOUD_CLI_DESIRED_LINK_SECRET,
+      CLOUD_LINKED_USER_ID,
+      RELAY_URL_SECRET,
+      RELAY_ISSUER_SECRET,
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      CLOUD_MINT_PUBLIC_KEY,
+      CLOUD_ENDPOINT_RUNTIME_CONFIG,
+      PUBLISH_AGENT_ACTIVITY_SECRET,
     ],
-    { concurrency: "unbounded" },
+    (secret) => secrets.remove(secret),
+    { concurrency: 1, discard: true },
   );
 });

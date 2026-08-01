@@ -75,7 +75,7 @@ jobs:
   release_smoke:
     name: Release Smoke
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -93,6 +93,12 @@ jobs:
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
+
+      - name: Exercise composed T3 Connect flow
+        run: pnpm release:connect-smoke
+
+      - name: Exercise packaged T3 Connect CLI
+        run: pnpm release:cli-smoke
 
   windows_smoke:
     name: Windows Smoke

@@ -35,6 +35,8 @@
     "install:t3:alpha": "bash scripts/install-t3-alpha.sh",
     "install:t3:official": "bash scripts/install-t3-official.sh",
     "release:smoke": "node scripts/release-smoke.ts",
+    "release:cli-smoke": "node scripts/cli-package-smoke.ts",
+    "release:connect-smoke": "node apps/server/integration/connect-release-smoke.ts",
     "clean": "node scripts/clean.ts",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },

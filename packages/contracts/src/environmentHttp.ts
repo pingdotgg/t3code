@@ -41,6 +41,7 @@ import {
   RelayEnvironmentLinkProof,
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
+  RelayManagedEndpointProviderKind,
 } from "./relay.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
@@ -231,11 +232,44 @@ export class EnvironmentHttpConflictError extends Schema.TaggedErrorClass<Enviro
   }
 }
 
+export const EnvironmentCloudEndpointRuntimeStatus = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("disabled"),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("failed"),
+    providerKind: RelayManagedEndpointProviderKind,
+    reason: Schema.String,
+    tunnelId: Schema.optionalKey(TrimmedNonEmptyString),
+    tunnelName: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("starting"),
+    providerKind: Schema.Literal("cloudflare_tunnel"),
+    pid: Schema.Int,
+    tunnelId: Schema.optionalKey(TrimmedNonEmptyString),
+    tunnelName: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("running"),
+    providerKind: Schema.Literal("cloudflare_tunnel"),
+    pid: Schema.Int,
+    tunnelId: Schema.optionalKey(TrimmedNonEmptyString),
+    tunnelName: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("unsupported"),
+    providerKind: RelayManagedEndpointProviderKind,
+  }),
+]);
+export type EnvironmentCloudEndpointRuntimeStatus =
+  typeof EnvironmentCloudEndpointRuntimeStatus.Type;
+
 export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedErrorClass<EnvironmentCloudEndpointUnavailableError>()(
   "EnvironmentCloudEndpointUnavailableError",
   {
     message: Schema.String,
-    endpointRuntimeStatus: Schema.Unknown,
+    endpointRuntimeStatus: EnvironmentCloudEndpointRuntimeStatus,
   },
   { httpApiStatus: 503 },
 ) {
@@ -309,7 +343,7 @@ const EnvironmentHttpCloudErrors = [
 
 export const EnvironmentCloudRelayConfigResult = Schema.Struct({
   ok: Schema.Boolean,
-  endpointRuntimeStatus: Schema.Unknown,
+  endpointRuntimeStatus: EnvironmentCloudEndpointRuntimeStatus,
 });
 export type EnvironmentCloudRelayConfigResult = typeof EnvironmentCloudRelayConfigResult.Type;
 
@@ -319,6 +353,7 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   relayUrl: Schema.NullOr(Schema.String),
   relayIssuer: Schema.NullOr(Schema.String),
   publishAgentActivity: Schema.Boolean,
+  endpointRuntimeStatus: EnvironmentCloudEndpointRuntimeStatus,
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
@@ -483,7 +518,7 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     HttpApiEndpoint.post("unlink", "/api/connect/unlink", {
       headers: OptionalBearerHeaders,
       success: EnvironmentCloudRelayConfigResult,
-      error: EnvironmentHttpCloudErrors,
+      error: [...EnvironmentHttpCloudErrors, EnvironmentCloudEndpointUnavailableError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

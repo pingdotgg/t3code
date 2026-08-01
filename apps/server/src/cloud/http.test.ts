@@ -1,4 +1,5 @@
 // @ts-nocheck
+import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,11 +17,14 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
+import * as CliState from "./CliState.ts";
 import {
+  applyCloudRelayConfig,
   consumeCloudReplayGuards,
   persistCloudRelayConfig,
   reconcileDesiredCloudLink,
   relayClientRequest,
+  unlinkCloudRuntime,
 } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
@@ -403,6 +407,227 @@ it.effect("serializes relay configuration rollback with overlapping writes", () 
       );
     }),
   ),
+);
+
+it.effect("stops a newly started tunnel when unlink disables Connect during runtime startup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const values = new Map<string, Uint8Array>();
+      const runtimeStartupStarted = yield* Deferred.make<void>();
+      const releaseRuntimeStartup = yield* Deferred.make<void>();
+      const runtimeConfigs: Array<RelayManagedEndpointRuntimeConfig | null> = [];
+      const publicKey = NodeCrypto.generateKeyPairSync("ed25519")
+        .publicKey.export({ type: "spki", format: "pem" })
+        .toString();
+      const secrets = {
+        get: (name: string) =>
+          Effect.sync(() => {
+            const value = values.get(name);
+            return value === undefined ? Option.none<Uint8Array>() : Option.some(value);
+          }),
+        set: (name: string, value: Uint8Array) =>
+          Effect.sync(() => {
+            values.set(name, value);
+          }),
+        create: unusedSecretStoreOperation,
+        getOrCreateRandom: unusedSecretStoreOperation,
+        remove: (name: string) =>
+          Effect.sync(() => {
+            values.delete(name);
+          }),
+        list: () => Effect.succeed([]),
+      } as ServerSecretStore.ServerSecretStore["Service"];
+
+      yield* CliState.setCliDesiredCloudLink(true).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+      );
+      const applying = yield* Effect.result(
+        applyCloudRelayConfig(
+          {
+            secrets,
+            endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+              applyConfig: (config) =>
+                Effect.gen(function* () {
+                  runtimeConfigs.push(config);
+                  if (config === null) return { status: "disabled" as const };
+                  yield* Deferred.succeed(runtimeStartupStarted, undefined);
+                  yield* Deferred.await(releaseRuntimeStartup);
+                  return {
+                    status: "starting" as const,
+                    providerKind: "cloudflare_tunnel" as const,
+                    pid: 123,
+                  };
+                }),
+              getStatus: Effect.succeed({ status: "disabled" }),
+            }),
+          } as never,
+          {
+            relayUrl: "https://relay.example.test",
+            cloudUserId: "cloud-user",
+            environmentCredential: "credential",
+            cloudMintPublicKey: publicKey,
+            endpointRuntime: {
+              providerKind: "cloudflare_tunnel",
+              connectorToken: "connector-token",
+            },
+          },
+        ),
+      ).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+        Effect.forkScoped,
+      );
+
+      yield* Deferred.await(runtimeStartupStarted);
+      yield* CliState.setCliDesiredCloudLink(false).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+      );
+      yield* Deferred.succeed(releaseRuntimeStartup, undefined);
+
+      const exit = yield* Fiber.join(applying);
+      expect(exit).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "EnvironmentHttpConflictError",
+        },
+      });
+      expect(runtimeConfigs).toEqual([
+        {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "connector-token",
+        },
+        null,
+      ]);
+    }),
+  ),
+);
+
+it.effect("reports a failed stop when Connect is disabled before runtime apply", () =>
+  Effect.gen(function* () {
+    const values = new Map<string, Uint8Array>();
+    const runtimeConfigs: Array<RelayManagedEndpointRuntimeConfig | null> = [];
+    const publicKey = NodeCrypto.generateKeyPairSync("ed25519")
+      .publicKey.export({ type: "spki", format: "pem" })
+      .toString();
+    const secrets = {
+      get: (name: string) =>
+        Effect.sync(() => {
+          const value = values.get(name);
+          return value === undefined ? Option.none<Uint8Array>() : Option.some(value);
+        }),
+      set: (name: string, value: Uint8Array) =>
+        Effect.sync(() => {
+          values.set(name, value);
+          if (name === CLOUD_MINT_PUBLIC_KEY) {
+            values.delete(CliState.CLOUD_CLI_DESIRED_LINK_SECRET);
+          }
+        }),
+      create: unusedSecretStoreOperation,
+      getOrCreateRandom: unusedSecretStoreOperation,
+      remove: (name: string) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+      list: () => Effect.succeed([]),
+    } as ServerSecretStore.ServerSecretStore["Service"];
+
+    yield* CliState.setCliDesiredCloudLink(true).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+    const failure = yield* Effect.flip(
+      applyCloudRelayConfig(
+        {
+          secrets,
+          endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+            applyConfig: (config) =>
+              Effect.sync(() => {
+                runtimeConfigs.push(config);
+                return {
+                  status: "failed" as const,
+                  providerKind: "cloudflare_tunnel" as const,
+                  reason: "The relay client could not be stopped.",
+                };
+              }),
+            getStatus: Effect.succeed({ status: "disabled" }),
+          }),
+        } as never,
+        {
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "cloud-user",
+          environmentCredential: "credential",
+          cloudMintPublicKey: publicKey,
+          endpointRuntime: {
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "connector-token",
+          },
+        },
+      ).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secrets)),
+    );
+
+    expect(failure).toMatchObject({
+      _tag: "EnvironmentCloudEndpointUnavailableError",
+      endpointRuntimeStatus: { status: "failed" },
+    });
+    expect(runtimeConfigs).toEqual([null]);
+  }),
+);
+
+it.effect("reports failed live tunnel teardown while keeping Connect durably disabled", () =>
+  Effect.gen(function* () {
+    const values = new Map<string, Uint8Array>();
+    const runtimeConfigs: Array<RelayManagedEndpointRuntimeConfig | null> = [];
+    const secrets = {
+      get: (name: string) =>
+        Effect.sync(() => {
+          const value = values.get(name);
+          return value === undefined ? Option.none<Uint8Array>() : Option.some(value);
+        }),
+      set: (name: string, value: Uint8Array) =>
+        Effect.sync(() => {
+          values.set(name, value);
+        }),
+      create: unusedSecretStoreOperation,
+      getOrCreateRandom: unusedSecretStoreOperation,
+      remove: (name: string) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+      list: () => Effect.succeed([]),
+    } as ServerSecretStore.ServerSecretStore["Service"];
+    yield* CliState.setCliDesiredCloudLink(true).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+
+    const failure = yield* Effect.flip(
+      unlinkCloudRuntime({
+        secrets,
+        endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+          applyConfig: (config) =>
+            Effect.sync(() => {
+              runtimeConfigs.push(config);
+              return {
+                status: "failed" as const,
+                providerKind: "cloudflare_tunnel" as const,
+                reason: "The relay client could not be stopped.",
+              };
+            }),
+          getStatus: Effect.succeed({ status: "disabled" }),
+        }),
+      } as never).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secrets)),
+    );
+
+    expect(failure).toMatchObject({
+      _tag: "EnvironmentCloudEndpointUnavailableError",
+      endpointRuntimeStatus: {
+        status: "failed",
+      },
+    });
+    expect(
+      yield* CliState.readCliDesiredCloudLink.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+      ),
+    ).toBe(false);
+    expect(runtimeConfigs).toEqual([null]);
+  }),
 );
 
 it.effect("times out stalled relay requests after fifteen seconds", () =>
