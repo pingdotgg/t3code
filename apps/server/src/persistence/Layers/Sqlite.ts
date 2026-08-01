@@ -5,8 +5,9 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
-import { runMigrations } from "../Migrations.ts";
+import { assertMigrationManifest, runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+import { isServiceLauncherTrial } from "../../cloud/serviceLauncherClient.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -30,24 +31,34 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   return clientModule.layer(config);
 }, Layer.unwrap);
 
-const setup = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`PRAGMA journal_mode = WAL;`;
-    yield* sql`PRAGMA foreign_keys = ON;`;
-    yield* runMigrations();
-  }),
-);
+const setup = (trial: boolean) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA foreign_keys = ON;`;
+      if (trial) {
+        yield* sql`PRAGMA query_only = ON;`;
+        yield* assertMigrationManifest();
+        // All durable workers are still parked. Restore the connection before
+        // prepared so activation itself cannot fail on database setup.
+        yield* sql`PRAGMA query_only = OFF;`;
+        return;
+      }
+      yield* sql`PRAGMA journal_mode = WAL;`;
+      yield* runMigrations();
+    }),
+  );
 
 export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(function* (
   dbPath: string,
+  options?: { readonly trial?: boolean },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
   return Layer.provideMerge(
-    setup,
+    setup(options?.trial === true),
     makeRuntimeSqliteLayer({
       filename: dbPath,
       spanAttributes: {
@@ -59,10 +70,13 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
 }, Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(
-  setup,
+  setup(false),
   makeRuntimeSqliteLayer({ filename: ":memory:" }),
 );
 
 export const layerConfig = Layer.unwrap(
-  Effect.map(Effect.service(ServerConfig), ({ dbPath }) => makeSqlitePersistenceLive(dbPath)),
+  Effect.gen(function* () {
+    const { dbPath } = yield* ServerConfig;
+    return makeSqlitePersistenceLive(dbPath, { trial: isServiceLauncherTrial() });
+  }),
 );

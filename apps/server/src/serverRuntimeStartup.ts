@@ -34,6 +34,9 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { forkParked } from "./serverActivation.ts";
+import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as ServerShutdown from "./serverShutdown.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -288,151 +291,158 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-export const make = Effect.gen(function* () {
-  const serverConfig = yield* ServerConfig.ServerConfig;
-  const keybindings = yield* Keybindings.Keybindings;
-  const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
-  const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
-  const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-  const crypto = yield* Crypto.Crypto;
+export const make = (options?: { readonly awaitAuxiliaryParked?: Effect.Effect<void> }) =>
+  Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const keybindings = yield* Keybindings.Keybindings;
+    const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
+    const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
+    const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+    const crypto = yield* Crypto.Crypto;
+    const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    const awaitActivation = launcher.awaitActivation.pipe(Effect.orDie);
 
-  const commandGate = yield* makeCommandGate;
-  const httpListening = yield* Deferred.make<void>();
-  const reactorScope = yield* Scope.make("sequential");
+    const commandGate = yield* makeCommandGate;
+    const httpListening = yield* Deferred.make<void>();
+    const reactorScope = yield* Scope.make("sequential");
 
-  yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
+    yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
 
-  const startup = Effect.gen(function* () {
-    yield* Effect.logDebug("startup phase: starting keybindings runtime");
-    yield* runStartupPhase(
-      "keybindings.start",
-      keybindings.start.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to start keybindings runtime", {
-            path: error.configPath,
-            detail: error.detail,
-            cause: error.cause,
-          }),
-        ),
-        Effect.forkScoped,
-      ),
-    );
-
-    yield* Effect.logDebug("startup phase: starting server settings runtime");
-    yield* runStartupPhase(
-      "settings.start",
-      serverSettings.start.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to start server settings runtime", {
-            path: error.settingsPath,
-            operation: error.operation,
-            providerInstanceId: error.providerInstanceId,
-            environmentVariable: error.environmentVariable,
-            cause: error.cause,
-          }),
-        ),
-        Effect.forkScoped,
-      ),
-    );
-
-    yield* Effect.logDebug("startup phase: starting orchestration reactors");
-    yield* runStartupPhase(
-      "reactors.start",
-      Effect.gen(function* () {
-        yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
-        yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
-      }),
-    );
-
-    const welcomeBase = yield* resolveWelcomeBase;
-    const environment = yield* serverEnvironment.getDescriptor;
-    yield* Effect.logDebug("startup phase: preparing welcome payload");
-    yield* Effect.logDebug("startup phase: publishing welcome event", {
-      environmentId: environment.environmentId,
-      cwd: welcomeBase.cwd,
-      projectName: welcomeBase.projectName,
-    });
-    yield* runStartupPhase(
-      "welcome.publish",
-      lifecycleEvents.publish({
-        version: 1,
-        type: "welcome",
-        payload: {
-          environment,
-          ...welcomeBase,
-        },
-      }),
-    );
-
-    if (serverConfig.autoBootstrapProjectFromCwd) {
-      yield* Effect.forkScoped(
-        runStartupPhase(
-          "welcome.autobootstrap",
-          Effect.gen(function* () {
-            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-              Effect.provideService(Crypto.Crypto, crypto),
-            );
-            if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
-              return;
-            }
-
-            yield* Effect.logDebug("startup phase: publishing bootstrapped welcome event", {
-              environmentId: environment.environmentId,
-              cwd: welcomeBase.cwd,
-              projectName: welcomeBase.projectName,
-              bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
-              bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
-            });
-            yield* lifecycleEvents.publish({
-              version: 1,
-              type: "welcome",
-              payload: {
-                environment,
-                ...welcomeBase,
-                ...bootstrapTargets,
-              },
-            });
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("startup auto-bootstrap welcome failed", {
-                cause,
-              }),
-            ),
+    const startup = Effect.gen(function* () {
+      yield* Effect.logDebug("startup phase: starting keybindings runtime");
+      yield* runStartupPhase(
+        "keybindings.start",
+        keybindings.start.pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to start keybindings runtime", {
+              path: error.configPath,
+              detail: error.detail,
+              cause: error.cause,
+            }),
           ),
         ),
       );
-    }
-  }).pipe(
-    Effect.annotateSpans({
-      "server.mode": serverConfig.mode,
-      "server.port": serverConfig.port,
-      "server.host": serverConfig.host ?? "default",
-    }),
-    Effect.withSpan("server.startup", { kind: "server", root: true }),
-  );
 
-  yield* Effect.forkScoped(
-    Effect.gen(function* () {
-      const startupExit = yield* Effect.exit(startup);
-      if (Exit.isFailure(startupExit)) {
-        const error = new ServerRuntimeStartupError({
-          mode: serverConfig.mode,
-          host: serverConfig.host ?? null,
-          port: serverConfig.port,
-          cause: startupExit.cause,
-        });
-        yield* Effect.logError("server runtime startup failed", { cause: startupExit.cause });
-        yield* commandGate.failCommandReady(error);
-        return;
+      yield* Effect.logDebug("startup phase: starting server settings runtime");
+      yield* runStartupPhase(
+        "settings.start",
+        serverSettings.start.pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to start server settings runtime", {
+              path: error.settingsPath,
+              operation: error.operation,
+              providerInstanceId: error.providerInstanceId,
+              environmentVariable: error.environmentVariable,
+              cause: error.cause,
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
+      yield* runStartupPhase(
+        "reactors.start",
+        Effect.gen(function* () {
+          yield* orchestrationReactor.start(awaitActivation).pipe(Scope.provide(reactorScope));
+          yield* providerSessionReaper.start(awaitActivation).pipe(Scope.provide(reactorScope));
+        }),
+      );
+
+      const welcomeBase = yield* resolveWelcomeBase;
+      const environment = yield* serverEnvironment.getDescriptor;
+      yield* Effect.logDebug("startup phase: preparing welcome payload");
+
+      if (serverConfig.autoBootstrapProjectFromCwd) {
+        yield* forkParked(
+          awaitActivation,
+          runStartupPhase(
+            "welcome.autobootstrap",
+            Effect.gen(function* () {
+              const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+              );
+              if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
+                return;
+              }
+
+              yield* Effect.logDebug("startup phase: publishing bootstrapped welcome event", {
+                environmentId: environment.environmentId,
+                cwd: welcomeBase.cwd,
+                projectName: welcomeBase.projectName,
+                bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
+                bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
+              });
+              yield* lifecycleEvents.publish({
+                version: 1,
+                type: "welcome",
+                payload: {
+                  environment,
+                  ...welcomeBase,
+                  ...bootstrapTargets,
+                },
+              });
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("startup auto-bootstrap welcome failed", {
+                  cause,
+                }),
+              ),
+            ),
+          ),
+        );
       }
+
+      const readyPublished = yield* Deferred.make<void>();
+      yield* forkParked(
+        Deferred.await(readyPublished),
+        Effect.gen(function* () {
+          yield* Effect.logDebug("startup phase: recording startup heartbeat");
+          yield* recordStartupHeartbeat.pipe(
+            Effect.annotateSpans({ "startup.phase": "heartbeat.record" }),
+            Effect.withSpan("server.startup.heartbeat.record"),
+            Effect.ignoreCause({ log: true }),
+          );
+          if (serverConfig.startupPresentation === "headless") {
+            const accessInfo = yield* issueHeadlessServeAccessInfo();
+            yield* runStartupPhase(
+              "headless.output",
+              Console.log(formatHeadlessServeOutput(accessInfo)),
+            );
+          } else {
+            const startupBrowserTarget = yield* resolveStartupBrowserTarget;
+            if (serverConfig.mode !== "desktop") {
+              yield* Effect.logInfo(
+                "Authentication required. Open T3 Code using the pairing URL.",
+              ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+            }
+            yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
+          }
+        }),
+      );
+
+      yield* Effect.logDebug("startup phase: waiting for http listener");
+      yield* runStartupPhase("http.wait", Deferred.await(httpListening));
+      yield* runStartupPhase(
+        "auxiliary-roots.parked",
+        options?.awaitAuxiliaryParked ?? Effect.void,
+      );
+
+      // This is the prepared boundary. Every dependency has been acquired and
+      // every runtime root has confirmed that it is parked before this request.
+      const updateOutcome = yield* launcher.prepareTrial;
 
       yield* Effect.logDebug("Accepting commands");
       yield* commandGate.signalCommandReady;
-      yield* Effect.logDebug("startup phase: waiting for http listener");
-      yield* runStartupPhase("http.wait", Deferred.await(httpListening));
-      yield* Effect.logDebug("startup phase: publishing ready event");
+      yield* runStartupPhase(
+        "welcome.publish",
+        lifecycleEvents.publish({
+          version: 1,
+          type: "welcome",
+          payload: { environment, ...welcomeBase },
+        }),
+      );
       yield* runStartupPhase(
         "ready.publish",
         lifecycleEvents.publish({
@@ -440,39 +450,51 @@ export const make = Effect.gen(function* () {
           type: "ready",
           payload: {
             at: DateTime.formatIso(yield* DateTime.now),
-            environment: yield* serverEnvironment.getDescriptor,
+            environment,
+            ...(Option.isSome(updateOutcome) ? { updateOutcome: updateOutcome.value } : {}),
           },
         }),
       );
-
-      yield* Effect.logDebug("startup phase: recording startup heartbeat");
-      yield* launchStartupHeartbeat;
-      if (serverConfig.startupPresentation === "headless") {
-        yield* Effect.logDebug("startup phase: headless access info");
-        const accessInfo = yield* issueHeadlessServeAccessInfo();
-        yield* runStartupPhase(
-          "headless.output",
-          Console.log(formatHeadlessServeOutput(accessInfo)),
-        );
-      } else {
-        yield* Effect.logDebug("startup phase: browser open check");
-        const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-        if (serverConfig.mode !== "desktop") {
-          yield* Effect.logInfo(
-            "Authentication required. Open T3 Code using the pairing URL.",
-          ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
-        }
-        yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
-      }
+      yield* Deferred.succeed(readyPublished, undefined).pipe(Effect.orDie);
       yield* Effect.logDebug("startup phase: complete");
-    }),
-  );
+    }).pipe(
+      Effect.annotateSpans({
+        "server.mode": serverConfig.mode,
+        "server.port": serverConfig.port,
+        "server.host": serverConfig.host ?? "default",
+      }),
+      Effect.withSpan("server.startup", { kind: "server", root: true }),
+    );
 
-  return {
-    awaitCommandReady: commandGate.awaitCommandReady,
-    markHttpListening: Deferred.succeed(httpListening, undefined),
-    enqueueCommand: commandGate.enqueueCommand,
-  } satisfies ServerRuntimeStartup["Service"];
-});
+    yield* Effect.forkScoped(
+      Effect.exit(startup).pipe(
+        Effect.flatMap((startupExit) => {
+          if (Exit.isSuccess(startupExit)) return Effect.void;
+          const error = new ServerRuntimeStartupError({
+            mode: serverConfig.mode,
+            host: serverConfig.host ?? null,
+            port: serverConfig.port,
+            cause: startupExit.cause,
+          });
+          return Effect.logError("server runtime startup failed", {
+            cause: startupExit.cause,
+          }).pipe(
+            Effect.andThen(commandGate.failCommandReady(error)),
+            Effect.andThen(launcher.trial ? ServerShutdown.request(1) : Effect.void),
+          );
+        }),
+      ),
+    );
 
-export const layer = Layer.effect(ServerRuntimeStartup, make);
+    return {
+      awaitCommandReady: commandGate.awaitCommandReady,
+      markHttpListening: Deferred.succeed(httpListening, undefined),
+      enqueueCommand: commandGate.enqueueCommand,
+    } satisfies ServerRuntimeStartup["Service"];
+  });
+
+export const layerWithOptions = (options?: {
+  readonly awaitAuxiliaryParked?: Effect.Effect<void>;
+}) => Layer.effect(ServerRuntimeStartup, make(options));
+
+export const layer = layerWithOptions();

@@ -38,6 +38,7 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { forkParked } from "../../serverActivation.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -1315,7 +1316,7 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
-  const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+  const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* (activation) {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
@@ -1330,14 +1331,15 @@ const make = Effect.gen(function* () {
       }
     });
 
-    yield* Effect.forkScoped(
+    yield* forkParked(
+      activation,
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
     // captured here, leaving any newer request untouched.
-    yield* clearInterruptedThreadTitleRegenerations().pipe(
+    const clearInterrupted = clearInterruptedThreadTitleRegenerations().pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
@@ -1350,6 +1352,7 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+    yield* activation === undefined ? clearInterrupted : forkParked(activation, clearInterrupted);
   });
 
   return {

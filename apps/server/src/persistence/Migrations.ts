@@ -11,6 +11,8 @@
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -96,6 +98,42 @@ export const migrationEntries = [
   [34, "ProjectionThreadsSnoozed", Migration0034],
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
 ] as const;
+
+export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+
+export class MigrationManifestMismatchError extends Schema.TaggedErrorClass<MigrationManifestMismatchError>()(
+  "MigrationManifestMismatchError",
+  {
+    expectedCount: Schema.Number,
+    actualCount: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "The database migration manifest does not exactly match this server version.";
+  }
+}
+
+/** Trial runtimes may inspect the schema, but never advance it. */
+export const assertMigrationManifest = Effect.fn("assertMigrationManifest")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{
+    readonly migration_id: number;
+    readonly name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+  const actual = rows.map((row) => [Number(row.migration_id), row.name] as const);
+  const matches =
+    actual.length === migrationManifest.length &&
+    actual.every(
+      ([id, name], index) =>
+        migrationManifest[index]?.[0] === id && migrationManifest[index]?.[1] === name,
+    );
+  if (!matches) {
+    return yield* new MigrationManifestMismatchError({
+      expectedCount: migrationManifest.length,
+      actualCount: actual.length,
+    });
+  }
+});
 
 export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(

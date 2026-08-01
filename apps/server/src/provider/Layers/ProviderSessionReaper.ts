@@ -11,6 +11,7 @@ import {
   ProviderSessionReaper,
   type ProviderSessionReaperShape,
 } from "../Services/ProviderSessionReaper.ts";
+import { forkParked } from "../../serverActivation.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
@@ -103,9 +104,10 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       }
     });
 
-    const start: ProviderSessionReaperShape["start"] = () =>
+    const start: ProviderSessionReaperShape["start"] = (activation) =>
       Effect.gen(function* () {
-        yield* Effect.forkScoped(
+        yield* forkParked(
+          activation,
           sweep.pipe(
             Effect.catch((error: unknown) =>
               Effect.logWarning("provider.session.reaper.sweep-failed", {
