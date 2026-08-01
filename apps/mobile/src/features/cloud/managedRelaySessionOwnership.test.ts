@@ -40,7 +40,8 @@ describe("managed relay session ownership", () => {
       readClerkToken: provider("ui"),
     });
 
-    releaseBackground();
+    expect(releaseBackground).not.toBeNull();
+    releaseBackground?.();
     expect(registry.get(managedRelaySessionAtom)?.accountId).toBe("account-1");
     ownership.releaseOwner("ui");
     expect(registry.get(managedRelaySessionAtom)).toBeNull();
@@ -57,7 +58,8 @@ describe("managed relay session ownership", () => {
       readClerkToken: provider("second"),
     });
 
-    releaseFirst();
+    expect(releaseFirst).not.toBeNull();
+    releaseFirst?.();
     expect(registry.get(managedRelaySessionAtom)?.accountId).toBe("account-1");
   });
 
@@ -82,11 +84,12 @@ describe("managed relay session ownership", () => {
       accountId: "account-2",
       readClerkToken: provider("ui"),
     });
-    ownership.setOwner("background", {
+    const rejected = ownership.setOwner("background", {
       accountId: "account-1",
       readClerkToken: provider("background"),
     });
 
+    expect(rejected).toBeNull();
     ownership.releaseOwner("ui");
     expect(registry.get(managedRelaySessionAtom)).toBeNull();
   });
