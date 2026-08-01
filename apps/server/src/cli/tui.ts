@@ -11,12 +11,14 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import { Command, GlobalFlag } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { ServerConfig } from "../config.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { authLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { isLivePersistedServerRuntimeState } from "./runningServer.ts";
 
 /** Mirror of the server's accepted websocket-ticket query parameter. */
 const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
@@ -140,6 +142,12 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
         );
         return;
       }
+      if (!(yield* isLivePersistedServerRuntimeState(runtimeState.value))) {
+        yield* Console.error(
+          "The recorded T3 Code server is no longer running. Start it with `t3 serve` (or `t3 start`) first.",
+        );
+        return;
+      }
       const origin = runtimeState.value.origin;
 
       // The TUI runs in a separate Bun process and never touches the server's
@@ -210,6 +218,6 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
           }),
         ),
       );
-    }),
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),
 );

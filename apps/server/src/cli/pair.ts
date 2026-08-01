@@ -31,12 +31,7 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
@@ -54,9 +49,12 @@ import {
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import {
+  type EnvironmentProbeResult,
+  isProcessAlive,
+  probeEnvironmentDescriptor,
+} from "./runningServer.ts";
 
-const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
-const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
 // Tailscale provisions an HTTPS certificate on the first request to a fresh
 // serve mapping, which can take a few seconds.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
@@ -191,54 +189,6 @@ export const formatPairOutput = (input: {
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
     "",
   ].join("\n");
-
-/**
- * Three outcomes, because they drive different decisions: a T3 descriptor
- * (pair with it), nothing answering (safe to configure Tailscale Serve), or
- * something answering that is not a T3 server (do NOT overwrite its mapping).
- */
-type EnvironmentProbeResult =
-  | { readonly _tag: "descriptor"; readonly descriptor: ExecutionEnvironmentDescriptor }
-  | { readonly _tag: "unreachable" }
-  | { readonly _tag: "not-a-t3-server" };
-
-const probeEnvironmentDescriptor = (
-  baseUrl: string,
-): Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient;
-    const request = HttpClientRequest.get(new URL(WELL_KNOWN_ENVIRONMENT_PATH, baseUrl).toString());
-    const response = yield* client.execute(request).pipe(
-      Effect.timeout(PAIR_PROBE_TIMEOUT),
-      // Transport failure or timeout: nothing (reachable) is listening there.
-      Effect.mapError(() => ({ _tag: "unreachable" }) as const),
-    );
-    // Bad-gateway family means a proxy (Tailscale Serve) answered for a
-    // backend that is gone — a stale mapping, not a live occupant. Treating
-    // it as unreachable lets `t3 pair --tailscale` repair its own mapping
-    // after the server's port changed.
-    if (response.status === 502 || response.status === 503 || response.status === 504) {
-      return { _tag: "unreachable" } as const;
-    }
-    // Anything else that answered HTTP but not with a valid descriptor is
-    // some other service.
-    const descriptor = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)),
-      Effect.mapError(() => ({ _tag: "not-a-t3-server" }) as const),
-    );
-    return { _tag: "descriptor", descriptor } as const;
-  }).pipe(Effect.catch((outcome) => Effect.succeed(outcome)));
-
-// signal 0 delivers nothing; it only reports whether the pid exists. EPERM
-// means it exists but belongs to another user, which still counts as alive.
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-};
 
 interface DiscoveredPairTarget {
   readonly baseDir: string;
