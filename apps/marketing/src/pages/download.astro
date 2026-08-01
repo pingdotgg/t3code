@@ -177,9 +177,11 @@ import "../styles/stage-sky.css";
   import {
     fetchLatestRelease,
     fetchNightlyRelease,
+    findReleaseAssetUrl,
     NIGHTLY_RELEASES_URL,
     RELEASES_URL,
     type Release,
+    type ReleasePlatform,
   } from "../lib/releases";
   import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
@@ -198,13 +200,22 @@ import "../styles/stage-sky.css";
     document.querySelectorAll<HTMLAnchorElement>(".download-card[data-asset]");
   let releaseRequest = 0;
 
+  function platformForAsset(suffix: string): ReleasePlatform | null {
+    if (suffix === "arm64.dmg") return { os: "mac", arch: "arm64" };
+    if (suffix === "x64.dmg") return { os: "mac", arch: "x64" };
+    if (suffix === "x64.exe") return { os: "win", arch: "x64" };
+    if (suffix === "x86_64.AppImage") return { os: "linux", arch: "x64" };
+    return null;
+  }
+
   function setDesktopCards(release: Release | null, fallbackUrl: string) {
     desktopCards.forEach((card) => {
       const suffix = card.dataset.asset;
-      const match = suffix
-        ? release?.assets.find((asset) => asset.name.endsWith(`-${suffix}`))
-        : null;
-      card.href = match?.browser_download_url ?? fallbackUrl;
+      const platform = suffix ? platformForAsset(suffix) : null;
+      card.href =
+        release && platform
+          ? findReleaseAssetUrl(release.assets, platform) ?? fallbackUrl
+          : fallbackUrl;
     });
   }
 

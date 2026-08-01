@@ -21,6 +21,13 @@ const mobileEndorsementRows = [
 
 const featureShowcases = showcaseSpec.sections;
 const showcaseRender = showcaseSpec.render;
+const mobileShowcaseScenes = [
+  "threads",
+  "thread",
+  "terminal",
+  "review",
+  "environments",
+] as const;
 
 const faqs = [
   {
@@ -145,6 +152,47 @@ const faqs = [
           ></iframe>
         </div>
       </div>
+
+      <div class="hero-mobile-showcase">
+        {
+          mobileShowcaseScenes.map((scene) => (
+            <span class="hero-mobile-showcase__screen">
+              <img
+                data-ios-src={
+                  scene === "threads"
+                    ? "/mobile-states/threads.png"
+                    : `/mobile-states/ios-${scene}.png`
+                }
+                data-android-src={`/mobile-states/android-${scene}.png`}
+                alt=""
+                decoding="async"
+              />
+            </span>
+          ))
+        }
+        <div
+          class="hero-mobile-showcase__pager"
+          role="region"
+          aria-label="Swipe through T3 Code mobile screens"
+          tabindex="0"
+        >
+          {
+            mobileShowcaseScenes.map(() => (
+              <span class="hero-mobile-showcase__page" aria-hidden="true"></span>
+            ))
+          }
+        </div>
+        <div class="hero-mobile-showcase__dots" aria-label="Mobile screen pages">
+          {
+            mobileShowcaseScenes.map((_, index) => (
+              <button
+                type="button"
+                aria-label={`Show mobile screen ${index + 1} of ${mobileShowcaseScenes.length}`}
+              ></button>
+            ))
+          }
+        </div>
+      </div>
     </div>
 
     <div class="hero-mobile-store" aria-label="T3 Code on iPhone and iPad">
@@ -159,8 +207,8 @@ const faqs = [
           src="/mobile-states/ipad-threads.png"
           alt=""
           loading="lazy"
-          width="2064"
-          height="2752"
+          width="2752"
+          height="2064"
         />
         <span aria-hidden="true">App Store ↗</span>
       </a>
@@ -583,6 +631,7 @@ const faqs = [
     RELEASES_URL,
     type ReleasePlatform,
   } from "../lib/releases";
+  import { GOOGLE_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 
   // A demo iframe focuses its composer as it boots. On a hard refresh browsers
   // can restore that nested focus and scroll the marketing page to a cutout.
@@ -613,10 +662,33 @@ const faqs = [
     }
   }
 
-  type Platform = ReleasePlatform & { label: string };
+  type DesktopPlatform = ReleasePlatform & { label: string };
+  type MobilePlatform = {
+    os: "android" | "ios";
+    label: string;
+    downloadUrl: string;
+  };
+  type Platform = DesktopPlatform | MobilePlatform;
 
   function detectPlatform(): Platform | null {
     const ua = navigator.userAgent;
+    if (/Android/i.test(ua)) {
+      return {
+        os: "android",
+        label: "Get it on Google Play",
+        downloadUrl: GOOGLE_PLAY_STORE_URL,
+      };
+    }
+    if (
+      /iPad|iPhone|iPod/i.test(ua) ||
+      (/Mac/i.test(ua) && navigator.maxTouchPoints > 1)
+    ) {
+      return {
+        os: "ios",
+        label: "Get it on App Store",
+        downloadUrl: IOS_APP_STORE_URL,
+      };
+    }
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
@@ -715,14 +787,22 @@ const faqs = [
     const existingRequest = downloadRequestByStage[stage];
     if (existingRequest) return existingRequest;
 
+    const platform = detectedPlatform;
+    if (platform && "downloadUrl" in platform) {
+      downloadUrlByStage[stage] = platform.downloadUrl;
+      const request = Promise.resolve();
+      downloadRequestByStage[stage] = request;
+      return request;
+    }
+
     const fallbackUrl =
-      detectedPlatform?.os === "mac"
+      platform?.os === "mac"
         ? "/download"
         : stage === "nightly"
           ? NIGHTLY_RELEASES_URL
           : RELEASES_URL;
     downloadUrlByStage[stage] = fallbackUrl;
-    if (detectedPlatform?.os === "mac") {
+    if (platform?.os === "mac") {
       const request = Promise.resolve();
       downloadRequestByStage[stage] = request;
       return request;
@@ -733,8 +813,8 @@ const faqs = [
         const release = await (stage === "nightly"
           ? fetchNightlyRelease()
           : fetchLatestRelease());
-        downloadUrlByStage[stage] = detectedPlatform
-          ? findReleaseAssetUrl(release.assets ?? [], detectedPlatform) ?? fallbackUrl
+        downloadUrlByStage[stage] = platform
+          ? findReleaseAssetUrl(release.assets ?? [], platform) ?? fallbackUrl
           : release.html_url;
       } catch {
         downloadUrlByStage[stage] = fallbackUrl;
@@ -803,13 +883,104 @@ const faqs = [
     if (detectedPlatform) {
       document.documentElement.dataset.platform = detectedPlatform.os;
       downloadLabel = detectedPlatform.label;
-      if (detectedPlatform.os === "mac") {
+      if ("downloadUrl" in detectedPlatform) {
+        downloadUrlByStage.latest = detectedPlatform.downloadUrl;
+        downloadUrlByStage.nightly = detectedPlatform.downloadUrl;
+      } else if (detectedPlatform.os === "mac") {
         downloadUrlByStage.latest = "/download";
         downloadUrlByStage.nightly = "/download";
       }
     }
     applyStage(currentStage);
     if (currentStage !== "dev") void ensureDownloadUrl(currentStage);
+  }
+
+  function initMobileHeroShowcase() {
+    const showcase = document.querySelector<HTMLElement>(".hero-mobile-showcase");
+    const pager = showcase?.querySelector<HTMLElement>(
+      ".hero-mobile-showcase__pager",
+    );
+    if (!showcase || !pager) return;
+
+    let hasLoaded = false;
+    let activePage = -1;
+    let pagerFrame: number | null = null;
+    const mobileHeroQuery = window.matchMedia("(max-width: 820px)");
+    const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const screens = Array.from(
+      showcase.querySelectorAll<HTMLElement>(".hero-mobile-showcase__screen"),
+    );
+    const pageButtons = Array.from(
+      showcase.querySelectorAll<HTMLButtonElement>(".hero-mobile-showcase__dots button"),
+    );
+
+    const setActivePage = (nextPage: number) => {
+      const clampedPage = Math.max(0, Math.min(screens.length - 1, nextPage));
+      if (clampedPage === activePage) return;
+      activePage = clampedPage;
+      showcase.dataset.activePage = String(activePage);
+      screens.forEach((screen, index) => {
+        screen.classList.toggle("is-visible", index <= activePage);
+        screen.classList.toggle("is-current", index === activePage);
+      });
+      pageButtons.forEach((button, index) => {
+        if (index === activePage) {
+          button.setAttribute("aria-current", "page");
+        } else {
+          button.removeAttribute("aria-current");
+        }
+      });
+    };
+
+    const updatePageFromPager = () => {
+      pagerFrame = null;
+      if (!mobileHeroQuery.matches || pager.clientWidth === 0) return;
+      setActivePage(Math.round(pager.scrollLeft / pager.clientWidth));
+    };
+
+    const schedulePagerUpdate = () => {
+      if (pagerFrame !== null) return;
+      pagerFrame = requestAnimationFrame(updatePageFromPager);
+    };
+
+    const loadImages = () => {
+      if (hasLoaded || !mobileHeroQuery.matches) return;
+      hasLoaded = true;
+
+      const mobilePlatform = detectedPlatform?.os === "android" ? "android" : "ios";
+      showcase.dataset.mobilePlatform = mobilePlatform;
+
+      const images = Array.from(showcase.querySelectorAll<HTMLImageElement>("img"));
+      for (const image of images) {
+        const source =
+          mobilePlatform === "android" ? image.dataset.androidSrc : image.dataset.iosSrc;
+        if (!source) continue;
+        image.src = source;
+        image.width = mobilePlatform === "android" ? 1080 : 1320;
+        image.height = mobilePlatform === "android" ? 1920 : 2868;
+      }
+
+      void Promise.all(images.map((image) => image.decode().catch(() => undefined))).then(() => {
+        setActivePage(0);
+        showcase.classList.add("is-loaded");
+      });
+    };
+
+    pager.addEventListener("scroll", schedulePagerUpdate, { passive: true });
+    pageButtons.forEach((button, index) => {
+      button.addEventListener("click", () => {
+        pager.scrollTo({
+          left: index * pager.clientWidth,
+          behavior: reducedMotionQuery.matches ? "instant" : "smooth",
+        });
+      });
+    });
+
+    loadImages();
+    mobileHeroQuery.addEventListener("change", () => {
+      loadImages();
+      if (mobileHeroQuery.matches) setActivePage(0);
+    });
   }
 
   initChannelPickers();
@@ -820,6 +991,7 @@ const faqs = [
     if (stage !== "dev") void ensureDownloadUrl(stage);
   });
   init();
+  initMobileHeroShowcase();
 
   const heroDemoFrame = document.querySelector<HTMLElement>(".hero-demo-frame");
   const heroDemoIframe = heroDemoFrame?.querySelector<HTMLIFrameElement>("iframe");
@@ -1216,7 +1388,8 @@ const faqs = [
     flex-shrink: 0;
   }
 
-  :global([data-platform="mac"]) .dl-icon--apple { display: block; }
+  :global([data-platform="mac"]) .dl-icon--apple,
+  :global([data-platform="ios"]) .dl-icon--apple { display: block; }
   :global([data-platform="win"]) .dl-icon--windows { display: block; }
   :global([data-platform="linux"]) .dl-icon--linux { display: block; }
   :global(html:not([data-platform])) .dl-icon--apple { display: block; }
@@ -1329,6 +1502,10 @@ const faqs = [
       var(--preview-fade-duration)
       var(--preview-fade-easing)
       both;
+  }
+
+  .hero-mobile-showcase {
+    display: none;
   }
 
   .hero-device-card {
@@ -1807,8 +1984,12 @@ const faqs = [
     .faq-chevron,
     .hero-demo-frame,
     .hero-mobile-store,
+    .hero-mobile-showcase,
+    .hero-mobile-showcase__screen,
+    .hero-mobile-showcase__dots button,
     .hero-device-card,
-    .mobile-download-links a {
+    .mobile-download-links a,
+    .endorsement-track {
       animation: none;
       transition: none;
     }
@@ -2490,6 +2671,197 @@ const faqs = [
     .hero-mobile-store {
       display: none;
     }
+    .hero--layout-2 {
+      --mobile-stack-offset: 24px;
+      display: flex;
+      min-height: 100svh;
+      padding-block: 0;
+      overflow: clip;
+      isolation: isolate;
+    }
+    .hero--layout-2 .hero-inner {
+      position: relative;
+      z-index: 2;
+      justify-content: center;
+      height: 100svh;
+      min-height: 100svh;
+      overflow: visible;
+    }
+    .hero--layout-2 .hero-copy {
+      z-index: 3;
+      width: min(72vw, 280px);
+      text-shadow: 0 2px 24px #000, 0 1px 8px #000;
+    }
+    .hero--layout-2 .hero-actions {
+      text-shadow: none;
+    }
+    .hero-mobile-showcase {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      display: block;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .hero-mobile-showcase.is-loaded {
+      visibility: visible;
+    }
+    .hero-mobile-showcase::after {
+      position: absolute;
+      inset: 0;
+      z-index: 6;
+      background: linear-gradient(
+        to right,
+        var(--bg) 0%,
+        var(--bg) 38%,
+        transparent 80%
+      );
+      content: "";
+      pointer-events: none;
+    }
+    .hero-mobile-showcase__screen {
+      position: absolute;
+      top: calc(var(--mobile-top) + var(--mobile-stack-offset));
+      right: var(--mobile-right);
+      z-index: var(--mobile-layer);
+      display: block;
+      visibility: hidden;
+      overflow: hidden;
+      width: var(--mobile-width);
+      aspect-ratio: 1320 / 2868;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 24px;
+      background: #080808;
+      box-shadow:
+        -18px 24px 70px rgba(0, 0, 0, 0.72),
+        inset 0 1px rgba(255, 255, 255, 0.08);
+      transform: translate3d(52px, 72px, 0) scale(0.96);
+      transform-origin: right top;
+      transition:
+        transform 560ms var(--preview-fade-easing),
+        visibility 0s linear 560ms;
+    }
+    .hero-mobile-showcase__screen.is-visible {
+      visibility: visible;
+      transform: translate3d(0, 0, 0) scale(1);
+      transition-delay: 0s;
+    }
+    .hero-mobile-showcase__screen:nth-child(1) {
+      --mobile-layer: 1;
+      --mobile-right: -12vw;
+      --mobile-top: 12svh;
+      --mobile-width: min(72vw, 300px);
+    }
+    .hero-mobile-showcase__screen:nth-child(2) {
+      --mobile-layer: 2;
+      --mobile-right: -20vw;
+      --mobile-top: 10svh;
+      --mobile-width: min(76vw, 316px);
+    }
+    .hero-mobile-showcase__screen:nth-child(3) {
+      --mobile-layer: 3;
+      --mobile-right: -29vw;
+      --mobile-top: 8svh;
+      --mobile-width: min(80vw, 332px);
+    }
+    .hero-mobile-showcase__screen:nth-child(4) {
+      --mobile-layer: 4;
+      --mobile-right: -38vw;
+      --mobile-top: 6svh;
+      --mobile-width: min(84vw, 348px);
+    }
+    .hero-mobile-showcase__screen:nth-child(5) {
+      --mobile-layer: 5;
+      --mobile-right: -46vw;
+      --mobile-top: 4svh;
+      --mobile-width: min(88vw, 364px);
+    }
+    .hero-mobile-showcase__screen img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .hero-mobile-showcase__pager {
+      position: absolute;
+      top: 7svh;
+      right: 0;
+      bottom: 7svh;
+      z-index: 7;
+      display: flex;
+      width: 62vw;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      pointer-events: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+      touch-action: pan-x pan-y;
+      -webkit-overflow-scrolling: touch;
+    }
+    .hero-mobile-showcase__pager::-webkit-scrollbar {
+      display: none;
+    }
+    .hero-mobile-showcase__page {
+      flex: 0 0 100%;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+    }
+    .hero-mobile-showcase__dots {
+      position: absolute;
+      right: 20px;
+      bottom: 3svh;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      pointer-events: auto;
+    }
+    .hero-mobile-showcase__dots button {
+      width: 6px;
+      height: 6px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.28);
+      cursor: pointer;
+      transition:
+        width 180ms ease,
+        background 180ms ease;
+    }
+    .hero-mobile-showcase__dots button[aria-current="page"] {
+      width: 18px;
+      background: rgba(255, 255, 255, 0.82);
+    }
+    .hero-mobile-showcase[data-mobile-platform="android"]
+      .hero-mobile-showcase__screen {
+      aspect-ratio: 1080 / 1920;
+      border-radius: 24px;
+    }
+    .hero-mobile-showcase[data-mobile-platform="android"]
+      .hero-mobile-showcase__screen:nth-child(1) {
+      --mobile-right: -30vw;
+      --mobile-width: min(90vw, 374px);
+    }
+    .hero-mobile-showcase[data-mobile-platform="android"]
+      .hero-mobile-showcase__screen:nth-child(2) {
+      --mobile-right: -40vw;
+      --mobile-width: min(96vw, 398px);
+    }
+    .hero-mobile-showcase[data-mobile-platform="android"]
+      .hero-mobile-showcase__screen:nth-child(3) {
+      --mobile-right: -51vw;
+      --mobile-width: min(102vw, 423px);
+    }
+    .hero-mobile-showcase[data-mobile-platform="android"]
+      .hero-mobile-showcase__screen:nth-child(4) {
+      --mobile-right: -62vw;
+      --mobile-width: min(108vw, 448px);
+    }
+    .hero-mobile-showcase[data-mobile-platform="android"]
+      .hero-mobile-showcase__screen:nth-child(5) {
+      --mobile-right: -72vw;
+      --mobile-width: min(113vw, 473px);
+    }
     .git-visual { display: none; }
     .endorsements-head {
       margin-bottom: 40px;
@@ -2530,6 +2902,9 @@ const faqs = [
     }
     .harness {
       gap: 10px;
+    }
+    .harness:nth-child(5) {
+      grid-column: 1 / -1;
     }
 
     .showcase-copy .section-head h2 {

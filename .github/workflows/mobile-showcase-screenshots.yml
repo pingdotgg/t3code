@@ -84,9 +84,11 @@ jobs:
     if: |
       always() &&
       needs.ios.result == 'success' &&
+      needs.android.result == 'success' &&
+      inputs.platform == 'all' &&
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
       inputs.appearance != 'light'
-    needs: ios
+    needs: [ios, android]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -112,6 +114,12 @@ jobs:
           name: app-store-connect-screenshots
           path: ${{ runner.temp }}/mobile-showcase
 
+      - name: Download Android screenshots
+        uses: actions/download-artifact@v8
+        with:
+          name: google-play-screenshots
+          path: ${{ runner.temp }}/mobile-showcase
+
       - id: app_bot
         name: Resolve GitHub App bot identity
         env:
@@ -125,48 +133,77 @@ jobs:
       - id: preview
         name: Update website preview asset
         env:
-          ARTIFACT_ID: ${{ needs.ios.outputs.artifact_id }}
+          IOS_ARTIFACT_ID: ${{ needs.ios.outputs.artifact_id }}
+          ANDROID_ARTIFACT_ID: ${{ needs.android.outputs.artifact_id }}
           HEAD_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           WORKFLOW_NAME: ${{ github.workflow }}
         run: |
-          phone_source_path="$RUNNER_TEMP/mobile-showcase/iphone-6.9/dark/threads.png"
-          tablet_source_path="$RUNNER_TEMP/mobile-showcase/ipad-13/dark/threads.png"
           output_directory="apps/marketing/public/mobile-states"
-          phone_output_path="$output_directory/threads.png"
-          tablet_output_path="$output_directory/ipad-threads.png"
+          declare -A preview_sources=(
+            ["threads.png"]="$RUNNER_TEMP/mobile-showcase/iphone-6.9/dark/threads.png"
+            ["ipad-threads.png"]="$RUNNER_TEMP/mobile-showcase/ipad-13/dark/threads.png"
+            ["ios-thread.png"]="$RUNNER_TEMP/mobile-showcase/iphone-6.9/dark/thread.png"
+            ["ios-terminal.png"]="$RUNNER_TEMP/mobile-showcase/iphone-6.9/dark/terminal.png"
+            ["ios-review.png"]="$RUNNER_TEMP/mobile-showcase/iphone-6.9/dark/review.png"
+            ["ios-environments.png"]="$RUNNER_TEMP/mobile-showcase/iphone-6.9/dark/environments.png"
+            ["android-threads.png"]="$RUNNER_TEMP/mobile-showcase/phone/dark/threads.png"
+            ["android-thread.png"]="$RUNNER_TEMP/mobile-showcase/phone/dark/thread.png"
+            ["android-terminal.png"]="$RUNNER_TEMP/mobile-showcase/phone/dark/terminal.png"
+            ["android-review.png"]="$RUNNER_TEMP/mobile-showcase/phone/dark/review.png"
+            ["android-environments.png"]="$RUNNER_TEMP/mobile-showcase/phone/dark/environments.png"
+          )
 
-          if [[ ! -f "$phone_source_path" || ! -f "$tablet_source_path" ]]; then
-            echo "Missing expected website preview source." >&2
-            echo "Phone: $phone_source_path" >&2
-            echo "Tablet: $tablet_source_path" >&2
-            exit 1
-          fi
+          for output_name in "${!preview_sources[@]}"; do
+            source_path="${preview_sources[$output_name]}"
+            if [[ ! -f "$source_path" ]]; then
+              echo "Missing expected website preview source: $source_path" >&2
+              exit 1
+            fi
+          done
 
-          if [[ -f "$phone_output_path" && -f "$tablet_output_path" ]] &&
-            cmp --silent "$phone_source_path" "$phone_output_path" &&
-            cmp --silent "$tablet_source_path" "$tablet_output_path"; then
+          changed=false
+          for output_name in "${!preview_sources[@]}"; do
+            source_path="${preview_sources[$output_name]}"
+            output_path="$output_directory/$output_name"
+            if [[ ! -f "$output_path" ]] || ! cmp --silent "$source_path" "$output_path"; then
+              changed=true
+              break
+            fi
+          done
+
+          if [[ "$changed" == "false" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Website previews already match the generated screenshots."
             exit 0
           fi
 
           mkdir -p "$output_directory"
-          cp "$phone_source_path" "$phone_output_path"
-          cp "$tablet_source_path" "$tablet_output_path"
+          for output_name in "${!preview_sources[@]}"; do
+            cp "${preview_sources[$output_name]}" "$output_directory/$output_name"
+          done
           node --input-type=module <<'NODE'
           import { writeFile } from "node:fs/promises";
 
           const metadata = {
-            artifactId: Number(process.env.ARTIFACT_ID),
-            artifactName: "app-store-connect-screenshots",
+            artifacts: [
+              {
+                id: Number(process.env.IOS_ARTIFACT_ID),
+                name: "app-store-connect-screenshots",
+              },
+              {
+                id: Number(process.env.ANDROID_ARTIFACT_ID),
+                name: "google-play-screenshots",
+              },
+            ],
             artifactCreatedAt: new Date().toISOString(),
             runId: Number(process.env.RUN_ID),
             runUrl: process.env.RUN_URL,
             headSha: process.env.HEAD_SHA,
             workflow: process.env.WORKFLOW_NAME,
-            devices: ["iphone-6.9", "ipad-13"],
+            devices: ["iphone-6.9", "ipad-13", "pixel"],
+            scenes: ["thread", "terminal", "review", "threads", "environments"],
             appearance: "dark",
           };
 
@@ -184,10 +221,7 @@ jobs:
         run: |
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
-          git add \
-            apps/marketing/public/mobile-states/source.json \
-            apps/marketing/public/mobile-states/threads.png \
-            apps/marketing/public/mobile-states/ipad-threads.png
+          git add apps/marketing/public/mobile-states
           git commit -m "chore(marketing): refresh mobile showcase screenshot"
           git pull --rebase origin "$DEFAULT_BRANCH"
           git push origin "HEAD:$DEFAULT_BRANCH"
@@ -197,6 +231,8 @@ jobs:
     if: inputs.platform == 'all' || inputs.platform == 'android'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.upload_android.outputs.artifact-id }}
     env:
       T3_SHOWCASE_ANDROID_ABI: x86_64
     steps:
@@ -259,6 +295,7 @@ jobs:
         run: pnpm screenshots:mobile --platform android --appearance "${{ inputs.appearance }}" --validate-only
 
       - name: Upload Android screenshots
+        id: upload_android
         if: always()
         uses: actions/upload-artifact@v7
         with:
