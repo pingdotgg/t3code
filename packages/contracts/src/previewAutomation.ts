@@ -677,6 +677,7 @@ export class PreviewReviewSnapshotMalformedError extends Schema.TaggedErrorClass
   {
     threadId: ThreadId,
     tabId: PreviewTabId,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

@@ -469,10 +469,11 @@ const makeWsRpcLayer = (
         });
         const snapshot = yield* decodePreviewAutomationReviewSnapshot(rawSnapshot).pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new PreviewReviewSnapshotMalformedError({
                 threadId: input.threadId,
                 tabId: input.tabId,
+                cause,
               }),
           ),
         );
