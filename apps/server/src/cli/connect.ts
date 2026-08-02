@@ -27,11 +27,15 @@ import {
   HttpClientResponse,
 } from "effect/unstable/http";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { homedir } from "node:os";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
+import * as BootService from "../cloud/bootService.ts";
+import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
 import { CLOUD_LINKED_USER_ID, RELAY_URL_SECRET } from "../cloud/config.ts";
 import {
   hasCloudCliOAuthConfig,
@@ -41,7 +45,10 @@ import {
 import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  readPersistedServerRuntimeState,
+  type PersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 const jsonFlag = Flag.boolean("json").pipe(
@@ -309,9 +316,58 @@ type LiveCloudActionResult =
   | { readonly status: "succeeded" }
   | { readonly status: "failed"; readonly cause: Cause.Cause<unknown> };
 
+const runtimeProcessIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return !(
+      typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      cause.code === "ESRCH"
+    );
+  }
+};
+
+export const readPreferredCloudRuntimeStateWith = (
+  probe: (state: PersistedServerRuntimeState) => Promise<boolean>,
+) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    if (process.platform === "darwin" && typeof process.getuid === "function") {
+      const canonicalBaseDir = yield* Effect.tryPromise(() =>
+        BootService.liveServiceHost.canonicalize(config.baseDir),
+      );
+      const serviceState = yield* readPersistedServerRuntimeState(
+        BootService.servicePaths({
+          homeDir: homedir(),
+          canonicalBaseDir,
+          userId: process.getuid(),
+        }).runtimeStatePath,
+      );
+      if (
+        Option.isSome(serviceState) &&
+        runtimeProcessIsAlive(serviceState.value.pid) &&
+        (yield* Effect.tryPromise(() => probe(serviceState.value)).pipe(
+          Effect.orElseSucceed(() => false),
+        ))
+      ) {
+        return serviceState;
+      }
+    }
+    return yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  });
+
+export const readPreferredCloudRuntimeState = readPreferredCloudRuntimeStateWith(async (state) => {
+  const response = await fetch(state.origin, {
+    signal: AbortSignal.timeout(Duration.toMillis(CLOUD_CLI_LIVE_SERVER_TIMEOUT)),
+  });
+  return response.ok;
+});
+
 const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  const runtimeState = yield* readPreferredCloudRuntimeState;
   if (Option.isNone(runtimeState)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
   }
@@ -340,8 +396,7 @@ type LiveCloudLinkStateResult =
   | { readonly status: "unavailable"; readonly cause: Cause.Cause<unknown> };
 
 const runLiveCloudLinkState = Effect.fn("cloud.cli.run_live_link_state")(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  const runtimeState = yield* readPreferredCloudRuntimeState;
   if (Option.isNone(runtimeState)) {
     return { status: "not-running" } satisfies LiveCloudLinkStateResult;
   }
@@ -622,7 +677,7 @@ const runCloudCommand = <A, E>(
       ServerSecretStore.layer,
       CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
       RelayClient.layerCloudflared({ baseDir: config.baseDir }),
-      EnvironmentAuth.runtimeLayer,
+      EnvironmentAuth.runtimeLayer.pipe(Layer.provide(AuthControlPlaneRuntimeLive)),
       ServerEnvironment.layer,
       headlessRelayClientTracingLayer,
     ).pipe(
@@ -789,9 +844,20 @@ const connectSetupCommand = Command.make("connect", {
         }
         const identity = yield* authorizeCli(flags);
         yield* CliState.setCliDesiredCloudLink(true);
-        yield* Console.log(
-          `Connected${identity ? ` as ${identity}` : ""}. Start T3 to provision this environment.`,
+        yield* Console.log(`Connected${identity ? ` as ${identity}` : ""}.`);
+        const config = yield* ServerConfig.ServerConfig;
+        const background = yield* recoverServiceOnboardingOffer(
+          offerServiceDuringOnboarding({
+            baseDir: config.baseDir,
+          }).pipe(
+            Effect.provide(
+              Layer.effect(BootService.BootService, BootService.make({ baseDir: config.baseDir })),
+            ),
+          ),
         );
+        if (!background) {
+          yield* Console.log("Start T3 to provision this environment.");
+        }
       }),
       { configuration: "full" },
     ),

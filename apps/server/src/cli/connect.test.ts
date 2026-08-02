@@ -1,9 +1,15 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
@@ -17,10 +23,15 @@ import {
   executeCloudDisconnect,
   formatHeadlessAuthorizationPrompt,
   isHeadlessConnectEnvironment,
+  readPreferredCloudRuntimeStateWith,
   relayUnlinkResultFromStatus,
   reportCloudDisconnectResults,
 } from "./connect.ts";
+import { recoverServiceOnboardingOffer } from "./service.ts";
+import * as BootService from "../cloud/bootService.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
+import { ServerConfig } from "../config.ts";
+import { persistServerRuntimeState } from "../serverRuntimeState.ts";
 
 it("distinguishes durable Connect status states without treating stale link metadata as online", () => {
   assert.equal(
@@ -90,6 +101,65 @@ it("permits credential-only login without a relay URL", () => {
     cloudConfigurationError("full", oauthOnly),
     "T3 Connect is not configured. Set T3CODE_RELAY_URL, T3CODE_CLERK_PUBLISHABLE_KEY, and T3CODE_CLERK_CLI_OAUTH_CLIENT_ID.",
   );
+});
+
+it.effect("keeps successful Connect setup successful when background setup validation fails", () =>
+  Effect.gen(function* () {
+    const result = yield* recoverServiceOnboardingOffer(
+      Effect.fail(new Error("invalid T3CODE_PORT")),
+    );
+    assert.isFalse(result);
+  }),
+);
+
+it("prefers service-instance runtime discovery over shared foreground state", async () => {
+  if (process.platform !== "darwin" || typeof process.getuid !== "function") return;
+  const userId = process.getuid();
+  const baseDir = await mkdtemp(join(tmpdir(), "t3-connect-service-state-"));
+  try {
+    const effect = Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const canonicalBaseDir = yield* Effect.promise(() =>
+        BootService.liveServiceHost.canonicalize(baseDir),
+      );
+      const serviceStatePath = BootService.servicePaths({
+        homeDir: homedir(),
+        canonicalBaseDir,
+        userId,
+      }).runtimeStatePath;
+      const state = (pid: number, port: number) => ({
+        version: 1 as const,
+        pid,
+        port,
+        origin: `http://127.0.0.1:${port}`,
+        startedAt: new Date(0).toISOString(),
+      });
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: state(process.pid, 3773),
+      });
+      yield* persistServerRuntimeState({
+        path: serviceStatePath,
+        state: state(process.pid, 3774),
+      });
+
+      assert.equal(
+        Option.getOrThrow(yield* readPreferredCloudRuntimeStateWith(async () => true)).port,
+        3774,
+      );
+      assert.equal(
+        Option.getOrThrow(yield* readPreferredCloudRuntimeStateWith(async () => false)).port,
+        3773,
+      );
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), baseDir).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+    );
+    await Effect.runPromise(effect);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
 });
 
 it("keeps status and disconnect commands usable when Connect is not configured", () => {

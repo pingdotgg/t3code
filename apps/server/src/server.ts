@@ -409,8 +409,22 @@ export const makeServerLayer = Layer.unwrap(
             path: config.serverRuntimeStatePath,
             state,
           });
+          const serviceRuntimeStatePath = process.env.T3CODE_SERVICE_RUNTIME_STATE_PATH;
+          if (serviceRuntimeStatePath) {
+            yield* persistServerRuntimeState({
+              path: serviceRuntimeStatePath,
+              state,
+            });
+          }
         }),
-        () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
+        () =>
+          Effect.gen(function* () {
+            yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
+            const serviceRuntimeStatePath = process.env.T3CODE_SERVICE_RUNTIME_STATE_PATH;
+            if (serviceRuntimeStatePath) {
+              yield* clearPersistedServerRuntimeState(serviceRuntimeStatePath);
+            }
+          }),
       ),
     );
 

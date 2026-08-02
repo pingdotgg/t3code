@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import { Flag } from "effect/unstable/cli";
 
 import { deriveServerPaths, ensureServerDirectories, type ServerConfigShape } from "../config.ts";
+import { resolveBaseDir } from "../os-jank.ts";
 
 const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription("Base directory path (equivalent to T3CODE_HOME)."),
@@ -29,7 +30,9 @@ export const resolveCliAuthConfig = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const cwd = process.cwd();
-    const baseDir = path.resolve(Option.getOrElse(flags.baseDir, () => ".t3code"));
+    const baseDir = yield* resolveBaseDir(
+      Option.getOrUndefined(flags.baseDir) ?? process.env.T3CODE_HOME,
+    );
     const devUrl = flags.devUrl ? Option.getOrUndefined(flags.devUrl) : undefined;
     const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
     yield* ensureServerDirectories(derivedPaths);

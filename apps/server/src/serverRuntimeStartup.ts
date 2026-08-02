@@ -496,7 +496,9 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
 
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
-      if (serverConfig.startupPresentation === "headless") {
+      if (serverConfig.startupPresentation === "service") {
+        yield* Effect.logDebug("startup phase: background service ready");
+      } else if (serverConfig.startupPresentation === "headless") {
         yield* Effect.logDebug("startup phase: headless access info");
         const accessInfo = yield* issueHeadlessServeAccessInfo();
         yield* runStartupPhase(

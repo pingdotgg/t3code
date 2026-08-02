@@ -126,6 +126,7 @@ import {
   type CliSnapshot,
 } from "./cli/liveContext.ts";
 import { connectCommand } from "./cli/connect.ts";
+import { serviceCommand } from "./cli/service.ts";
 
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 const PENDING_REQUEST_DETAILS_CONCURRENCY = 4;
@@ -273,6 +274,7 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  backgroundService: Config.boolean("T3CODE_BACKGROUND_SERVICE").pipe(Config.withDefault(false)),
 });
 
 interface CliServerFlags {
@@ -394,7 +396,9 @@ export const resolveServerConfig = (
     );
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
     yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
-    const startupPresentation = options?.startupPresentation ?? "browser";
+    const startupPresentation = env.backgroundService
+      ? "service"
+      : (options?.startupPresentation ?? "browser");
     const isHeadlessStartup = startupPresentation === "headless";
     const noBrowser = Option.getOrElse(
       resolveOptionPrecedence(
@@ -4914,5 +4918,6 @@ export const cli: Command.Command<"t3", never, {}, unknown, NetService | NodeSer
       rpcCommand,
       orchestrationCommand,
       connectCommand,
+      serviceCommand,
     ]),
   );

@@ -1,4 +1,6 @@
 import { Effect, FileSystem, Option, Schema } from "effect";
+import { randomUUID } from "node:crypto";
+import { link, readFile, rename, rm } from "node:fs/promises";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { type ServerConfigShape } from "./config.ts";
@@ -15,6 +17,9 @@ export const PersistedServerRuntimeState = Schema.Struct({
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
 const decodePersistedServerRuntimeState = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PersistedServerRuntimeState),
+);
+const decodePersistedServerRuntimeStatePromise = Schema.decodeUnknownPromise(
   Schema.fromJsonString(PersistedServerRuntimeState),
 );
 
@@ -48,12 +53,6 @@ export const persistServerRuntimeState = (input: {
     contents: `${JSON.stringify(input.state)}\n`,
   });
 
-export const clearPersistedServerRuntimeState = (path: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.remove(path, { force: true }).pipe(Effect.ignore({ log: true }));
-  });
-
 export const readPersistedServerRuntimeState = (path: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -70,3 +69,60 @@ export const readPersistedServerRuntimeState = (path: string) =>
 
     return yield* decodePersistedServerRuntimeState(trimmed).pipe(Effect.option);
   });
+
+const fileErrorCode = (cause: unknown): string | undefined =>
+  typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
+    ? cause.code
+    : undefined;
+
+const runtimePidIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return fileErrorCode(cause) !== "ESRCH";
+  }
+};
+
+export const clearPersistedServerRuntimeState = (path: string, expectedPid: number = process.pid) =>
+  Effect.tryPromise(async () => {
+    const claimedPath = `${path}.${expectedPid}.${randomUUID()}.clear`;
+    try {
+      await rename(path, claimedPath);
+    } catch (cause) {
+      if (fileErrorCode(cause) === "ENOENT") return false;
+      throw cause;
+    }
+
+    const restoreClaim = async () => {
+      try {
+        await link(claimedPath, path);
+      } catch (cause) {
+        if (fileErrorCode(cause) !== "EEXIST") throw cause;
+      }
+      await rm(claimedPath, { force: true });
+    };
+
+    const state = await decodePersistedServerRuntimeStatePromise(
+      await readFile(claimedPath, "utf8"),
+    ).catch(() => undefined);
+    if (state?.pid !== expectedPid) {
+      if (state !== undefined && !runtimePidIsAlive(state.pid)) {
+        await rm(claimedPath, { force: true });
+        return false;
+      }
+      await restoreClaim();
+      return false;
+    }
+
+    await rm(claimedPath, { force: true });
+    return true;
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Failed to clear persisted server runtime state", {
+        cause,
+        path,
+        expectedPid,
+      }).pipe(Effect.as(false)),
+    ),
+  );
