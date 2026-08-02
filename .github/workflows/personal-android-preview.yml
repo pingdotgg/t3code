@@ -21,15 +21,15 @@ permissions:
 
 env:
   APK_NAME: t3-code-preview.apk
-  # Keep the personal build on the reviewed archive changes even if concurrent
-  # work is temporarily stacked on the PR branch.
-  ARCHIVE_FEATURE_HEAD: 3e0f9606de3c59e493309eaf185e5fc6f2fb5441
+  # Pin the reviewed personal feature set while still rebasing it onto current
+  # upstream source. Rebase drops patch-equivalent commits as upstream merges
+  # them without dropping changes that remain personal to this build.
+  PERSONAL_FEATURE_HEAD: 3e0f9606de3c59e493309eaf185e5fc6f2fb5441
   FEATURE_BRANCH: feat/mobile-quick-archive
   FEATURE_REPOSITORY: Feighery89/t3code
   NODE_OPTIONS: --max-old-space-size=6144
   T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST: http://100.97.53.68:7791
   T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL: https://api.github.com/repos/Feighery89/t3code/releases/latest
-  UPSTREAM_PR: "5205"
   UPSTREAM_REPOSITORY: pingdotgg/t3code
 
 jobs:
@@ -71,32 +71,24 @@ jobs:
           git -C source checkout --detach origin/main
 
           main_sha="$(git -C source rev-parse HEAD)"
-          pr_json="$(gh api "repos/${UPSTREAM_REPOSITORY}/pulls/${UPSTREAM_PR}")"
-          merged="$(jq -r '.merged' <<<"$pr_json")"
-          pr_state="$(jq -r '.state' <<<"$pr_json")"
+          git -C source fetch --no-tags \
+            "https://github.com/${FEATURE_REPOSITORY}.git" \
+            "+refs/heads/${FEATURE_BRANCH}:refs/remotes/personal/feature"
+          feature_sha="$PERSONAL_FEATURE_HEAD"
 
-          if [[ "$merged" == "true" ]]; then
-            feature_sha="merged"
-          else
-            git -C source fetch --no-tags \
-              "https://github.com/${FEATURE_REPOSITORY}.git" \
-              "+refs/heads/${FEATURE_BRANCH}:refs/remotes/personal/feature"
-            feature_sha="$ARCHIVE_FEATURE_HEAD"
-
-            if ! git -C source merge-base --is-ancestor \
-              "$feature_sha" \
-              refs/remotes/personal/feature; then
-              echo "::error::The curated archive commit is no longer available on the feature branch."
-              exit 1
-            fi
-
-            git -C source config user.name "github-actions[bot]"
-            git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git -C source checkout --detach "$feature_sha"
-            git -C source rebase origin/main
+          if ! git -C source merge-base --is-ancestor \
+            "$feature_sha" \
+            refs/remotes/personal/feature; then
+            echo "::error::The curated personal feature commit is no longer available on the feature branch."
+            exit 1
           fi
 
-          source_key="${main_sha}:${feature_sha}:${merged}"
+          git -C source config user.name "github-actions[bot]"
+          git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C source checkout --detach "$feature_sha"
+          git -C source rebase origin/main
+
+          source_key="${main_sha}:${feature_sha}"
           latest_body=""
           if latest_body="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.body')"; then
             :
@@ -114,8 +106,6 @@ jobs:
           echo "build_sha=${build_sha}" >>"$GITHUB_OUTPUT"
           echo "feature_sha=${feature_sha}" >>"$GITHUB_OUTPUT"
           echo "main_sha=${main_sha}" >>"$GITHUB_OUTPUT"
-          echo "merged=${merged}" >>"$GITHUB_OUTPUT"
-          echo "pr_state=${pr_state}" >>"$GITHUB_OUTPUT"
           echo "should_build=${should_build}" >>"$GITHUB_OUTPUT"
           echo "source_key=${source_key}" >>"$GITHUB_OUTPUT"
           echo "version_code=${version_code}" >>"$GITHUB_OUTPUT"
@@ -259,7 +249,7 @@ jobs:
             "- Package: \`${{ steps.apk.outputs.package_name }}\`" \
             "- Android version code: \`${{ steps.apk.outputs.version_code }}\`" \
             "- Upstream main: \`${{ steps.source.outputs.main_sha }}\`" \
-            "- Archive feature: \`${{ steps.source.outputs.feature_sha }}\` (PR #${UPSTREAM_PR}, merged: ${{ steps.source.outputs.merged }})" \
+            "- Personal feature set: \`${{ steps.source.outputs.feature_sha }}\`" \
             "- Official Expo OTA updates: disabled for this custom package" \
             "- Personal updates: checked automatically from this signed GitHub release channel" \
             "" \
