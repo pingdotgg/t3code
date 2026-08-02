@@ -1567,10 +1567,7 @@ function FontFamilySettingsRow({
 }
 
 export function GeneralSettingsPanel() {
-  const supportsCua =
-    typeof window !== "undefined" &&
-    Boolean(window.desktopBridge) &&
-    isMacPlatform(window.navigator.platform);
+  const supportsCua = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
@@ -1760,7 +1757,7 @@ export function GeneralSettingsPanel() {
         {supportsCua ? (
           <SettingsRow
             title="Computer use"
-            description="Let agents use Cua to see and control your Mac. Restart T3 Code after changing this setting."
+            description="Let agents use Cua to see and control your computer. Restart T3 Code after changing this setting."
             resetAction={
               settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? (
                 <SettingResetButton

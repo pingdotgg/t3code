@@ -69,6 +69,17 @@ const CUA_DRIVER_MAC_ASSETS: Record<typeof BuildArch.Type, CuaDriverMacAsset> = 
   },
 };
 
+const CUA_DRIVER_PLATFORM_SHA256 = {
+  linux: {
+    arm64: "176365815fac4fc7e1f472a9ce18c5c67aa0cd0b7453950651c24cf8b9d7d52c",
+    x64: "686bb354420a3019c812bb940cf531a830db6a86ccaeb329ad754cac2b869c6e",
+  },
+  win: {
+    arm64: "9a639c4e77b4f280ae632a736fb26dbcae8de4db966f06ada294478846eadd85",
+    x64: "421b2a092e101d6d54c8256fadc6b252410f3bdea0b6994a351235b3525d34fd",
+  },
+} as const;
+
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -168,6 +179,29 @@ export function resolveCuaDriverMacAsset(arch: typeof BuildArch.Type) {
   return {
     ...asset,
     url: `${CUA_DRIVER_RELEASE_BASE_URL}/${asset.archiveName}`,
+  };
+}
+
+export function resolveCuaDriverAsset(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+) {
+  if (platform === "mac") return resolveCuaDriverMacAsset(arch);
+  if (!EXACT_RELEASE_VERSION_PATTERN.test(CUA_DRIVER_RELEASE_VERSION) || arch === "universal") {
+    throw new Error(`Cua Driver has no release asset for ${platform}/${arch}.`);
+  }
+
+  const os = platform === "win" ? "windows" : "linux";
+  const releaseArch = arch === "x64" ? "x86_64" : "arm64";
+  const extension = platform === "win" ? "zip" : "tar.gz";
+  const archiveName = `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-${os}-${releaseArch}-binary.${extension}`;
+  return {
+    archiveName,
+    executablePath: platform === "win" ? "cua-driver.exe" : "cua-driver",
+    companionPaths:
+      platform === "win" ? ["cua-cursor-theme.exe"] : ["cua-cursor-theme", "wayland-helper"],
+    sha256: CUA_DRIVER_PLATFORM_SHA256[platform][arch],
+    url: `${CUA_DRIVER_RELEASE_BASE_URL}/${archiveName}`,
   };
 }
 
@@ -698,6 +732,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+export const CUA_DRIVER_EXTRA_RESOURCE = {
+  from: "apps/desktop/prod-resources/cua-driver",
+  to: "cua-driver",
+} as const;
 
 export interface MacPasskeySigningConfiguration {
   readonly appId: string;
@@ -1639,6 +1677,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     };
   }
 
+  if (platform !== "mac") {
+    buildConfig.extraResources = [...DESKTOP_EXTRA_RESOURCES, CUA_DRIVER_EXTRA_RESOURCE];
+  }
+
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
@@ -1709,12 +1751,10 @@ const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(function*
   readonly stageResourcesDir: string;
   readonly verbose: boolean;
 }) {
-  if (input.platform !== "mac") return;
-
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
-  const asset = resolveCuaDriverMacAsset(input.arch);
+  const asset = resolveCuaDriverAsset(input.platform, input.arch);
   const cacheDir = path.join(repoRoot, "node_modules/.cache/t3code/cua-driver");
   const archivePath = path.join(cacheDir, asset.archiveName);
   const extractDir = path.join(input.stageRoot, "cua-driver/extract");
@@ -1758,14 +1798,45 @@ const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(function*
     }).pipe(Effect.ensuring(fs.remove(temporaryArchivePath, { force: true }).pipe(Effect.ignore)));
   }
 
-  yield* runCommand(ChildProcess.make("tar", ["-xzf", archivePath, "-C", extractDir]), {
+  const extractCommand =
+    input.platform === "win"
+      ? ChildProcess.make("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Expand-Archive",
+          "-LiteralPath",
+          archivePath,
+          "-DestinationPath",
+          extractDir,
+          "-Force",
+        ])
+      : ChildProcess.make("tar", ["-xzf", archivePath, "-C", extractDir]);
+  yield* runCommand(extractCommand, {
     label: `extract ${asset.archiveName}`,
     verbose: input.verbose,
   });
 
-  const destination = path.join(input.stageResourcesDir, "cua-driver");
-  yield* fs.copyFile(path.join(extractDir, asset.executablePath), destination);
-  yield* fs.chmod(destination, 0o755);
+  const extractedExecutable = path.join(extractDir, asset.executablePath);
+  if (input.platform === "mac") {
+    const destination = path.join(input.stageResourcesDir, "cua-driver");
+    yield* fs.copyFile(extractedExecutable, destination);
+    yield* fs.chmod(destination, 0o755);
+  } else {
+    const destination = path.join(input.stageResourcesDir, "cua-driver");
+    yield* fs.makeDirectory(destination, { recursive: true });
+    yield* fs.copyFile(
+      extractedExecutable,
+      path.join(destination, path.basename(asset.executablePath)),
+    );
+    for (const companionPath of "companionPaths" in asset ? asset.companionPaths : []) {
+      yield* fs.copy(path.join(extractDir, companionPath), path.join(destination, companionPath));
+    }
+    if (input.platform === "linux") {
+      yield* fs.chmod(path.join(destination, "cua-driver"), 0o755);
+      yield* fs.chmod(path.join(destination, "cua-cursor-theme"), 0o755);
+    }
+  }
   yield* Effect.log(`[desktop-artifact] Staged Cua Driver ${CUA_DRIVER_RELEASE_VERSION}.`);
 });
 
