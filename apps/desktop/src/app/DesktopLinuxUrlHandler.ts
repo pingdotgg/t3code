@@ -65,10 +65,11 @@ export function escapeDesktopEntryExecArgument(value: string): string {
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
+// The AppImage integration entry owns the window identity and icon. This
+// hidden URL-only entry must not compete with it for StartupWMClass matching.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
-  readonly wmClass: string;
   readonly scheme: string;
 }): string {
   return [
@@ -79,7 +80,6 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
-    `StartupWMClass=${escapeDesktopEntryString(input.wmClass)}`,
     `MimeType=x-scheme-handler/${input.scheme};`,
     "",
   ].join("\n");
@@ -113,7 +113,6 @@ export const make = Effect.gen(function* () {
       renderUrlHandlerDesktopEntry({
         displayName: environment.displayName,
         execTarget,
-        wmClass: environment.linuxWmClass,
         scheme,
       }),
     );
