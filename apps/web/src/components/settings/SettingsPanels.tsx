@@ -136,6 +136,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -963,9 +964,9 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Appearance">
+      <SettingsSection id="appearance" title="Appearance">
         <SettingsRow
-          title="Theme"
+          {...searchableSetting("theme")}
           description="Choose how T3 Code looks across the app."
           resetAction={
             theme !== "system" ? (
@@ -998,7 +999,7 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
-          title="Glass opacity"
+          {...searchableSetting("setting-glass-opacity")}
           description="Control how transparent glass surfaces are. Higher values make menus, dialogs, and the composer more solid."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
@@ -1045,7 +1046,7 @@ export function AppearanceSettingsPanel() {
 
         {showEnvironmentIdentification ? (
           <SettingsRow
-            title="Environment identification"
+            {...searchableSetting("environment-identification")}
             description="Choose how Dev and Nightly environments are identified."
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
@@ -1086,7 +1087,7 @@ export function AppearanceSettingsPanel() {
         ) : null}
 
         <SettingsRow
-          title="Word wrap"
+          {...searchableSetting("word-wrap")}
           description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
           resetAction={
             settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
@@ -1170,7 +1171,7 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="General">
         <SettingsRow
-          title="Project Grouping"
+          {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
           resetAction={
             settings.sidebarProjectGroupingMode !==
@@ -1200,13 +1201,13 @@ export function GeneralSettingsPanel() {
                   ),
                 });
               }}
-              aria-label="Project Grouping"
+              aria-label="Project grouping"
             />
           }
         />
 
         <SettingsRow
-          title="Time format"
+          {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."
           resetAction={
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
@@ -1248,7 +1249,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Hide whitespace changes"
+          {...searchableSetting("hide-whitespace-changes")}
           description="Set whether the diff panel ignores whitespace-only edits by default."
           resetAction={
             settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
@@ -1274,7 +1275,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Assistant output"
+          {...searchableSetting("assistant-output")}
           description="Show token-by-token output while a response is in progress."
           resetAction={
             settings.enableAssistantStreaming !==
@@ -1301,7 +1302,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Provider update checks"
+          {...searchableSetting("provider-update-checks")}
           description="Check installed provider CLIs for newer available versions."
           resetAction={
             settings.enableProviderUpdateChecks !==
@@ -1410,7 +1411,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Auto-open task panel"
+          {...searchableSetting("auto-open-task-panel")}
           description="Open the right-side plan and task panel automatically when steps appear."
           resetAction={
             settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
@@ -1436,7 +1437,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="New threads"
+          {...searchableSetting("new-threads")}
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
             settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
@@ -1483,7 +1484,7 @@ export function GeneralSettingsPanel() {
         {settings.defaultThreadEnvMode === "worktree" ? (
           <SettingsRow
             className="bg-muted/20 sm:pl-9"
-            title="Start from origin"
+            title={searchableSetting("start-from-origin").title}
             description="Creates the worktree from the latest matching branch on origin instead of your local branch."
             resetAction={
               settings.newWorktreesStartFromOrigin !==
@@ -1512,7 +1513,7 @@ export function GeneralSettingsPanel() {
         ) : null}
 
         <SettingsRow
-          title="Add project starts in"
+          {...searchableSetting("add-project-starts-in")}
           description='Leave empty to use "~/" when the Add Project browser opens.'
           resetAction={
             settings.addProjectBaseDirectory !==
@@ -1540,7 +1541,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Archive confirmation"
+          {...searchableSetting("archive-confirmation")}
           description="Require a second click on the inline archive action before a thread is archived."
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
@@ -1566,7 +1567,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Delete confirmation"
+          {...searchableSetting("delete-confirmation")}
           description="Ask before deleting a thread and its chat history."
           resetAction={
             settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
@@ -1592,7 +1593,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Text generation model"
+          {...searchableSetting("text-generation-model")}
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
             isTextGenerationModelDirty ? (
@@ -1676,7 +1677,7 @@ export function GeneralSettingsPanel() {
           />
         )}
         <SettingsRow
-          title="Diagnostics"
+          {...searchableSetting("diagnostics")}
           description={diagnosticsDescription}
           control={
             <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
@@ -1991,7 +1992,7 @@ export function ProviderSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Providers"
+        {...searchableSetting("providers")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
@@ -2320,7 +2321,10 @@ export function ArchivedThreadsPanel() {
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
-        <SettingsSection title="Archived threads">
+        <SettingsSection
+          id={isLoadingArchive ? undefined : searchableSetting("archive").id}
+          title={searchableSetting("archive").title}
+        >
           <SettingsRow
             title={
               <span className="inline-flex items-center gap-2">
@@ -2344,9 +2348,10 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }) => (
+        archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
             key={project.id}
+            id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.name}
             icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
           >
