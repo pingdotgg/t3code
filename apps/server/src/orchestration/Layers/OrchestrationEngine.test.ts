@@ -1371,6 +1371,12 @@ describe("OrchestrationEngine", () => {
       ),
     ).rejects.toThrow("already used for thread 'thread-conflict-a'");
 
+    const readModel = await system.readModel();
+    const targetThread = readModel.threads.find(
+      (candidate) => candidate.id === "thread-conflict-b",
+    );
+    expect(targetThread?.messages.filter((message) => message.role === "user")).toHaveLength(0);
+
     await system.dispose();
   });
 });
