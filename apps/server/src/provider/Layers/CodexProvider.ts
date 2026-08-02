@@ -62,6 +62,11 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
+const CURRENT_CODEX_MODELS = new Set(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+
+export function isLegacyCodexModel(model: string): boolean {
+  return !CURRENT_CODEX_MODELS.has(model);
+}
 
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
@@ -190,6 +195,7 @@ function parseCodexModelListResponse(
     name: toDisplayName(model),
     isCustom: false,
     ...(model.isDefault ? { isDefault: true } : {}),
+    ...(isLegacyCodexModel(model.model) ? { isLegacy: true } : {}),
     capabilities: mapCodexModelCapabilities(model),
   }));
 }

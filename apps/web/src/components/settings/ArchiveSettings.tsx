@@ -54,7 +54,9 @@ import {
   SettingsRow,
   SettingsSection,
   useRelativeTimeTick,
+  useSettingsSearchTarget,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 function ArchivedSortButton({
   field,
@@ -124,6 +126,8 @@ function ArchivedIconButton({
 }
 
 export function ArchivedThreadsPanel() {
+  const archiveSetting = searchableSetting("archive");
+  const archiveSearchTargetRef = useSettingsSearchTarget<HTMLInputElement>(archiveSetting.id);
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { unarchiveThread, deleteThread } = useThreadActions();
@@ -543,6 +547,8 @@ export function ArchivedThreadsPanel() {
   return (
     <SettingsPageContainer>
       <Input
+        ref={archiveSearchTargetRef}
+        id={archiveSetting.id}
         nativeInput
         type="search"
         value={archiveSearchQuery}
@@ -551,7 +557,7 @@ export function ArchivedThreadsPanel() {
         aria-label="Search archived conversations"
       />
       {archivedGroups.length === 0 ? (
-        <SettingsSection title="Archived threads">
+        <SettingsSection title={archiveSetting.title}>
           <SettingsRow
             title={
               <span className="inline-flex items-center gap-2">

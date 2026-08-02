@@ -24,12 +24,16 @@ The update does not remove saved threads, settings, or project files.
 
 | Action                     | What to do                                                                                                                                                                  |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Select the button and leave T3 Code open. It prepares the matching version, restarts the server, and reconnects automatically. This can take several minutes.               |
+| **Update server**          | Available for the T3 Code Linux background service. Select the button and leave T3 Code open while it prepares, tests, restarts, and reconnects.                            |
 | **Update the desktop app** | Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                     |
 | **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use. |
 
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
+
+If the requested version includes a database update, remote installation stops before restart and
+asks you to run the exact `npx t3@<version> service update` command on the server machine. This is
+an intentional rollback-safety boundary.
 
 After selecting **Update server**, the warning becomes a three-step progress rail:
 **Download**, **Install**, and **Resume**. The same progress appears in the conversation and in
@@ -56,8 +60,8 @@ commands.
 ## After the Update
 
 Keep the web or desktop app open while the server restarts. The update completes only after the
-replacement server reports the requested version and is ready to accept commands. The warning and
-progress rail then disappear.
+service launcher reports that exact update committed and the replacement server is ready to accept
+commands. A rollback is reported immediately instead of waiting for a generic reconnect timeout.
 
 If a step fails:
 
