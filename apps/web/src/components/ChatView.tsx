@@ -5720,6 +5720,7 @@ function ChatViewContent(props: ChatViewProps) {
         threadRef={activeThreadRef}
         cwd={gitCwd ?? undefined}
         skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+        onImageExpand={onExpandTimelineImage}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
