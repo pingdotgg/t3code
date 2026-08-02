@@ -21,6 +21,18 @@ export class CuaDriverStartError extends Schema.TaggedErrorClass<CuaDriverStartE
   }
 }
 
+export class CuaDriverModuleLoadError extends Schema.TaggedErrorClass<CuaDriverModuleLoadError>()(
+  "CuaDriverModuleLoadError",
+  {
+    modulePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not load embedded cua-driver module at '${this.modulePath}'.`;
+  }
+}
+
 const tomlString = (value: string): string => JSON.stringify(value);
 
 export const buildCodexLaunchArgs = (connection: Pick<EmbeddedDriverConnection, "mcp">): string => {
@@ -85,7 +97,11 @@ export const startEmbeddedCuaDriver = Effect.fn("server.startEmbeddedCuaDriver")
   const moduleUrl = process.env[T3CODE_CUA_DRIVER_MODULE_URL_ENV]?.trim() || undefined;
   const { EmbeddedCuaDriverHost } = yield* Effect.tryPromise({
     try: () => importEmbeddedCuaDriver(moduleUrl),
-    catch: (cause) => new CuaDriverStartError({ binaryPath, cause }),
+    catch: (cause) =>
+      new CuaDriverModuleLoadError({
+        modulePath: moduleUrl ?? "@trycua/cua-driver/embedded",
+        cause,
+      }),
   });
   const driver = yield* Effect.try({
     try: () => new EmbeddedCuaDriverHost(binaryPath, hostBundleId),
