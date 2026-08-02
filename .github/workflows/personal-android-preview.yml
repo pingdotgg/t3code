@@ -212,8 +212,8 @@ jobs:
           apksigner="$ANDROID_HOME/build-tools/$build_tools_version/apksigner"
 
           badging="$($aapt dump badging "$apk" | head -n 1)"
-          package_name="$(sed -n "s/.*name='\([^']*\)'.*/\1/p" <<<"$badging")"
-          version_code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+          package_name="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/^package: name='[^']*' versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
 
           if [[ "$package_name" != "com.t3tools.t3code.preview" ]]; then
             echo "::error::Unexpected Android package: ${package_name}"
