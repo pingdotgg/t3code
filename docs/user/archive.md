@@ -9,6 +9,9 @@ To open the archive:
 - In the web or desktop app, open **Settings** → **Archive**.
 - In the mobile app, open **Settings** → **Archived Threads**.
 
+On web and desktop, searching Settings for **Archived threads** also opens Archive and focuses the
+archive search field.
+
 ## Find an Archived Thread
 
 Archived threads are grouped by project. Project groups start collapsed so large archives remain
