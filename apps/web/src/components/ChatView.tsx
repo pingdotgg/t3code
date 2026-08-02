@@ -134,6 +134,7 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import { openUrlInPreview } from "~/browser/openFileInPreview";
 import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
@@ -2880,12 +2881,30 @@ function ChatViewContent(props: ChatViewProps) {
           data: `${script.command}\r`,
         },
       });
-      if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
+      if (writeResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(writeResult)) {
+          const error = squashAtomCommandFailure(writeResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
+      }
+
+      if (
+        script.autoOpenPreview &&
+        script.previewUrl &&
+        isPreviewSupportedInRuntime() &&
+        activeThreadRef
+      ) {
+        // Preview failures surface in the panel itself, and the script is
+        // already running — never report one as a failure of the script.
+        await openUrlInPreview({
+          threadRef: activeThreadRef,
+          url: script.previewUrl,
+          openPreview,
+        });
       }
     },
     [
@@ -2894,6 +2913,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThreadId,
       activeThreadRef,
       gitCwd,
+      openPreview,
       setTerminalOpen,
       setThreadError,
       storeNewTerminal,
