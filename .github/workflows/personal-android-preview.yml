@@ -23,10 +23,12 @@ env:
   APK_NAME: t3-code-preview.apk
   # Keep the personal build on the reviewed archive changes even if concurrent
   # work is temporarily stacked on the PR branch.
-  ARCHIVE_FEATURE_HEAD: edade0ee6464c661120e15bfd2b188f4f85abfed
+  ARCHIVE_FEATURE_HEAD: 3e0f9606de3c59e493309eaf185e5fc6f2fb5441
   FEATURE_BRANCH: feat/mobile-quick-archive
   FEATURE_REPOSITORY: Feighery89/t3code
   NODE_OPTIONS: --max-old-space-size=6144
+  T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST: http://100.97.53.68:7791
+  T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL: https://api.github.com/repos/Feighery89/t3code/releases/latest
   UPSTREAM_PR: "5205"
   UPSTREAM_REPOSITORY: pingdotgg/t3code
 
@@ -252,13 +254,14 @@ jobs:
           notes="$RUNNER_TEMP/release-notes.md"
 
           printf '%s\n' \
-            "A separately installed Android preview containing Mark's archive workflow and current upstream T3 Code improvements." \
+            "A separately installed Android preview containing Mark's archive workflow, local agent notifications, and current upstream T3 Code improvements." \
             "" \
             "- Package: \`${{ steps.apk.outputs.package_name }}\`" \
             "- Android version code: \`${{ steps.apk.outputs.version_code }}\`" \
             "- Upstream main: \`${{ steps.source.outputs.main_sha }}\`" \
             "- Archive feature: \`${{ steps.source.outputs.feature_sha }}\` (PR #${UPSTREAM_PR}, merged: ${{ steps.source.outputs.merged }})" \
             "- Official Expo OTA updates: disabled for this custom package" \
+            "- Personal updates: checked automatically from this signed GitHub release channel" \
             "" \
             "Source key: ${{ steps.source.outputs.source_key }}" \
             >"$notes"
