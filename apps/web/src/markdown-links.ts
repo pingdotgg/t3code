@@ -92,6 +92,123 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   return `${target.path}${target.hash}`;
 }
 
+/**
+ * Extract the destination of every markdown inline link found in `text`.
+ *
+ * This mirrors the CommonMark link-destination grammar closely enough for file
+ * link classification: it understands both the angle-bracket form
+ * (`[label](<dest with spaces>)`) and the bare form, where the destination may
+ * contain balanced parentheses (`[label](/tmp/a(1).txt)`). The previous
+ * single-regex implementation captured neither form, so links whose paths held
+ * spaces or parentheses were never recognized as file links.
+ */
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  const hrefs: string[] = [];
+  const length = text.length;
+  let index = 0;
+
+  while (index < length) {
+    const labelStart = text.indexOf("[", index);
+    if (labelStart === -1) break;
+
+    const labelEnd = text.indexOf("]", labelStart + 1);
+    if (labelEnd === -1) break;
+
+    if (text[labelEnd + 1] !== "(") {
+      index = labelEnd + 1;
+      continue;
+    }
+
+    let pos = labelEnd + 2;
+    while (pos < length && (text[pos] === " " || text[pos] === "\t")) {
+      pos += 1;
+    }
+
+    let destination = "";
+
+    if (text[pos] === "<") {
+      // Angle-bracket destination: may contain spaces, ends at an unescaped ">".
+      pos += 1;
+      let closed = false;
+      while (pos < length) {
+        const char = text[pos];
+        if (char === undefined) break;
+        if (char === "\\" && pos + 1 < length) {
+          destination += text[pos + 1];
+          pos += 2;
+          continue;
+        }
+        if (char === "\n") break;
+        if (char === ">") {
+          closed = true;
+          pos += 1;
+          break;
+        }
+        destination += char;
+        pos += 1;
+      }
+      if (!closed) {
+        index = labelEnd + 2;
+        continue;
+      }
+    } else {
+      // Bare destination: balanced parentheses are part of the destination; it
+      // ends at whitespace, a control character, or an unbalanced ")".
+      let depth = 0;
+      while (pos < length) {
+        const char = text[pos];
+        if (char === undefined) break;
+        if (char === "\\" && pos + 1 < length) {
+          destination += text[pos + 1];
+          pos += 2;
+          continue;
+        }
+        if (char === " " || char === "\t" || char === "\n" || char.charCodeAt(0) < 0x20) {
+          break;
+        }
+        if (char === "(") {
+          depth += 1;
+          destination += char;
+          pos += 1;
+          continue;
+        }
+        if (char === ")") {
+          if (depth === 0) break;
+          depth -= 1;
+          destination += char;
+          pos += 1;
+          continue;
+        }
+        destination += char;
+        pos += 1;
+      }
+    }
+
+    const href = destination.trim();
+    if (href.length > 0) hrefs.push(href);
+    index = Math.max(pos, labelEnd + 2);
+  }
+
+  return hrefs;
+}
+
+/**
+ * Canonical lookup key for a markdown link destination.
+ *
+ * react-markdown percent-encodes some destination characters when it renders a
+ * link (a literal space becomes `%20`), while the raw text the link was authored
+ * from may contain the unencoded character. Decoding both the rendered href and
+ * the destination scanned out of the source text lets the file-link classifier
+ * match the two. File URIs keep their single-decode semantics so paths that
+ * embed literally percent-encoded octets are not decoded twice.
+ */
+export function normalizeMarkdownLinkHrefKey(href: string): string {
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  const rewritten = rewriteMarkdownFileUriHref(normalizedHref);
+  if (rewritten !== null) return rewritten;
+  return safeDecode(normalizedHref);
+}
+
 function looksLikePosixFilesystemPath(path: string): boolean {
   if (!path.startsWith("/")) return false;
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;

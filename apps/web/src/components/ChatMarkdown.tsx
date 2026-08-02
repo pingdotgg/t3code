@@ -66,7 +66,8 @@ import {
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
-  normalizeMarkdownLinkDestination,
+  extractMarkdownLinkHrefs,
+  normalizeMarkdownLinkHrefKey,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
 } from "../markdown-links";
@@ -752,7 +753,6 @@ interface MarkdownFileLinkProps {
   className?: string | undefined;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link cursor-pointer transition-colors hover:bg-accent/70";
 
@@ -814,21 +814,6 @@ function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<
   }
 
   return suffixByPath;
-}
-
-function extractMarkdownLinkHrefs(text: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = match[1]?.trim();
-    if (!href) continue;
-    hrefs.push(href);
-  }
-  return hrefs;
-}
-
-function normalizeMarkdownLinkHrefKey(href: string): string {
-  const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1475,7 +1460,7 @@ function ChatMarkdown({
             workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
             line={fileLinkMeta.line}
             label={labelParts.join(" · ")}
-            copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
+            copyMarkdown={`[${fileLinkMeta.basename}](${href ?? normalizedHref})`}
             theme={resolvedTheme}
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
