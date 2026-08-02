@@ -622,14 +622,18 @@ export class GhosttyTerminalSurface {
   }
 
   /**
-   * Sends clipboard text through the same bracketed-paste encoding as a native
-   * paste event, for hosts that read the clipboard themselves (context menu).
+   * Pastes clipboard text read by the host (context menu) with the same
+   * bracketed-paste encoding as a native paste event. The read joins the same
+   * race the paste shortcut uses — the token is claimed before it starts — so
+   * a shortcut or native paste arriving during the read supersedes this one
+   * instead of both reaching the shell.
    */
-  paste(text: string): void {
-    if (text.length === 0) return;
-    // Settle the paste-shortcut race exactly like the native paste event does,
-    // so a clipboard read still in flight cannot deliver the text twice.
+  async pasteFromClipboard(readText: () => Promise<string>): Promise<void> {
+    const token = ++this.pasteShortcutToken;
+    const text = await readText();
+    if (this.disposed || this.pasteShortcutToken !== token) return;
     this.pasteShortcutToken += 1;
+    if (text.length === 0) return;
     this.options.onData(this.core.encodePaste(text));
   }
 

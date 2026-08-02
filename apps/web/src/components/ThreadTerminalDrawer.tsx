@@ -505,29 +505,29 @@ export function TerminalViewport({
       };
 
       const pasteFromClipboard = async (requestId: number) => {
-        let text: string;
+        const activeTerminal = terminalRef.current;
+        if (!activeTerminal) return;
         try {
-          text = await readTextFromClipboard("terminal input");
+          // The surface owns the read so it can claim the paste race before it
+          // starts: a paste shortcut fired while the menu read is in flight
+          // supersedes this paste instead of landing alongside it.
+          await activeTerminal.pasteFromClipboard(() => readTextFromClipboard("terminal input"));
         } catch (error) {
           if (requestId !== selectionActionRequestIdRef.current) {
             return;
           }
-          const activeTerminal = terminalRef.current;
-          if (activeTerminal) {
+          const latestTerminal = terminalRef.current;
+          if (latestTerminal) {
             writeSystemMessage(
-              activeTerminal,
+              latestTerminal,
               error instanceof Error ? error.message : "Unable to read the clipboard",
             );
           }
           return;
         }
-        if (requestId !== selectionActionRequestIdRef.current) {
-          return;
+        if (requestId === selectionActionRequestIdRef.current) {
+          terminalRef.current?.focus();
         }
-        const activeTerminal = terminalRef.current;
-        if (!activeTerminal) return;
-        activeTerminal.paste(text);
-        activeTerminal.focus();
       };
 
       const showTerminalContextMenu = async (event: MouseEvent) => {
