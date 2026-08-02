@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_WS_METHODS,
+  OrchestrationGetSnapshotError,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
@@ -11,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
@@ -41,6 +43,17 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "Could not synchronize the thread.";
+}
+
+const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
+
+function isThreadNotFoundSnapshotCause(cause: Cause.Cause<unknown>): boolean {
+  return cause.reasons.some(
+    (reason) =>
+      Cause.isFailReason(reason) &&
+      isOrchestrationGetSnapshotError(reason.error) &&
+      reason.error.reason === "thread_not_found",
+  );
 }
 
 function shouldPersistThread(thread: OrchestrationThread): boolean {
@@ -140,7 +153,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         })),
       ),
     );
-
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationThread,
   ) {
@@ -178,6 +190,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ),
     );
   });
+  const handleStreamError = (cause: Cause.Cause<unknown>) =>
+    isThreadNotFoundSnapshotCause(cause) ? setDeleted() : setStreamError(cause);
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
@@ -317,7 +331,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        onExpectedFailure: setStreamError,
+        onExpectedFailure: handleStreamError,
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },

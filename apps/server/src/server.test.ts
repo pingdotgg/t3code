@@ -6088,6 +6088,35 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeThread identifies a missing large-gap fallback", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 5,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
+      assert.equal(result.failure.reason, "thread_not_found");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeThread replaces a cursor ahead of the authoritative head", () =>
     Effect.gen(function* () {
       let readEventsCalls = 0;

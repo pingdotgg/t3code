@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   EventId,
   ORCHESTRATION_WS_METHODS,
+  OrchestrationGetSnapshotError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -458,6 +459,42 @@ describe("EnvironmentThreads", () => {
         hasData: false,
         loaderCalls: 1,
         subscriptionCount: 0,
+        removedThreads: [THREAD_ID],
+      });
+    }),
+  );
+
+  it.effect("keeps a socket thread_not_found fallback terminal for a warm cache", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(
+        harness.inputs,
+        new OrchestrationGetSnapshotError({
+          message: `Thread ${THREAD_ID} was not found`,
+          reason: "thread_not_found",
+        }),
+      );
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      yield* TestClock.adjust("1 second");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect({
+        status: state.status,
+        hasData: Option.isSome(state.data),
+        loaderCalls: yield* Ref.get(harness.loaderCalls),
+        subscriptionCount: yield* Ref.get(harness.subscriptionCount),
+        removedThreads: yield* Ref.get(harness.removedThreads),
+      }).toEqual({
+        status: "deleted",
+        hasData: false,
+        loaderCalls: 0,
+        subscriptionCount: 1,
         removedThreads: [THREAD_ID],
       });
     }),
