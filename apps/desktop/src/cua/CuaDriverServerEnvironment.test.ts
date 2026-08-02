@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 import {
   configureCuaDriverServerEnvironment,
+  CuaDriverNotConfiguredError,
   disableCuaDriverServerEnvironment,
   resolveEmbeddedDriverPath,
   T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV,
@@ -45,6 +46,26 @@ describe("cua-driver server environment", () => {
   it("ignores missing and empty paths", () => {
     expect(Option.isNone(resolveEmbeddedDriverPath({}))).toBe(true);
     expect(Option.isNone(resolveEmbeddedDriverPath({ T3CODE_CUA_DRIVER_PATH: "  " }))).toBe(true);
+  });
+
+  it.effect("reports missing configuration without a fabricated path", () => {
+    const previous = process.env[T3CODE_CUA_DRIVER_PATH_ENV];
+    delete process.env[T3CODE_CUA_DRIVER_PATH_ENV];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env[T3CODE_CUA_DRIVER_PATH_ENV];
+            else process.env[T3CODE_CUA_DRIVER_PATH_ENV] = previous;
+          }),
+        );
+        const error = yield* configureCuaDriverServerEnvironment(
+          "com.t3tools.t3code",
+          "linux",
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(CuaDriverNotConfiguredError);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("loads the packaged module from the asar archive", () =>
