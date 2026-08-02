@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import {
   buildBrowseGroups,
+  buildProjectActionItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
@@ -110,6 +111,32 @@ describe("enumerateCommandPaletteItems", () => {
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+describe("buildProjectActionItems", () => {
+  it("uses the caller-provided machine-aware description", () => {
+    const project = {
+      id: PROJECT_ID,
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      title: "Desktop",
+      workspaceRoot: "/Users/henry/Desktop",
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+
+    const [item] = buildProjectActionItems({
+      projects: [project],
+      valuePrefix: "new-thread-in",
+      description: (candidate) => `${candidate.workspaceRoot} · Henry's Mac Studio`,
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+
+    expect(item?.description).toBe("/Users/henry/Desktop · Henry's Mac Studio");
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

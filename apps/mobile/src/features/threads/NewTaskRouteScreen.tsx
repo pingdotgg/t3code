@@ -1,6 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
+import { buildProjectPickerDescription } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
@@ -14,6 +15,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useThreadShells } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
+import { useEnvironments } from "../../state/environments";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
@@ -81,6 +83,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
+  const { environments } = useEnvironments();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -104,6 +107,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     () => groupProjectsByRepository({ projects, threads }),
     [projects, threads],
   );
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
+  const showProjectEnvironmentLabels = environments.length > 1;
   const items = useMemo(() => {
     const nextItems: Array<{
       readonly environmentId: EnvironmentId;
@@ -111,6 +120,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       readonly key: string;
       readonly title: string;
       readonly workspaceRoot: string;
+      readonly environmentLabel: string | null;
     }> = [];
     for (const group of repositoryGroups) {
       const project = group.projects[0]?.project;
@@ -123,10 +133,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         key: group.key,
         title: project.title,
         workspaceRoot: project.workspaceRoot,
+        environmentLabel: environmentLabelById.get(project.environmentId) ?? null,
       });
     }
     return nextItems;
-  }, [repositoryGroups]);
+  }, [environmentLabelById, repositoryGroups]);
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
@@ -313,6 +324,16 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     </View>
                     <View className="flex-1">
                       <Text className="text-base leading-snug font-t3-bold">{item.title}</Text>
+                      <Text
+                        className="text-sm leading-snug text-foreground-muted"
+                        numberOfLines={1}
+                      >
+                        {buildProjectPickerDescription({
+                          workspaceRoot: item.workspaceRoot,
+                          environmentLabel: item.environmentLabel,
+                          showEnvironmentLabel: showProjectEnvironmentLabels,
+                        })}
+                      </Text>
                     </View>
                     <SymbolView
                       name="chevron.right"

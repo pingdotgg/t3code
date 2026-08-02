@@ -130,12 +130,13 @@ export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-export function buildProjectActionItems(input: {
-  projects: ReadonlyArray<Project>;
+export function buildProjectActionItems<TProject extends Project>(input: {
+  projects: ReadonlyArray<TProject>;
   valuePrefix: string;
-  icon: (project: Project) => ReactNode;
-  runProject: (project: Project) => Promise<void>;
-  searchTerms?: (project: Project) => ReadonlyArray<string>;
+  icon: (project: TProject) => ReactNode;
+  runProject: (project: TProject) => Promise<void>;
+  description?: (project: TProject) => ReactNode;
+  searchTerms?: (project: TProject) => ReadonlyArray<string>;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
@@ -143,7 +144,7 @@ export function buildProjectActionItems(input: {
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
     searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
     title: project.title,
-    description: project.workspaceRoot,
+    description: input.description?.(project) ?? project.workspaceRoot,
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
