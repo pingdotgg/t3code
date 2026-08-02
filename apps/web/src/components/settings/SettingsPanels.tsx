@@ -601,6 +601,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Provider update checks"]
         : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
+      ...(settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? ["Computer use"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -632,6 +633,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.environmentIdentificationMode,
       settings.glassOpacity,
       settings.enableAssistantStreaming,
+      settings.enableCua,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
@@ -662,6 +664,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1116,6 +1119,7 @@ export function AppearanceSettingsPanel() {
 }
 
 export function GeneralSettingsPanel() {
+  const supportsCua = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
@@ -1301,6 +1305,28 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {supportsCua ? (
+          <SettingsRow
+            title="Computer use"
+            description="Let agents use Cua to see and control your computer. Restart T3 Code after changing this setting."
+            resetAction={
+              settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? (
+                <SettingResetButton
+                  label="computer use"
+                  onClick={() => updateSettings({ enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.enableCua}
+                onCheckedChange={(checked) => updateSettings({ enableCua: Boolean(checked) })}
+                aria-label="Enable Cua computer use"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           title="Provider update checks"

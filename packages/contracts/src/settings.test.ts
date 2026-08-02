@@ -16,6 +16,16 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("ClientSettings Cua integration", () => {
+  it("defaults computer use off", () => {
+    expect(decodeClientSettings({}).enableCua).toBe(false);
+  });
+
+  it("accepts computer use updates", () => {
+    expect(decodeClientSettingsPatch({ enableCua: true }).enableCua).toBe(true);
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

@@ -10,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BuildCommandFailedError,
+  CUA_DRIVER_EXTRA_RESOURCE,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -26,6 +27,8 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
+  resolveCuaDriverMacAsset,
+  resolveCuaDriverAsset,
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
@@ -349,6 +352,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
+      assert.deepStrictEqual(linux.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        CUA_DRIVER_EXTRA_RESOURCE,
+      ]);
+      assert.deepStrictEqual(win.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        CUA_DRIVER_EXTRA_RESOURCE,
+      ]);
       for (const config of [mac, linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
         assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
@@ -520,6 +531,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.t3tools.t3code");
+      assert.deepStrictEqual(config.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        { from: "apps/desktop/prod-resources/cua-driver", to: "cua-driver" },
+      ]);
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.deepStrictEqual(mac.protocols, [
@@ -567,6 +582,41 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
     assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
   });
+
+  it("pins Cua Driver executable assets for each macOS architecture", () => {
+    assert.deepInclude(resolveCuaDriverMacAsset("arm64"), {
+      archiveName: "cua-driver-rs-0.12.2-darwin-arm64.tar.gz",
+      executablePath: "cua-driver-rs-0.12.2-darwin-arm64/cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverMacAsset("x64"), {
+      archiveName: "cua-driver-rs-0.12.2-darwin-x86_64.tar.gz",
+      executablePath: "cua-driver-rs-0.12.2-darwin-x86_64/cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverMacAsset("universal"), {
+      archiveName: "cua-driver-rs-0.12.2-darwin-universal-binary.tar.gz",
+      executablePath: "cua-driver",
+    });
+  });
+
+  it("pins Cua Driver assets for Linux and Windows", () => {
+    assert.deepInclude(resolveCuaDriverAsset("linux", "x64"), {
+      archiveName: "cua-driver-rs-0.12.2-linux-x86_64-binary.tar.gz",
+      executablePath: "cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverAsset("linux", "arm64"), {
+      archiveName: "cua-driver-rs-0.12.2-linux-arm64-binary.tar.gz",
+      executablePath: "cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverAsset("win", "x64"), {
+      archiveName: "cua-driver-rs-0.12.2-windows-x86_64-binary.zip",
+      executablePath: "cua-driver.exe",
+    });
+    assert.deepInclude(resolveCuaDriverAsset("win", "arm64"), {
+      archiveName: "cua-driver-rs-0.12.2-windows-arm64-binary.zip",
+      executablePath: "cua-driver.exe",
+    });
+  });
+
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",

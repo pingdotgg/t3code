@@ -60,6 +60,11 @@ import {
 } from "../../provider/Drivers/CodexHomeLayout.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import {
+  codexAppServerArgs,
+  resolveCodexLaunchArgs,
+  T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV,
+} from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -1261,6 +1266,25 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
+const withLiveCodexIntegrationEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const merged = { ...environment };
+  const liveLaunchArgs = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+  if (liveLaunchArgs === undefined) {
+    delete merged[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+  } else {
+    merged[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = liveLaunchArgs;
+  }
+  return merged;
+};
+
+export const resolveCodexAdapterAppServerArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<string> =>
+  codexAppServerArgs(
+    resolveCodexLaunchArgs(launchArgs, withLiveCodexIntegrationEnvironment(environment)),
+  );
+
 export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
   CodexAppServerClientFactory,
   never,
@@ -1281,7 +1305,7 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: ["app-server"],
+            args: resolveCodexAdapterAppServerArgs(input.settings.launchArgs, environment),
             env: environment,
           });
           const handle = yield* spawner.spawn(command).pipe(
