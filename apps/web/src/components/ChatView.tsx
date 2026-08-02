@@ -25,6 +25,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   deriveThreadActivityRun,
@@ -5157,26 +5158,18 @@ function ChatViewContent(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
-    if (composerImagesSnapshot.length > 0) {
-      const firstComposerImage = composerImagesSnapshot[0];
-      if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
-      }
-    }
-    let titleSeed = trimmed;
-    if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
-      } else if (composerTerminalContextsSnapshot.length > 0) {
-        titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
-      } else if (composerElementContextsSnapshot.length > 0) {
-        titleSeed = formatElementContextLabel(composerElementContextsSnapshot[0]!);
-      } else {
-        titleSeed = "New thread";
-      }
-    }
-    const title = truncate(titleSeed);
+    const title = deriveThreadTitleSeed({
+      text: trimmed,
+      attachments: composerImagesSnapshot,
+      fallbackLabels: [
+        composerTerminalContextsSnapshot[0] === undefined
+          ? null
+          : formatTerminalContextLabel(composerTerminalContextsSnapshot[0]),
+        composerElementContextsSnapshot[0] === undefined
+          ? null
+          : formatElementContextLabel(composerElementContextsSnapshot[0]),
+      ],
+    });
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,

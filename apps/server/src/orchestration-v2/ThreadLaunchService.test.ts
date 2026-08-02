@@ -533,6 +533,57 @@ it.effect("arms durable title generation after accepting the first message", () 
   }),
 );
 
+it.effect("does not update a reused thread title when the initial message is rejected", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:launch:reused-title-failure");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("command:launch:reused-title-failure:create"),
+        threadId,
+        projectId,
+        title: "Original title",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+
+      const commandId = CommandId.make("command:launch:reused-title-failure");
+      const failed = yield* launches
+        .launch({
+          ...launchInput({
+            command: commandId,
+            thread: threadId,
+            message: "Generate a provisional title",
+          }),
+          reuseExistingThread: true,
+          title: "Generate a provisional title",
+          generateTitle: true,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("missing-provider"),
+            model: "missing-model",
+          },
+        })
+        .pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(failed));
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, "Original title");
+      assert.isUndefined(projection.thread.titleRegeneration);
+      assert.isEmpty(projection.messages);
+      assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${commandId}:initial-message`)));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("generates an initial title for an attachment-only message", () =>
   Effect.gen(function* () {
     const harness = makeHarness();

@@ -5,6 +5,7 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -17,10 +18,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
-import {
-  buildProjectThreadStartTurnInput,
-  deriveThreadTitleFromPrompt,
-} from "../lib/projectThreadStartTurn";
+import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
@@ -234,7 +232,10 @@ export function useThreadOutboxDrain(): void {
             attachments: toUploadChatImageAttachments(queuedMessage.attachments),
           },
           modelSelection: settings.modelSelection,
-          titleSeed: deriveThreadTitleFromPrompt(queuedMessage.text),
+          titleSeed: deriveThreadTitleSeed({
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
+          }),
           runtimeMode: settings.runtimeMode,
           interactionMode: settings.interactionMode,
           createdAt: queuedMessage.createdAt,
