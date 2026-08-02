@@ -58,6 +58,20 @@ describe("extractMarkdownLinkHrefs", () => {
     expect(extractMarkdownLinkHrefs('[t](/tmp/a.txt "title")')).toEqual(["/tmp/a.txt"]);
   });
 
+  it("finds the label end across escaped brackets", () => {
+    expect(extractMarkdownLinkHrefs("[foo \\] bar](/tmp/a.txt)")).toEqual(["/tmp/a.txt"]);
+  });
+
+  it("finds the label end across balanced nested brackets", () => {
+    expect(extractMarkdownLinkHrefs("[foo [bar]](/tmp/a.txt)")).toEqual(["/tmp/a.txt"]);
+  });
+
+  it("does not extract link-looking sequences inside a title", () => {
+    expect(extractMarkdownLinkHrefs('[t](/tmp/a.txt "see [x](/tmp/should-not-match.txt)")')).toEqual(
+      ["/tmp/a.txt"],
+    );
+  });
+
   it("extracts every link in a multi-line message", () => {
     const text = [
       "[angle](</tmp/link repro/manifest.tsv>)",
@@ -85,10 +99,17 @@ describe("normalizeMarkdownLinkHrefKey", () => {
     expect(normalizeMarkdownLinkHrefKey("/tmp/a(1).txt")).toBe("/tmp/a(1).txt");
   });
 
-  it("preserves single-decode semantics for file URIs", () => {
-    expect(normalizeMarkdownLinkHrefKey("file:///Users/julius/project/file%2520name.md")).toBe(
+  it("matches a file URI key to its rewritten-path render form", () => {
+    // Pre-scan sees the raw file:// href; after markdownUrlTransform the anchor
+    // href is the rewritten path. Both must produce the same lookup key.
+    const fromFileUri = normalizeMarkdownLinkHrefKey(
+      "file:///Users/julius/project/file%2520name.md",
+    );
+    const fromRewrittenPath = normalizeMarkdownLinkHrefKey(
       "/Users/julius/project/file%2520name.md",
     );
+    expect(fromFileUri).toBe(fromRewrittenPath);
+    expect(fromFileUri).toBe("/Users/julius/project/file%20name.md");
   });
 });
 
