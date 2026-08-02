@@ -144,6 +144,24 @@ describe("buildPackagedRuntimeStageScript", () => {
     expect(script.slice(cacheHit, sourceConversion)).toContain("exit 0");
   });
 
+  it("falls back from an XDG cache on a Windows-mounted filesystem", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
+      "1.2.3-x64",
+    );
+    const xdgSelection = script.indexOf('cache_home="$XDG_CACHE_HOME"');
+    const filesystemProbe = script.indexOf('findmnt -T "$cache_home"');
+    const windowsMountFallback = script.indexOf("9p|drvfs");
+    const runtimeBase = script.indexOf('runtime_base="$cache_home/t3code/desktop-wsl-runtime"');
+
+    expect(filesystemProbe).toBeGreaterThan(xdgSelection);
+    expect(windowsMountFallback).toBeGreaterThan(filesystemProbe);
+    expect(runtimeBase).toBeGreaterThan(windowsMountFallback);
+    expect(script.slice(filesystemProbe, runtimeBase)).toContain(
+      'cache_home="${HOME:?WSL home directory is unavailable}/.cache"',
+    );
+  });
+
   it("serializes cache misses and rechecks the cache before reading the mounted source", () => {
     const script = buildPackagedRuntimeStageScript(
       "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
