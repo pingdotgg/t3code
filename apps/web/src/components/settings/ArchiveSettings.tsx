@@ -125,9 +125,33 @@ function ArchivedIconButton({
   );
 }
 
+function ArchivedThreadsSearch({
+  settingId,
+  query,
+  onQueryChange,
+}: {
+  readonly settingId: string;
+  readonly query: string;
+  readonly onQueryChange: (query: string) => void;
+}) {
+  const searchTargetRef = useSettingsSearchTarget<HTMLInputElement>(settingId);
+
+  return (
+    <Input
+      ref={searchTargetRef}
+      id={settingId}
+      nativeInput
+      type="search"
+      value={query}
+      onChange={(event) => onQueryChange(event.currentTarget.value)}
+      placeholder="Search archived conversations"
+      aria-label="Search archived conversations"
+    />
+  );
+}
+
 export function ArchivedThreadsPanel() {
   const archiveSetting = searchableSetting("archive");
-  const archiveSearchTargetRef = useSettingsSearchTarget<HTMLInputElement>(archiveSetting.id);
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { unarchiveThread, deleteThread } = useThreadActions();
@@ -546,15 +570,10 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
-      <Input
-        ref={archiveSearchTargetRef}
-        id={archiveSetting.id}
-        nativeInput
-        type="search"
-        value={archiveSearchQuery}
-        onChange={(event) => setArchiveSearchQuery(event.currentTarget.value)}
-        placeholder="Search archived conversations"
-        aria-label="Search archived conversations"
+      <ArchivedThreadsSearch
+        settingId={archiveSetting.id}
+        query={archiveSearchQuery}
+        onQueryChange={setArchiveSearchQuery}
       />
       {archivedGroups.length === 0 ? (
         <SettingsSection title={archiveSetting.title}>
