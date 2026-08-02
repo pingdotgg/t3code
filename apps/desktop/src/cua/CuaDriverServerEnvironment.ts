@@ -10,12 +10,12 @@ export const T3CODE_CUA_DRIVER_MODULE_URL_ENV = "T3CODE_CUA_DRIVER_MODULE_URL";
 export class CuaDriverConfigurationError extends Schema.TaggedErrorClass<CuaDriverConfigurationError>()(
   "CuaDriverConfigurationError",
   {
-    binaryPath: Schema.String,
+    modulePath: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Could not configure embedded cua-driver at '${this.binaryPath}'.`;
+    return `Could not configure embedded cua-driver module at '${this.modulePath}'.`;
   }
 }
 
@@ -98,16 +98,14 @@ export const configureCuaDriverServerEnvironment = Effect.fn("configureCuaDriver
       [T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV]: hostBundleId,
     };
     if (resourcesPath !== undefined) {
-      const moduleUrl = yield* path
-        .toFileUrl(
-          path.join(resourcesPath, "app.asar/node_modules/@trycua/cua-driver/dist/embedded.js"),
-        )
-        .pipe(
-          Effect.map((url) => url.href),
-          Effect.mapError(
-            (cause) => new CuaDriverConfigurationError({ binaryPath: driverPath.value, cause }),
-          ),
-        );
+      const modulePath = path.join(
+        resourcesPath,
+        "app.asar/node_modules/@trycua/cua-driver/dist/embedded.js",
+      );
+      const moduleUrl = yield* path.toFileUrl(modulePath).pipe(
+        Effect.map((url) => url.href),
+        Effect.mapError((cause) => new CuaDriverConfigurationError({ modulePath, cause })),
+      );
       updates[T3CODE_CUA_DRIVER_MODULE_URL_ENV] = moduleUrl;
     }
 
