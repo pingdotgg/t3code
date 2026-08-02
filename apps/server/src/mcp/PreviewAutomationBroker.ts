@@ -55,6 +55,7 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
@@ -81,7 +82,6 @@ interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
   readonly connectionId: ClientConnection["connectionId"];
   readonly queue: ClientConnection["queue"];
-  readonly expiresAt: number;
   readonly tabId?: PreviewTabId;
   readonly tabSequence?: number;
 }
@@ -104,6 +104,7 @@ interface PreviewAutomationRequestErrorContext {
 interface BrokerState {
   readonly clients: ReadonlyMap<string, ClientConnection>;
   readonly assignments: ReadonlyMap<string, HostAssignment>;
+  readonly revokedProviderSessionIds: ReadonlySet<string>;
   readonly pending: ReadonlyMap<string, PendingRequest>;
   readonly requestSequence: number;
   readonly focusSequence: number;
@@ -169,6 +170,8 @@ const selectorDiagnosticsFromInput = (
 
 const hostAssignmentKey = (scope: McpInvocationContext.McpInvocationScope): string =>
   `${scope.environmentId}\u0000${scope.providerSessionId}`;
+
+const MAX_REVOKED_PROVIDER_SESSION_TOMBSTONES = 4_096;
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 
@@ -308,6 +311,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     assignments: new Map(),
+    revokedProviderSessionIds: new Set(),
     pending: new Map(),
     requestSequence: 0,
     focusSequence: 0,
@@ -442,6 +446,27 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
+  const revokeProviderSession: PreviewAutomationBroker["Service"]["revokeProviderSession"] =
+    Effect.fn("PreviewAutomationBroker.revokeProviderSession")(function* (providerSessionId) {
+      yield* SynchronizedRef.update(state, (current) => {
+        const assignments = new Map(current.assignments);
+        for (const key of assignments.keys()) {
+          if (key.endsWith(`\u0000${providerSessionId}`)) {
+            assignments.delete(key);
+          }
+        }
+        const revokedProviderSessionIds = new Set(current.revokedProviderSessionIds);
+        revokedProviderSessionIds.delete(providerSessionId);
+        revokedProviderSessionIds.add(providerSessionId);
+        while (revokedProviderSessionIds.size > MAX_REVOKED_PROVIDER_SESSION_TOMBSTONES) {
+          const oldest = revokedProviderSessionIds.values().next().value;
+          if (oldest === undefined) break;
+          revokedProviderSessionIds.delete(oldest);
+        }
+        return { ...current, assignments, revokedProviderSessionIds };
+      });
+    });
+
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
@@ -456,14 +481,16 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           Array.from(current.assignments).filter(([, assignment]) => {
             const connection = current.clients.get(assignment.clientId);
             return (
-              assignment.expiresAt > now &&
               connection?.connectionId === assignment.connectionId &&
               connection.queue === assignment.queue
             );
           }),
         );
         const assignmentKey = hostAssignmentKey(input.scope);
-        const assigned = assignments.get(assignmentKey);
+        const providerSessionRevoked = current.revokedProviderSessionIds.has(
+          input.scope.providerSessionId,
+        );
+        const assigned = providerSessionRevoked ? undefined : assignments.get(assignmentKey);
         const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
         const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
         if (hasLiveAssignment && !supportsOperation(assignedConnection, input.operation)) {
@@ -512,16 +539,19 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           assigned !== undefined &&
           assigned.connectionId === connection.connectionId &&
           assigned.queue === connection.queue;
-        assignments.set(assignmentKey, {
-          clientId: connection.clientId,
-          connectionId: connection.connectionId,
-          queue: connection.queue,
-          expiresAt: input.scope.expiresAt,
-          ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
-          ...(canReuseAssignedTab && assigned.tabSequence !== undefined
-            ? { tabSequence: assigned.tabSequence }
-            : {}),
-        });
+        if (!providerSessionRevoked) {
+          assignments.set(assignmentKey, {
+            clientId: connection.clientId,
+            connectionId: connection.connectionId,
+            queue: connection.queue,
+            ...(canReuseAssignedTab && assigned.tabId !== undefined
+              ? { tabId: assigned.tabId }
+              : {}),
+            ...(canReuseAssignedTab && assigned.tabSequence !== undefined
+              ? { tabSequence: assigned.tabSequence }
+              : {}),
+          });
+        }
 
         const requestSequence = current.requestSequence;
         const requestId = `preview-${requestSequence}`;
@@ -683,7 +713,38 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  return PreviewAutomationBroker.of({
+    connect,
+    focusHost,
+    respond,
+    revokeProviderSession,
+    invoke,
+  });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
-export const layer = Layer.effect(PreviewAutomationBroker, make);
+let activePreviewAutomationBroker: PreviewAutomationBroker["Service"] | undefined;
+
+const managedMake = Effect.acquireRelease(
+  make.pipe(
+    Effect.tap((broker) =>
+      Effect.sync(() => {
+        activePreviewAutomationBroker = broker;
+      }),
+    ),
+  ),
+  (broker) =>
+    Effect.sync(() => {
+      if (activePreviewAutomationBroker === broker) {
+        activePreviewAutomationBroker = undefined;
+      }
+    }),
+);
+
+export const revokeActivePreviewAutomationProviderSession = (
+  providerSessionId: string,
+): Effect.Effect<void> =>
+  activePreviewAutomationBroker
+    ? activePreviewAutomationBroker.revokeProviderSession(providerSessionId)
+    : Effect.void;
+
+export const layer = Layer.effect(PreviewAutomationBroker, managedMake);

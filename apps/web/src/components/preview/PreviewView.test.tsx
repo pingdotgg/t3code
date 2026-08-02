@@ -85,7 +85,7 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/browser/browserRecording", () => ({
   startBrowserRecording: vi.fn(async () => "2026-07-29T00:00:00.000Z"),
   stopBrowserRecording: vi.fn(),
-  useActiveBrowserRecordingTabId: () => null,
+  useActiveBrowserRecordingTabIds: () => new Set(),
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({
@@ -270,7 +270,14 @@ describe("PreviewView navigation", () => {
     mocks.capture?.(true);
 
     await vi.waitFor(() =>
-      expect(recording.startBrowserRecording).toHaveBeenCalledWith(runtimeTabId, "tab-1"),
+      expect(recording.startBrowserRecording).toHaveBeenCalledWith(
+        runtimeTabId,
+        {
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        "tab-1",
+      ),
     );
   });
 });

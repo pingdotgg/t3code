@@ -34,7 +34,6 @@ const scope = {
   providerInstanceId: ProviderInstanceId.make("codex"),
   capabilities: new Set(["preview"] as const),
   issuedAt: 1,
-  expiresAt: Number.MAX_SAFE_INTEGER,
 };
 
 const makeHost = (overrides: Partial<PreviewAutomationHost> = {}): PreviewAutomationHost => ({
@@ -84,6 +83,59 @@ it.effect("atomically registers a connected host and correlates its response", (
       });
 
       expect(result).toEqual({ available: true });
+    }),
+  ),
+);
+
+it.effect("drops provider-session affinity when its credential is revoked", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const routedClientIds: string[] = [];
+      const connectionIds = new Map<string, string>();
+      for (const clientId of ["client-1", "client-2"]) {
+        const requests = requestsFrom(
+          yield* broker.connect(makeHost({ clientId })),
+          (connectionId) => connectionIds.set(clientId, connectionId),
+        );
+        yield* Stream.runForEach(requests, (request) => {
+          routedClientIds.push(clientId);
+          return broker.respond({
+            clientId,
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { available: true },
+          });
+        }).pipe(Effect.forkScoped);
+      }
+      yield* Effect.yieldNow;
+
+      yield* broker.focusHost({
+        clientId: "client-1",
+        connectionId: connectionIds.get("client-1")!,
+        environmentId: scope.environmentId,
+        focused: true,
+      });
+
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      expect(routedClientIds.at(-1)).toBe("client-1");
+      yield* broker.revokeProviderSession(scope.providerSessionId);
+      yield* broker.focusHost({
+        clientId: "client-1",
+        connectionId: connectionIds.get("client-1")!,
+        environmentId: scope.environmentId,
+        focused: false,
+      });
+      yield* broker.focusHost({
+        clientId: "client-2",
+        connectionId: connectionIds.get("client-2")!,
+        environmentId: scope.environmentId,
+        focused: true,
+      });
+
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      expect(routedClientIds.at(-1)).toBe("client-2");
     }),
   ),
 );

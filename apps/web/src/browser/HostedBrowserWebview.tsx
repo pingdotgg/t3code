@@ -8,7 +8,7 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
-import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserRecording";
+import { stopBrowserRecording } from "./browserRecording";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
@@ -55,7 +55,6 @@ export function HostedBrowserWebview(props: {
   const webviewRef = useRef<ElectronWebview | null>(null);
   const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(INITIAL_WEBVIEW_CRASH_RECOVERY_STATE);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
-  const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[runtimeTabId];
@@ -68,17 +67,16 @@ export function HostedBrowserWebview(props: {
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
 
   useEffect(() => {
-    if (presentation.visible || activeRecordingTabId !== runtimeTabId) return;
-    void stopBrowserRecording(runtimeTabId).catch(() => undefined);
-  }, [activeRecordingTabId, presentation.visible, runtimeTabId]);
-
-  useEffect(() => {
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
     const lease = acquireDesktopTab(runtimeTabId);
     tabLeaseRef.current = lease;
     return () => {
       if (tabLeaseRef.current === lease) tabLeaseRef.current = null;
-      lease.release();
+      void stopBrowserRecording(runtimeTabId)
+        .catch((error) => {
+          console.error("Failed to stop browser recording during webview cleanup.", error);
+        })
+        .finally(lease.release);
     };
   }, [runtimeTabId]);
 

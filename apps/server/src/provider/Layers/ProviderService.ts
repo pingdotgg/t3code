@@ -753,6 +753,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.kind": routed.adapter.provider,
           ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
         });
+        yield* McpSessionRegistry.touchActiveMcpProviderInstance(input.threadId, routed.instanceId);
         const turn = yield* routed.adapter.sendTurn(input);
         yield* directory.upsert({
           threadId: input.threadId,

@@ -20,7 +20,7 @@ const fakeEnvironment = ServerEnvironment.of({
 
 const makeRegistry = (
   now: () => number,
-  options: Pick<McpSessionRegistry.McpSessionRegistryOptions, "maximumLifetimeMs"> = {},
+  options: Pick<McpSessionRegistry.McpSessionRegistryOptions, "livenessWindowMs"> = {},
   hostname = "127.0.0.1",
 ) =>
   McpSessionRegistry.__testing
@@ -103,10 +103,10 @@ it.effect(
     }),
 );
 
-it.effect("expires credentials after the maximum provider-session lifetime", () =>
+it.effect("expires credentials after their session stops showing signs of life", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
-    const registry = yield* makeRegistry(() => timestamp, { maximumLifetimeMs: 100 });
+    const registry = yield* makeRegistry(() => timestamp, { livenessWindowMs: 100 });
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-expiry"),
       providerInstanceId: ProviderInstanceId.make("copilot"),
@@ -121,6 +121,85 @@ it.effect("expires credentials after the maximum provider-session lifetime", () 
         ProviderInstanceId.make("copilot"),
       ),
     ).toBeUndefined();
+  }),
+);
+
+it.effect("keeps credentials alive across turns without MCP traffic", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp, { livenessWindowMs: 100 });
+    const threadId = ThreadId.make("thread-turn-liveness");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("copilot"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    for (let turn = 0; turn < 10; turn += 1) {
+      timestamp += 99;
+      yield* registry.touch(threadId, ProviderInstanceId.make("copilot"));
+    }
+
+    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+  }),
+);
+
+it.effect("revives the matching credential when a trusted turn arrives after the window", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp, { livenessWindowMs: 100 });
+    const threadId = ThreadId.make("thread-late-turn");
+    const providerInstanceId = ProviderInstanceId.make("copilot");
+    const issued = yield* registry.issue({ threadId, providerInstanceId });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    timestamp += 101;
+    yield* registry.touch(threadId, providerInstanceId);
+
+    expect((yield* registry.resolve(token))?.providerSessionId).toBe(
+      issued.config.providerSessionId,
+    );
+  }),
+);
+
+it.effect("does not refresh credentials for unrelated threads", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp, { livenessWindowMs: 100 });
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-stale"),
+      providerInstanceId: ProviderInstanceId.make("copilot"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    timestamp += 99;
+    yield* registry.touch(ThreadId.make("thread-other"), ProviderInstanceId.make("copilot"));
+    timestamp += 2;
+
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("does not refresh another provider instance on the same thread", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp, { livenessWindowMs: 100 });
+    const threadId = ThreadId.make("thread-shared");
+    const stale = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("copilot-stale"),
+    });
+    yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("copilot-active"),
+    });
+    const staleToken = stale.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    timestamp += 99;
+    yield* registry.touch(threadId, ProviderInstanceId.make("copilot-active"));
+    timestamp += 2;
+
+    expect(yield* registry.resolve(staleToken)).toBeUndefined();
   }),
 );
 

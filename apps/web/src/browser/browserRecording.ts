@@ -1,6 +1,7 @@
 import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
@@ -46,17 +47,6 @@ export class BrowserRecordingCanvasUnavailableError extends Schema.TaggedErrorCl
   }
 }
 
-export class BrowserRecordingRequiresVisibleTabError extends Schema.TaggedErrorClass<BrowserRecordingRequiresVisibleTabError>()(
-  "BrowserRecordingRequiresVisibleTabError",
-  {
-    tabId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Browser recording requires tab ${this.tabId} to be visible.`;
-  }
-}
-
 export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<BrowserRecordingOperationError>()(
   "BrowserRecordingOperationError",
   {
@@ -91,7 +81,11 @@ type BrowserRecordingLifecycle =
     };
 
 interface ActiveRecording {
+  /** Desktop-scoped identity used by capture and surface stores. */
   readonly tabId: string;
+  /** Server-local identity returned by preview automation tools. */
+  readonly serverTabId: string;
+  readonly threadRef: ScopedThreadRef | null;
   readonly canvas: HTMLCanvasElement;
   readonly context: CanvasRenderingContext2D;
   readonly recorder: MediaRecorder;
@@ -99,38 +93,65 @@ interface ActiveRecording {
   readonly mimeType: string;
   readonly startedAt: string;
   readonly startupSettled: Promise<void>;
-  /** Server-scoped tab id the runtime tab currently maps to. */
-  readonly serverTabId: string;
   lifecycle: BrowserRecordingLifecycle;
 }
 
-const activeBrowserRecordingTabIdAtom = Atom.make<string | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("preview:active-browser-recording-tab"),
-);
-
-export function useActiveBrowserRecordingTabId(): string | null {
-  return useAtomValue(activeBrowserRecordingTabIdAtom);
+interface ActiveBrowserRecordingIndex {
+  readonly tabIds: ReadonlySet<string>;
 }
 
-let active: ActiveRecording | null = null;
+const activeBrowserRecordingTabIdsAtom = Atom.make<ActiveBrowserRecordingIndex>({
+  tabIds: new Set<string>(),
+}).pipe(Atom.keepAlive, Atom.withLabel("preview:active-browser-recording-tabs"));
+
+export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
+  return useAtomValue(activeBrowserRecordingTabIdsAtom).tabIds;
+}
+
+const activeRecordings = new Map<string, ActiveRecording>();
 let unsubscribeFrames: (() => void) | null = null;
 
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
 
-export function readActiveBrowserRecordingTabId(): string | null {
-  return active?.tabId ?? null;
+export function readActiveBrowserRecordingTabIds(threadRef?: ScopedThreadRef): ReadonlySet<string> {
+  const tabIds = new Set<string>();
+  for (const recording of activeRecordings.values()) {
+    if (
+      threadRef === undefined ||
+      (recording.threadRef?.environmentId === threadRef.environmentId &&
+        recording.threadRef.threadId === threadRef.threadId)
+    ) {
+      tabIds.add(recording.tabId);
+    }
+  }
+  return tabIds;
 }
 
-/**
- * Recordings are keyed by runtime tab id, but automation callers address tabs
- * by their server id, so expose both sides of the active mapping.
- */
-export function readActiveBrowserRecordingTarget(): {
+export interface ActiveBrowserRecordingTarget {
   readonly runtimeTabId: string;
   readonly serverTabId: string;
-} | null {
-  return active ? { runtimeTabId: active.tabId, serverTabId: active.serverTabId } : null;
+}
+
+export function readActiveBrowserRecordingTargets(
+  threadRef: ScopedThreadRef,
+): ReadonlyArray<ActiveBrowserRecordingTarget> {
+  return Array.from(activeRecordings.values()).flatMap((recording) =>
+    recording.threadRef?.environmentId === threadRef.environmentId &&
+    recording.threadRef.threadId === threadRef.threadId
+      ? [{ runtimeTabId: recording.tabId, serverTabId: recording.serverTabId }]
+      : [],
+  );
+}
+
+export function findActiveBrowserRecordingRuntimeTabId(
+  threadRef: ScopedThreadRef,
+  serverTabId: string,
+): string | null {
+  return (
+    readActiveBrowserRecordingTargets(threadRef).find(
+      (recording) => recording.serverTabId === serverTabId,
+    )?.runtimeTabId ?? null
+  );
 }
 
 const preferredMimeType = (): string => {
@@ -139,13 +160,13 @@ const preferredMimeType = (): string => {
 };
 
 const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
-  const recording = active;
-  if (!recording || recording.tabId !== frame.tabId) return;
+  const recording = activeRecordings.get(frame.tabId);
+  if (!recording) return;
   const image = new Image();
   image.addEventListener(
     "load",
     () => {
-      if (active !== recording) return;
+      if (activeRecordings.get(frame.tabId) !== recording) return;
       recording.context.drawImage(image, 0, 0, recording.canvas.width, recording.canvas.height);
     },
     { once: true },
@@ -163,11 +184,15 @@ const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
 };
 
 const clearActiveRecording = (recording: ActiveRecording): void => {
-  if (active !== recording) return;
-  active = null;
-  unsubscribeFrames?.();
-  unsubscribeFrames = null;
-  appAtomRegistry.set(activeBrowserRecordingTabIdAtom, null);
+  if (activeRecordings.get(recording.tabId) !== recording) return;
+  activeRecordings.delete(recording.tabId);
+  if (activeRecordings.size === 0) {
+    unsubscribeFrames?.();
+    unsubscribeFrames = null;
+  }
+  appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
+    tabIds: new Set(activeRecordings.keys()),
+  });
 };
 
 const recordingStartupCancelledError = (
@@ -181,7 +206,7 @@ const recordingStartupCancelledError = (
   });
 
 const isRecordingStarting = (recording: ActiveRecording): boolean =>
-  active === recording && recording.lifecycle.phase === "starting";
+  activeRecordings.get(recording.tabId) === recording && recording.lifecycle.phase === "starting";
 
 const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Promise<void> => {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -208,20 +233,32 @@ const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Prom
 const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperationError =>
   isBrowserRecordingOperationError(error) && error.operation === "wait-startup";
 
-export async function startBrowserRecording(tabId: string, serverTabId?: string): Promise<string> {
+export async function startBrowserRecording(
+  tabId: string,
+  threadRef: ScopedThreadRef | null = null,
+  serverTabId = tabId,
+): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
-  if (active) {
-    if (active.tabId === tabId && active.lifecycle.phase === "recording") {
-      return active.startedAt;
+  const activeRecording = activeRecordings.get(tabId);
+  if (activeRecording) {
+    if (activeRecording.lifecycle.phase === "recording") {
+      return activeRecording.startedAt;
     }
     throw new BrowserRecordingConflictError({
       requestedTabId: tabId,
-      activeTabId: active.tabId,
+      activeTabId: activeRecording.tabId,
+    });
+  }
+  const activeLogicalRecording =
+    threadRef === null ? null : findActiveBrowserRecordingRuntimeTabId(threadRef, serverTabId);
+  if (activeLogicalRecording !== null) {
+    throw new BrowserRecordingConflictError({
+      requestedTabId: tabId,
+      activeTabId: activeLogicalRecording,
     });
   }
   const surface = useBrowserSurfaceStore.getState().byTabId[tabId];
-  if (!surface?.visible) throw new BrowserRecordingRequiresVisibleTabError({ tabId });
   const recordingSize = surface?.content ?? surface?.rect;
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, recordingSize?.width ?? 1280);
@@ -260,6 +297,8 @@ export async function startBrowserRecording(tabId: string, serverTabId?: string)
   });
   const recording: ActiveRecording = {
     tabId,
+    serverTabId,
+    threadRef,
     canvas,
     context,
     recorder,
@@ -267,10 +306,9 @@ export async function startBrowserRecording(tabId: string, serverTabId?: string)
     mimeType,
     startedAt,
     startupSettled,
-    serverTabId: serverTabId ?? tabId,
     lifecycle: { phase: "starting" },
   };
-  active = recording;
+  activeRecordings.set(tabId, recording);
   try {
     try {
       unsubscribeFrames ??= bridge.recording.onFrame(drawFrame);
@@ -338,7 +376,9 @@ export async function startBrowserRecording(tabId: string, serverTabId?: string)
       throw recordingStartupCancelledError(recording);
     }
     recording.lifecycle = { phase: "recording" };
-    appAtomRegistry.set(activeBrowserRecordingTabIdAtom, tabId);
+    appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
+      tabIds: new Set(activeRecordings.keys()),
+    });
     return startedAt;
   } finally {
     settleStartup?.();
@@ -393,7 +433,7 @@ const finalizeBrowserRecording = async (
   }
 
   if (result._tag === "Failure" && isStartupWaitTimeout(result.error)) {
-    // Do not clear `active` yet. The renderer-side start promise can still
+    // Do not clear the active slot yet. The renderer-side start promise can still
     // resolve later, and its cancellation path will call `stopScreencast`.
     // Keeping the slot reserved prevents a newer recording for this tab from
     // being started and then accidentally stopped by the older late cleanup.
@@ -448,14 +488,14 @@ export function stopBrowserRecording(
   tabId: string,
 ): Promise<DesktopPreviewRecordingArtifact | null> {
   const bridge = previewBridge;
-  const recording = active;
-  if (!bridge || !recording || recording.tabId !== tabId) return Promise.resolve(null);
+  const recording = activeRecordings.get(tabId);
+  if (!bridge || !recording) return Promise.resolve(null);
   if (recording.lifecycle.phase === "stopping") return recording.lifecycle.stopPromise;
 
   const stopPromise = Promise.resolve()
     .then(() => finalizeBrowserRecording(bridge, recording))
     .catch((error) => {
-      if (isStartupWaitTimeout(error) && active === recording) {
+      if (isStartupWaitTimeout(error) && activeRecordings.get(recording.tabId) === recording) {
         const cleanupAfterStartup = recording.startupSettled.then(() =>
           discardBrowserRecording(bridge, recording),
         );

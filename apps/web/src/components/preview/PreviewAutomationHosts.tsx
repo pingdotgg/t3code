@@ -32,7 +32,7 @@ import {
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
-  readActiveBrowserRecordingTarget,
+  readActiveBrowserRecordingTargets,
   startBrowserRecording,
   stopBrowserRecording,
 } from "~/browser/browserRecording";
@@ -617,7 +617,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "recordingStart": {
             const ready = await requireReadyTab();
-            const startedAt = await startBrowserRecording(ready.runtimeTabId, ready.tabId);
+            const startedAt = await startBrowserRecording(
+              ready.runtimeTabId,
+              threadRef,
+              ready.tabId,
+            );
             return {
               tabId: ready.tabId,
               recording: true,
@@ -625,8 +629,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             };
           }
           case "recordingStop": {
-            const activeRecording = readActiveBrowserRecordingTarget();
-            const activeTarget: BrowserRecordingStopTarget | null = activeRecording;
+            const activeTargets: ReadonlyArray<BrowserRecordingStopTarget> =
+              readActiveBrowserRecordingTargets(threadRef);
             const requestedRuntimeTabId =
               request.tabIdExplicit && request.tabId
                 ? previewRuntimeTabId(
@@ -636,14 +640,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   )
                 : undefined;
             const stopTarget = resolveBrowserRecordingStopTarget(
-              activeTarget,
+              activeTargets,
+              tabId,
               requestedRuntimeTabId,
             );
             tabId = stopTarget?.serverTabId ?? tabId;
-            const artifact =
-              stopTarget && activeRecording
-                ? await stopBrowserRecording(stopTarget.runtimeTabId)
-                : null;
+            const artifact = stopTarget
+              ? await stopBrowserRecording(stopTarget.runtimeTabId)
+              : null;
             if (!artifact || !stopTarget) {
               return raisePreviewAutomationHostError(
                 new PreviewAutomationRecordingNotActiveError({

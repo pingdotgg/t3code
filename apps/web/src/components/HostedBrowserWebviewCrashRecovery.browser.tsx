@@ -25,8 +25,8 @@ vi.mock("~/components/preview/usePreviewBridge", () => ({
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
-  stopBrowserRecording: vi.fn(async () => undefined),
-  useActiveBrowserRecordingTabId: () => null,
+  stopBrowserRecording: vi.fn(async () => null),
+  useActiveBrowserRecordingTabIds: () => new Set(),
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({

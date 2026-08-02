@@ -52,7 +52,7 @@ import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   startBrowserRecording,
   stopBrowserRecording,
-  useActiveBrowserRecordingTabId,
+  useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
@@ -78,7 +78,7 @@ export function PreviewView({
 }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
-  const activeRecordingTabId = useActiveBrowserRecordingTabId();
+  const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
@@ -249,7 +249,7 @@ export function PreviewView({
     (record: boolean) => {
       if (!previewBridge || !runtimeTabId || !tabId) return;
       const bridge = previewBridge;
-      const recordingThisTab = activeRecordingTabId === runtimeTabId;
+      const recordingThisTab = activeRecordingTabIds.has(runtimeTabId);
       if (recordingThisTab) {
         void stopBrowserRecording(runtimeTabId).then(
           (artifact) => {
@@ -336,15 +336,7 @@ export function PreviewView({
         return;
       }
       if (record) {
-        if (activeRecordingTabId !== null) {
-          toastManager.add({
-            type: "warning",
-            title: "Another preview is recording",
-            description: "Stop the active recording before starting a new one.",
-          });
-          return;
-        }
-        void startBrowserRecording(runtimeTabId, tabId).catch((error) => {
+        void startBrowserRecording(runtimeTabId, threadRef, tabId).catch((error) => {
           toastManager.add({
             type: "error",
             title: "Unable to start recording",
@@ -477,7 +469,7 @@ export function PreviewView({
         },
       );
     },
-    [activeRecordingTabId, runtimeTabId, tabId],
+    [activeRecordingTabIds, runtimeTabId, tabId, threadRef],
   );
 
   const handlePickElement = useCallback(() => {
@@ -599,7 +591,7 @@ export function PreviewView({
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
-        recording={runtimeTabId !== null && activeRecordingTabId === runtimeTabId}
+        recording={runtimeTabId !== null && activeRecordingTabIds.has(runtimeTabId)}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page

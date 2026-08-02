@@ -4,13 +4,18 @@ export interface BrowserRecordingStopTarget {
 }
 
 export function resolveBrowserRecordingStopTarget(
-  activeTarget: BrowserRecordingStopTarget | null,
-  requestedRuntimeTabId?: string,
+  activeTargets: ReadonlyArray<BrowserRecordingStopTarget>,
+  implicitServerTabId: string | null,
+  explicitRuntimeTabId?: string,
 ): BrowserRecordingStopTarget | null {
-  if (activeTarget === null) return null;
-  return requestedRuntimeTabId === undefined || requestedRuntimeTabId === activeTarget.runtimeTabId
-    ? activeTarget
-    : null;
+  if (explicitRuntimeTabId !== undefined) {
+    return activeTargets.find((target) => target.runtimeTabId === explicitRuntimeTabId) ?? null;
+  }
+  if (implicitServerTabId !== null) {
+    const implicit = activeTargets.find((target) => target.serverTabId === implicitServerTabId);
+    if (implicit) return implicit;
+  }
+  return activeTargets.length === 1 ? activeTargets[0]! : null;
 }
 
 export function rewriteBrowserRecordingArtifactTabId<T extends { readonly tabId: string }>(

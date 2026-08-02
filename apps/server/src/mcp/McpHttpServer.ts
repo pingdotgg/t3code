@@ -78,7 +78,12 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
             ? authorization.slice("Bearer ".length).trim()
             : "";
         const invocation = yield* registry.resolve(token);
-        if (!invocation) return invalidMcpCredentialResponse;
+        if (!invocation) {
+          yield* Effect.logWarning("rejected MCP request with an unusable credential", {
+            reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+          });
+          return invalidMcpCredentialResponse;
+        }
         return yield* httpEffect.pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.map(normalizeMcpHttpResponse),
