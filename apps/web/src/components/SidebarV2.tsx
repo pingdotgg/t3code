@@ -961,11 +961,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             {prBadge}
             <span
               className={cn(
-                "relative ml-auto flex h-6 shrink-0 items-center justify-end",
+                "group/v2-slim-status-slot relative ml-auto flex h-6 shrink-0 items-center justify-end",
                 variantAction === "unsettle" ? "min-w-14" : "min-w-8",
               )}
             >
-              <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
+              <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-has-[:focus-visible]/v2-slim-status-slot:opacity-0 group-hover/v2-row:opacity-0">
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                   // Snoozed rows show when they come BACK, not when they were
                   // last touched — the return ticket is the row's whole story.
