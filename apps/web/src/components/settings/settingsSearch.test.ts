@@ -85,4 +85,11 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("routes terminal shell to General settings", () => {
+    expect(searchSettings("terminal shell")[0]).toMatchObject({
+      id: "terminal-shell",
+      to: "/settings/general",
+    });
+  });
 });

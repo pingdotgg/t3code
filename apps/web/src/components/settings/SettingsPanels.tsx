@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  type TerminalShell,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -154,6 +155,13 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const TERMINAL_SHELL_LABELS: Record<TerminalShell, string> = {
+  system: "System default",
+  zsh: "Zsh",
+  bash: "Bash",
+  fish: "Fish",
+};
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -1906,6 +1914,44 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("terminal-shell")}
+          description="Shell used by new and restarted terminals on this environment. System default uses the environment's configured shell."
+          resetAction={
+            settings.terminalShell !== DEFAULT_UNIFIED_SETTINGS.terminalShell ? (
+              <SettingResetButton
+                label="terminal shell"
+                onClick={() =>
+                  updateSettings({ terminalShell: DEFAULT_UNIFIED_SETTINGS.terminalShell })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.terminalShell}
+              onValueChange={(value) => {
+                if (value === "system" || value === "zsh" || value === "bash" || value === "fish") {
+                  updateSettings({ terminalShell: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Terminal shell">
+                <SelectValue>{TERMINAL_SHELL_LABELS[settings.terminalShell]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {(Object.entries(TERMINAL_SHELL_LABELS) as Array<[TerminalShell, string]>).map(
+                  ([value, label]) => (
+                    <SelectItem hideIndicator key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ),
+                )}
               </SelectPopup>
             </Select>
           }
