@@ -433,7 +433,7 @@ export const buildPackagedRuntimeStageScript = (
     '    mkdir -p "$cache_home"',
     '    cache_filesystem=$(findmnt -T "$cache_home" -n -o FSTYPE 2>/dev/null || true)',
     '    case "$cache_filesystem" in',
-    '      9p|drvfs|"") cache_home="${HOME:?WSL home directory is unavailable}/.cache" ;;',
+    '      9p|drvfs|plan9|virtio-plan9|virtiofs|"") cache_home="${HOME:?WSL home directory is unavailable}/.cache" ;;',
     "    esac",
     "    ;;",
     '  *) cache_home="${HOME:?WSL home directory is unavailable}/.cache" ;;',

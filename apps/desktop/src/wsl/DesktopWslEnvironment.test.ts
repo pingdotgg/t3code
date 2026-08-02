@@ -151,7 +151,7 @@ describe("buildPackagedRuntimeStageScript", () => {
     );
     const xdgSelection = script.indexOf('cache_home="$XDG_CACHE_HOME"');
     const filesystemProbe = script.indexOf('findmnt -T "$cache_home"');
-    const windowsMountFallback = script.indexOf("9p|drvfs");
+    const windowsMountFallback = script.indexOf("9p|drvfs|plan9|virtio-plan9|virtiofs");
     const runtimeBase = script.indexOf('runtime_base="$cache_home/t3code/desktop-wsl-runtime"');
 
     expect(filesystemProbe).toBeGreaterThan(xdgSelection);
