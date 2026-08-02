@@ -4,6 +4,7 @@ import { Alert, Linking, Platform } from "react-native";
 const RELEASE_TAG_PREFIX = "mark-mobile-preview-v";
 const PREVIEW_APK_NAME = "t3-code-preview.apk";
 const TRUSTED_REPOSITORY = "Feighery89/t3code";
+const BUILD_UPDATE_API_URL = process.env.EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL;
 
 export interface PersonalPreviewUpdate {
   readonly versionCode: number;
@@ -119,7 +120,11 @@ export function selectNewerPersonalPreviewUpdate(
 
 export function personalPreviewUpdateConfig(): PersonalPreviewUpdateConfig | null {
   if (Platform.OS !== "android") return null;
-  return parsePersonalPreviewUpdateConfig(Constants.expoConfig?.extra?.personalPreviewUpdates);
+  return parsePersonalPreviewUpdateConfig(
+    BUILD_UPDATE_API_URL
+      ? { latestReleaseApiUrl: BUILD_UPDATE_API_URL }
+      : Constants.expoConfig?.extra?.personalPreviewUpdates,
+  );
 }
 
 export function isPersonalPreviewUpdatesEnabled(): boolean {

@@ -10,9 +10,14 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
-const personalPreviewUpdateApiUrl = repoEnv.T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL?.trim();
-const personalPreviewDefaultEnvironmentHost =
-  repoEnv.T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST?.trim();
+const personalPreviewUpdateApiUrl = (
+  repoEnv.EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL ??
+  repoEnv.T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL
+)?.trim();
+const personalPreviewDefaultEnvironmentHost = (
+  repoEnv.EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST ??
+  repoEnv.T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST
+)?.trim();
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;

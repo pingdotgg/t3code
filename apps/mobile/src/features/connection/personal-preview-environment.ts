@@ -1,5 +1,8 @@
 import Constants from "expo-constants";
 
+const BUILD_DEFAULT_ENVIRONMENT_HOST =
+  process.env.EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST;
+
 export function parsePersonalPreviewDefaultEnvironmentHost(value: unknown): string {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
@@ -23,6 +26,7 @@ export function parsePersonalPreviewDefaultEnvironmentHost(value: unknown): stri
 
 export function personalPreviewDefaultEnvironmentHost(): string {
   return parsePersonalPreviewDefaultEnvironmentHost(
-    Constants.expoConfig?.extra?.personalPreviewDefaultEnvironmentHost,
+    BUILD_DEFAULT_ENVIRONMENT_HOST ??
+      Constants.expoConfig?.extra?.personalPreviewDefaultEnvironmentHost,
   );
 }

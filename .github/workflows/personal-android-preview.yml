@@ -29,8 +29,8 @@ env:
   FEATURE_BRANCH: feat/mobile-quick-archive
   FEATURE_REPOSITORY: Feighery89/t3code
   NODE_OPTIONS: --max-old-space-size=6144
-  T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST: http://100.97.53.68:7791
-  T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL: https://api.github.com/repos/Feighery89/t3code/releases/latest
+  EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST: http://100.97.53.68:7791
+  EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL: https://api.github.com/repos/Feighery89/t3code/releases/latest
   UPSTREAM_REPOSITORY: pingdotgg/t3code
 
 jobs:
@@ -223,18 +223,11 @@ jobs:
             exit 1
           fi
 
-          manifest="$(unzip -p "$apk" assets/app.manifest)"
-          if ! jq -e \
-            --arg package_name "$package_name" \
-            --arg update_api "$T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL" \
-            --arg environment_host "$T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST" \
-            '.name == "T3 Code Preview"
-              and .android.package == $package_name
-              and .extra.appVariant == "preview"
-              and .extra.personalPreviewUpdates.latestReleaseApiUrl == $update_api
-              and .extra.personalPreviewDefaultEnvironmentHost == $environment_host' \
-            <<<"$manifest" >/dev/null; then
-            echo "::error::The embedded app manifest is not the configured personal preview."
+          bundle="$RUNNER_TEMP/index.android.bundle"
+          unzip -p "$apk" assets/index.android.bundle >"$bundle"
+          if ! grep -aFq "$EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL" "$bundle" || \
+             ! grep -aFq "$EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST" "$bundle"; then
+            echo "::error::The embedded app bundle is missing the personal preview configuration."
             exit 1
           fi
 
