@@ -28,6 +28,8 @@ Primary implementation files:
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/ChatView.sourceControl.ts`, which exports source-control right-panel availability/surface helpers and `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
 - `apps/web/src/components/RightPanelTabs.tsx`
+- `apps/web/src/components/settings/settingsSearch.ts`
+- `apps/web/src/components/settings/SourceControlSettings.tsx` and `SourceControlWritingSettings.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/sourceControl/SourceControlPanelReaders.ts` and `SourceControlPanelActions.ts`
 - `apps/server/src/sourceControl/SourceControlPanelParsers.ts` and `SourceControlPanelStatusParsers.ts`
@@ -37,6 +39,10 @@ Primary implementation files:
 - `packages/contracts/src/rpc.ts`
 - `packages/contracts/src/ipc.ts`
 - `packages/client-runtime/src/state/sourceControl.ts`
+
+## Source Control Settings
+
+Settings search catalogs the individual Source Control controls in `settingsSearch.ts`. The writing-style, change-request-template, and writer-model controls use `searchableSetting` for both their visible title and row anchor, so search results navigate directly to the rendered setting without duplicating labels. Git fetch interval and provider commit-avatar controls are discovery-dependent and live inside collapsible VCS/provider rows; their search results target the stable `source-control` section instead, so navigation remains valid when a provider is absent or its details are collapsed.
 
 ## Entry Points And Host Behavior
 
