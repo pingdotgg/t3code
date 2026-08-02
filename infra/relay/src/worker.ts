@@ -55,6 +55,7 @@ import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 
 const webcryptoLayer = Layer.succeed(
@@ -90,8 +91,9 @@ const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningS
   bytes: 32,
 });
 
-export default class Api extends Cloudflare.Worker<Api>()(
-  "Api",
+export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
+
+export const ApiLive = Api.make(
   RelayDeploymentConfig.pipe(
     Effect.map(({ relayPublicDomain }) => ({
       main: import.meta.filename,
@@ -128,7 +130,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
     const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
-    const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
+    const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
     const axiomIngestToken = yield* observability.workerIngestToken.token;
@@ -140,19 +142,19 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
-    const hyperdrive = yield* Cloudflare.Hyperdrive.bind(yield* RelayDb.RelayHyperdrive);
-    const db = yield* Drizzle.postgres(hyperdrive.connectionString);
+    const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
+    const db = yield* Drizzle.Postgres(hyperdrive.connectionString);
 
-    const managedEndpointTunnelBinding = yield* Cloudflare.TunnelReadWrite.bind();
+    const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
-    const managedEndpointDnsBinding = yield* Cloudflare.DnsReadWrite.bind(managedEndpointZone);
+    const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
 
     //
     // 3. Runtime layers and app construction
     //
-    const alchemyRuntimeContext = yield* Alchemy.RuntimeContext;
+    const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
 
     const loadSettings = Effect.gen(function* () {
       return RelayConfiguration.RelayConfiguration.of({
@@ -205,11 +207,21 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provideMerge(AgentActivityRows.layer),
       Layer.provideMerge(Devices.layer),
       Layer.provideMerge(EnvironmentCredentials.layer),
-      Layer.provideMerge(Layer.mergeAll(EnvironmentLinks.layer, ManagedEndpointAllocations.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          EnvironmentLinks.layer,
+          ManagedEndpointAllocations.layer,
+          ManagedTunnelLimits.layer,
+        ),
+      ),
       Layer.provideMerge(LiveActivities.layer),
       Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(RelayTokens.layer),
-      Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
+      Layer.provideMerge(
+        RelayDb.RelayTransactions.layer.pipe(
+          Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
+        ),
+      ),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
       Layer.provideMerge(webcryptoLayer),
     );
@@ -221,27 +233,29 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(runtimeLayer),
     );
 
-    yield* Cloudflare.messages<unknown>(apnsDeliveryQueue, {
-      batchSize: 10,
-      maxRetries: 5,
-      maxWaitTime: "5 seconds",
-      retryDelay: "30 seconds",
-      // Alchemy beta.45 expects a resolved string here although Queue names are Outputs.
-      deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
-    }).subscribe((stream) =>
-      stream.pipe(
-        Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-        Stream.runForEach((message) =>
-          ApnsDeliveries.ApnsDeliveries.pipe(
-            Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-            Effect.withSpan("relay.apn_delivery_queue.process_message"),
+    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
+      apnsDeliveryQueue,
+      {
+        batchSize: 10,
+        maxRetries: 5,
+        maxWaitTime: "5 seconds",
+        retryDelay: "30 seconds",
+        deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
+      },
+      (stream) =>
+        stream.pipe(
+          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
+          Stream.runForEach((message) =>
+            ApnsDeliveries.ApnsDeliveries.pipe(
+              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
+              Effect.withSpan("relay.apn_delivery_queue.process_message"),
+            ),
           ),
+          Effect.provide(runtimeLayer),
         ),
-        Effect.provide(runtimeLayer),
-      ),
     );
 
-    yield* Cloudflare.cron("*/5 * * * *").subscribe(() =>
+    yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
       DpopProofs.DpopProofReplay.pipe(
         Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
         // Terminal thread rows are kept briefly so finished agents show as
@@ -279,13 +293,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
   }).pipe(
     Effect.provide(
       Layer.empty.pipe(
-        Layer.provideMerge(Cloudflare.HyperdriveBindingLive),
-        Layer.provideMerge(Cloudflare.CronEventSourceLive),
-        Layer.provideMerge(Cloudflare.QueueBindingLive),
-        Layer.provideMerge(Cloudflare.QueueEventSourceLive),
-        Layer.provideMerge(Cloudflare.TunnelReadWriteLive),
-        Layer.provideMerge(Cloudflare.DnsReadWriteLive),
+        Layer.provideMerge(Cloudflare.Hyperdrive.ConnectBinding),
+        Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
+        Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
+        Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
+        Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
+        Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
       ),
     ),
   ),
-) {}
+);
+
+export default ApiLive;

@@ -1,9 +1,10 @@
 /**
- * Utilities for applying Effect SQL migrations to Cloudflare Durable Object SQLite storage.
+ * Runs database migrations for Durable Object SQLite storage that uses Effect
+ * SQL.
  *
  * This module re-exports the shared `Migrator` loaders and error types, then
  * provides `run` and `layer` helpers that execute ordered migrations through the
- * current Durable Object `SqlStorage`-backed `SqlClient`. Use it when a Durable
+ * current Durable Object SQLite `SqlClient`. Use it when a Durable
  * Object needs to create or upgrade its local schema during construction, before
  * repositories or request handlers use the object storage, or in tests that
  * exercise Durable Object persistence.
@@ -12,7 +13,8 @@
  * using the shared `<id>_<name>` file or record-key convention. The underlying
  * storage is scoped to a Durable Object id, so running migrations for one object
  * does not update any other object instance; run the migrator against the same
- * `SqlStorage` handle that the object uses for normal queries. These SQL
+ * `DurableObjectStorage`-backed client that the object uses for normal queries
+ * so migrations can run in Cloudflare-managed transactions. These SQL
  * migrations are separate from Cloudflare's Durable Object class migrations, and
  * the Durable Object must already be configured with SQLite storage before this
  * module can apply schema changes. Repeated startup runs are expected and are

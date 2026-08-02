@@ -1,5 +1,5 @@
 import { assert, describe, expect, it } from "@effect/vitest"
-import { Effect, FileSystem, Layer, Option, Path, PlatformError, Ref, Result } from "effect"
+import { Effect, FileSystem, Layer, Option, Path, PlatformError, Ref, Result, Stdio } from "effect"
 import { TestConsole } from "effect/testing"
 import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli"
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner"
@@ -15,7 +15,7 @@ const FileSystemLayer = FileSystem.layerNoop({
     if (path.includes("/non/existent/file.txt")) {
       return Effect.fail(PlatformError.badArgument({ module: "", method: "" }))
     }
-    if (path.includes("workspace")) {
+    if (path.endsWith("workspace")) {
       return Effect.succeed({ type: "Directory" } as any)
     }
     return Effect.succeed({ type: "File" } as any)
@@ -32,6 +32,11 @@ const CliOutputLayer = CliOutput.layer(
     colors: false
   })
 )
+const StdioLayer = Stdio.layerTest({})
+const ChildProcessSpawnerLayer = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() => Effect.die("Not implemented"))
+)
 
 const TestLayer = Layer.mergeAll(
   ConsoleLayer,
@@ -39,11 +44,12 @@ const TestLayer = Layer.mergeAll(
   PathLayer,
   TerminalLayer,
   CliOutputLayer,
-  Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, ChildProcessSpawner.make(() => Effect.die("Not implemented")))
+  StdioLayer,
+  ChildProcessSpawnerLayer
 )
 
 describe("Command arguments", () => {
-  it("should parse all argument types correctly", () =>
+  it.effect("should parse all argument types correctly", () =>
     Effect.gen(function*() {
       // Create a Ref to store the result
       const resultRef = yield* Ref.make<any>(null)
@@ -83,7 +89,7 @@ describe("Command arguments", () => {
       assert.strictEqual(result.verbose, true)
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle file mustExist validation", () =>
+  it.effect("should handle file mustExist validation", () =>
     Effect.gen(function*() {
       // Test 1: mustExist: true with existing file - should pass
       const result1Ref = yield* Ref.make<string | null>(null)
@@ -97,7 +103,9 @@ describe("Command arguments", () => {
 
       // Test 2: mustExist: true with non-existing file - should display error and help
       const runCommand = Command.runWith(existingFileCommand, { version: "1.0.0" })
-      yield* runCommand(["/non/existent/file.txt"])
+      yield* runCommand(["/non/existent/file.txt"]).pipe(
+        Effect.catchTag("ShowHelp", () => Effect.void)
+      )
 
       // Check that help was shown
       const stdout = yield* TestConsole.logLines
@@ -121,7 +129,7 @@ describe("Command arguments", () => {
       assert.isTrue(result3!.includes("/non/existent/file.txt"))
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should fail with invalid arguments", () =>
+  it.effect("should fail with invalid arguments", () =>
     Effect.gen(function*() {
       const testCommand = Command.make("test", {
         count: Argument.integer("count"),
@@ -130,19 +138,17 @@ describe("Command arguments", () => {
 
       // Test invalid integer - should display help and error
       const runCommand = Command.runWith(testCommand, { version: "1.0.0" })
-      yield* runCommand(["not-a-number", "dev"])
+      yield* runCommand(["not-a-number", "dev"]).pipe(
+        Effect.catchTag("ShowHelp", () => Effect.void)
+      )
 
       // Check help was shown
       const stdout = yield* TestConsole.logLines
       const helpText = stdout.join("\n")
-      expect(helpText).toMatchInlineSnapshot(`
-        "USAGE
-          test [flags] <count> <env>
-
-        ARGUMENTS
-          count integer    
-          env choice       "
-      `)
+      expect(helpText).toContain("USAGE")
+      expect(helpText).toContain("test [flags] <count> <env>")
+      expect(helpText).toContain("count integer")
+      expect(helpText).toContain("env choice")
 
       // Check error was shown
       const stderr = yield* TestConsole.errorLines
@@ -150,11 +156,11 @@ describe("Command arguments", () => {
       expect(errorText).toMatchInlineSnapshot(`
         "
         ERROR
-          Invalid value for argument <count>: "not-a-number". Expected: Failed to parse integer: Expected an integer, got NaN"
+          Invalid value for argument <count>: "not-a-number". Expected a string representing a finite number, got "not-a-number""
       `)
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle variadic arguments", () =>
+  it.effect("should handle variadic arguments", () =>
     Effect.gen(function*() {
       let result: { readonly files: ReadonlyArray<string> } | undefined
 
@@ -175,7 +181,7 @@ describe("Command arguments", () => {
       assert.deepStrictEqual(result.files, ["file1.txt", "file2.txt", "file3.txt"])
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle choiceWithValue", () =>
+  it.effect("should handle choiceWithValue", () =>
     Effect.gen(function*() {
       const resultRef = yield* Ref.make<any>(null)
 
@@ -195,7 +201,7 @@ describe("Command arguments", () => {
       assert.strictEqual(result.level, 1)
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle filter combinator - valid", () =>
+  it.effect("should handle filter combinator - valid", () =>
     Effect.gen(function*() {
       const resultRef = yield* Ref.make<any>(null)
 
@@ -213,7 +219,7 @@ describe("Command arguments", () => {
       assert.strictEqual(result.port, 8080)
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle filter combinator - invalid", () =>
+  it.effect("should handle filter combinator - invalid", () =>
     Effect.gen(function*() {
       const testCommand = Command.make("test", {
         port: Argument.integer("port").pipe(
@@ -224,12 +230,14 @@ describe("Command arguments", () => {
         )
       }, () => Effect.void)
 
-      yield* Command.runWith(testCommand, { version: "1.0.0" })(["99999"])
+      yield* Command.runWith(testCommand, { version: "1.0.0" })(["99999"]).pipe(
+        Effect.catchTag("ShowHelp", () => Effect.void)
+      )
       const stderr = yield* TestConsole.errorLines
       assert.isTrue(stderr.some((line) => String(line).includes("out of range")))
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle filterMap combinator - valid", () =>
+  it.effect("should handle filterMap combinator - valid", () =>
     Effect.gen(function*() {
       const resultRef = yield* Ref.make<any>(null)
 
@@ -247,7 +255,7 @@ describe("Command arguments", () => {
       assert.strictEqual(result.positiveInt, 42)
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle filterMap combinator - invalid", () =>
+  it.effect("should handle filterMap combinator - invalid", () =>
     Effect.gen(function*() {
       const testCommand = Command.make("test", {
         positiveInt: Argument.integer("num").pipe(
@@ -258,12 +266,14 @@ describe("Command arguments", () => {
         )
       }, () => Effect.void)
 
-      yield* Command.runWith(testCommand, { version: "1.0.0" })(["0"])
+      yield* Command.runWith(testCommand, { version: "1.0.0" })(["0"]).pipe(
+        Effect.catchTag("ShowHelp", () => Effect.void)
+      )
       const stderr = yield* TestConsole.errorLines
       assert.isTrue(stderr.some((line) => String(line).includes("Expected positive integer")))
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle orElse combinator", () =>
+  it.effect("should handle orElse combinator", () =>
     Effect.gen(function*() {
       const resultRef = yield* Ref.make<any>(null)
 
@@ -286,7 +296,7 @@ describe("Command arguments", () => {
       assert.strictEqual(result.value, -1)
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle orElseResult combinator", () =>
+  it.effect("should handle orElseResult combinator", () =>
     Effect.gen(function*() {
       const resultRef = yield* Ref.make<any>(null)
 
@@ -300,17 +310,17 @@ describe("Command arguments", () => {
       yield* Command.runWith(testCommand, { version: "1.0.0" })(["42"])
       let result = yield* Ref.get(resultRef)
       assert.isTrue(Result.isSuccess(result.value))
-      assert.strictEqual(result.value.value, 42)
+      assert.strictEqual(result.value.success, 42)
 
       // Invalid integer - returns Failure with string
       yield* Ref.set(resultRef, null)
       yield* Command.runWith(testCommand, { version: "1.0.0" })(["abc"])
       result = yield* Ref.get(resultRef)
       assert.isTrue(Result.isFailure(result.value))
-      assert.strictEqual(result.value.value, "abc")
+      assert.strictEqual(result.value.failure, "abc")
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle withMetavar combinator", () =>
+  it.effect("should handle withMetavar combinator", () =>
     Effect.gen(function*() {
       const testCommand = Command.make("test", {
         file: Argument.string("file").pipe(
@@ -325,7 +335,7 @@ describe("Command arguments", () => {
       assert.isTrue(helpText.includes("FILE_PATH"))
     }).pipe(Effect.provide(TestLayer)))
 
-  it("should handle optional arguments - when provided", () =>
+  it.effect("should handle optional arguments - when provided", () =>
     Effect.gen(function*() {
       const resultRef = yield* Ref.make<any>(null)
 

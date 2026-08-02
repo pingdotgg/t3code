@@ -1,6 +1,25 @@
 import type * as iam from "@distilled.cloud/aws/iam";
 import * as Redacted from "effect/Redacted";
+import { toWireDays, toWireSeconds } from "../../Util/Duration.ts";
 import type { PolicyDocument } from "./Policy.ts";
+
+/**
+ * Convert an optional `Duration.Input` prop to whole wire seconds.
+ *
+ * @deprecated Import {@link toWireSeconds} from `Util/Duration.ts` directly.
+ * Kept as an alias because several other AWS services still import it from
+ * here.
+ */
+export const durationToSeconds = toWireSeconds;
+
+/**
+ * Convert an optional `Duration.Input` prop to whole wire days.
+ *
+ * @deprecated Import {@link toWireDays} from `Util/Duration.ts` directly.
+ * Kept as an alias because several other AWS services still import it from
+ * here.
+ */
+export const durationToDays = toWireDays;
 
 export const toTagRecord = (
   tags: Array<{ Key?: string; Value?: string }> | undefined,

@@ -1,51 +1,11 @@
 /**
- * The `Duration` module models spans of time as immutable values with support
- * for unit conversion, ordering, arithmetic, and positive or negative infinity.
- * It is the standard representation for delays, timeouts, intervals, and
- * TTL-like values across Effect APIs.
+ * Represents immutable spans of time.
  *
- * **Mental model**
- *
- * - A `Duration` stores either milliseconds, nanoseconds, `Infinity`, or
- *   `-Infinity`; operations preserve that distinction where it matters
- * - Constructor helpers such as {@link seconds} and {@link millis} build
- *   duration values for the chosen unit
- * - {@link Input} values are decoded at API boundaries: numbers mean
- *   milliseconds, bigints mean nanoseconds, tuples mean `[seconds, nanos]`,
- *   and strings use units such as `"5 seconds"`
- * - Arithmetic and ordering helpers return new duration values rather than
- *   mutating existing ones
- *
- * **Common tasks**
- *
- * - Build durations with {@link nanos}, {@link micros}, {@link millis},
- *   {@link seconds}, {@link minutes}, {@link hours}, {@link days}, or
- *   {@link weeks}
- * - Decode flexible inputs with {@link fromInput} or {@link fromInputUnsafe}
- * - Convert with {@link toMillis}, {@link toSeconds}, {@link toNanos},
- *   {@link toHrTime}, {@link parts}, or {@link format}
- * - Compare and constrain durations with {@link Order}, {@link between},
- *   {@link min}, {@link max}, and {@link clamp}
- * - Combine durations with {@link sum}, {@link subtract}, {@link times}, and
- *   {@link divide}
- *
- * **Gotchas**
- *
- * - Passing a plain number means milliseconds, not seconds
- * - {@link toNanosUnsafe} throws for infinite durations; {@link toNanos}
- *   returns `Option.none()` instead
- * - Unsafe decoders and unsafe math helpers throw or apply fallback rules for
- *   invalid inputs; prefer the safe variants when input is external
- *
- * **Example** (Decoding and formatting a duration)
- *
- * ```ts
- * import { Duration, Option } from "effect"
- *
- * const formatted = Duration.fromInput("90 seconds").pipe(
- *   Option.map((duration) => Duration.format(duration))
- * )
- * ```
+ * A `Duration` can be finite, positive infinity, or negative infinity. It is
+ * the standard representation for delays, timeouts, intervals, and
+ * time-to-live values across Effect APIs. This module includes constructors
+ * from common input shapes, unit conversions, comparisons, arithmetic,
+ * formatting, and reusable reducer or combiner helpers.
  *
  * @since 2.0.0
  */
@@ -66,11 +26,29 @@ import * as Reducer from "./Reducer.ts"
 const TypeId = "~effect/time/Duration"
 
 const bigint0 = BigInt(0)
+const bigint1 = BigInt(1)
 const bigint24 = BigInt(24)
 const bigint60 = BigInt(60)
 const bigint1e3 = BigInt(1_000)
 const bigint1e6 = BigInt(1_000_000)
 const bigint1e9 = BigInt(1_000_000_000)
+
+const roundTiesAwayFromZero = (input: number): bigint =>
+  BigInt(input < 0 ? Math.ceil(input - 0.5) : Math.floor(input + 0.5))
+
+const roundMillisToNanos = (millis: number): bigint => roundTiesAwayFromZero(millis * 1_000_000)
+
+const parseNanos = (input: string, scale: bigint): bigint =>
+  input.includes(".") ? roundTiesAwayFromZero(Number(input) * Number(scale)) : BigInt(input) * scale
+
+const nanosToHrTime = (nanos: bigint): [seconds: number, nanos: number] => {
+  const sign = nanos < bigint0 ? -bigint1 : bigint1
+  const absolute = nanos < bigint0 ? -nanos : nanos
+  return [
+    Number(sign * (absolute / bigint1e9)),
+    Number(sign * (absolute % bigint1e9))
+  ]
+}
 
 /**
  * Represents a span of time with high precision, supporting operations from
@@ -165,7 +143,9 @@ export type Unit =
  * **Details**
  *
  * String inputs accept values like `"10 seconds"`, `"500 millis"`,
- * `"Infinity"`, and `"-Infinity"`.
+ * `"Infinity"`, and `"-Infinity"`. Finite fractional values that are
+ * normalized to nanoseconds are rounded to the nearest nanosecond, with ties
+ * away from zero.
  *
  * @see {@link fromInput} for safe conversion to `Option`
  * @see {@link fromInputUnsafe} for throwing conversion
@@ -222,6 +202,11 @@ const DURATION_REGEXP = /^(-?\d+(?:\.\d+)?)\s+(nanos?|micros?|millis?|seconds?|m
 /**
  * Decodes a `Duration.Input` into a `Duration`.
  *
+ * **When to use**
+ *
+ * Use when the input has already been validated or comes from a trusted source
+ * and throwing is acceptable for invalid duration syntax.
+ *
  * **Gotchas**
  *
  * If the input is not a valid `Duration.Input`, it throws an error.
@@ -256,14 +241,14 @@ export const fromInputUnsafe = (input: Input): Duration => {
       const match = DURATION_REGEXP.exec(input)
       if (!match) break
       const [_, valueStr, unit] = match
+      if (unit === "nano" || unit === "nanos") {
+        return nanos(parseNanos(valueStr, bigint1))
+      }
+      if (unit === "micro" || unit === "micros") {
+        return nanos(parseNanos(valueStr, bigint1e3))
+      }
       const value = Number(valueStr)
       switch (unit) {
-        case "nano":
-        case "nanos":
-          return nanos(BigInt(valueStr))
-        case "micro":
-        case "micros":
-          return micros(BigInt(valueStr))
         case "milli":
         case "millis":
           return millis(value)
@@ -301,7 +286,7 @@ export const fromInputUnsafe = (input: Input): Duration => {
         if (input[0] === Infinity || input[1] === Infinity) {
           return infinity
         }
-        return make(BigInt(Math.round(input[0] * 1_000_000_000)) + BigInt(Math.round(input[1])))
+        return make(roundTiesAwayFromZero(input[0] * 1_000_000_000 + input[1]))
       }
       const obj = input as DurationObject
       let millis = 0
@@ -313,10 +298,9 @@ export const fromInputUnsafe = (input: Input): Duration => {
       if (obj.seconds) millis += obj.seconds * 1_000
       if (obj.milliseconds) millis += obj.milliseconds
       if (!obj.microseconds && !obj.nanoseconds) return make(millis)
-      let nanos = BigInt(millis) * bigint1e6
-      if (obj.microseconds) nanos += BigInt(obj.microseconds) * bigint1e3
-      if (obj.nanoseconds) nanos += BigInt(obj.nanoseconds)
-      return make(nanos)
+      return make(roundTiesAwayFromZero(
+        millis * 1_000_000 + (obj.microseconds ?? 0) * 1_000 + (obj.nanoseconds ?? 0)
+      ))
     }
   }
   return invalid(input)
@@ -399,7 +383,7 @@ const make = (input: number | bigint): Duration => {
     } else if (!Number.isFinite(input)) {
       duration.value = input > 0 ? infinityDurationValue : negativeInfinityDurationValue
     } else if (!Number.isInteger(input)) {
-      duration.value = { _tag: "Nanos", nanos: BigInt(Math.round(input * 1_000_000)) }
+      duration.value = { _tag: "Nanos", nanos: roundMillisToNanos(input) }
     } else {
       duration.value = { _tag: "Millis", millis: input }
     }
@@ -589,7 +573,7 @@ export const negate = (self: Duration): Duration => {
 /**
  * A Duration representing zero time.
  *
- * **Example** (Using the zero duration)
+ * **Example** (Referencing the zero duration)
  *
  * ```ts
  * import { Duration } from "effect"
@@ -605,7 +589,7 @@ export const zero: Duration = make(0)
 /**
  * A Duration representing infinite time.
  *
- * **Example** (Using infinite duration)
+ * **Example** (Referencing infinite duration)
  *
  * ```ts
  * import { Duration } from "effect"
@@ -621,7 +605,7 @@ export const infinity: Duration = make(Infinity)
 /**
  * A Duration representing negative infinite time.
  *
- * **Example** (Using negative infinite duration)
+ * **Example** (Referencing negative infinite duration)
  *
  * ```ts
  * import { Duration } from "effect"
@@ -909,7 +893,17 @@ export const toWeeks = (self: Input): number =>
   })
 
 /**
- * Gets the duration in nanoseconds as a bigint, throwing for infinite durations.
+ * Gets the duration in nanoseconds as a bigint.
+ *
+ * **When to use**
+ *
+ * Use when the duration is known to be finite and you need the nanosecond value
+ * as a `bigint`.
+ *
+ * **Details**
+ *
+ * Millisecond-backed fractional durations are rounded to the nearest
+ * nanosecond, with ties away from zero.
  *
  * **Gotchas**
  *
@@ -940,7 +934,7 @@ export const toNanosUnsafe = (input: Input): bigint => {
     case "Nanos":
       return self.value.nanos
     case "Millis":
-      return BigInt(Math.round(self.value.millis * 1_000_000))
+      return roundMillisToNanos(self.value.millis)
   }
 }
 
@@ -990,24 +984,10 @@ export const toHrTime = (input: Input): [seconds: number, nanos: number] => {
       return [Infinity, 0]
     case "NegativeInfinity":
       return [-Infinity, 0]
-    case "Nanos": {
-      const n = self.value.nanos
-      const sign = n < bigint0 ? -BigInt(1) : BigInt(1)
-      const a = n < bigint0 ? -n : n
-      return [
-        Number(sign * (a / bigint1e9)),
-        Number(sign * (a % bigint1e9))
-      ]
-    }
-    case "Millis": {
-      const m = self.value.millis
-      const sign = m < 0 ? -1 : 1
-      const a = Math.abs(m)
-      return [
-        sign * Math.floor(a / 1000),
-        sign * Math.round((a % 1000) * 1_000_000)
-      ]
-    }
+    case "Nanos":
+      return nanosToHrTime(self.value.nanos)
+    case "Millis":
+      return nanosToHrTime(roundMillisToNanos(self.value.millis))
   }
 }
 
@@ -1269,7 +1249,7 @@ export const min: {
  * console.log(Duration.toSeconds(longer)) // 5
  * ```
  *
- * @category order
+ * @category ordering
  * @since 2.0.0
  */
 export const max: {
@@ -1292,7 +1272,7 @@ export const max: {
  * console.log(Duration.toSeconds(clamped)) // 5
  * ```
  *
- * @category order
+ * @category ordering
  * @since 2.0.0
  */
 export const clamp: {
@@ -1349,6 +1329,11 @@ export const divide: {
 /**
  * Divides a `Duration` by a number using fallback rules instead of returning
  * an `Option`.
+ *
+ * **When to use**
+ *
+ * Use when dividing a `Duration` should return `Duration.zero` or signed
+ * infinity for invalid cases instead of forcing callers to handle `Option.none`.
  *
  * **Details**
  *
@@ -1443,16 +1428,12 @@ export const times: {
  *
  * **Details**
  *
- * Infinity subtraction follows these rules:
- *
- * - infinity - infinity = 0
- * - infinity - negativeInfinity = infinity
- * - infinity - finite = infinity
- * - negativeInfinity - negativeInfinity = 0
- * - negativeInfinity - infinity = negativeInfinity
- * - negativeInfinity - finite = negativeInfinity
- * - finite - infinity = negativeInfinity
- * - finite - negativeInfinity = infinity
+ * Infinity subtraction follows signed-infinity arithmetic. Subtracting the
+ * same infinity from itself returns zero. Positive infinity minus negative
+ * infinity or any finite duration remains positive infinity. Negative infinity
+ * minus positive infinity or any finite duration remains negative infinity.
+ * Finite durations minus positive infinity produce negative infinity, and
+ * finite durations minus negative infinity produce positive infinity.
  *
  * **Example** (Subtracting durations)
  *

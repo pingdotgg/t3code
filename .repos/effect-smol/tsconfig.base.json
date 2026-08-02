@@ -26,14 +26,13 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     // Miscellaneoaus
-    "stripInternal": false, // We temporarily override this to `true` when publishing packages.
+    "stripInternal": false, // tests require `false` because project references type-check against those declarations.
     "skipLibCheck": true, // Skip type checking of third party libraries.
     "noErrorTruncation": true, // Do not truncate error messages.
     "types": [], // Disable automatic loading of `@types/*` packages.
     "jsx": "react-jsx",
     "plugins": [{
       "name": "@effect/language-service",
-      "transform": "@effect/language-service/transform",
       "namespaceImportPackages": ["effect", "@effect/*"],
       "diagnosticSeverity": {
         "globalErrorInEffectFailure": "off" // TODO: Check if we should fix the warnings this reports

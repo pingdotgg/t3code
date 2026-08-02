@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   archiveSelectedThreadEntries,
+  buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
@@ -19,6 +20,7 @@ import {
   resolveSidebarV2Status,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  searchSidebarThreadsByTitle,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -146,6 +148,42 @@ describe("archiveSelectedThreadEntries", () => {
       mutationFailure: null,
       followupFailures: [failure],
     });
+  });
+});
+
+describe("buildBulkTitleRegenerationContextMenuItem", () => {
+  it("counts only threads that can start a new regeneration", () => {
+    expect(
+      buildBulkTitleRegenerationContextMenuItem({
+        supportedCount: 4,
+        actionableCount: 3,
+      }),
+    ).toEqual({
+      id: "regenerate-title",
+      label: "Regenerate titles (3)",
+    });
+  });
+
+  it("shows a disabled progress item when every supported thread is pending", () => {
+    expect(
+      buildBulkTitleRegenerationContextMenuItem({
+        supportedCount: 2,
+        actionableCount: 0,
+      }),
+    ).toEqual({
+      id: "regenerate-title",
+      label: "Regenerating… (2)",
+      disabled: true,
+    });
+  });
+
+  it("omits the action when no selected environment supports it", () => {
+    expect(
+      buildBulkTitleRegenerationContextMenuItem({
+        supportedCount: 0,
+        actionableCount: 0,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -651,6 +689,26 @@ describe("resolveSidebarV2Status", () => {
 
   it("defaults to ready with no session", () => {
     expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("searchSidebarThreadsByTitle", () => {
+  const threads = [
+    { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
+    { id: "thread-2", title: "Review providers", project: "Workspace" },
+    { id: "thread-3", title: "WORKTREE cleanup", project: "Beta" },
+  ];
+
+  it("matches thread titles case-insensitively and preserves their order", () => {
+    expect(searchSidebarThreadsByTitle(threads, "work")).toEqual([threads[0], threads[2]]);
+  });
+
+  it("does not match project metadata", () => {
+    expect(searchSidebarThreadsByTitle(threads, "workspace")).toEqual([threads[0]]);
+  });
+
+  it("returns no results for an empty query", () => {
+    expect(searchSidebarThreadsByTitle(threads, "   ")).toEqual([]);
   });
 });
 

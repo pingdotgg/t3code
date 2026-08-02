@@ -26,7 +26,7 @@ export type Annotation = Resource<
  * Although typically created at deploy/release time (out-of-band of
  * regular IaC), modelling them as resources makes per-environment
  * annotation history reproducible.
- *
+ * @resource
  * @see https://axiom.co/docs/query-data/annotate-charts
  *
  * @section Creating an Annotation
@@ -64,9 +64,18 @@ export const AnnotationProvider = () =>
       const update = yield* Axiom.updateAnnotation;
       const get = yield* Axiom.getAnnotation;
       const del = yield* Axiom.deleteAnnotation;
+      const listAnnotations = yield* Axiom.getAnnotations;
 
       return {
         stables: ["id"],
+        // Axiom exposes a flat, account-wide `GET /v2/annotations` list that
+        // returns every annotation's full record in one (non-paginated)
+        // response — the exact same shape `get`/`read` produce. Hand each
+        // record back directly as the resource's Attributes.
+        list: () =>
+          listAnnotations({}).pipe(
+            Effect.map((annotations) => annotations.map((a) => ({ ...a }))),
+          ),
         reconcile: Effect.fn(function* ({ news, output }) {
           // Observe — Axiom assigns the annotation id server-side, so the
           // only handle to a previously-created annotation is the cached

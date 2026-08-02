@@ -99,6 +99,95 @@ export const suite = (name: string, layer: Layer.Layer<PersistedQueue.PersistedQ
 
         assert.isUndefined(fiber.pollUnsafe())
       }))
+
+    it.effect("does not redeliver in-flight elements", () =>
+      Effect.gen(function*() {
+        const queue = yield* PersistedQueue.make({
+          name: "test-queue-reset",
+          schema: Item
+        })
+
+        yield* queue.offer({ n: 42n })
+
+        const taken = Latch.makeUnsafe()
+        const release = Latch.makeUnsafe()
+        const fiber = yield* queue.take(() => Effect.andThen(taken.open, release.await)).pipe(Effect.forkScoped)
+        yield* taken.await
+
+        const fiber2 = yield* queue.take((val) => Effect.succeed(val)).pipe(Effect.forkScoped)
+
+        // allow any periodic reset in the store to run while the element is
+        // still being processed
+        yield* TestClock.adjust(1000)
+        yield* Effect.sleep(1000).pipe(
+          TestClock.withLive
+        )
+
+        assert.isUndefined(fiber2.pollUnsafe())
+
+        // after a successful take the element should not be delivered again
+        yield* release.open
+        yield* Fiber.join(fiber)
+        yield* TestClock.adjust(1000)
+        yield* Effect.sleep(1000).pipe(
+          TestClock.withLive
+        )
+
+        assert.isUndefined(fiber2.pollUnsafe())
+
+        yield* Fiber.interrupt(fiber2)
+      }))
+
+    it.effect("stops delivering when maxAttempts is exhausted", () =>
+      Effect.gen(function*() {
+        const queue = yield* PersistedQueue.make({
+          name: "test-queue-exhausted",
+          schema: Item
+        })
+
+        yield* queue.offer({ n: 42n })
+
+        const error = yield* queue
+          .take(() => Effect.fail("boom"), { maxAttempts: 1 })
+          .pipe(Effect.flip)
+
+        assert.strictEqual(error, "boom")
+
+        const fiber = yield* queue.take((val) => Effect.succeed(val), { maxAttempts: 1 }).pipe(Effect.forkScoped)
+
+        yield* TestClock.adjust(1000)
+        yield* Effect.sleep(1000).pipe(
+          TestClock.withLive
+        )
+
+        assert.isUndefined(fiber.pollUnsafe())
+      }))
+
+    it.effect("counts schema decode failures as attempts", () =>
+      Effect.gen(function*() {
+        const store = yield* PersistedQueue.PersistedQueueStore
+        const queue = yield* PersistedQueue.make({
+          name: "test-queue-decode-failure",
+          schema: Item
+        })
+
+        yield* store.offer({
+          name: "test-queue-decode-failure",
+          id: crypto.randomUUID(),
+          element: { n: null },
+          isCustomId: false
+        })
+
+        const error = yield* queue.take(Effect.succeed, { maxAttempts: 1 }).pipe(Effect.flip)
+        assert.isTrue(Schema.isSchemaError(error))
+
+        const fiber = yield* queue.take(Effect.succeed, { maxAttempts: 1 }).pipe(Effect.forkScoped)
+
+        yield* TestClock.adjust(1000)
+        yield* Effect.sleep(1000).pipe(TestClock.withLive)
+
+        assert.isUndefined(fiber.pollUnsafe())
+      }))
   })
 
 const Item = Schema.Struct({

@@ -36,8 +36,9 @@ export interface ThreadFeedActivity {
   readonly turnId: TurnId | null;
   readonly summary: string;
   readonly detail: string | null;
-  readonly fullDetail: string | null;
-  readonly copyText: string;
+  readonly canExpand: boolean;
+  readonly getFullDetail: () => string | null;
+  readonly getCopyText: () => string;
   readonly icon:
     | "agent"
     | "alert"
@@ -554,6 +555,27 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
+function workEntryHasExpandedBody(entry: WorkLogEntry): boolean {
+  return (
+    (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) ||
+    Boolean((entry.rawCommand ?? entry.command)?.trim()) ||
+    Boolean(entry.detail?.trim()) ||
+    (entry.changedFiles?.some((path) => path.trim().length > 0) ?? false)
+  );
+}
+
+function memoizeValue<T>(build: () => T): () => T {
+  let value: T;
+  let initialized = false;
+  return () => {
+    if (!initialized) {
+      value = build();
+      initialized = true;
+    }
+    return value;
+  };
+}
+
 function workEntryPreview(
   workEntry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles">,
 ): string | null {
@@ -935,6 +957,11 @@ function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
 
 function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): ThreadFeedEntry[] {
   const grouped: ThreadFeedEntry[] = [];
+  // Mutable backing array for the trailing group so appending an activity is
+  // O(1) instead of re-copying the group (which made this loop quadratic on
+  // long tool runs). The array is only mutated while it is the trailing group.
+  let openGroupActivities: ThreadFeedActivity[] | null = null;
+  let openGroupTurnId: TurnId | null = null;
 
   for (const entry of entries) {
     // Skip empty messages so they don't break activity grouping.
@@ -944,24 +971,23 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
 
     if (entry.type !== "activity") {
       grouped.push(entry);
+      openGroupActivities = null;
       continue;
     }
 
-    const previous = grouped.at(-1);
-    if (previous?.type === "activity-group" && previous.turnId === entry.turnId) {
-      grouped[grouped.length - 1] = {
-        ...previous,
-        activities: [...previous.activities, entry.activity],
-      };
+    if (openGroupActivities !== null && openGroupTurnId === entry.turnId) {
+      openGroupActivities.push(entry.activity);
       continue;
     }
 
+    openGroupActivities = [entry.activity];
+    openGroupTurnId = entry.turnId;
     grouped.push({
       type: "activity-group",
       id: entry.id,
       createdAt: entry.createdAt,
       turnId: entry.turnId,
-      activities: [entry.activity],
+      activities: openGroupActivities,
     });
   }
 
@@ -1203,13 +1229,24 @@ function appendPresentedFeedEntry(
   });
 }
 
-export function derivePendingApprovals(
+/**
+ * Sorts activities into lifecycle order. `derivePendingApprovals` and
+ * `derivePendingUserInputs` both expect this ordering; sorting once and
+ * passing the result to both avoids re-sorting the full activity history
+ * per derivation.
+ */
+export function sortThreadActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  return Arr.sort(activities, activityOrder);
+}
+
+export function derivePendingApprovals(
+  sortedActivities: ReadonlyArray<OrchestrationThreadActivity>,
 ): PendingApproval[] {
   const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
-  const ordered = Arr.sort(activities, activityOrder);
 
-  for (const activity of ordered) {
+  for (const activity of sortedActivities) {
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -1251,12 +1288,11 @@ export function derivePendingApprovals(
 }
 
 export function derivePendingUserInputs(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  sortedActivities: ReadonlyArray<OrchestrationThreadActivity>,
 ): PendingUserInput[] {
   const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
-  const ordered = Arr.sort(activities, activityOrder);
 
-  for (const activity of ordered) {
+  for (const activity of sortedActivities) {
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -1353,7 +1389,14 @@ export function buildThreadFeed(
         .map<RawThreadFeedEntry>((entry) => {
           const summary = workEntryHeading(entry);
           const detail = workEntryPreview(entry);
-          const fullDetail = buildWorkEntryExpandedBody(entry);
+          const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
+          const getCopyText = memoizeValue(() =>
+            [summary, detail, getFullDetail()]
+              .filter((value, index, values): value is string => {
+                return Boolean(value) && values.indexOf(value) === index;
+              })
+              .join("\n"),
+          );
           return {
             type: "activity",
             id: entry.id,
@@ -1365,13 +1408,10 @@ export function buildThreadFeed(
               turnId: entry.turnId,
               summary,
               detail,
-              fullDetail,
+              canExpand: workEntryHasExpandedBody(entry),
+              getFullDetail,
+              getCopyText,
               icon: workEntryIcon(entry),
-              copyText: [summary, detail, fullDetail]
-                .filter((value, index, values): value is string => {
-                  return Boolean(value) && values.indexOf(value) === index;
-                })
-                .join("\n"),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
             },

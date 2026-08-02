@@ -1,59 +1,12 @@
 /**
- * The `UndefinedOr` module works with plain TypeScript values of type
- * `A | undefined` where `undefined` is the only absence marker. It is a small
- * alternative to wrapping values in `Option` when your domain already uses
- * `undefined` to mean "no value".
+ * Works with values that may be `undefined`.
  *
- * **Mental model**
- *
- * - A defined value is the present branch.
- * - `undefined` is reserved for absence; the payload type `A` should not itself
- *   include `undefined`.
- * - Helpers such as {@link map} and {@link match} keep values unwrapped and use
- *   `undefined` directly instead of allocating tagged values.
- * - The fail-fast combiner and reducer helpers propagate `undefined` when a
- *   required value is missing.
- *
- * **Common tasks**
- *
- * - Transform a present value: {@link map}
- * - Branch on present versus absent: {@link match}
- * - Unwrap at a boundary: {@link getOrThrow}, {@link getOrThrowWith}
- * - Adapt throwing code to an optional result: {@link liftThrowable}
- * - Lift combination and reduction logic: {@link makeReducer},
- *   {@link makeCombinerFailFast}, {@link makeReducerFailFast}
- *
- * **Gotchas**
- *
- * - `A | undefined` cannot distinguish "missing" from "present and
- *   undefined". Use `Option` when that distinction matters.
- * - {@link liftThrowable} discards the thrown value and also returns
- *   `undefined` when the wrapped function throws.
- *
- * **Example** (Parsing optional input)
- *
- * ```ts
- * import { UndefinedOr } from "effect"
- *
- * const parseInteger = UndefinedOr.liftThrowable((input: string) => {
- *   const value = Number.parseInt(input, 10)
- *   if (Number.isNaN(value)) {
- *     throw new Error("not an integer")
- *   }
- *   return value
- * })
- *
- * console.log(UndefinedOr.map(parseInteger("42"), (n) => n + 1))
- * // 43
- *
- * console.log(
- *   UndefinedOr.match(parseInteger("abc"), {
- *     onUndefined: () => "missing",
- *     onDefined: (n) => `parsed ${n}`
- *   })
- * )
- * // "missing"
- * ```
+ * Use this module for plain TypeScript values of type `A | undefined` when
+ * `undefined` is the only absence marker. It is a small alternative to wrapping
+ * values in `Option` when your data already uses `undefined` to mean "no
+ * value". The module includes helpers for mapping defined values, matching both
+ * cases, throwing when a value is missing, adapting throwing functions, and
+ * building reducers or combiners.
  *
  * @since 4.0.0
  */
@@ -118,8 +71,8 @@ export const match: {
  *
  * **When to use**
  *
- * Use when fail-fast unwrapping of an `A | undefined` value is appropriate and
- * callers need to provide the thrown error for the undefined case.
+ * Use when you need fail-fast unwrapping of an `A | undefined` value and want
+ * to provide the thrown error for the undefined case.
  *
  * **Details**
  *
@@ -148,7 +101,7 @@ export const getOrThrowWith: {
  *
  * **When to use**
  *
- * Use when a value should already be defined at this point and throwing a
+ * Use when you need to unwrap a value that should already be defined and a
  * generic missing-value `Error` is acceptable.
  *
  * **Details**
@@ -200,16 +153,17 @@ export const liftThrowable = <A extends ReadonlyArray<unknown>, B>(
  *
  * **When to use**
  *
- * Use to take the first available value like a fallback chain, combining values
- * only when both operands are present.
+ * Use when you need to reduce values that may be `undefined`, keeping the
+ * first defined value as a fallback and combining only when both operands are
+ * defined.
  *
  * **Details**
  *
- * - `undefined` + `undefined` -> `undefined`
- * - `a` + `undefined` -> `a` (first value wins)
- * - `undefined` + `b` -> `b` (second value wins)
- * - `a` + `b` -> `combiner.combine(a, b)`
- * - Initial value is `undefined`
+ * Combining `undefined` with `undefined` returns `undefined`. Combining a
+ * defined value with `undefined` keeps the defined value, so the first defined
+ * value wins when only one side is present. When both values are defined, they
+ * are combined with `combiner.combine`. The reducer's initial value is
+ * `undefined`.
  *
  * @category constructors
  * @since 4.0.0
