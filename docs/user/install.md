@@ -6,7 +6,7 @@ T3 Code is a web and desktop GUI for running coding agents on your machine.
 
 Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the T3 Code server.
 
-At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
+At least one provider CLI installed. T3 Code can guide you through authentication after it starts.
 
 ## Run Without Installing
 
@@ -43,8 +43,9 @@ yay -S t3code-bin
 
 ## Providers
 
-T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
-to use, then authenticate it.
+T3 Code drives provider CLIs; it does not ship them outside the Docker image. Install the CLI for
+each provider you want to use, then open T3 Code. The first-run setup offers to sign in to each
+detected provider. You can return to the same controls later under **Settings** → **Providers**.
 
 | Provider   | CLI                                                   | Default binary | Log in with           |
 | ---------- | ----------------------------------------------------- | -------------- | --------------------- |
@@ -57,8 +58,13 @@ to use, then authenticate it.
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
 
-Run the login command on the machine running the T3 Code server, not on the device you browse
-from.
+T3 Code runs the provider's official login command in the environment that owns the server and
+shows its interactive terminal in the web, desktop, or mobile client. Browser links and device
+codes are surfaced as buttons. Closing a client does not cancel the login; choose **Continue** on
+the provider row to reconnect. Choose **Cancel session** to stop it.
+
+The commands in the table remain useful as a manual fallback. Run them on the machine or in the
+container that runs the T3 Code server, not on the device you browse from.
 
 ### Binary Discovery
 
@@ -71,8 +77,8 @@ started T3 Code.
 
 Provider auth is required before you start a session with that provider, not before you start
 T3 Code. You can install T3 Code, open it, and add providers afterwards. A provider that is not
-authenticated shows its status in **Settings** and fails at session start with the login command
-to run.
+authenticated shows a **Sign in** action in Settings. Auth state belongs to the server environment:
+remote clients manage the remote environment's credentials, never the client device's credentials.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
 

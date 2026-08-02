@@ -65,6 +65,16 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderAuthAttachInput,
+  ProviderAuthAttachStreamEvent,
+  ProviderAuthCancelInput,
+  ProviderAuthError,
+  ProviderAuthResizeInput,
+  ProviderAuthSessionSnapshot,
+  ProviderAuthStartInput,
+  ProviderAuthWriteInput,
+} from "./providerAuth.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -206,6 +216,13 @@ export const WS_METHODS = {
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
+
+  // Provider authentication methods
+  providerAuthStart: "providerAuth.start",
+  providerAuthAttach: "providerAuth.attach",
+  providerAuthWrite: "providerAuth.write",
+  providerAuthResize: "providerAuth.resize",
+  providerAuthCancel: "providerAuth.cancel",
 
   // Preview methods
   previewOpen: "preview.open",
@@ -566,6 +583,37 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
+  payload: ProviderAuthStartInput,
+  success: ProviderAuthSessionSnapshot,
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderAuthAttachRpc = Rpc.make(WS_METHODS.providerAuthAttach, {
+  payload: ProviderAuthAttachInput,
+  success: ProviderAuthAttachStreamEvent,
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsProviderAuthWriteRpc = Rpc.make(WS_METHODS.providerAuthWrite, {
+  payload: ProviderAuthWriteInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderAuthResizeRpc = Rpc.make(WS_METHODS.providerAuthResize, {
+  payload: ProviderAuthResizeInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
+  payload: ProviderAuthCancelInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -830,6 +878,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
+  WsProviderAuthStartRpc,
+  WsProviderAuthAttachRpc,
+  WsProviderAuthWriteRpc,
+  WsProviderAuthResizeRpc,
+  WsProviderAuthCancelRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

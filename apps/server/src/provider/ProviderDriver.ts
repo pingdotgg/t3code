@@ -22,6 +22,7 @@
  * @module provider/ProviderDriver
  */
 import type {
+  ProviderAuthAction,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
@@ -71,6 +72,26 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  readonly authentication?: ProviderAuthenticationCapability | undefined;
+}
+
+export interface ProviderAuthLaunchSpec {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Trusted per-instance authentication commands. These values never cross the
+ * wire: clients choose an action, while the driver owns argv, cwd, and env.
+ */
+export interface ProviderAuthenticationCapability {
+  readonly canSignIn: boolean;
+  readonly canSignOut: boolean;
+  readonly resolveLaunch: (
+    action: ProviderAuthAction,
+  ) => Effect.Effect<ProviderAuthLaunchSpec, ProviderDriverError>;
 }
 
 export interface ProviderContinuationIdentity {

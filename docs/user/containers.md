@@ -66,7 +66,18 @@ next export.
 
 ## Authenticate providers
 
-Authenticate once inside the container before starting work:
+Open the pairing URL, then use the first-run provider setup or open
+**Settings** → **Providers**. Choose **Sign in** for a provider and follow the
+provider CLI's instructions in the interactive terminal. The command runs
+inside the container, so credentials are written directly to the isolated
+`t3-home` volume.
+
+If the browser disconnects or the app closes, the login keeps running for up
+to 30 minutes. Reopen the provider row and choose **Continue** to reconnect to
+the same session. T3 Code does not persist the terminal transcript after the
+server restarts.
+
+Manual CLI authentication remains available as a fallback:
 
 ```bash
 docker compose run --rm t3code codex login --device-auth
@@ -76,7 +87,7 @@ docker compose run --rm t3code grok login --device-auth
 docker compose run --rm t3code opencode auth login
 ```
 
-These commands write credentials into the persistent `t3-home` volume. Normal
+Both in-app and manual commands write credentials into the persistent `t3-home` volume. Normal
 token refreshes also write there, so rebuilding or replacing the container
 does not require another login.
 

@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -55,6 +56,8 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  type ProviderAuthAttachStreamEvent,
+  ProviderAuthError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -80,6 +83,7 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import * as ProviderAuthSessionManager from "./provider/Services/ProviderAuthSessionManager.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -366,6 +370,25 @@ const makeWsRpcLayer = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const providerAuthSessionManager = Context.getOption(
+        yield* Effect.context<never>(),
+        ProviderAuthSessionManager.ProviderAuthSessionManager,
+      );
+      const withProviderAuthManager = <A>(
+        use: (
+          manager: ProviderAuthSessionManager.ProviderAuthSessionManager["Service"],
+        ) => Effect.Effect<A, ProviderAuthError>,
+      ) =>
+        Option.match(providerAuthSessionManager, {
+          onNone: () =>
+            Effect.fail(
+              new ProviderAuthError({
+                reason: "unsupported",
+                message: "This T3 server does not provide in-app provider authentication.",
+              }),
+            ),
+          onSome: use,
+        });
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1854,6 +1877,43 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
             "rpc.aggregate": "review",
           }),
+        [WS_METHODS.providerAuthStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthStart,
+            withProviderAuthManager((manager) => manager.start(input)),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthAttach]: (input) =>
+          observeRpcStream(
+            WS_METHODS.providerAuthAttach,
+            Stream.callback<ProviderAuthAttachStreamEvent, ProviderAuthError>((queue) =>
+              Effect.acquireRelease(
+                withProviderAuthManager((manager) =>
+                  manager.attachStream(input, (event) => Queue.offer(queue, event)),
+                ),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ),
+            ),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthWrite]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthWrite,
+            withProviderAuthManager((manager) => manager.write(input)).pipe(Effect.as({})),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthResize]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthResize,
+            withProviderAuthManager((manager) => manager.resize(input)).pipe(Effect.as({})),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthCancel,
+            withProviderAuthManager((manager) => manager.cancel(input)).pipe(Effect.as({})),
+            { "rpc.aggregate": "provider-auth" },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

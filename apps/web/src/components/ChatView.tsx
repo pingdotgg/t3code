@@ -164,7 +164,11 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
-import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import {
+  formatProviderDriverKindLabel,
+  getProviderModelCapabilities,
+  resolveSelectableProvider,
+} from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -236,6 +240,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { useProviderAuthController } from "./provider-auth/ProviderAuthController";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
@@ -1154,6 +1159,7 @@ function ChatViewContent(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
+  const { openProviderAuth } = useProviderAuthController();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -5792,6 +5798,23 @@ function ChatViewContent(props: ChatViewProps) {
               <ProviderStatusBanner
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
+                onAuthenticate={
+                  visibleProviderStatus?.auth.status === "unauthenticated" &&
+                  visibleProviderStatus.authManagement?.canSignIn
+                    ? () => {
+                        const activeSession = visibleProviderStatus.authManagement?.activeSession;
+                        openProviderAuth({
+                          environmentId,
+                          instanceId: visibleProviderStatus.instanceId,
+                          displayName:
+                            visibleProviderStatus.displayName?.trim() ||
+                            formatProviderDriverKindLabel(visibleProviderStatus.driver),
+                          action: activeSession?.action ?? "signIn",
+                          ...(activeSession ? { activeSessionId: activeSession.sessionId } : {}),
+                        });
+                      }
+                    : undefined
+                }
               />
             </div>
             {/* Messages Wrapper */}

@@ -4,6 +4,7 @@ import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   return !status || status.status === "ready" || status.status === "disabled"
@@ -21,9 +22,11 @@ export function shouldShowProviderStatusBanner(
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
+  onAuthenticate,
   status,
 }: {
   onDismiss: () => void;
+  onAuthenticate?: (() => void) | undefined;
   status: ServerProvider | null;
 }) {
   if (!status || status.status === "ready" || status.status === "disabled") {
@@ -36,7 +39,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
     ? `${providerName} is unauthenticated`
     : `${providerName} provider status`;
   const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
+    ? "Sign in to authenticate this environment."
     : (status.message ??
       (status.status === "error"
         ? `${providerName} provider is unavailable.`
@@ -64,6 +67,11 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
               {message}
             </TooltipPopup>
           </Tooltip>
+          {isUnauthenticated && onAuthenticate ? (
+            <Button size="xs" variant="outline" className="mt-1 w-fit" onClick={onAuthenticate}>
+              {status.authManagement?.activeSession ? "Continue sign-in" : "Sign in"}
+            </Button>
+          ) : null}
         </div>
         <button
           type="button"

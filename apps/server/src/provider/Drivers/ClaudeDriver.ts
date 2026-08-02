@@ -44,6 +44,10 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeProviderAuthenticationCapability,
+  PROVIDER_AUTH_COMMAND_ARGS,
+} from "../providerAuthentication.ts";
+import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
@@ -54,7 +58,11 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
+} from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -131,6 +139,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
       });
       const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const authenticationEnvironment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -216,6 +225,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        authentication: makeProviderAuthenticationCapability({
+          command: effectiveConfig.binaryPath,
+          env: authenticationEnvironment,
+          signInArgs: PROVIDER_AUTH_COMMAND_ARGS.claude.signIn,
+          signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.claude.signOut,
+        }),
       } satisfies ProviderInstance;
     }),
 };

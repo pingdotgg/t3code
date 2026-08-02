@@ -123,6 +123,11 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow
+            icon="person.badge.key"
+            label="Provider Accounts"
+            target="SettingsProviders"
+          />
         </SettingsSection>
 
         <GeneralSettingsSection />
@@ -476,6 +481,11 @@ function ConfiguredSettingsRouteScreen() {
             label="Environments"
             value={`${environmentCount}`}
             target="SettingsEnvironments"
+          />
+          <SettingsRow
+            icon="person.badge.key"
+            label="Provider Accounts"
+            target="SettingsProviders"
           />
           <SettingsSwitchRow
             icon="bell.badge"

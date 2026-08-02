@@ -117,6 +117,7 @@ import {
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { useProviderAuthController } from "../provider-auth/ProviderAuthController";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   backgroundActivitySharedPolicySettings,
@@ -1695,6 +1696,7 @@ export function ProviderSettingsPanel() {
   const updateSettings = useUpdatePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const primaryEnvironment = usePrimaryEnvironment();
+  const { openProviderAuth } = useProviderAuthController();
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -2143,6 +2145,18 @@ export function ProviderSettingsPanel() {
               instance={row.instance}
               driverOption={driverOption}
               liveProvider={liveProvider}
+              onAuthAction={(action) => {
+                if (!primaryEnvironment || !liveProvider?.authManagement) return;
+                const activeSession = liveProvider.authManagement.activeSession;
+                openProviderAuth({
+                  environmentId: primaryEnvironment.environmentId,
+                  instanceId: row.instanceId,
+                  displayName:
+                    row.instance.displayName?.trim() || driverOption?.label || String(row.driver),
+                  action: activeSession?.action ?? action,
+                  ...(activeSession ? { activeSessionId: activeSession.sessionId } : {}),
+                });
+              }}
               isExpanded={openInstanceDetails[row.instanceId] ?? false}
               onExpandedChange={(open) =>
                 setOpenInstanceDetails((existing) => ({
