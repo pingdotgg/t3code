@@ -84,10 +84,7 @@ export const configureCuaDriverServerEnvironment = Effect.fn("configureCuaDriver
     if (resourcesPath !== undefined) {
       const moduleUrl = yield* path
         .toFileUrl(
-          path.join(
-            resourcesPath,
-            "app.asar.unpacked/node_modules/@trycua/cua-driver/dist/embedded.js",
-          ),
+          path.join(resourcesPath, "app.asar/node_modules/@trycua/cua-driver/dist/embedded.js"),
         )
         .pipe(
           Effect.map((url) => url.href),
