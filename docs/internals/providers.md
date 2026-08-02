@@ -75,6 +75,39 @@ spills the whole accumulated text as one delta. The buffer also flushes at inter
 when a request opens (approval) or user input is requested, via
 `flushBufferedAssistantMessagesForTurn`.
 
+## MCP servers
+
+Two unrelated things share the name. `apps/server/src/mcp/` is T3 Code _hosting_ an MCP server: it
+serves `/mcp`, mints a bearer credential per thread, and injects itself into every session as
+`t3-code` so agents can reach the `preview_*` browser tools. `apps/server/src/mcpServers/` is the
+inventory of the _user's_ MCP servers — the ones the harness CLIs load from their own config.
+
+The inventory is read-only and best effort. Nothing writes to `.claude.json`, `.mcp.json`, or
+`config.toml`, and no MCP process is ever spawned by us — the harness CLI owns those.
+
+Reads differ per driver because the harnesses differ:
+
+| Driver                 | Source                                                                    | Why                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                 | `.claude.json` parsed directly, plus approved `.mcp.json` project servers | `claude mcp list` health-checks every server over the network, far too slow for a settings page                                           |
+| Codex                  | not read yet                                                              | needs a `codex mcp list --json` subprocess; that CLI already reports the `enabled` flag Codex honours, so no TOML parser will be required |
+| Cursor, Grok, OpenCode | not read                                                                  | ACP can add a server to a session but never reports the ones the agent loads from its own config                                          |
+
+Two invariants worth preserving:
+
+- **`complete` is not decoration.** [`ClaudeMcpConfig.ts`][claudemcp] returns it `false` whenever a
+  config file exists but could not be parsed, and whenever no workspace `cwd` was supplied (which
+  makes the `local` and `project` scopes unreadable). A future caller that replaces the CLI's own
+  resolution — `--strict-mcp-config` — must refuse to act on an incomplete list, or it will silently
+  drop servers the session would otherwise load.
+- **Nothing secret crosses the wire.** `env` values are dropped, and command arguments and URLs are
+  rendered through an allowlist: anything that is not clearly a flag, package name, or path becomes
+  `…`. This endpoint is reachable remotely, and MCP configs routinely carry API keys.
+
+See [the user guide][usermcp] for the shipped behaviour.
+
+[claudemcp]: ../../apps/server/src/mcpServers/ClaudeMcpConfig.ts
+[usermcp]: ../user/mcp.md
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
