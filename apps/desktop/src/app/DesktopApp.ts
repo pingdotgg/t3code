@@ -294,34 +294,32 @@ const startup = Effect.gen(function* () {
     onSome: (settings) => settings.enableCua,
   });
   if (cuaEnabled) {
+    const continueWithoutCua = Effect.fn("desktop.continueWithoutCua")(function* (
+      context: Readonly<Record<string, string>>,
+    ) {
+      yield* disableCuaDriverServerEnvironment();
+      yield* logStartupError("embedded cua-driver failed to configure", context);
+      yield* electronDialog
+        .showMessageBox({
+          type: "error",
+          title: "Computer use unavailable",
+          message: "Cua could not start.",
+          detail:
+            "T3 Code will continue without computer use. Check the logs, then restart to try again.",
+          buttons: ["Continue"],
+        })
+        .pipe(Effect.ignore);
+    });
     yield* configureCuaDriverServerEnvironment(
       environment.appUserModelId,
       environment.platform,
       environment.isPackaged ? environment.resourcesPath : undefined,
     ).pipe(
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          yield* disableCuaDriverServerEnvironment();
-          const context =
-            error._tag === "CuaDriverConfigurationError"
-              ? {
-                  binaryPath: error.binaryPath,
-                  cause: String(error.cause),
-                }
-              : {};
-          yield* logStartupError("embedded cua-driver failed to configure", context);
-          yield* electronDialog
-            .showMessageBox({
-              type: "error",
-              title: "Computer use unavailable",
-              message: "Cua could not start.",
-              detail:
-                "T3 Code will continue without computer use. Check the logs, then restart to try again.",
-              buttons: ["Continue"],
-            })
-            .pipe(Effect.ignore);
-        }),
-      ),
+      Effect.catchTags({
+        CuaDriverConfigurationError: (error) =>
+          continueWithoutCua({ modulePath: error.modulePath, cause: String(error.cause) }),
+        CuaDriverNotConfiguredError: () => continueWithoutCua({}),
+      }),
     );
   } else {
     yield* disableCuaDriverServerEnvironment();
