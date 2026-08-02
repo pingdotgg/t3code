@@ -25,7 +25,7 @@ env:
   # Pin the reviewed personal feature set while still rebasing it onto current
   # upstream source. Rebase drops patch-equivalent commits as upstream merges
   # them without dropping changes that remain personal to this build.
-  PERSONAL_FEATURE_HEAD: 3e0f9606de3c59e493309eaf185e5fc6f2fb5441
+  PERSONAL_FEATURE_HEAD: 16601a0c0497c2621ba2ba3152b5ae7e4a48ca0b
   FEATURE_BRANCH: feat/mobile-quick-archive
   FEATURE_REPOSITORY: Feighery89/t3code
   NODE_OPTIONS: --max-old-space-size=6144
