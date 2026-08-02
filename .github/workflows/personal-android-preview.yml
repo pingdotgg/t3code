@@ -42,14 +42,15 @@ jobs:
         with:
           path: automation
 
-      - name: Checkout latest upstream source
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          path: source
-          persist-credentials: false
-          ref: main
-          repository: pingdotgg/t3code
+      - name: Clone latest upstream source
+        run: >-
+          git clone
+          --filter=blob:none
+          --no-tags
+          --single-branch
+          --branch main
+          "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          source
 
       - id: source
         name: Resolve upstream and feature source
