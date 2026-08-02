@@ -198,8 +198,6 @@ export function resolveCuaDriverAsset(
   return {
     archiveName,
     executablePath: platform === "win" ? "cua-driver.exe" : "cua-driver",
-    companionPaths:
-      platform === "win" ? ["cua-cursor-theme.exe"] : ["cua-cursor-theme", "wayland-helper"],
     sha256: CUA_DRIVER_PLATFORM_SHA256[platform][arch],
     url: `${CUA_DRIVER_RELEASE_BASE_URL}/${archiveName}`,
   };
@@ -1824,17 +1822,9 @@ const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(function*
     yield* fs.chmod(destination, 0o755);
   } else {
     const destination = path.join(input.stageResourcesDir, "cua-driver");
-    yield* fs.makeDirectory(destination, { recursive: true });
-    yield* fs.copyFile(
-      extractedExecutable,
-      path.join(destination, path.basename(asset.executablePath)),
-    );
-    for (const companionPath of "companionPaths" in asset ? asset.companionPaths : []) {
-      yield* fs.copy(path.join(extractDir, companionPath), path.join(destination, companionPath));
-    }
+    yield* fs.copy(extractDir, destination);
     if (input.platform === "linux") {
       yield* fs.chmod(path.join(destination, "cua-driver"), 0o755);
-      yield* fs.chmod(path.join(destination, "cua-cursor-theme"), 0o755);
     }
   }
   yield* Effect.log(`[desktop-artifact] Staged Cua Driver ${CUA_DRIVER_RELEASE_VERSION}.`);
