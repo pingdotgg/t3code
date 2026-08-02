@@ -94,6 +94,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+/** Cap for per-turn reasoning/thought buffers (same order as assistant text). */
+const MAX_BUFFERED_REASONING_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -766,11 +768,23 @@ const make = Effect.gen(function* () {
           Option.getOrElse(option, () => ({ text: "", started: false, lastPublishedLength: 0 })),
         ),
       );
-      const nextText = `${existing.text}${input.delta}`;
+      // Cap buffer growth so long thought streams cannot exhaust server memory.
+      let nextText = `${existing.text}${input.delta}`;
+      if (nextText.length > MAX_BUFFERED_REASONING_CHARS) {
+        nextText = nextText.slice(0, MAX_BUFFERED_REASONING_CHARS);
+      }
       const taskId = reasoningTaskIdForTurn(input.turnId);
       const activities: Array<OrchestrationThreadActivity> = [];
+      const hasVisibleText = nextText.trim().length > 0;
+      // Only open a Thinking task once there is non-whitespace content so a
+      // whitespace-only stream never leaves a dangling "Thinking" entry.
+      const shouldStart = !existing.started && hasVisibleText;
+      const shouldPublishProgress =
+        hasVisibleText &&
+        (shouldStart ||
+          nextText.length - existing.lastPublishedLength >= REASONING_PROGRESS_PUBLISH_CHARS);
 
-      if (!existing.started) {
+      if (shouldStart) {
         activities.push({
           id: EventId.make(`${input.event.eventId}:reasoning-started`),
           createdAt: input.createdAt,
@@ -786,10 +800,7 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const shouldPublishProgress =
-        !existing.started ||
-        nextText.length - existing.lastPublishedLength >= REASONING_PROGRESS_PUBLISH_CHARS;
-      if (shouldPublishProgress && nextText.trim().length > 0) {
+      if (shouldPublishProgress) {
         activities.push({
           id: EventId.make(`${input.event.eventId}:reasoning-progress`),
           createdAt: input.createdAt,
@@ -806,12 +817,16 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const started = existing.started || shouldStart;
       yield* Cache.set(bufferedReasoningByTurnKey, key, {
         text: nextText,
-        started: true,
+        started,
+        // Only advance when progress was actually published (not on whitespace skips).
         lastPublishedLength: shouldPublishProgress ? nextText.length : existing.lastPublishedLength,
       });
-      yield* rememberTaskDescription(input.threadId, taskId, "Thinking");
+      if (started) {
+        yield* rememberTaskDescription(input.threadId, taskId, "Thinking");
+      }
 
       yield* Effect.forEach(
         activities,
@@ -843,14 +858,16 @@ const make = Effect.gen(function* () {
         Effect.map(Option.getOrUndefined),
       );
       if (!existing?.started) {
+        // Drop any whitespace-only buffer that never opened a UI task.
+        if (existing) {
+          yield* Cache.invalidate(bufferedReasoningByTurnKey, key);
+        }
         return;
       }
       const taskId = reasoningTaskIdForTurn(input.turnId);
       const detail = truncateDetail(existing.text.trim());
       yield* Cache.invalidate(bufferedReasoningByTurnKey, key);
-      if (detail.length === 0) {
-        return;
-      }
+      // Always close the task if we opened it, even when the visible detail is empty.
       yield* providerCommandId(input.event, "reasoning-complete").pipe(
         Effect.flatMap((commandId) =>
           orchestrationEngine.dispatch({
@@ -867,8 +884,8 @@ const make = Effect.gen(function* () {
                 taskId,
                 status: "completed",
                 title: "Thinking",
-                summary: detail,
-                detail,
+                summary: detail.length > 0 ? detail : "Thinking complete",
+                detail: detail.length > 0 ? detail : "Thinking complete",
               },
               turnId: input.turnId,
             },
@@ -1313,6 +1330,7 @@ const make = Effect.gen(function* () {
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       const taskDescriptionKeys = Array.from(yield* Cache.keys(taskDescriptionByTaskKey));
+      const reasoningKeys = Array.from(yield* Cache.keys(bufferedReasoningByTurnKey));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -1352,6 +1370,12 @@ const make = Effect.gen(function* () {
         taskDescriptionKeys,
         (key) =>
           key.startsWith(prefix) ? Cache.invalidate(taskDescriptionByTaskKey, key) : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        reasoningKeys,
+        (key) =>
+          key.startsWith(prefix) ? Cache.invalidate(bufferedReasoningByTurnKey, key) : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });

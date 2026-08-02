@@ -203,7 +203,12 @@ function buildKimiDiscoveredModelsFromConfigOptions(
   }
   const capabilities = buildKimiThinkingCapabilitiesFromConfigOptions(configOptions);
   const seen = new Set<string>();
-  return modelOption.options.flatMap((entry): Array<ServerProviderModel> => {
+  // ACP select options may be flat `{ value }` entries or grouped
+  // `{ options: [...] }` entries — flatten groups the same way thinking does.
+  const flatEntries = modelOption.options.flatMap((entry) =>
+    "options" in entry && Array.isArray(entry.options) ? entry.options : [entry],
+  );
+  return flatEntries.flatMap((entry): Array<ServerProviderModel> => {
     if (!("value" in entry) || typeof entry.value !== "string") {
       return [];
     }
