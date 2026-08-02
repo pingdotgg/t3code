@@ -19,6 +19,7 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
@@ -67,6 +68,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
+  isTimelineScrollbarPointerDown,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
@@ -180,6 +182,7 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
+  maintainScrollAtEndOnLayout: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
@@ -215,6 +218,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  maintainScrollAtEndOnLayout,
   onIsAtEndChange,
   onManualNavigation,
   hideEmptyPlaceholder = false,
@@ -385,6 +389,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
 
+  const handlePointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const scrollNode = event.currentTarget;
+      if (
+        isTimelineScrollbarPointerDown({
+          pointerType: event.pointerType,
+          targetIsCurrentTarget: event.target === scrollNode,
+          clientX: event.clientX,
+          viewportRight: scrollNode.getBoundingClientRect().right,
+          offsetWidth: scrollNode.offsetWidth,
+          clientWidth: scrollNode.clientWidth,
+          scrollHeight: scrollNode.scrollHeight,
+          clientHeight: scrollNode.clientHeight,
+        })
+      ) {
+        onManualNavigation();
+      }
+    },
+    [onManualNavigation],
+  );
+
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
@@ -502,7 +527,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     on: {
                       dataChange: true,
                       itemLayout: true,
-                      layout: true,
+                      layout: maintainScrollAtEndOnLayout,
                     },
                   }
             }
@@ -511,6 +536,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               size: false,
             }}
             onScroll={handleScroll}
+            onWheel={onManualNavigation}
+            onTouchMove={onManualNavigation}
+            onPointerDown={handlePointerDown}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
               topFadeEnabled && "chat-timeline-scroll-fade",
