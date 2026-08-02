@@ -1,9 +1,19 @@
-import { type ExecutionEnvironmentDescriptor, type ThreadId } from "@t3tools/contracts";
+import {
+  type ExecutionEnvironmentDescriptor,
+  type PinnedThreadKeysByProjectKey,
+  type ThreadId,
+} from "@t3tools/contracts";
 import {
   canSnooze,
   effectiveSettled,
   effectiveSnoozed,
 } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime";
 
 import { isMacPlatform } from "../lib/utils";
 import { isThreadActivelyWorking } from "../session-logic";
@@ -82,6 +92,8 @@ function sortByRecent(left: SidebarThreadSummary, right: SidebarThreadSummary): 
 }
 
 export interface SidebarV2Shelves {
+  readonly pinned: readonly SidebarThreadSummary[];
+  readonly pinnedByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly active: readonly SidebarThreadSummary[];
   readonly snoozed: readonly SidebarThreadSummary[];
   readonly settled: readonly SidebarThreadSummary[];
@@ -102,11 +114,42 @@ export function resolveSidebarV2ThreadRouteTarget(
 export function classifySidebarV2Shelves(input: {
   readonly threads: readonly SidebarThreadSummary[];
   readonly now: string;
+  readonly pinnedThreadKeysByProjectKey?: PinnedThreadKeysByProjectKey;
 }): SidebarV2Shelves {
+  const visibleThreads = selectVisibleSidebarThreads(input.threads);
+  const threadByKey = new Map(
+    visibleThreads
+      .filter((thread) => thread.virtualAgentRun === undefined)
+      .map(
+        (thread) =>
+          [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+      ),
+  );
+  const pinnedByProjectKey = new Map<string, readonly SidebarThreadSummary[]>();
+  const pinnedThreadKeys = new Set<string>();
+  for (const [projectKey, threadKeys] of Object.entries(input.pinnedThreadKeysByProjectKey ?? {})) {
+    const pinnedThreads = threadKeys.flatMap((threadKey) => {
+      const thread = threadByKey.get(threadKey);
+      return thread &&
+        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)) === projectKey
+        ? [thread]
+        : [];
+    });
+    if (pinnedThreads.length > 0) {
+      pinnedByProjectKey.set(projectKey, pinnedThreads);
+      for (const thread of pinnedThreads) {
+        pinnedThreadKeys.add(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
+      }
+    }
+  }
+
   const active: SidebarThreadSummary[] = [];
   const snoozed: SidebarThreadSummary[] = [];
   const settled: SidebarThreadSummary[] = [];
-  for (const thread of selectVisibleSidebarThreads(input.threads)) {
+  for (const thread of visibleThreads) {
+    if (pinnedThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))) {
+      continue;
+    }
     if (effectiveSnoozed(thread, { now: input.now })) {
       snoozed.push(thread);
     } else if (effectiveSettled(thread, { now: input.now })) {
@@ -116,6 +159,8 @@ export function classifySidebarV2Shelves(input: {
     }
   }
   return {
+    pinned: [...pinnedByProjectKey.values()].flat(),
+    pinnedByProjectKey,
     active: active.toSorted(sortByRecent),
     snoozed: snoozed.toSorted(sortByRecent),
     settled: settled.toSorted(sortByRecent),

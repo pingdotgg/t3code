@@ -135,6 +135,47 @@ describe("selectSnoozeShelfBulkTargets", () => {
 });
 
 describe("classifySidebarV2Shelves", () => {
+  it("keeps pinned threads in their durable project order and out of other shelves", () => {
+    const projectId = ProjectId.make("project-1");
+    const first = thread({ id: ThreadId.make("first"), projectId });
+    const second = thread({ id: ThreadId.make("second"), projectId });
+    const active = thread({ id: ThreadId.make("active"), projectId });
+    const projectKey = `${capableEnvironmentId}:${projectId}`;
+    const firstKey = `${capableEnvironmentId}:${first.id}`;
+    const secondKey = `${capableEnvironmentId}:${second.id}`;
+
+    const shelves = classifySidebarV2Shelves({
+      threads: [first, second, active],
+      now,
+      pinnedThreadKeysByProjectKey: {
+        [projectKey]: [secondKey, firstKey],
+      },
+    });
+
+    expect(shelves.pinned).toEqual([second, first]);
+    expect(shelves.pinnedByProjectKey.get(projectKey)).toEqual([second, first]);
+    expect(shelves.active).toEqual([active]);
+    expect(shelves.snoozed).toEqual([]);
+    expect(shelves.settled).toEqual([]);
+  });
+
+  it("ignores stale and wrongly scoped pin entries", () => {
+    const realThread = thread({ id: ThreadId.make("real") });
+    const projectKey = `${capableEnvironmentId}:${realThread.projectId}`;
+
+    const shelves = classifySidebarV2Shelves({
+      threads: [realThread],
+      now,
+      pinnedThreadKeysByProjectKey: {
+        [projectKey]: ["missing"],
+        other: [`${capableEnvironmentId}:${realThread.id}`],
+      },
+    });
+
+    expect(shelves.pinned).toEqual([]);
+    expect(shelves.active).toEqual([realThread]);
+  });
+
   it("excludes descendants of archived parents before shelf classification", () => {
     const archivedParent = thread({
       id: ThreadId.make("archived-parent"),

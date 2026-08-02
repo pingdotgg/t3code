@@ -5,11 +5,13 @@ import {
   Clock3Icon,
   GitBranchIcon,
   InboxIcon,
+  PinIcon,
   RotateCcwIcon,
   ServerIcon,
   TerminalIcon,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, memo, useCallback, useEffect, useMemo, useState } from "react";
+import type { useSortable } from "@dnd-kit/sortable";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import { threadRaisedHandWhileSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -59,6 +61,7 @@ export interface SidebarV2RowProps {
       stay on the single-line variant so history stays scannable. */
   readonly variant: "card" | "slim";
   readonly active: boolean;
+  readonly pinned: boolean;
   readonly snoozed: boolean;
   readonly settled: boolean;
   // Resolved by the parent against its clock so a ticking `now` never reaches
@@ -74,10 +77,18 @@ export interface SidebarV2RowProps {
   readonly providerEntry: ProviderInstanceEntry | null;
   readonly onDismissAgentRun: (thread: SidebarThreadSummary) => void;
   readonly onOpen: (thread: SidebarThreadSummary) => void;
+  readonly onSetPinned: (thread: SidebarThreadSummary, pinned: boolean) => void;
   readonly onSettle: (thread: SidebarThreadSummary) => void;
   readonly onUnsettle: (thread: SidebarThreadSummary) => void;
   readonly onSnooze: (thread: SidebarThreadSummary, until: string) => void;
   readonly onUnsnooze: (thread: SidebarThreadSummary) => void;
+  readonly sortable?: {
+    readonly attributes: ReturnType<typeof useSortable>["attributes"];
+    readonly isDragging: boolean;
+    readonly listeners: ReturnType<typeof useSortable>["listeners"];
+    readonly setNodeRef: ReturnType<typeof useSortable>["setNodeRef"];
+    readonly style: CSSProperties;
+  };
 }
 
 function fourHoursFromNow(): string {
@@ -194,6 +205,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   projectCwd,
   variant,
   active,
+  pinned,
   snoozed,
   settled,
   settleBlocked,
@@ -203,10 +215,12 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   providerEntry,
   onDismissAgentRun,
   onOpen,
+  onSetPinned,
   onSettle,
   onUnsettle,
   onSnooze,
   onUnsnooze,
+  sortable,
 }: SidebarV2RowProps) {
   const prewarmThreadKey = getSidebarThreadPrewarmKey(thread);
   const raisedHand = threadRaisedHandWhileSnoozed(thread);
@@ -298,6 +312,13 @@ export const SidebarV2Row = memo(function SidebarV2Row({
     },
     [onSettle, onUnsettle, settled, thread],
   );
+  const handlePinnedToggle = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      onSetPinned(thread, !pinned);
+    },
+    [onSetPinned, pinned, thread],
+  );
   const handlePrClick = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
       if (prStatus) openPullRequestLink(event, prStatus.url);
@@ -320,6 +341,18 @@ export const SidebarV2Row = memo(function SidebarV2Row({
 
   const hoverActions = (
     <div className="absolute right-2 top-1.5 hidden items-center gap-0.5 group-hover/thread:flex group-focus-within/thread:flex">
+      {!isVirtualAgentRun ? (
+        <Button
+          aria-label={`${pinned ? "Unpin" : "Pin"} ${thread.title}`}
+          aria-pressed={pinned}
+          onClick={handlePinnedToggle}
+          size="icon-xs"
+          title={pinned ? "Unpin thread" : "Pin thread"}
+          variant="ghost"
+        >
+          <PinIcon className={pinned ? "fill-current" : undefined} />
+        </Button>
+      ) : null}
       {dismissibleAgentRun ? (
         <Button
           aria-label={`Archive ${thread.title}`}
@@ -463,7 +496,14 @@ export const SidebarV2Row = memo(function SidebarV2Row({
 
   return (
     <SidebarMenuItem
-      className="group/thread [contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]"
+      ref={sortable?.setNodeRef}
+      style={sortable?.style}
+      {...sortable?.attributes}
+      {...sortable?.listeners}
+      className={cn(
+        "group/thread [contain-intrinsic-size:auto_3.5rem] [content-visibility:auto]",
+        sortable?.isDragging && "z-20 opacity-80",
+      )}
       data-thread-prewarm-key={prewarmThreadKey}
     >
       <Tooltip>
