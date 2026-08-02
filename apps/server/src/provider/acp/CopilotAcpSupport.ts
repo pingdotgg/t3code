@@ -164,6 +164,7 @@ export function buildCopilotMcpServerOptions(
   cwd: string,
   threadId: string | undefined,
   cliBaseDir: string | undefined,
+  runtimeMode?: RuntimeMode,
   env: NodeJS.ProcessEnv = process.env,
   runtime: {
     readonly execPath: string;
@@ -187,11 +188,13 @@ export function buildCopilotMcpServerOptions(
   );
   toolsetNames.add("create_isolated_workspace");
   toolsetNames.add("switch_workspace");
+  toolsetNames.add("create_nested_thread");
   return {
     cwd,
     toolsets: toolsetNames,
     threadId,
     cliCommand: command,
+    ...(runtimeMode ? { runtimeMode } : {}),
     ...(commandArgsPrefix.length > 0 ? { cliArgsPrefix: commandArgsPrefix } : {}),
     ...(cliBaseDir ? { cliBaseDir } : {}),
   };
@@ -312,7 +315,12 @@ export const makeCopilotAcpRuntime = (
       Effect.tryPromise({
         try: () =>
           startMcpHttpServer(
-            buildCopilotMcpServerOptions(input.cwd, input.threadId, input.baseDir),
+            buildCopilotMcpServerOptions(
+              input.cwd,
+              input.threadId,
+              input.baseDir,
+              input.runtimeMode,
+            ),
           ),
         catch: (cause) =>
           new EffectAcpErrors.AcpSpawnError({

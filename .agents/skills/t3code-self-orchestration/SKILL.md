@@ -5,28 +5,21 @@ description: Coordinates T3 Code from within T3 Code by creating helper threads,
 
 # T3 Code Self-Orchestration
 
-Use the T3 CLI as a control plane for running work in other T3 Code threads.
+Use T3's authenticated MCP control plane for running work in other T3 Code threads.
 
 ## Quick start
 
-```sh
-t3 project list
-t3 chat new \
-  --project <project> \
-  --parent "$T3_MCP_THREAD_ID" \
-  --provider copilot \
-  --model <gpt-5.6-sol|gpt-5.6-terra> \
-  --reasoning <low|medium|high|xhigh> \
-  --title "<delegated task>" \
-  "<complete prompt>"
-t3 chat show <thread-id> --messages
-```
+Call `create_nested_thread` with the project, title, prompt, model, and reasoning level.
+The tool supplies the authenticated current thread as the parent and routes through the
+correct flavor-scoped CLI.
 
 ## Delegation workflow
 
-1. Resolve the project with `t3 project list` unless the user provided a project ID/path.
+1. Resolve the project from current context or with the flavor-scoped CLI when necessary.
 2. Choose `gpt-5.6-sol` or `gpt-5.6-terra` and a reasoning level based on the delegated task.
-3. Create a nested helper thread with `t3 chat new --project <project> --parent "$T3_MCP_THREAD_ID" --provider copilot --model <model> --reasoning <level> --title "<short task>" "<full prompt>"`.
+3. Create a nested helper thread with the `create_nested_thread` MCP tool. Never use
+   terminal-based `t3 chat new` for delegation: shell environment does not carry an
+   authoritative current thread id and a globally installed CLI can target another app flavor.
 4. Capture the returned `threadId`.
 5. Monitor only when needed:
    - Use `t3 chat show <threadId> --messages` for a point-in-time result and to confirm
@@ -38,10 +31,10 @@ t3 chat show <thread-id> --messages
 
 ## Model selection
 
-- Always use the GitHub Copilot provider with `--provider copilot`; never use the Codex provider for helper threads.
+- `create_nested_thread` always uses the GitHub Copilot provider; never use a terminal CLI fallback.
 - Choose between `gpt-5.6-sol` and `gpt-5.6-terra` by assessing the task rather than using a fixed default.
 - Choose `low`, `medium`, `high`, or `xhigh` reasoning based on the task's complexity, ambiguity, and risk.
-- Pass the selected model and reasoning explicitly to every `t3 chat new` invocation.
+- Pass the selected model and reasoning explicitly to every `create_nested_thread` call.
 
 ## Prompting helper threads
 
@@ -94,6 +87,6 @@ When consolidating, distinguish:
 
 - Keep destructive operations in the current controlling thread unless explicitly delegated.
 - Prefer creating a new helper thread over reusing an unrelated old thread.
-- Keep helper threads nested under the controlling thread with `--parent "$T3_MCP_THREAD_ID"`.
+- Create helper threads with `create_nested_thread` so nesting and flavor routing are enforced.
 - Stop or interrupt helper threads only when the user asks or the task is clearly obsolete.
 - Do not hide helper failures; report blocked or inconclusive results plainly.

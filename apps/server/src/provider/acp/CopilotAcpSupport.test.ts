@@ -105,6 +105,7 @@ describe("buildCopilotAcpSpawnInput", () => {
           "/tmp/project",
           "thread-1",
           "/tmp/t3-dev",
+          "approval-required",
           {},
           {
             execPath: "/usr/bin/node",
@@ -113,11 +114,16 @@ describe("buildCopilotAcpSpawnInput", () => {
         ),
       ).toEqual({
         cwd: "/tmp/project",
-        toolsets: new Set(["create_isolated_workspace", "switch_workspace"]),
+        toolsets: new Set([
+          "create_isolated_workspace",
+          "switch_workspace",
+          "create_nested_thread",
+        ]),
         threadId: "thread-1",
         cliCommand: "/usr/bin/node",
         cliArgsPrefix: ["/app/bin.mjs"],
         cliBaseDir: "/tmp/t3-dev",
+        runtimeMode: "approval-required",
       });
 
       expect(
@@ -140,11 +146,17 @@ describe("buildCopilotAcpSpawnInput", () => {
 
     it("builds env-gated T3 MCP HTTP server options", () => {
       expect(
-        buildCopilotMcpServerOptions("/tmp/project", "thread-1", "/tmp/t3-dev", {
-          T3_COPILOT_ACP_ENABLE_MCP: "1",
-          T3_COPILOT_ACP_MCP_COMMAND: "t3-dev",
-          T3_COPILOT_ACP_MCP_TOOLSETS: "read_file,search_files",
-        }),
+        buildCopilotMcpServerOptions(
+          "/tmp/project",
+          "thread-1",
+          "/tmp/t3-dev",
+          "auto-accept-edits",
+          {
+            T3_COPILOT_ACP_ENABLE_MCP: "1",
+            T3_COPILOT_ACP_MCP_COMMAND: "t3-dev",
+            T3_COPILOT_ACP_MCP_TOOLSETS: "read_file,search_files",
+          },
+        ),
       ).toEqual({
         cwd: "/tmp/project",
         toolsets: new Set([
@@ -152,10 +164,12 @@ describe("buildCopilotAcpSpawnInput", () => {
           "search_files",
           "create_isolated_workspace",
           "switch_workspace",
+          "create_nested_thread",
         ]),
         threadId: "thread-1",
         cliCommand: "t3-dev",
         cliBaseDir: "/tmp/t3-dev",
+        runtimeMode: "auto-accept-edits",
       });
     });
 

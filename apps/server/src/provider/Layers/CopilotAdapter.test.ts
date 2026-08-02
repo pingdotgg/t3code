@@ -1562,7 +1562,13 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       };
       assert.deepEqual(
         body.result?.tools?.map((tool) => tool.name),
-        ["read_file", "search_files", "create_isolated_workspace", "switch_workspace"],
+        [
+          "read_file",
+          "search_files",
+          "create_isolated_workspace",
+          "switch_workspace",
+          "create_nested_thread",
+        ],
       );
       assert.deepEqual(
         mcpServers?.find((server) => server.name === "t3-code"),
