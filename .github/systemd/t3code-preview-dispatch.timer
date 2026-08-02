@@ -1,0 +1,12 @@
+[Unit]
+Description=Check daily for a new personal T3 Code Android preview
+
+[Timer]
+OnCalendar=*-*-* 05:47:00 Europe/Dublin
+Persistent=true
+RandomizedDelaySec=20min
+AccuracySec=1min
+Unit=t3code-preview-dispatch.service
+
+[Install]
+WantedBy=timers.target
