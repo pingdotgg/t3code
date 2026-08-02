@@ -1071,6 +1071,111 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("runs title generation beside critical work while serializing each lane", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-title-effect-lane");
+      const threadId = ThreadId.make("thread:foundation-title-effect-lane");
+      const titleEffectId = "effect:foundation-title-effect-lane:a-title";
+      const providerEffectId = "effect:foundation-title-effect-lane:b-provider";
+      const nextTitleEffectId = "effect:foundation-title-effect-lane:c-title";
+      const nextCriticalEffectId = "effect:foundation-title-effect-lane:d-critical";
+      yield* outbox.enqueue([
+        {
+          id: titleEffectId,
+          commandId,
+          threadId,
+          request: {
+            type: "thread-title.generate",
+            kind: {
+              type: "initial",
+              messageId: MessageId.make("message:foundation-title-effect-lane"),
+            },
+          },
+        },
+        {
+          id: providerEffectId,
+          commandId,
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-title-effect-lane"),
+          },
+        },
+        {
+          id: nextTitleEffectId,
+          commandId,
+          threadId,
+          request: { type: "thread-title.generate", kind: { type: "regenerate" } },
+        },
+        {
+          id: nextCriticalEffectId,
+          commandId,
+          threadId,
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+
+      const title = yield* outbox.claimNext({
+        workerId: "title-lane-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(title));
+      if (Option.isNone(title)) return;
+      assert.equal(title.value.id, titleEffectId);
+
+      const provider = yield* outbox.claimNext({
+        workerId: "critical-lane-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(provider));
+      if (Option.isNone(provider)) return;
+      assert.equal(provider.value.id, providerEffectId);
+
+      assert.isTrue(
+        Option.isNone(
+          yield* outbox.claimNext({
+            workerId: "blocked-lanes-worker",
+            leaseDurationMs: 30_000,
+          }),
+        ),
+      );
+
+      yield* outbox.succeed({
+        effectId: provider.value.id,
+        workerId: "critical-lane-worker",
+      });
+      const nextCritical = yield* outbox.claimNext({
+        workerId: "critical-lane-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(nextCritical));
+      if (Option.isNone(nextCritical)) return;
+      assert.equal(nextCritical.value.id, nextCriticalEffectId);
+      yield* outbox.succeed({
+        effectId: nextCritical.value.id,
+        workerId: "critical-lane-worker",
+      });
+
+      yield* outbox.succeed({
+        effectId: title.value.id,
+        workerId: "title-lane-worker",
+      });
+      const nextTitle = yield* outbox.claimNext({
+        workerId: "title-lane-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(nextTitle));
+      if (Option.isSome(nextTitle)) {
+        assert.equal(nextTitle.value.id, nextTitleEffectId);
+        yield* outbox.succeed({
+          effectId: nextTitle.value.id,
+          workerId: "title-lane-worker",
+        });
+      }
+    }),
+  );
+
   it.effect("ignores deadlines blocked by a running effect on the same thread", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutboxV2;

@@ -273,6 +273,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    // Title generation is correlated metadata work, so it has its own
+    // per-thread lane and cannot delay provider lifecycle effects.
     const claimableCandidatePredicate = (availableBefore?: string) =>
       sql`
         ${
@@ -286,6 +288,17 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           FROM orchestration_v2_effect_outbox AS active
           WHERE active.thread_id = candidate.thread_id
             AND active.status = 'running'
+            AND (
+              (
+                candidate.effect_type = 'thread-title.generate'
+                AND active.effect_type = 'thread-title.generate'
+              )
+              OR
+              (
+                candidate.effect_type != 'thread-title.generate'
+                AND active.effect_type != 'thread-title.generate'
+              )
+            )
         )
       `;
 
