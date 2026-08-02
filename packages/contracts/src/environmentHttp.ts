@@ -26,6 +26,7 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { McpServerInventory } from "./mcpInventory.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -489,6 +490,14 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentMcpServersHttpApi extends HttpApiGroup.make("mcpServers").add(
+  HttpApiEndpoint.get("inventory", "/api/mcp-servers", {
+    headers: OptionalBearerHeaders,
+    success: McpServerInventory,
+    error: EnvironmentOrchestrationSnapshotErrors,
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -554,4 +563,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentMcpServersHttpApi)
   .add(EnvironmentConnectHttpApi) {}
