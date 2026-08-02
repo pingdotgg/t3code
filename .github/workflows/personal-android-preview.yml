@@ -21,6 +21,7 @@ permissions:
 
 env:
   APK_NAME: t3-code-preview.apk
+  APP_VARIANT: preview
   # Pin the reviewed personal feature set while still rebasing it onto current
   # upstream source. Rebase drops patch-equivalent commits as upstream merges
   # them without dropping changes that remain personal to this build.
@@ -193,7 +194,7 @@ jobs:
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - id: apk
-        name: Verify package, version, and signature
+        name: Verify package, embedded config, version, and signature
         if: steps.source.outputs.should_build == 'true'
         env:
           EXPECTED_VERSION_CODE: ${{ steps.source.outputs.version_code }}
@@ -219,6 +220,21 @@ jobs:
 
           if [[ "$version_code" != "$EXPECTED_VERSION_CODE" ]]; then
             echo "::error::Unexpected version code: ${version_code}"
+            exit 1
+          fi
+
+          manifest="$(unzip -p "$apk" assets/app.manifest)"
+          if ! jq -e \
+            --arg package_name "$package_name" \
+            --arg update_api "$T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL" \
+            --arg environment_host "$T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST" \
+            '.name == "T3 Code Preview"
+              and .android.package == $package_name
+              and .extra.appVariant == "preview"
+              and .extra.personalPreviewUpdates.latestReleaseApiUrl == $update_api
+              and .extra.personalPreviewDefaultEnvironmentHost == $environment_host' \
+            <<<"$manifest" >/dev/null; then
+            echo "::error::The embedded app manifest is not the configured personal preview."
             exit 1
           fi
 
