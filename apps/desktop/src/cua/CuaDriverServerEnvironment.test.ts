@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  configureCuaDriverServerEnvironment,
   disableCuaDriverServerEnvironment,
   resolveEmbeddedDriverPath,
   T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV,
@@ -43,6 +45,21 @@ describe("cua-driver server environment", () => {
     expect(Option.isNone(resolveEmbeddedDriverPath({}))).toBe(true);
     expect(Option.isNone(resolveEmbeddedDriverPath({ T3CODE_CUA_DRIVER_PATH: "  " }))).toBe(true);
   });
+
+  it.effect("loads the packaged module from the asar archive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* configureCuaDriverServerEnvironment(
+          "com.t3tools.t3code",
+          "/Applications/T3 Code.app/Contents/Resources",
+        );
+
+        expect(process.env[T3CODE_CUA_DRIVER_MODULE_URL_ENV]).toBe(
+          "file:///Applications/T3%20Code.app/Contents/Resources/app.asar/node_modules/@trycua/cua-driver/dist/embedded.js",
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("prevents inherited configuration from bypassing the desktop opt-in", () => {
     const names = [

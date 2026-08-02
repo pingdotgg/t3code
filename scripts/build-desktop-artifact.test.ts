@@ -527,6 +527,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.deepStrictEqual(config.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
         { from: "apps/desktop/prod-resources/cua-driver", to: "cua-driver" },
       ]);
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");

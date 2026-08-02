@@ -1617,6 +1617,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "mac") {
     buildConfig.extraResources = [
+      ...DESKTOP_EXTRA_RESOURCES,
       { from: "apps/desktop/prod-resources/cua-driver", to: "cua-driver" },
     ];
     buildConfig.mac = {
