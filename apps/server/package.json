@@ -21,7 +21,7 @@
     "start": "node dist/bin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run test:parallel && pnpm run test:serial",
-    "test:parallel": "vp test run --fileParallelism --maxWorkers=3 --exclude src/server.test.ts",
+    "test:parallel": "vp test run --fileParallelism --maxWorkers=3 --exclude src/server.test.ts --exclude integration/directConnectSmoke.integration.test.ts",
     "test:process-reaper": "vp test run src/server.test.ts src/provider/Layers/ClaudeAdapter.test.ts src/provider/Layers/ProviderSessionDirectory.test.ts src/provider/Layers/ProviderSessionReaper.test.ts src/provider/Layers/CodexAdapter.test.ts",
     "test:serial": "vp test run src/server.test.ts --no-file-parallelism"
   },
@@ -48,6 +48,7 @@
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
+    "playwright": "^1.58.2",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:",

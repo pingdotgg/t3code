@@ -56,14 +56,13 @@ function pairingHttpLayer(
       );
     }
 
-    if (url.endsWith("/oauth/token")) {
+    if (url.endsWith("/api/auth/bootstrap/bearer")) {
       return Promise.resolve(
         Response.json({
-          access_token: "bearer-token",
-          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-          token_type: "Bearer",
-          expires_in: 3600,
-          scope: AuthStandardClientScopes.join(" "),
+          authenticated: true,
+          sessionMethod: "bearer-session-token",
+          expiresAt: "2026-08-01T01:00:00.000Z",
+          sessionToken: "bearer-token",
         }),
       );
     }
@@ -103,18 +102,17 @@ describe("connection onboarding", () => {
       });
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
-        "https://remote.example.test/oauth/token",
+        "https://remote.example.test/api/auth/bootstrap/bearer",
       ]);
 
-      const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
+      const tokenRequest = calls.find((call) => call.url.endsWith("/api/auth/bootstrap/bearer"));
       const tokenBody =
         tokenRequest?.init.body instanceof Uint8Array
           ? new TextDecoder().decode(tokenRequest.init.body)
           : String(tokenRequest?.init.body);
-      const tokenParams = new URLSearchParams(tokenBody);
-      expect(tokenParams.get("subject_token")).toBe("pairing-token");
-      expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
-      expect(tokenParams.get("client_label")).toBe("T3 Code Test");
+      expect(JSON.parse(tokenBody)).toEqual({
+        credential: "pairing-token",
+      });
     }),
   );
 

@@ -4,8 +4,8 @@ import {
   exchangeRemoteDpopAccessToken,
   type RemoteEnvironmentAuthError,
   resolveRemoteDpopWebSocketConnectionUrl,
-  resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
+import { resolveRemoteWebSocketConnectionUrl } from "../remote.ts";
 import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";

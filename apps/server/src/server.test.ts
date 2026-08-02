@@ -3,6 +3,7 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
+  AuthStandardClientScopes,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -31,8 +32,18 @@ import {
   WsRpcGroup,
   EditorId,
 } from "@t3tools/contracts";
+import { preparePairingRegistration } from "../../../packages/client-runtime/src/connection/onboarding.ts";
+import { ClientPresentation } from "../../../packages/client-runtime/src/platform/capabilities.ts";
+import { remoteHttpClientLayer } from "../../../packages/client-runtime/src/rpc/http.ts";
+import { resolveRemoteWebSocketConnectionUrl as resolveClientRuntimeWebSocketUrl } from "../../../packages/client-runtime/src/remote.ts";
+import { WsTransport } from "../../../packages/client-runtime/src/wsTransport.ts";
+import {
+  bootstrapRemoteBearerSession as bootstrapBrowserRemoteBearerSession,
+  resolveRemoteWebSocketConnectionUrl as resolveBrowserRemoteWebSocketUrl,
+} from "../../web/src/environments/remote/api.ts";
+import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
 import { FIX_REVIEW_ISSUES_WORKFLOW_ID } from "@t3tools/shared/workflows/fixReviewIssues";
-import { assert, it } from "@effect/vitest";
+import { assert, it as rootIt } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import {
   Deferred,
@@ -960,7 +971,7 @@ const readNodeWebSocketJson = (socket: NodeWsSocket) =>
 
 const decodeMobileServerMessage = Schema.decodeUnknownSync(MobileServerMessage);
 
-it.layer(NodeServices.layer)("server router seam", (it) => {
+rootIt.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("serves static index content for GET / when staticDir is configured", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1705,6 +1716,190 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
         assert.equal(response.auth.policy, "desktop-managed-local");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  rootIt.skip("legacy direct-connect harness replaced by the production integration smoke", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeOrchestrationIntegrationHarness().pipe(
+        Effect.provide(NodeServices.layer),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: harness.engine.getReadModel,
+            readEvents: harness.engine.readEvents,
+            dispatch: harness.engine.dispatch,
+            streamDomainEvents: harness.engine.streamDomainEvents,
+          },
+          projectionSnapshotQuery: {
+            getSnapshot: harness.snapshotQuery.getSnapshot,
+            getShellSnapshot: harness.snapshotQuery.getShellSnapshot,
+            getSnapshotSequence: harness.snapshotQuery.getSnapshotSequence,
+            getThreadDetailById: harness.snapshotQuery.getThreadDetailById,
+            getThreadShellById: harness.snapshotQuery.getThreadShellById,
+          },
+        },
+      });
+
+      const origin = yield* getHttpServerUrl();
+      const wsOrigin = origin.replace(/^http/u, "ws");
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const createPairingCredential = Effect.gen(function* () {
+        const response = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: ownerCookie },
+        });
+        const body = (yield* response.json) as { readonly credential: string };
+        assert.equal(response.status, 200);
+        return body.credential;
+      });
+
+      const browserCredential = yield* createPairingCredential;
+      const browserAccess = yield* Effect.promise(() =>
+        bootstrapBrowserRemoteBearerSession({
+          httpBaseUrl: origin,
+          credential: browserCredential,
+        }),
+      );
+      const browserWsUrl = yield* Effect.promise(() =>
+        resolveBrowserRemoteWebSocketUrl({
+          httpBaseUrl: origin,
+          wsBaseUrl: wsOrigin,
+          bearerToken: browserAccess.sessionToken,
+        }),
+      );
+      const browserRpcUrl = new URL(browserWsUrl);
+      browserRpcUrl.pathname = "/ws";
+      const browserConfig = yield* Effect.scoped(
+        withWsRpcClient(browserRpcUrl.toString(), (client) =>
+          client[WS_METHODS.serverGetConfig]({}),
+        ),
+      );
+      assert.equal(
+        browserConfig.environment.environmentId,
+        testEnvironmentDescriptor.environmentId,
+      );
+
+      const mobileCredential = yield* createPairingCredential;
+      const registration = yield* preparePairingRegistration({
+        pairingUrl: `${origin}/#token=${encodeURIComponent(mobileCredential)}`,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            remoteHttpClientLayer(globalThis.fetch),
+            Layer.succeed(
+              ClientPresentation,
+              ClientPresentation.of({
+                metadata: {
+                  label: "Direct Connect Smoke Mobile",
+                  deviceType: "mobile",
+                  os: "Test",
+                },
+                scopes: AuthStandardClientScopes,
+              }),
+            ),
+          ),
+        ),
+      );
+      const httpSnapshot = yield* getLiveOrchestrationShellSnapshot({
+        url: Option.some(new URL(registration.profile.httpBaseUrl).origin),
+        token: Option.some(registration.credential.token),
+        baseDir: Option.none(),
+      });
+      assert.equal(httpSnapshot.snapshotSequence, 0);
+      assert.equal(httpSnapshot.projects.length, 0);
+      const unauthorizedSnapshot = yield* HttpClient.get("/api/orchestration/shell-snapshot");
+      assert.equal(unauthorizedSnapshot.status, 401);
+      const pairedSessionResponse = yield* HttpClient.get("/api/auth/session", {
+        headers: { authorization: `Bearer ${registration.credential.token}` },
+      });
+      const pairedSessionState = (yield* pairedSessionResponse.json) as {
+        readonly authenticated: boolean;
+      };
+      assert.equal(pairedSessionResponse.status, 200);
+      assert.equal(pairedSessionState.authenticated, true);
+      const pairedPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { authorization: `Bearer ${registration.credential.token}` },
+      });
+      assert.equal(pairedPairingResponse.status, 403);
+
+      let wsTokenIssueCount = 0;
+      let reconnectCount = 0;
+      const transport = new WsTransport(
+        async () => {
+          wsTokenIssueCount += 1;
+          return await Effect.runPromise(
+            resolveClientRuntimeWebSocketUrl({
+              httpBaseUrl: registration.profile.httpBaseUrl,
+              wsBaseUrl: registration.profile.wsBaseUrl,
+              bearerToken: registration.credential.token,
+            }).pipe(Effect.provide(remoteHttpClientLayer(globalThis.fetch))),
+          );
+        },
+        undefined,
+        {
+          onBeforeReconnect: () => {
+            reconnectCount += 1;
+          },
+        },
+      );
+      const initialSnapshot = yield* Deferred.make<void>();
+      const receivedItems: Array<{ readonly kind: string; readonly sequence: number }> = [];
+      const unsubscribe = transport.subscribe(
+        (client) => client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
+        (item) => {
+          receivedItems.push({
+            kind: item.kind,
+            sequence: item.kind === "snapshot" ? item.snapshot.snapshotSequence : item.sequence,
+          });
+          if (item.kind === "snapshot") {
+            Effect.runFork(Deferred.succeed(initialSnapshot, undefined));
+          }
+        },
+        { tag: ORCHESTRATION_WS_METHODS.subscribeShell },
+      );
+      yield* Deferred.await(initialSnapshot).pipe(Effect.timeout("5 seconds"));
+
+      const createdAt = "2026-08-01T00:00:01.000Z";
+      const dispatchResult = yield* Effect.promise(() =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "project.create",
+            commandId: CommandId.make("cmd-direct-connect-project-create"),
+            projectId: defaultProjectId,
+            title: "Direct Connect Project",
+            workspaceRoot: harness.workspaceDir,
+            defaultModelSelection,
+            createdAt,
+          }),
+        ),
+      ).pipe(Effect.timeout("5 seconds"));
+      assert.equal(dispatchResult.sequence, 1);
+      yield* Effect.sleep("100 millis");
+
+      const persistedSnapshot = yield* harness.snapshotQuery.getShellSnapshot();
+      assert.equal(persistedSnapshot.snapshotSequence, 1);
+      assert.equal(persistedSnapshot.projects[0]?.title, "Direct Connect Project");
+      yield* Effect.promise(() => transport.reconnect());
+      yield* Effect.promise(() => transport.reconnect());
+      yield* Effect.sleep("300 millis");
+      const reconciledSnapshot = yield* Effect.promise(() =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.getShellSnapshot]({})),
+      ).pipe(Effect.timeout("5 seconds"));
+      assert.equal(reconciledSnapshot.snapshotSequence, 1);
+      assert.equal(reconciledSnapshot.projects[0]?.title, "Direct Connect Project");
+      unsubscribe();
+      yield* Effect.promise(() => transport.dispose()).pipe(Effect.timeout("5 seconds"));
+      yield* harness.dispose;
+      assert.equal(wsTokenIssueCount, 2);
+      assert.equal(reconnectCount, 2);
+      assert.deepEqual(receivedItems, [
+        { kind: "snapshot", sequence: 0 },
+        { kind: "snapshot", sequence: 1 },
+      ]);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, NodeServices.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("loads a large CLI shell snapshot without reading the full projection", () =>

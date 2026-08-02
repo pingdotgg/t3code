@@ -27,6 +27,19 @@ const makeTraceId = () => crypto.randomUUID().replaceAll("-", "");
 const sessionScopes = (role: string): ReadonlySet<AuthEnvironmentScope> =>
   new Set(role === "owner" ? AuthAdministrativeScopes : AuthStandardClientScopes);
 
+export const requireSessionScope = (
+  role: string,
+  requiredScope: AuthEnvironmentScope,
+): Effect.Effect<void, AuthError> =>
+  sessionScopes(role).has(requiredScope)
+    ? Effect.void
+    : Effect.fail(
+        new AuthError({
+          message: `Session is missing required scope: ${requiredScope}.`,
+          status: 403,
+        }),
+      );
+
 const toEnvironmentAuthError = (error: AuthError) =>
   error.status === 401
     ? new EnvironmentAuthInvalidError({

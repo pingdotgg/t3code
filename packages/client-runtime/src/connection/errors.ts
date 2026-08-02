@@ -2,6 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayProtectedError } from "@t3tools/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
+import type { RemoteEnvironmentAuthError as LegacyRemoteEnvironmentAuthError } from "../remote.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -110,7 +111,7 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
 }
 
 export function mapRemoteEnvironmentError(
-  error: RemoteEnvironmentAuthError,
+  error: RemoteEnvironmentAuthError | LegacyRemoteEnvironmentAuthError,
 ): ConnectionAttemptError {
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
@@ -140,6 +141,21 @@ export function mapRemoteEnvironmentError(
     case "RemoteEnvironmentAuthFetchError":
       return new ConnectionTransientError({
         reason: "network",
+        detail: error.message,
+      });
+    case "RemoteEnvironmentAuthHttpError":
+      return error.status === 401
+        ? new ConnectionBlockedError({
+            reason: "authentication",
+            detail: "The environment credential is invalid.",
+          })
+        : new ConnectionTransientError({
+            reason: "remote-unavailable",
+            detail: error.message,
+          });
+    case "RemoteEnvironmentAuthResponseReadError":
+      return new ConnectionTransientError({
+        reason: "remote-unavailable",
         detail: error.message,
       });
     case "EnvironmentInternalError":

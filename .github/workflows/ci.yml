@@ -64,6 +64,9 @@ jobs:
       - name: Browser test
         run: pnpm --dir apps/web test:browser
 
+      - name: Direct Connect smoke test
+        run: pnpm test:direct-connect-smoke
+
       - name: Build desktop pipeline
         run: pnpm build:desktop
 
