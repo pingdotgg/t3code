@@ -173,6 +173,72 @@ describe("decider queued turns", () => {
     });
   });
 
+  it("rejects a handoff to another active thread's canonical worktree alias", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-handoff");
+    const ownerThreadId = asThreadId("thread-worktree-owner");
+    const readModel = await makeThreadReadModel({ now, threadId });
+    const withOwner = await Effect.runPromise(
+      projectEvent(readModel, {
+        sequence: 2,
+        eventId: asEventId("evt-worktree-owner"),
+        aggregateKind: "thread",
+        aggregateId: ownerThreadId,
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-worktree-owner"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-worktree-owner"),
+        metadata: {},
+        payload: {
+          threadId: ownerThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Owner",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          pendingRuntimeMode: null,
+          branch: "feature/owner",
+          worktreePath: "/tmp/worktree/../shared-worktree",
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.workspace.handoff",
+            commandId: CommandId.make("cmd-workspace-handoff-alias"),
+            threadId,
+            branch: "feature/handoff",
+            worktreePath: "/tmp/shared-worktree",
+            markerMessageId: MessageId.make("message-handoff-alias-marker"),
+            continuation: {
+              id: asQueuedTurnId("queued-turn-handoff-alias"),
+              threadId,
+              message: {
+                messageId: asMessageId("message-handoff-alias"),
+                role: "user",
+                text: "continue in workspace",
+                attachments: [],
+              },
+              runtimeMode: "approval-required",
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              createdAt: now,
+              updatedAt: now,
+              failedAt: null,
+              failureMessage: null,
+            },
+          },
+          readModel: withOwner,
+        }),
+      ),
+    ).rejects.toThrow("already bound to active thread");
+  });
+
   it("derives the continuation origin instead of trusting the caller", async () => {
     const now = "2026-03-01T00:00:00.000Z";
     const threadId = asThreadId("thread-handoff");

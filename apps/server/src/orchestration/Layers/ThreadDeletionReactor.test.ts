@@ -7,8 +7,8 @@ import {
 import { Cause, Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { findCanonicalActiveWorktreeOwner } from "../worktreeOwnership.ts";
 import {
-  findCanonicalActiveWorktreeOwner,
   logCleanupCauseUnlessInterrupted,
   processAfterWorktreeReservation,
   runAfterThreadRuntimeTeardown,
@@ -171,6 +171,23 @@ describe("logCleanupCauseUnlessInterrupted", () => {
       await expect(
         Effect.runPromise(
           findCanonicalActiveWorktreeOwner(readModel, deletedThreadId, worktreePath),
+        ),
+      ).resolves.toEqual(Option.none());
+    });
+
+    it("ignores archived threads", async () => {
+      const archivedOwner = {
+        ...makeThread("thread-archived", worktreePath),
+        archivedAt: "2026-07-30T00:00:02.000Z",
+      };
+
+      await expect(
+        Effect.runPromise(
+          findCanonicalActiveWorktreeOwner(
+            makeReadModel([makeThread("thread-deleted", worktreePath), archivedOwner]),
+            deletedThreadId,
+            worktreePath,
+          ),
         ),
       ).resolves.toEqual(Option.none());
     });

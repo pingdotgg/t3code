@@ -2277,7 +2277,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-session-stop-")))(
   "OrchestrationProjectionPipeline latest turn session state",
   (it) => {
-    it.effect("reopens a completed latest turn when the provider session resumes it", () =>
+    it.effect("keeps a turn running when an assistant segment completes", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -2361,30 +2361,6 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-ses
             streaming: false,
             createdAt: "2026-02-26T16:00:02.000Z",
             updatedAt: "2026-02-26T16:00:02.000Z",
-          },
-        });
-
-        yield* appendAndProject({
-          type: "thread.session-set",
-          eventId: EventId.make("evt-session-resume-running-again"),
-          aggregateKind: "thread",
-          aggregateId: threadId,
-          occurredAt: "2026-02-26T16:00:03.000Z",
-          commandId: CommandId.make("cmd-session-resume-running-again"),
-          causationEventId: null,
-          correlationId: CorrelationId.make("cmd-session-resume-running-again"),
-          metadata: {},
-          payload: {
-            threadId,
-            session: {
-              threadId,
-              status: "running",
-              providerName: "copilot",
-              runtimeMode: "full-access",
-              activeTurnId: turnId,
-              lastError: null,
-              updatedAt: "2026-02-26T16:00:03.000Z",
-            },
           },
         });
 

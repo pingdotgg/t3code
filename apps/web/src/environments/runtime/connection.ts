@@ -19,6 +19,7 @@ export interface EnvironmentConnection {
   readonly knownEnvironment: KnownEnvironment;
   readonly client: WsRpcClient;
   readonly ensureBootstrapped: () => Promise<void>;
+  readonly refreshShellSnapshot: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
   readonly dispose: () => Promise<void>;
 }
@@ -217,6 +218,16 @@ export function createEnvironmentConnection(
     knownEnvironment: input.knownEnvironment,
     client: input.client,
     ensureBootstrapped: () => (fatalError ? Promise.reject(fatalError) : bootstrapGate.wait()),
+    refreshShellSnapshot: async () => {
+      if (fatalError) {
+        throw fatalError;
+      }
+      if (disposed) {
+        throw new Error(`Environment connection ${environmentId} is disposed.`);
+      }
+      const snapshot = await input.client.orchestration.getShellSnapshot();
+      input.syncShellSnapshot(snapshot, environmentId);
+    },
     reconnect: async () => {
       if (fatalError) {
         throw fatalError;

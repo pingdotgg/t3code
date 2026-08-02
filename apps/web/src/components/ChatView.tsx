@@ -54,6 +54,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary/context";
+import { readEnvironmentConnection } from "../environments/runtime";
 import { readEnvironmentApi } from "../environmentApi";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
@@ -233,6 +234,22 @@ import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
 import { FindInChatBar } from "./chat/FindInChatBar";
 import { useChatFind } from "./chat/useChatFind";
 import { isInsightActivity } from "../insights";
+
+async function ensureRoutableServerThread(threadRef: ScopedThreadRef): Promise<void> {
+  if (await waitForRoutableServerThread(threadRef)) {
+    return;
+  }
+
+  const connection = readEnvironmentConnection(threadRef.environmentId);
+  if (!connection) {
+    throw new Error(`No connection is available for environment ${threadRef.environmentId}.`);
+  }
+
+  await connection.refreshShellSnapshot();
+  if (!(await waitForRoutableServerThread(threadRef, 0))) {
+    throw new Error(`Thread ${threadRef.threadId} was not found after refreshing the workspace.`);
+  }
+}
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -3985,21 +4002,32 @@ function ChatViewBody(
           createdAt,
         });
       })
-      .then(() => {
-        return waitForRoutableServerThread(
-          scopeThreadRef(activeThread.environmentId, nextThreadId),
-        );
-      })
-      .then(() => {
-        // Signal that the plan sidebar should open on the new thread when enabled.
-        planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
-        return navigate({
-          to: "/$environmentId/$threadId",
-          params: {
-            environmentId: activeThread.environmentId,
-            threadId: nextThreadId,
-          },
-        });
+      .then(async () => {
+        try {
+          await ensureRoutableServerThread(
+            scopeThreadRef(activeThread.environmentId, nextThreadId),
+          );
+          // Signal that the plan sidebar should open on the new thread when enabled.
+          planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: {
+              environmentId: activeThread.environmentId,
+              threadId: nextThreadId,
+            },
+          });
+        } catch (err) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Implementation thread started but could not be opened",
+              description:
+                err instanceof Error
+                  ? err.message
+                  : "Open the implementation thread from the sidebar to continue.",
+            }),
+          );
+        }
       })
       .catch(async (err: unknown) => {
         await api.orchestration
@@ -4297,8 +4325,9 @@ function ChatViewBody(
             return;
           }
 
-          if (result.threadId !== activeThread.id) {
-            await waitForRoutableServerThread(scopeThreadRef(environmentId, result.threadId));
+          const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
+          await ensureRoutableServerThread(resultThreadRef);
+          if (!isServerThread || result.threadId !== activeThread.id) {
             await navigate({
               to: "/$environmentId/$threadId",
               params: {

@@ -6,9 +6,8 @@ import type {
   OrchestrationReadModel,
   TurnId,
 } from "@t3tools/contracts";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 
-import { canonicalizeWorktreePath } from "../git/worktreePaths.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
@@ -27,6 +26,7 @@ import {
 import { projectEvent } from "./projector.ts";
 import { collectActiveThreadSubtree } from "./threadHierarchy.ts";
 import { assistantTurnCount } from "./Utils.ts";
+import { findCanonicalActiveWorktreeOwner } from "./worktreeOwnership.ts";
 
 const FORK_TITLE_PREFIX = "Forked: ";
 /**
@@ -77,40 +77,12 @@ type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
 
-function findActiveWorktreeOwner(
-  readModel: OrchestrationReadModel,
-  threadId: ThreadId,
-  worktreePath: string,
-) {
-  return readModel.threads.find(
-    (thread) =>
-      thread.id !== threadId &&
-      thread.deletedAt === null &&
-      thread.archivedAt === null &&
-      thread.worktreePath === worktreePath,
-  );
-}
-
 const hasCanonicalActiveWorktreeOwner = Effect.fn("hasCanonicalActiveWorktreeOwner")(function* (
   readModel: OrchestrationReadModel,
   threadId: ThreadId,
   worktreePath: string,
 ) {
-  const canonicalWorktreePath = yield* Effect.promise(() => canonicalizeWorktreePath(worktreePath));
-  const activeWorktreePaths = readModel.threads.flatMap((thread) =>
-    thread.id !== threadId && thread.deletedAt === null && thread.worktreePath !== null
-      ? [thread.worktreePath]
-      : [],
-  );
-  const matches = yield* Effect.forEach(
-    activeWorktreePaths,
-    (activeWorktreePath) =>
-      Effect.promise(() => canonicalizeWorktreePath(activeWorktreePath)).pipe(
-        Effect.map((canonicalActivePath) => canonicalActivePath === canonicalWorktreePath),
-      ),
-    { concurrency: 4 },
-  );
-  return matches.some(Boolean);
+  return Option.isSome(yield* findCanonicalActiveWorktreeOwner(readModel, threadId, worktreePath));
 });
 
 function forkedTitle(title: string): string {
@@ -841,15 +813,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
 
-      const worktreeOwner = findActiveWorktreeOwner(
+      const worktreeOwner = yield* findCanonicalActiveWorktreeOwner(
         readModel,
         command.threadId,
         command.worktreePath,
       );
-      if (worktreeOwner !== undefined) {
+      if (Option.isSome(worktreeOwner)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `Worktree '${command.worktreePath}' is already bound to active thread '${worktreeOwner.id}'.`,
+          detail: `Worktree '${command.worktreePath}' is already bound to active thread '${worktreeOwner.value}'.`,
         });
       }
 

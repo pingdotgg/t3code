@@ -337,14 +337,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   const listHeader = useMemo(() => {
-    if (loadingOlder) {
+    const canLoadOlder = hasMoreOlder && onLoadOlder !== undefined;
+
+    if (loadingOlder && canLoadOlder) {
       return (
         <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
           Loading older history...
         </div>
       );
     }
-    if (hasMoreOlder) {
+    if (canLoadOlder) {
       return (
         <button
           type="button"

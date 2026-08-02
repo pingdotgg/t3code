@@ -919,6 +919,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
+        const binding = yield* directory.getBinding(input.threadId);
+        if (Option.isNone(binding)) {
+          return;
+        }
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.stopSession",

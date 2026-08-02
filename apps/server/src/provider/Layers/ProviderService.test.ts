@@ -1080,6 +1080,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       yield* provider.stopSession({ threadId: initial.threadId });
+      yield* provider.stopSession({ threadId: asThreadId("thread-without-binding") });
 
       const persistedAfterStop = yield* runtimeRepository.getByThreadId({
         threadId: initial.threadId,

@@ -486,10 +486,23 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         timelineEntries={[buildUserTimelineEntry("Hi")]}
         hasMoreOlder
+        onLoadOlder={vi.fn()}
       />,
     );
 
     expect(markup).toContain("Load older history");
+  });
+
+  it("hides the older activity control when no older page can be loaded", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hi")]}
+        hasMoreOlder
+      />,
+    );
+
+    expect(markup).not.toContain("Load older history");
   });
 
   it("shows when older activity history is loading", () => {
@@ -499,6 +512,7 @@ describe("MessagesTimeline", () => {
         timelineEntries={[buildUserTimelineEntry("Hi")]}
         hasMoreOlder
         loadingOlder
+        onLoadOlder={vi.fn()}
       />,
     );
 

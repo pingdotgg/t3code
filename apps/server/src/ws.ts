@@ -18,6 +18,7 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffStateError,
@@ -1043,6 +1044,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.mapEffect(toShellStreamEvent),
+                Stream.flatMap((event) =>
+                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                ),
+              );
+
+              // Attach live delivery before loading the snapshot so newly created
+              // workflow threads cannot disappear during startup or reconnect.
+              const liveBuffer = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+              yield* Effect.forkScoped(
+                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+              );
+
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.mapError(
                   (cause) =>
@@ -1053,19 +1068,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ),
               );
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                ),
-              );
-
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
                   snapshot,
                 }),
-                liveStream,
+                Stream.fromQueue(liveBuffer).pipe(
+                  Stream.filter((item) => item.sequence > snapshot.snapshotSequence),
+                ),
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1094,13 +1104,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
               );
 
-              const [threadDetail, snapshotSequence] = yield* Effect.all(
-                [
-                  projectionSnapshotQuery.getThreadDetailById(input.threadId),
-                  projectionSnapshotQuery.getSnapshotSequence(),
-                ],
-                { concurrency: "unbounded" },
-              ).pipe(
+              const [snapshotSequence, threadDetail] = yield* Effect.gen(function* () {
+                const sequence = yield* projectionSnapshotQuery.getSnapshotSequence();
+                const detail = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId);
+                return [sequence, detail] as const;
+              }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationGetSnapshotError({
@@ -1125,7 +1133,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     thread: threadDetail.value,
                   }),
                 }),
-                Stream.fromQueue(liveBuffer),
+                Stream.fromQueue(liveBuffer).pipe(
+                  Stream.filter(
+                    (item) => item.kind === "event" && item.event.sequence > snapshotSequence,
+                  ),
+                ),
               );
             }),
             { "rpc.aggregate": "orchestration" },

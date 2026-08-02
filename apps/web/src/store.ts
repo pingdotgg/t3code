@@ -1430,13 +1430,7 @@ function updateThreadMessageState(
       ? buildLatestTurn({
           previous: currentLatestTurn,
           turnId: event.payload.turnId,
-          state: event.payload.streaming
-            ? "running"
-            : currentLatestTurn?.state === "interrupted"
-              ? "interrupted"
-              : currentLatestTurn?.state === "error"
-                ? "error"
-                : "completed",
+          state: currentLatestTurn?.state ?? "running",
           requestedAt:
             currentLatestTurn?.turnId === event.payload.turnId
               ? currentLatestTurn.requestedAt
@@ -1446,11 +1440,10 @@ function updateThreadMessageState(
               ? (currentLatestTurn.startedAt ?? event.payload.createdAt)
               : event.payload.createdAt,
           sourceProposedPlan: currentTurnState?.pendingSourceProposedPlan,
-          completedAt: event.payload.streaming
-            ? currentLatestTurn?.turnId === event.payload.turnId
+          completedAt:
+            currentLatestTurn?.turnId === event.payload.turnId
               ? (currentLatestTurn.completedAt ?? null)
-              : null
-            : event.payload.updatedAt,
+              : null,
           assistantMessageId: event.payload.messageId,
         })
       : currentLatestTurn;

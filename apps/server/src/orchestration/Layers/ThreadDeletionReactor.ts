@@ -1,4 +1,4 @@
-import type { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationEvent } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schedule, Stream } from "effect";
 
@@ -17,6 +17,7 @@ import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
 } from "../Services/ThreadDeletionReactor.ts";
+import { findCanonicalActiveWorktreeOwner } from "../worktreeOwnership.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
 
@@ -37,37 +38,6 @@ export const processAfterWorktreeReservation = <A, E1, R1, E2, R2>(
       }),
     ),
   );
-
-export const findCanonicalActiveWorktreeOwner = Effect.fn("findCanonicalActiveWorktreeOwner")(
-  function* (
-    readModel: {
-      readonly threads: ReadonlyArray<{
-        readonly id: ThreadId;
-        readonly deletedAt: string | null;
-        readonly worktreePath: string | null;
-      }>;
-    },
-    deletedThreadId: ThreadId,
-    canonicalWorktreePath: string,
-  ) {
-    const activeThreads = readModel.threads.flatMap((thread) =>
-      thread.id !== deletedThreadId && thread.deletedAt === null && thread.worktreePath !== null
-        ? [{ id: thread.id, worktreePath: thread.worktreePath }]
-        : [],
-    );
-    const matches = yield* Effect.forEach(
-      activeThreads,
-      (thread) =>
-        Effect.promise(() => canonicalizeWorktreePath(thread.worktreePath)).pipe(
-          Effect.map((activePath) => activePath === canonicalWorktreePath),
-        ),
-      { concurrency: 4 },
-    );
-    const ownerIndex = matches.findIndex(Boolean);
-    const owner = ownerIndex === -1 ? undefined : activeThreads[ownerIndex];
-    return owner === undefined ? Option.none<ThreadId>() : Option.some(owner.id);
-  },
-);
 
 export const logCleanupCauseUnlessInterrupted = <R, E>({
   effect,
@@ -121,10 +91,6 @@ const make = Effect.gen(function* () {
   const stopActiveProviderSession = Effect.fn("stopActiveProviderSession")(function* (
     threadId: ThreadDeletedEvent["payload"]["threadId"],
   ) {
-    const sessions = yield* providerService.listSessions();
-    if (!sessions.some((session) => session.threadId === threadId)) {
-      return;
-    }
     yield* providerService.stopSession({ threadId });
   });
 
