@@ -142,6 +142,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
   },
   {
+    id: "git-fetch-interval",
+    title: "Git fetch interval",
+    to: "/settings/source-control",
+    // Discovery-dependent controls live inside collapsible VCS rows. The
+    // section is the stable destination even when Git has not been detected.
+    targetId: "source-control",
+  },
+  {
+    id: "commit-author-avatars",
+    title: "Commit author avatars",
+    to: "/settings/source-control",
+    // Provider rows are discovery-dependent and may be collapsed.
+    targetId: "source-control",
+  },
+  {
+    id: "source-control-writing-style",
+    title: "Source control writing style",
+    to: "/settings/source-control",
+  },
+  {
+    id: "follow-change-request-templates",
+    title: "Follow change request templates",
+    to: "/settings/source-control",
+  },
+  {
+    id: "source-control-writer-model",
+    title: "Source control writer model",
+    to: "/settings/source-control",
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",

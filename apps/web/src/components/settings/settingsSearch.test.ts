@@ -84,4 +84,24 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("indexes customized source control settings with stable destinations", () => {
+    expect(searchSettings("fetch interval")[0]).toMatchObject({
+      id: "git-fetch-interval",
+      to: "/settings/source-control",
+      targetId: "source-control",
+    });
+    expect(searchSettings("commit author avatars")[0]).toMatchObject({
+      id: "commit-author-avatars",
+      targetId: "source-control",
+    });
+    expect(searchSettings("source control writing style")[0]).toMatchObject({
+      id: "source-control-writing-style",
+      to: "/settings/source-control",
+    });
+    expect(searchSettings("change request templates")[0]?.id).toBe(
+      "follow-change-request-templates",
+    );
+    expect(searchSettings("writer model")[0]?.id).toBe("source-control-writer-model");
+  });
 });
