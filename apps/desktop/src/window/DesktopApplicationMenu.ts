@@ -99,6 +99,7 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
 export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const appName = yield* electronApp.name;
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
@@ -119,6 +120,53 @@ export const make = Effect.gen(function* () {
       ),
     );
   };
+
+  const zoomClick =
+    (
+      action: string,
+      updateZoomLevel: (zoomLevel: number) => number,
+    ): NonNullable<Electron.MenuItemConstructorOptions["click"]> =>
+    (_menuItem, window) => {
+      if (!window || !("webContents" in window)) {
+        return;
+      }
+
+      const webContents = window.webContents as Electron.WebContents;
+      webContents.zoomLevel = updateZoomLevel(webContents.zoomLevel);
+      runMenuEffect(action, desktopWindow.syncAppearance);
+    };
+
+  const zoomMenuItems: Electron.MenuItemConstructorOptions[] =
+    environment.platform === "darwin"
+      ? [
+          { role: "resetZoom" },
+          { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
+          { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
+          { role: "zoomOut" },
+        ]
+      : [
+          {
+            label: "Actual Size",
+            accelerator: "CmdOrCtrl+0",
+            click: zoomClick("reset-zoom", () => 0),
+          },
+          {
+            label: "Zoom In",
+            accelerator: "CmdOrCtrl+=",
+            click: zoomClick("zoom-in", (zoomLevel) => zoomLevel + 0.5),
+          },
+          {
+            label: "Zoom In",
+            accelerator: "CmdOrCtrl+Plus",
+            visible: false,
+            click: zoomClick("zoom-in", (zoomLevel) => zoomLevel + 0.5),
+          },
+          {
+            label: "Zoom Out",
+            accelerator: "CmdOrCtrl+-",
+            click: zoomClick("zoom-out", (zoomLevel) => zoomLevel - 0.5),
+          },
+        ];
 
   const configure = Effect.gen(function* () {
     const checkForUpdatesClick = () => {
@@ -181,10 +229,7 @@ export const make = Effect.gen(function* () {
           { role: "forceReload" },
           { role: "toggleDevTools" },
           { type: "separator" },
-          { role: "resetZoom" },
-          { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
-          { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-          { role: "zoomOut" },
+          ...zoomMenuItems,
           { type: "separator" },
           { role: "togglefullscreen" },
         ],

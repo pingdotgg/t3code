@@ -184,6 +184,7 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
+  zoomFactor = 1,
 ): WindowTitleBarOptions {
   if (platform === "darwin") {
     return {
@@ -196,10 +197,39 @@ function getWindowTitleBarOptions(
     titleBarStyle: "hidden",
     titleBarOverlay: {
       color: TITLEBAR_COLOR,
-      height: TITLEBAR_HEIGHT,
+      height: resolveTitleBarOverlayHeight(zoomFactor),
       symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
     },
   };
+}
+
+export function resolveTitleBarOverlayHeight(zoomFactor: number): number {
+  if (!Number.isFinite(zoomFactor) || zoomFactor <= 1) {
+    return TITLEBAR_HEIGHT;
+  }
+  return Math.round(TITLEBAR_HEIGHT * zoomFactor);
+}
+
+function syncWindowTitleBarHeight(window: Electron.BrowserWindow, platform: NodeJS.Platform): void {
+  if (platform === "darwin" || window.isDestroyed()) {
+    return;
+  }
+  window.setTitleBarOverlay({
+    height: resolveTitleBarOverlayHeight(window.webContents.getZoomFactor()),
+  });
+}
+
+function isRendererZoomShortcut(
+  input: Pick<Electron.Input, "alt" | "control" | "key" | "meta" | "type">,
+  platform: NodeJS.Platform,
+): boolean {
+  const modifierPressed = platform === "darwin" ? input.meta : input.control;
+  return (
+    input.type === "keyDown" &&
+    modifierPressed &&
+    !input.alt &&
+    ["+", "=", "-", "_", "0", ")"].includes(input.key)
+  );
 }
 
 function syncWindowAppearance(
@@ -213,7 +243,11 @@ function syncWindowAppearance(
     }
 
     window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
+    const { titleBarOverlay } = getWindowTitleBarOptions(
+      shouldUseDarkColors,
+      platform,
+      window.webContents.getZoomFactor(),
+    );
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
@@ -590,7 +624,19 @@ export const make = Effect.gen(function* () {
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
+      syncWindowTitleBarHeight(window, environment.platform);
     });
+    if (environment.platform !== "darwin") {
+      const syncTitleBarHeightAfterZoom = () => {
+        setImmediate(() => syncWindowTitleBarHeight(window, environment.platform));
+      };
+      window.webContents.on("zoom-changed", syncTitleBarHeightAfterZoom);
+      window.webContents.on("before-input-event", (_event, input) => {
+        if (isRendererZoomShortcut(input, environment.platform)) {
+          syncTitleBarHeightAfterZoom();
+        }
+      });
+    }
     window.webContents.on(
       "did-fail-load",
       (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
