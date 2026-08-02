@@ -93,15 +93,29 @@ describe("searchSettings", () => {
     });
     expect(searchSettings("commit author avatars")[0]).toMatchObject({
       id: "commit-author-avatars",
+      to: "/settings/source-control",
       targetId: "source-control",
     });
-    expect(searchSettings("source control writing style")[0]).toMatchObject({
+
+    const writingStyle = searchSettings("source control writing style")[0];
+    expect(writingStyle).toMatchObject({
       id: "source-control-writing-style",
       to: "/settings/source-control",
     });
-    expect(searchSettings("change request templates")[0]?.id).toBe(
-      "follow-change-request-templates",
-    );
-    expect(searchSettings("writer model")[0]?.id).toBe("source-control-writer-model");
+    expect(writingStyle?.targetId).toBeUndefined();
+
+    const templates = searchSettings("change request templates")[0];
+    expect(templates).toMatchObject({
+      id: "follow-change-request-templates",
+      to: "/settings/source-control",
+    });
+    expect(templates?.targetId).toBeUndefined();
+
+    const writerModel = searchSettings("writer model")[0];
+    expect(writerModel).toMatchObject({
+      id: "source-control-writer-model",
+      to: "/settings/source-control",
+    });
+    expect(writerModel?.targetId).toBeUndefined();
   });
 });
