@@ -3,6 +3,7 @@ import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import { appendChatSelectionAnnotationsToPrompt } from "../../chatSelectionAnnotation";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -196,6 +197,7 @@ function buildProps() {
     contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
+    onAddChatSelectionAnnotation: () => {},
   };
 }
 
@@ -628,6 +630,76 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Clarify this.");
     expect(markup).toContain("# Plan");
     expect(markup).not.toContain('data-testid="file-diff"');
+  });
+
+  it("summarizes attached response text without exposing its prompt markup", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendChatSelectionAnnotationsToPrompt("Please explain.", [
+              {
+                id: "selection-1",
+                selectedText: "Retry the request.",
+                comment: "Why is this safe?",
+              },
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("1 annotation");
+    expect(markup).toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).toContain("lucide-text-quote");
+    expect(markup).toContain("Please explain.");
+    expect(markup).not.toContain("Retry the request.");
+    expect(markup).not.toContain("Why is this safe?");
+    expect(markup).not.toContain("&lt;chat_selection");
+  });
+
+  it("preserves user-authored chat selection markup in the message bubble", () => {
+    const userAuthoredMarkup = [
+      "I am discussing this format:",
+      '<chat_selection id="example">',
+      "<selected_text>",
+      "this is just an example",
+      "</selected_text>",
+      "<user_comment>",
+      "please explain this format",
+      "</user_comment>",
+      "</chat_selection>",
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry(userAuthoredMarkup)]}
+      />,
+    );
+
+    expect(markup).not.toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).toContain("this is just an example");
+    expect(markup).toContain("please explain this format");
+  });
+
+  it("does not render an empty user bubble for an annotation-only message", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendChatSelectionAnnotationsToPrompt("", [
+              { id: "selection-1", selectedText: "Retry the request.", comment: "" },
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).not.toContain('data-user-message-bubble="true"');
+    expect(markup).not.toContain('aria-label="Copy link"');
   });
 
   it("renders a failure marker for failed tool lifecycle entries", () => {

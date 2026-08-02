@@ -73,6 +73,21 @@ describe("resolvePlanFollowUpSubmission", () => {
     ).toEqual({
       text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
       interactionMode: "default",
+      draftText: "",
+    });
+  });
+
+  it("keeps annotation-only follow-ups in plan mode", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "   ",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+        hasChatSelectionAnnotations: true,
+      }),
+    ).toEqual({
+      text: "",
+      interactionMode: "plan",
+      draftText: "",
     });
   });
 
@@ -85,6 +100,7 @@ describe("resolvePlanFollowUpSubmission", () => {
     ).toEqual({
       text: "Refine step 2 first",
       interactionMode: "plan",
+      draftText: "Refine step 2 first",
     });
   });
 });

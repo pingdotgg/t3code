@@ -79,6 +79,7 @@ import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
+import { ComposerPendingChatSelectionAnnotations } from "./ComposerPendingChatSelectionAnnotations";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
 import {
   shouldUseCompactComposerPrimaryActions,
@@ -106,6 +107,7 @@ import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
+import type { ChatSelectionAnnotation } from "~/chatSelectionAnnotation";
 import { Separator } from "../ui/separator";
 
 function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
@@ -492,6 +494,7 @@ export interface ChatComposerHandle {
     elementContexts: ElementContextDraft[];
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
+    chatSelectionAnnotations: ChatSelectionAnnotation[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -704,6 +707,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerElementContexts = composerDraft.elementContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
+  const composerChatSelectionAnnotations = composerDraft.chatSelectionAnnotations;
+  const hasComposerPromptText =
+    prompt.trim().length > 0 || composerChatSelectionAnnotations.length > 0;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -727,6 +733,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const removeComposerDraftReviewComment = useComposerDraftStore(
     (store) => store.removeReviewComment,
+  );
+  const removeComposerDraftChatSelectionAnnotation = useComposerDraftStore(
+    (store) => store.removeChatSelectionAnnotation,
   );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
@@ -1024,13 +1033,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         elementContextCount:
           composerElementContexts.length +
           composerPreviewAnnotations.length +
-          composerReviewComments.length,
+          composerReviewComments.length +
+          composerChatSelectionAnnotations.length,
       }),
     [
       composerElementContexts.length,
       composerImages.length,
       composerPreviewAnnotations.length,
       composerReviewComments.length,
+      composerChatSelectionAnnotations.length,
       composerTerminalContexts,
       prompt,
     ],
@@ -1166,7 +1177,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return "running";
     }
     if (showPlanFollowUpPrompt) {
-      return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
+      return hasComposerPromptText ? "plan:refine" : "plan:implement";
     }
     return `idle:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
   }, [
@@ -1176,8 +1187,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting,
     isPreparingWorktree,
     isSendBusy,
+    hasComposerPromptText,
     phase,
-    prompt,
     showPlanFollowUpPrompt,
   ]);
 
@@ -2622,6 +2633,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         elementContexts: composerElementContextsRef.current,
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
+        chatSelectionAnnotations: composerChatSelectionAnnotations,
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
@@ -2643,6 +2655,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerElementContextsRef,
       composerPreviewAnnotations,
       composerReviewComments,
+      composerChatSelectionAnnotations,
       isConnecting,
       isComposerApprovalState,
       pendingUserInputs.length,
@@ -2822,6 +2835,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
           {showCollapsedMobilePromptRow ? (
             <div className="flex items-center justify-between gap-2 px-3 py-2">
+              {composerChatSelectionAnnotations.length > 0 ? (
+                <ComposerPendingChatSelectionAnnotations
+                  annotations={composerChatSelectionAnnotations}
+                  onRemove={(annotationId) =>
+                    removeComposerDraftChatSelectionAnnotation(composerDraftTarget, annotationId)
+                  }
+                  compact
+                  className="max-w-[38%] shrink-0"
+                />
+              ) : null}
               <button
                 type="button"
                 className={cn(
@@ -2924,6 +2947,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     const preview = buildExpandedImagePreview(composerImages, imageId);
                     if (preview) onExpandImage(preview);
                   }}
+                  className="mb-3"
+                />
+              )}
+
+            {!isComposerCollapsedMobile &&
+              !isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
+              composerChatSelectionAnnotations.length > 0 && (
+                <ComposerPendingChatSelectionAnnotations
+                  annotations={composerChatSelectionAnnotations}
+                  onRemove={(annotationId) =>
+                    removeComposerDraftChatSelectionAnnotation(composerDraftTarget, annotationId)
+                  }
                   className="mb-3"
                 />
               )}
@@ -3212,7 +3248,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
-                  promptHasText={prompt.trim().length > 0}
+                  promptHasText={hasComposerPromptText}
                   isSendBusy={isSendBusy}
                   sendDisabledReason={sendDisabledReason}
                   isConnecting={isConnecting}
