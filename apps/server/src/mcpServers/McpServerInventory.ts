@@ -25,6 +25,7 @@ import type {
   McpServerInventory,
   McpServerInventoryEntry,
   McpServerTransport,
+  McpServerUnreadableConfig,
   ProviderInstanceConfig,
   ServerSettings,
 } from "@t3tools/contracts";
@@ -45,6 +46,13 @@ const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const DISCOVERY_CONCURRENCY = 4;
 
 export type McpInventoryEnv = FileSystem.FileSystem | Path.Path;
+
+interface InstanceDiscovery {
+  readonly entries: ReadonlyArray<McpServerInventoryEntry>;
+  readonly unreadable: ReadonlyArray<McpServerUnreadableConfig>;
+}
+
+const EMPTY_DISCOVERY: InstanceDiscovery = { entries: [], unreadable: [] };
 
 function harnessDisplayName(instance: ProviderInstanceConfig, fallback: string): string {
   return instance.displayName?.trim() || fallback;
@@ -138,6 +146,22 @@ export function remoteDetail(rawUrl: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Server names come from a config file we do not control. Control characters —
+ * notably the RTL override U+202E — would reorder how a row reads on screen,
+ * and an unbounded name is a wire and layout hazard. React escapes markup, so
+ * this is about what a name can *look* like, not injection.
+ */
+const MAX_DISPLAY_NAME_LENGTH = 120;
+
+function sanitizeDisplayName(name: string): string {
+  const stripped = name.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  const safe = stripped.length > 0 ? stripped : name.trim();
+  return safe.length > MAX_DISPLAY_NAME_LENGTH
+    ? `${safe.slice(0, MAX_DISPLAY_NAME_LENGTH)}…`
+    : safe;
+}
+
 function claudeTransport(entry: Record<string, unknown>): McpServerTransport {
   const declared = trimmedOrUndefined(entry.type);
   if (declared === "http" || declared === "sse") return declared;
@@ -153,12 +177,17 @@ export const discoverClaudeMcpServerEntries = Effect.fn(
   instance: ProviderInstanceConfig,
   environment: NodeJS.ProcessEnv,
   cwd: string | undefined,
-): Effect.fn.Return<ReadonlyArray<McpServerInventoryEntry>, never, McpInventoryEnv> {
+): Effect.fn.Return<InstanceDiscovery, never, McpInventoryEnv> {
   const decoded = decodeClaudeSettings(instance.config ?? {});
-  if (decoded._tag === "None") return [];
+  if (decoded._tag === "None") return EMPTY_DISCOVERY;
   const settings = decoded.value;
 
-  const { complete, definitions } = yield* readClaudeMcpServers(settings, environment, cwd);
+  const displayName = harnessDisplayName(instance, "Claude");
+  const { complete, definitions, configPath } = yield* readClaudeMcpServers(
+    settings,
+    environment,
+    cwd,
+  );
 
   const entries: McpServerInventoryEntry[] = [];
   for (const { name, scope, sourcePath, definition: entry } of definitions) {
@@ -172,8 +201,8 @@ export const discoverClaudeMcpServerEntries = Effect.fn(
     entries.push({
       providerInstanceId: ProviderInstanceId.make(instanceId),
       harness: instance.driver,
-      harnessDisplayName: harnessDisplayName(instance, "Claude"),
-      name,
+      harnessDisplayName: displayName,
+      name: sanitizeDisplayName(name),
       transport,
       ...(detail ? { detail } : {}),
       configPath: sourcePath,
@@ -186,7 +215,21 @@ export const discoverClaudeMcpServerEntries = Effect.fn(
       enabled: true,
     });
   }
-  return entries;
+
+  return {
+    entries,
+    // Reported separately from the rows because an unreadable config often
+    // yields *no* rows at all, and then there is nothing to hang a status on.
+    unreadable: complete
+      ? []
+      : [
+          {
+            providerInstanceId: ProviderInstanceId.make(instanceId),
+            harnessDisplayName: displayName,
+            configPath,
+          },
+        ],
+  };
 });
 
 const discoverInstanceMcpServers = Effect.fn("McpServerInventory.discoverInstanceMcpServers")(
@@ -195,14 +238,14 @@ const discoverInstanceMcpServers = Effect.fn("McpServerInventory.discoverInstanc
     instance: ProviderInstanceConfig,
     environment: NodeJS.ProcessEnv,
     cwd: string | undefined,
-  ): Effect.fn.Return<ReadonlyArray<McpServerInventoryEntry>, never, McpInventoryEnv> {
+  ): Effect.fn.Return<InstanceDiscovery, never, McpInventoryEnv> {
     // A disabled instance never starts a session, so listing its servers would
     // describe work that cannot happen.
-    if (instance.enabled === false) return [];
+    if (instance.enabled === false) return EMPTY_DISCOVERY;
     if (instance.driver === "claudeAgent") {
       return yield* discoverClaudeMcpServerEntries(instanceId, instance, environment, cwd);
     }
-    return [];
+    return EMPTY_DISCOVERY;
   },
 );
 
@@ -228,11 +271,12 @@ export const discoverGlobalMcpInventory = Effect.fn(
   return {
     scannedAt: DateTime.formatIso(yield* DateTime.now),
     servers: discovered
-      .flat()
+      .flatMap((result) => result.entries)
       .sort(
         (left, right) =>
           left.harnessDisplayName.localeCompare(right.harnessDisplayName) ||
           left.name.localeCompare(right.name),
       ),
+    unreadable: discovered.flatMap((result) => result.unreadable),
   };
 });

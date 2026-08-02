@@ -22,6 +22,7 @@ const makeServer = (
 const inventoryOf = (servers: ReadonlyArray<McpServerInventoryEntry>): McpServerInventory => ({
   scannedAt: "2026-07-27T00:00:00.000Z",
   servers,
+  unreadable: [],
 });
 
 describe("filterMcpInventory", () => {

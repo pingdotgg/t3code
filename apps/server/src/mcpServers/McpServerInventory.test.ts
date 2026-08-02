@@ -87,7 +87,7 @@ it.layer(NodeServices.layer)("claude inventory entries", (it) => {
       // A malformed workspace `.mcp.json` leaves the project scope unknown.
       yield* fs.writeFileString(path.join(workspace, ".mcp.json"), "{ not json");
 
-      const entries = yield* discoverClaudeMcpServerEntries(
+      const { entries, unreadable } = yield* discoverClaudeMcpServerEntries(
         "claudeAgent",
         { driver: ProviderDriverKind.make("claudeAgent"), config: { homePath: tempDir } },
         {},
@@ -97,6 +97,70 @@ it.layer(NodeServices.layer)("claude inventory entries", (it) => {
       assert.deepEqual(
         entries.map((entry) => ({ name: entry.name, status: entry.status })),
         [{ name: "codegraph", status: "config unreadable" }],
+      );
+      assert.equal(unreadable.length, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports an unreadable config even when it yields no rows at all", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-inventory-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+      // The whole file is garbage, so not a single server can be recovered.
+      yield* fs.writeFileString(path.join(tempDir, ".claude.json"), "{ not json");
+
+      const { entries, unreadable } = yield* discoverClaudeMcpServerEntries(
+        "claudeAgent",
+        { driver: ProviderDriverKind.make("claudeAgent"), config: { homePath: tempDir } },
+        {},
+        workspace,
+      );
+
+      // Without the separate channel this is indistinguishable from "nothing
+      // configured", and the empty state would claim there are no servers.
+      assert.deepEqual(entries, []);
+      assert.deepEqual(
+        unreadable.map((item) => item.harnessDisplayName),
+        ["Claude"],
+      );
+      assert.equal(unreadable[0]?.configPath, path.join(tempDir, ".claude.json"));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("strips control characters and bounds absurd server names", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-inventory-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+      // Written as raw text so the control character survives verbatim.
+      const rtl = `rtl‮evil`;
+      const long = "a".repeat(5000);
+      yield* fs.writeFileString(
+        path.join(tempDir, ".claude.json"),
+        `{"mcpServers":{"${rtl}":{"command":"x"},"${long}":{"command":"y"}}}`,
+      );
+
+      const { entries } = yield* discoverClaudeMcpServerEntries(
+        "claudeAgent",
+        { driver: ProviderDriverKind.make("claudeAgent"), config: { homePath: tempDir } },
+        {},
+        workspace,
+      );
+
+      const names = entries.map((entry) => entry.name).sort();
+      // The RTL override would otherwise reorder how the row reads on screen.
+      assert.equal(
+        names.some((name) => /[\p{Cc}\p{Cf}]/u.test(name)),
+        false,
+      );
+      assert.equal(
+        names.every((name) => name.length <= 121),
+        true,
       );
     }).pipe(Effect.scoped),
   );
@@ -113,7 +177,7 @@ it.layer(NodeServices.layer)("claude inventory entries", (it) => {
         '{ "mcpServers": { "codegraph": { "command": "codegraph", "args": ["--token", "s3cret"] } } }',
       );
 
-      const entries = yield* discoverClaudeMcpServerEntries(
+      const { entries } = yield* discoverClaudeMcpServerEntries(
         "claudeAgent",
         { driver: ProviderDriverKind.make("claudeAgent"), config: { homePath: tempDir } },
         {},

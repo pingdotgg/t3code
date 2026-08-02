@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -29,6 +30,14 @@ export const McpServerInventoryEntry = Schema.Struct({
 });
 export type McpServerInventoryEntry = typeof McpServerInventoryEntry.Type;
 
+export const McpServerUnreadableConfig = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  harnessDisplayName: TrimmedNonEmptyString,
+  /** Config file that exists but could not be parsed, when one can be named. */
+  configPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type McpServerUnreadableConfig = typeof McpServerUnreadableConfig.Type;
+
 export const McpServerInventory = Schema.Struct({
   scannedAt: IsoDateTime,
   /**
@@ -37,5 +46,14 @@ export const McpServerInventory = Schema.Struct({
    * the rows it cannot decode instead of failing the whole page.
    */
   servers: ForwardCompatibleArray(McpServerInventoryEntry),
+  /**
+   * Instances whose config exists but could not be fully read. Without this an
+   * unparseable config is indistinguishable from "nothing configured": the
+   * listing is empty, and the empty state would claim there are no servers when
+   * the truth is that we could not tell.
+   */
+  unreadable: ForwardCompatibleArray(McpServerUnreadableConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type McpServerInventory = typeof McpServerInventory.Type;

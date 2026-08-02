@@ -166,6 +166,7 @@ function EnvironmentMcpInventory({
   }, [state, query]);
 
   const serverCount = state.status === "loaded" ? state.inventory.servers.length : null;
+  const unreadableCount = state.status === "loaded" ? state.inventory.unreadable.length : 0;
 
   return (
     <div>
@@ -201,10 +202,12 @@ function EnvironmentMcpInventory({
           ) : state.status === "error" ? (
             <StatusLine tone="error">{state.message}</StatusLine>
           ) : groups.length === 0 ? (
-            <StatusLine>
+            <StatusLine {...(unreadableCount > 0 && !query.trim() ? { tone: "error" } : {})}>
               {query.trim()
                 ? "No MCP servers match this search."
-                : "No MCP servers configured for Claude Code on this computer."}
+                : unreadableCount > 0
+                  ? "Could not read the Claude Code config on this computer, so its MCP servers are unknown."
+                  : "No MCP servers configured for Claude Code on this computer."}
             </StatusLine>
           ) : (
             groups.map((group) => (

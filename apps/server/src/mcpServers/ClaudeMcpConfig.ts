@@ -50,6 +50,8 @@ export interface ClaudeMcpServerRead {
    */
   readonly complete: boolean;
   readonly definitions: ReadonlyArray<ClaudeMcpServerDefinition>;
+  /** The `.claude.json` this read resolved to, whether or not it parsed. */
+  readonly configPath: string;
 }
 
 function readServerMap(value: unknown): ReadonlyArray<readonly [string, Record<string, unknown>]> {
@@ -183,7 +185,7 @@ export const readClaudeMcpServers = Effect.fn("ClaudeMcpConfig.readClaudeMcpServ
     // Without a workspace the `local` and `project` scopes cannot be read at
     // all, so the list is knowingly partial. Callers that replace the CLI's own
     // resolution must not treat it as the full set.
-    return { complete: false, definitions: [...byName.values()] };
+    return { complete: false, definitions: [...byName.values()], configPath };
   }
 
   // Claude Code keys `projects` by the resolved real path. Matching on the raw
@@ -219,5 +221,5 @@ export const readClaudeMcpServers = Effect.fn("ClaudeMcpConfig.readClaudeMcpServ
     byName.set(name, { name, scope: "local", sourcePath: configPath, definition });
   }
 
-  return { complete, definitions: [...byName.values()] };
+  return { complete, definitions: [...byName.values()], configPath };
 });
