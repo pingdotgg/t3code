@@ -42,6 +42,7 @@ import {
   registerHiddenUpdateTap,
   runAppUpdateCheck,
 } from "../updates/app-updates";
+import { isPersonalPreviewUpdatesEnabled } from "../updates/personal-preview-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -601,9 +602,15 @@ function AppSettingsSection() {
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
   const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
-  const updateCheckAvailable = isAppUpdateCheckAvailable();
+  const personalPreviewUpdatesEnabled = isPersonalPreviewUpdatesEnabled();
+  const updateCheckAvailable = personalPreviewUpdatesEnabled || isAppUpdateCheckAvailable();
   const busy =
-    updateState === "checking" || updateState === "downloading" || updateState === "restarting";
+    updateState === "checking" ||
+    updateState === "available" ||
+    updateState === "downloading" ||
+    updateState === "ready" ||
+    updateState === "opening" ||
+    updateState === "restarting";
 
   // "Up to date" is a transient acknowledgement, not a state worth persisting —
   // return the version row to its normal, deliberately quiet state.
@@ -633,27 +640,35 @@ function AppSettingsSection() {
 
   const handleVersionPress = useCallback(() => {
     if (!updateCheckAvailable || updateInFlight.current) return;
+    if (personalPreviewUpdatesEnabled) {
+      void checkForUpdate();
+      return;
+    }
     const tap = registerHiddenUpdateTap(hiddenUpdateTapCount.current);
     hiddenUpdateTapCount.current = tap.nextCount;
     if (tap.shouldCheck) {
       void checkForUpdate();
     }
-  }, [checkForUpdate, updateCheckAvailable]);
+  }, [checkForUpdate, personalPreviewUpdatesEnabled, updateCheckAvailable]);
 
   const statusLabel =
     updateState === "checking"
       ? "Checking…"
-      : updateState === "downloading"
-        ? "Downloading…"
-        : // "ready" appears only when this check joined an in-flight background-mode
-          // check; that download installs at the next backgrounding.
-          updateState === "ready"
-          ? "Update ready"
-          : updateState === "restarting"
-            ? "Restarting…"
-            : updateState === "current"
-              ? "Up to date"
-              : null;
+      : updateState === "available"
+        ? "Update available"
+        : updateState === "downloading"
+          ? "Downloading…"
+          : updateState === "ready"
+            ? "Update ready"
+            : updateState === "opening"
+              ? "Opening download…"
+              : updateState === "restarting"
+                ? "Restarting…"
+                : updateState === "current"
+                  ? "Up to date"
+                  : personalPreviewUpdatesEnabled
+                    ? "Tap to check"
+                    : null;
 
   const versionRow = (
     <View className="flex-row items-center gap-4 p-4">
