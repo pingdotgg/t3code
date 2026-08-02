@@ -14,7 +14,6 @@ type EnvironmentPatch = Record<string, string>;
 
 interface ShellEnvironmentConfig {
   readonly env: NodeJS.ProcessEnv;
-  readonly fileSystem: FileSystem.FileSystem;
   readonly platform: NodeJS.Platform;
   readonly userShell: Option.Option<string>;
 }
@@ -406,7 +405,12 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
 const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
+  ): Effect.fn.Return<
+    void,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  > {
+    const fileSystem = yield* FileSystem.FileSystem;
     const shellEnvironment: EnvironmentPatch = {};
 
     for (const shell of listLoginShellCandidates(config)) {
@@ -466,7 +470,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ) {
       for (const runtimeDir of linuxRuntimeDirCandidates(config.env, process.getuid?.())) {
         const dbusSessionBusPath = `${runtimeDir}/bus`;
-        const busExists = yield* config.fileSystem
+        const busExists = yield* fileSystem
           .exists(dbusSessionBusPath)
           .pipe(Effect.orElseSucceed(() => false));
         if (busExists) {
@@ -480,7 +484,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
 
 const installShellEnvironment = (
   config: ShellEnvironmentConfig,
-): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> => {
+): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> => {
   if (config.platform === "win32") {
     return installWindowsEnvironment(config);
   }
@@ -497,10 +501,10 @@ export const make = Effect.gen(function* () {
   const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
     installShellEnvironment({
       env: process.env,
-      fileSystem,
       platform: environment.platform,
       userShell: Option.none(),
     }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
     );
