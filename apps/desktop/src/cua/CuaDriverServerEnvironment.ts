@@ -11,7 +11,7 @@ export class CuaDriverConfigurationError extends Schema.TaggedErrorClass<CuaDriv
   "CuaDriverConfigurationError",
   {
     binaryPath: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {

@@ -306,7 +306,7 @@ const startup = Effect.gen(function* () {
             error._tag === "CuaDriverConfigurationError"
               ? {
                   binaryPath: error.binaryPath,
-                  ...(error.cause === undefined ? {} : { cause: String(error.cause) }),
+                  cause: String(error.cause),
                 }
               : {};
           yield* logStartupError("embedded cua-driver failed to configure", context);
