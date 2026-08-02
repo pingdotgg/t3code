@@ -37,10 +37,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
-      - name: Checkout preview automation
-        uses: actions/checkout@v7
-        with:
-          path: automation
+      - name: Clone preview automation
+        run: >-
+          git clone
+          --filter=blob:none
+          --no-tags
+          --single-branch
+          --branch "$GITHUB_REF_NAME"
+          "https://github.com/${GITHUB_REPOSITORY}.git"
+          automation
 
       - name: Clone latest upstream source
         run: >-
@@ -226,7 +231,10 @@ jobs:
           fi
 
           "$apksigner" verify --verbose --print-certs "$apk"
-          sha256sum "$apk" >"$RUNNER_TEMP/SHA256SUMS.txt"
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "$APK_NAME" >SHA256SUMS.txt
+          )
 
           echo "apk=${apk}" >>"$GITHUB_OUTPUT"
           echo "package_name=${package_name}" >>"$GITHUB_OUTPUT"
