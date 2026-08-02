@@ -29,11 +29,13 @@ import {
   applyServerConfigProjection,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
+  matchesServerUpdateReadyEvent,
   projectServerWelcome,
   resolveServerConfigValue,
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
+  validateServerUpdateReadyEvent,
 } from "./server.ts";
 
 const CONFIG = {
@@ -172,6 +174,40 @@ describe("server state projection", () => {
     expect(serverUpdateStateForServerVersion(failed, null)).toBe(failed);
     expect(serverUpdateStateForServerVersion(failed, "0.0.31")).toEqual({ status: "idle" });
   });
+
+  it.effect("correlates launcher outcomes and fails immediately after rollback", () =>
+    Effect.gen(function* () {
+      const result = {
+        targetVersion: "0.0.31",
+        method: "boot-service" as const,
+        updateId: "update-1",
+      };
+      const ready = (status: "committed" | "rolled-back") =>
+        ({
+          version: 1 as const,
+          sequence: 1,
+          type: "ready" as const,
+          payload: {
+            at: "2026-08-01T00:00:00.000Z",
+            environment: { serverVersion: status === "committed" ? "0.0.31" : "0.0.30" },
+            updateOutcome: {
+              id: "update-1",
+              fromVersion: "0.0.30",
+              targetVersion: "0.0.31",
+              status,
+              ...(status === "rolled-back" ? { reason: "prepared-timeout" } : {}),
+            },
+          },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+
+      expect(matchesServerUpdateReadyEvent(result, ready("committed"))).toBe(true);
+      yield* validateServerUpdateReadyEvent(result, ready("committed"));
+      const rollback = yield* Effect.flip(
+        validateServerUpdateReadyEvent(result, ready("rolled-back")),
+      );
+      expect(rollback.message).toBe("prepared-timeout");
+    }),
+  );
 
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
