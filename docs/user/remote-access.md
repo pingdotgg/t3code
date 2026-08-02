@@ -121,6 +121,9 @@ npx t3 serve --tailscale-serve --tailscale-serve-port 8443
 
 Once paired, add projects normally: open the Command Palette and choose **Add Project**, then pick
 the environment the project lives on. Every saved environment is offered, not only the local one.
+When multiple environments are connected, project choosers show the environment name beside each
+workspace path. In the web and desktop clients, remote conversations keep that environment visible
+below the composer.
 
 ### Option 3: Desktop-Managed SSH Launch
 

@@ -12,6 +12,16 @@ export interface ProjectGroupingSettings {
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
 
+export function buildProjectPickerDescription(input: {
+  readonly workspaceRoot: string;
+  readonly environmentLabel: string | null;
+  readonly showEnvironmentLabel: boolean;
+}): string {
+  return input.showEnvironmentLabel && input.environmentLabel
+    ? `${input.workspaceRoot} · ${input.environmentLabel}`
+    : input.workspaceRoot;
+}
+
 export function selectProjectGroupingSettings(settings: ClientSettings): ProjectGroupingSettings {
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,

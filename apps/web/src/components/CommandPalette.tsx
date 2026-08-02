@@ -2,6 +2,7 @@
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
+import { buildProjectPickerDescription } from "@t3tools/client-runtime/state/project-grouping";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
@@ -602,10 +603,21 @@ function OpenCommandPaletteDialog(props: {
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              resolveEnvironmentOptionLabel({
+                isPrimary: environment.environmentId === primaryEnvironmentId,
+                environmentId: environment.environmentId,
+                runtimeLabel: environment.label,
+              }),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, primaryEnvironmentId],
   );
+  const showProjectEnvironmentLabels = environments.length > 1;
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -918,10 +930,20 @@ function OpenCommandPaletteDialog(props: {
       buildProjectActionItems({
         projects: pickerProjects,
         valuePrefix: "project",
+        description: (project) =>
+          buildProjectPickerDescription({
+            workspaceRoot: project.workspaceRoot,
+            environmentLabel: project.environmentLabel,
+            showEnvironmentLabel: showProjectEnvironmentLabels,
+          }),
         searchTerms: (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           return (
-            group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+            group?.memberProjects.flatMap((member) => [
+              member.title,
+              member.workspaceRoot,
+              member.environmentLabel ?? "",
+            ]) ?? []
           );
         },
         icon: (project) => (
@@ -933,7 +955,7 @@ function OpenCommandPaletteDialog(props: {
         ),
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
+    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey, showProjectEnvironmentLabels],
   );
 
   const projectThreadItems = useMemo(
@@ -942,10 +964,20 @@ function OpenCommandPaletteDialog(props: {
         buildProjectActionItems({
           projects: pickerProjects,
           valuePrefix: "new-thread-in",
+          description: (project) =>
+            buildProjectPickerDescription({
+              workspaceRoot: project.workspaceRoot,
+              environmentLabel: project.environmentLabel,
+              showEnvironmentLabel: showProjectEnvironmentLabels,
+            }),
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             return (
-              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+              group?.memberProjects.flatMap((member) => [
+                member.title,
+                member.workspaceRoot,
+                member.environmentLabel ?? "",
+              ]) ?? []
             );
           },
           icon: (project) => (
@@ -972,7 +1004,13 @@ function OpenCommandPaletteDialog(props: {
           },
         }),
       ),
-    [contextualProjectRef, handleNewThread, pickerProjects, projectGroupByTargetKey],
+    [
+      contextualProjectRef,
+      handleNewThread,
+      pickerProjects,
+      projectGroupByTargetKey,
+      showProjectEnvironmentLabels,
+    ],
   );
 
   const allThreadItems = useMemo(
@@ -1355,9 +1393,18 @@ function OpenCommandPaletteDialog(props: {
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
+    const activeProjectEntry = projectPickerEntries.find((entry) => entry.isPreferred) ?? null;
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
+      activeProjectEntry?.group.displayName ??
       (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+    const activeProjectDescription =
+      showProjectEnvironmentLabels && activeProjectEntry
+        ? buildProjectPickerDescription({
+            workspaceRoot: activeProjectEntry.targetProject.workspaceRoot,
+            environmentLabel: activeProjectEntry.targetProject.environmentLabel,
+            showEnvironmentLabel: true,
+          })
+        : null;
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1369,6 +1416,7 @@ function OpenCommandPaletteDialog(props: {
             New thread in <span className="font-semibold">{activeProjectTitle}</span>
           </>
         ),
+        ...(activeProjectDescription ? { description: activeProjectDescription } : {}),
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.new",
         run: async () => {

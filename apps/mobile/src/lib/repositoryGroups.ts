@@ -25,6 +25,12 @@ export interface RepositoryGroup {
   readonly projects: ReadonlyArray<RepositoryProjectGroup>;
 }
 
+export function expandRepositoryGroupProjects(
+  groups: ReadonlyArray<RepositoryGroup>,
+): ReadonlyArray<RepositoryProjectGroup> {
+  return Arr.flatMap(groups, (group) => group.projects);
+}
+
 function compareIsoDateDescending(left: string, right: string): number {
   return new Date(right).getTime() - new Date(left).getTime();
 }

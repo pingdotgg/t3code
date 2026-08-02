@@ -27,7 +27,10 @@ import {
   groupByProvider,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
-import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import {
+  expandRepositoryGroupProjects,
+  groupProjectsByRepository,
+} from "../../lib/repositoryGroups";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -181,25 +184,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [projects, threads],
   );
   const logicalProjects = useMemo(
-    () =>
-      pipe(
-        repositoryGroups,
-        Arr.map((group) => {
-          const primaryProject = group.projects[0]?.project;
-          if (!primaryProject) {
-            return null;
-          }
-          return { key: group.key, project: primaryProject };
-        }),
-        Arr.filter(
-          (
-            entry,
-          ): entry is {
-            readonly key: string;
-            readonly project: EnvironmentProject;
-          } => entry !== null,
-        ),
-      ),
+    () => expandRepositoryGroupProjects(repositoryGroups),
     [repositoryGroups],
   );
 

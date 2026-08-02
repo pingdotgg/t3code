@@ -1,5 +1,6 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { buildProjectPickerDescription } from "@t3tools/client-runtime/state/project-grouping";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
@@ -13,6 +14,7 @@ import {
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { resolveEnvironmentOptionLabel } from "../BranchToolbar.logic";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -45,10 +47,21 @@ export function DraftHeroHeadline({
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              resolveEnvironmentOptionLabel({
+                isPrimary: environment.environmentId === primaryEnvironmentId,
+                environmentId: environment.environmentId,
+                runtimeLabel: environment.label,
+              }),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, primaryEnvironmentId],
   );
+  const showProjectEnvironmentLabels = environments.length > 1;
   const projectGroups = useMemo(
     () =>
       sortLogicalProjectsForSidebar(
@@ -119,10 +132,21 @@ export function DraftHeroHeadline({
             });
           }}
         >
-          {projectPickerEntries.map(({ group }) => {
+          {projectPickerEntries.map(({ group, targetProject }) => {
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
-                <span className="min-w-0 truncate">{group.displayName}</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{group.displayName}</span>
+                  {showProjectEnvironmentLabels ? (
+                    <span className="truncate text-muted-foreground text-xs">
+                      {buildProjectPickerDescription({
+                        workspaceRoot: targetProject.workspaceRoot,
+                        environmentLabel: targetProject.environmentLabel,
+                        showEnvironmentLabel: true,
+                      })}
+                    </span>
+                  ) : null}
+                </span>
               </MenuRadioItem>
             );
           })}

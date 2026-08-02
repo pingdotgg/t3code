@@ -17,6 +17,7 @@ import {
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   shouldIncludeBranchPickerItem,
+  shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 
@@ -415,6 +416,41 @@ describe("shouldShowEnvironmentIndicator", () => {
     expect(
       shouldShowEnvironmentIndicator({
         activeEnvironment: null,
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldShowComposerContextStrip", () => {
+  it("keeps machine identity visible for a remote non-git project", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: false,
+        activeEnvironment: { isPrimary: false },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the existing git controls for a primary project", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: true,
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the strip for a sole primary non-git project", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: false,
+        activeEnvironment: { isPrimary: true },
         canPickEnvironment: false,
       }),
     ).toBe(false);
