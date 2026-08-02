@@ -3,6 +3,7 @@ import type {
   ModelSelection,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import type { MenuAction } from "@react-native-menu/menu";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -16,6 +17,7 @@ export type ModelOption = {
   readonly providerLabel: string;
   readonly providerDriver: string;
   readonly isDefault: boolean;
+  readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -105,6 +107,7 @@ export function buildModelOptions(
         providerLabel,
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
+        isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -135,6 +138,7 @@ export function buildModelOptions(
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
         isDefault: false,
+        isLegacy: false,
         capabilities: null,
         selection: fallbackModelSelection,
       });
@@ -163,4 +167,54 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
   }));
+}
+
+function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
+  return {
+    id: `model:${option.key}`,
+    title: option.label,
+    state:
+      option.selection.instanceId === selectedModel?.instanceId &&
+      option.selection.model === selectedModel.model
+        ? "on"
+        : undefined,
+  };
+}
+
+export function buildModelMenuActions(
+  groups: ReadonlyArray<ProviderGroup>,
+  selectedModel: ModelSelection | null,
+): MenuAction[] {
+  return groups.flatMap((group) => {
+    const currentModels = group.models.filter((model) => !model.isLegacy);
+    const legacyModels = group.models.filter((model) => model.isLegacy);
+    const selected = group.models.find(
+      (model) =>
+        model.selection.instanceId === selectedModel?.instanceId &&
+        model.selection.model === selectedModel.model,
+    );
+
+    return [
+      ...(currentModels.length > 0
+        ? [
+            {
+              id: `provider:${group.providerKey}`,
+              title: group.providerLabel,
+              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
+              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
+      ...(legacyModels.length > 0
+        ? [
+            {
+              id: `legacy-models:${group.providerKey}`,
+              title: `${group.providerLabel} legacy models`,
+              subtitle: selected?.isLegacy ? selected.label : undefined,
+              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
+    ];
+  });
 }
