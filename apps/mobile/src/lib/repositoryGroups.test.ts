@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
-import { groupProjectsByRepository } from "./repositoryGroups";
+import { expandRepositoryGroupProjects, groupProjectsByRepository } from "./repositoryGroups";
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 function makeProject(
@@ -44,6 +44,68 @@ function makeThread(
 }
 
 describe("groupProjectsByRepository", () => {
+  it("expands identical repository workspaces into scoped projects for every environment", () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/t3tools/t3code",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@github.com:t3tools/t3code.git",
+      },
+      provider: "github",
+      owner: "t3tools",
+      name: "t3code",
+      displayName: "T3 Code",
+    };
+    const projects = [
+      makeProject({
+        environmentId: EnvironmentId.make("env-macbook"),
+        id: ProjectId.make("project-t3code"),
+        title: "T3 Code",
+        workspaceRoot: "/Users/henry/Desktop/t3code",
+        repositoryIdentity,
+      }),
+      makeProject({
+        environmentId: EnvironmentId.make("env-studio"),
+        id: ProjectId.make("project-t3code"),
+        title: "T3 Code",
+        workspaceRoot: "/Users/henry/Desktop/t3code",
+        repositoryIdentity,
+      }),
+    ];
+
+    const expanded = expandRepositoryGroupProjects(
+      groupProjectsByRepository({ projects, threads: [] }),
+    );
+
+    expect(
+      expanded
+        .map(({ key, project }) => ({
+          key,
+          environmentId: project.environmentId,
+          projectId: project.id,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+        }))
+        .sort((left, right) => left.key.localeCompare(right.key)),
+    ).toEqual([
+      {
+        key: "env-macbook:project-t3code",
+        environmentId: "env-macbook",
+        projectId: "project-t3code",
+        title: "T3 Code",
+        workspaceRoot: "/Users/henry/Desktop/t3code",
+      },
+      {
+        key: "env-studio:project-t3code",
+        environmentId: "env-studio",
+        projectId: "project-t3code",
+        title: "T3 Code",
+        workspaceRoot: "/Users/henry/Desktop/t3code",
+      },
+    ]);
+  });
+
   it("groups projects across environments by repository identity", () => {
     const repoIdentity = {
       canonicalKey: "github.com/t3tools/t3code",

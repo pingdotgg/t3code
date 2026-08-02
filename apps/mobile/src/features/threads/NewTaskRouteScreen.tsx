@@ -16,7 +16,10 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironments } from "../../state/environments";
-import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import {
+  expandRepositoryGroupProjects,
+  groupProjectsByRepository,
+} from "../../lib/repositoryGroups";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 
@@ -122,15 +125,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       readonly workspaceRoot: string;
       readonly environmentLabel: string | null;
     }> = [];
-    for (const group of repositoryGroups) {
-      const project = group.projects[0]?.project;
-      if (!project) {
-        continue;
-      }
+    for (const { key, project } of expandRepositoryGroupProjects(repositoryGroups)) {
       nextItems.push({
         environmentId: project.environmentId,
         id: project.id,
-        key: group.key,
+        key,
         title: project.title,
         workspaceRoot: project.workspaceRoot,
         environmentLabel: environmentLabelById.get(project.environmentId) ?? null,
