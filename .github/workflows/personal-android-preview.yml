@@ -232,12 +232,28 @@ jobs:
           echo "package_name=${package_name}" >>"$GITHUB_OUTPUT"
           echo "version_code=${version_code}" >>"$GITHUB_OUTPUT"
 
+      - name: Retain verified preview artifact
+        if: steps.source.outputs.should_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3-code-preview-${{ steps.apk.outputs.version_code }}
+          path: |
+            ${{ steps.apk.outputs.apk }}
+            ${{ runner.temp }}/SHA256SUMS.txt
+          compression-level: 0
+          retention-days: 3
+
       - name: Publish immutable preview release
         if: steps.source.outputs.should_build == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.T3CODE_PREVIEW_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::The personal preview release token is missing."
+            exit 1
+          fi
 
           tag="mark-mobile-preview-v${{ steps.apk.outputs.version_code }}"
           release_date="$(date -u +%Y-%m-%d)"
