@@ -265,10 +265,14 @@ const startup = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.gen(function* () {
           yield* disableCuaDriverServerEnvironment();
-          yield* logStartupError("embedded cua-driver failed to configure", {
-            binaryPath: error.binaryPath,
-            ...(error.cause === undefined ? {} : { cause: String(error.cause) }),
-          });
+          const context =
+            error._tag === "CuaDriverConfigurationError"
+              ? {
+                  binaryPath: error.binaryPath,
+                  ...(error.cause === undefined ? {} : { cause: String(error.cause) }),
+                }
+              : {};
+          yield* logStartupError("embedded cua-driver failed to configure", context);
           yield* electronDialog
             .showMessageBox({
               type: "error",

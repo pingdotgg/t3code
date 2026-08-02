@@ -19,6 +19,15 @@ export class CuaDriverConfigurationError extends Schema.TaggedErrorClass<CuaDriv
   }
 }
 
+export class CuaDriverNotConfiguredError extends Schema.TaggedErrorClass<CuaDriverNotConfiguredError>()(
+  "CuaDriverNotConfiguredError",
+  {},
+) {
+  override get message(): string {
+    return "Cua Driver is not configured.";
+  }
+}
+
 export const resolveEmbeddedDriverPath = (
   environment: NodeJS.ProcessEnv = process.env,
   packagedDriverPath?: string,
@@ -81,7 +90,7 @@ export const configureCuaDriverServerEnvironment = Effect.fn("configureCuaDriver
             );
     const driverPath = resolveEmbeddedDriverPath(process.env, packagedDriverPath);
     if (Option.isNone(driverPath)) {
-      return yield* new CuaDriverConfigurationError({ binaryPath: "<not configured>" });
+      return yield* new CuaDriverNotConfiguredError();
     }
 
     const updates: Record<string, string> = {
