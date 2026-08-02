@@ -329,6 +329,7 @@ describe("buildThreadFeed", () => {
     expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:turn-1", "assistant-final"]);
     expect(collapsed[0]).toMatchObject({
       type: "turn-fold",
+      foldKind: "worked",
       label: "Worked for 17s",
       expanded: false,
     });
@@ -416,7 +417,55 @@ describe("buildThreadFeed", () => {
     const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
     expect(collapsed.find((entry) => entry.type === "turn-fold")).toMatchObject({
       turnId: firstTurnId,
+      foldKind: "worked",
       label: "Worked for 12s",
+    });
+  });
+
+  it("marks interrupted folds structurally instead of relying on their label text", () => {
+    const turnId = TurnId.make("turn-interrupted");
+    const thread = makeThread({
+      id: ThreadId.make("thread-interrupted"),
+      projectId: ProjectId.make("project-1"),
+      title: "Interrupted work",
+      latestTurn: {
+        turnId,
+        state: "interrupted",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:06.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-commentary"),
+          role: "assistant",
+          text: "Starting.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "Stopped.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:05.000Z",
+          updatedAt: "2026-04-01T00:00:06.000Z",
+        },
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+
+    expect(collapsed[0]).toMatchObject({
+      type: "turn-fold",
+      turnId,
+      foldKind: "interrupted",
+      label: "You stopped after 5.0s",
     });
   });
 

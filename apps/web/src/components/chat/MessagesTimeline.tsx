@@ -708,7 +708,7 @@ function TimelineRowContent(props: { row: TimelineRow }) {
 
       {row.kind === "working" && (
         <div className="py-0.5 pl-1.5">
-          <div className="flex items-center gap-2 pt-1 text-[10px] text-muted-foreground/50">
+          <div className="flex items-center gap-2 pt-1 text-[7.5px] text-muted-foreground/50">
             <span className="inline-flex items-center gap-[3px]">
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
@@ -937,7 +937,7 @@ const ReasoningSection = memo(function ReasoningSection({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground/50 transition-colors hover:text-foreground/70"
+          className="inline-flex shrink-0 items-center gap-1 text-[9px] text-muted-foreground/50 transition-colors hover:text-foreground/70"
           onClick={() => setIsExpanded((value) => !value)}
           aria-expanded={isExpanded}
         >

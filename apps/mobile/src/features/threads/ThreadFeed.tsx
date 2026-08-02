@@ -706,7 +706,12 @@ function renderFeedEntry(
         hitSlop={4}
         className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
       >
-        <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
+        <Text
+          className={cn(
+            "font-t3-medium tabular-nums text-foreground-muted",
+            entry.foldKind === "worked" ? "text-[10.5px]" : "text-sm",
+          )}
+        >
           {entry.label}
         </Text>
         <SymbolView

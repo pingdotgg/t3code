@@ -121,6 +121,7 @@ export type ThreadFeedEntry =
       readonly id: string;
       readonly createdAt: string;
       readonly turnId: TurnId;
+      readonly foldKind: "worked" | "interrupted";
       readonly label: string;
       readonly expanded: boolean;
     };
@@ -999,6 +1000,7 @@ interface ThreadFeedTurnFold {
   readonly turnId: TurnId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
+  readonly foldKind: "worked" | "interrupted";
   readonly label: string;
 }
 
@@ -1087,6 +1089,7 @@ function deriveThreadFeedTurnFolds(
           );
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted = latestTurnMatches && latestTurn.state === "interrupted";
+    const foldKind = interrupted ? "interrupted" : "worked";
     const label = interrupted
       ? duration
         ? `You stopped after ${duration}`
@@ -1099,6 +1102,7 @@ function deriveThreadFeedTurnFolds(
       turnId,
       createdAt: firstEntry.createdAt,
       hiddenEntryIds,
+      foldKind,
       label,
     });
   }
@@ -1133,6 +1137,7 @@ export function deriveThreadFeedPresentation(
         id: `turn-fold:${fold.turnId}`,
         createdAt: fold.createdAt,
         turnId: fold.turnId,
+        foldKind: fold.foldKind,
         label: fold.label,
         expanded: expandedTurnIds.has(fold.turnId),
       });

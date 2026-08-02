@@ -195,7 +195,7 @@ const WorkingDurationPill = memo(function WorkingDurationPill(props: {
             <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
             <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
           </View>
-          <Text className="font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
+          <Text className="font-t3-medium text-[9px] text-neutral-600 dark:text-neutral-400">
             Working for {durationLabel}
           </Text>
         </View>
