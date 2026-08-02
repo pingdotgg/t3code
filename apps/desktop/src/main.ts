@@ -62,41 +62,6 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
-const configureElectronBeforeReady = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
-  return yield* Effect.sync(
-    (): DesktopPreReadyPlatform.DesktopPreReadyElectronOptions["Service"] => {
-      const linuxPasswordStoreCommandLine =
-        platform === "linux"
-          ? DesktopPreReadyPlatform.readCommandLineSwitchValue(
-              Electron.app.commandLine,
-              "password-store",
-            )
-          : null;
-      const linux =
-        platform === "linux"
-          ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess()
-          : null;
-
-      if (linux !== null) {
-        Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
-        if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
-          Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
-        }
-      }
-
-      return { linux, linuxPasswordStoreCommandLine };
-    },
-  );
-}).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
-
-// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
-// observe app readiness before scheme privileges and command-line switches exist.
-const desktopElectronPreReadyLayer = DesktopPreReadyPlatform.makeDesktopElectronPreReadyLayer({
-  schemePrivilegesLayer: ElectronProtocol.layerSchemePrivileges,
-  configureElectronBeforeReady,
-});
-
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
@@ -244,7 +209,7 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.flatMap((clerkContext) =>
     desktopApplicationRuntimeLayer.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
   ),
-  Layer.provideMerge(desktopElectronPreReadyLayer),
+  Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

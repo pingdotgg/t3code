@@ -1,19 +1,44 @@
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+import { beforeEach, vi } from "vite-plus/test";
 
-import {
-  DesktopPreReadyElectronOptions,
-  makeDesktopElectronPreReadyLayer,
-  readCommandLineSwitchValue,
-} from "./DesktopPreReadyPlatform.ts";
+const { appendSwitchMock, getSwitchValueMock, hasSwitchMock, registerSchemesMock } = vi.hoisted(
+  () => ({
+    appendSwitchMock: vi.fn(),
+    getSwitchValueMock: vi.fn(),
+    hasSwitchMock: vi.fn(),
+    registerSchemesMock: vi.fn(),
+  }),
+);
+
+vi.mock("electron", () => ({
+  app: {
+    commandLine: {
+      appendSwitch: appendSwitchMock,
+      getSwitchValue: getSwitchValueMock,
+      hasSwitch: hasSwitchMock,
+    },
+  },
+  protocol: {
+    registerSchemesAsPrivileged: registerSchemesMock,
+  },
+}));
+
+import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
 describe("DesktopPreReadyPlatform", () => {
+  beforeEach(() => {
+    appendSwitchMock.mockReset();
+    getSwitchValueMock.mockReset();
+    hasSwitchMock.mockReset();
+    registerSchemesMock.mockReset();
+  });
+
   it("reads an explicit Electron command-line switch value", () => {
-    const value = readCommandLineSwitchValue(
+    const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
       {
         hasSwitch: (switchName) => switchName === "password-store",
         getSwitchValue: (switchName) => {
@@ -28,7 +53,7 @@ describe("DesktopPreReadyPlatform", () => {
   });
 
   it("treats valueless Electron command-line switches as absent", () => {
-    const value = readCommandLineSwitchValue(
+    const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
       {
         hasSwitch: () => true,
         getSwitchValue: () => "",
@@ -40,7 +65,7 @@ describe("DesktopPreReadyPlatform", () => {
   });
 
   it("returns null for missing Electron command-line switches", () => {
-    const value = readCommandLineSwitchValue(
+    const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
       {
         hasSwitch: () => false,
         getSwitchValue: () => {
@@ -53,38 +78,6 @@ describe("DesktopPreReadyPlatform", () => {
     assert.isNull(value);
   });
 
-  it.effect("builds scheme privileges and command-line setup as sibling pre-ready effects", () =>
-    Effect.gen(function* () {
-      const schemeStarted = yield* Deferred.make<void>();
-      const configureStarted = yield* Deferred.make<void>();
-
-      const layer = makeDesktopElectronPreReadyLayer({
-        schemePrivilegesLayer: Layer.effectDiscard(
-          Deferred.succeed(schemeStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(configureStarted)),
-          ),
-        ),
-        configureElectronBeforeReady: Deferred.succeed(configureStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(schemeStarted)),
-          Effect.as({
-            linux: null,
-            linuxPasswordStoreCommandLine: null,
-          }),
-        ),
-      });
-
-      const options = yield* DesktopPreReadyElectronOptions.pipe(
-        Effect.provide(layer),
-        Effect.timeoutOption("50 millis"),
-      );
-
-      assert.deepEqual(Option.getOrNull(options), {
-        linux: null,
-        linuxPasswordStoreCommandLine: null,
-      });
-    }),
-  );
-
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>
@@ -94,14 +87,13 @@ describe("DesktopPreReadyPlatform", () => {
         ) {}
 
         const events: Array<string> = [];
-
-        const preReadyLayer = Layer.sync(DesktopPreReadyElectronOptions, () => {
+        registerSchemesMock.mockImplementation(() => {
           events.push("pre-ready");
-          return {
-            linux: null,
-            linuxPasswordStoreCommandLine: null,
-          };
         });
+
+        const preReadyLayer = DesktopPreReadyPlatform.layer.pipe(
+          Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
+        );
 
         const clerkShapedLayer = Layer.effect(
           ClerkShaped,
@@ -120,7 +112,7 @@ describe("DesktopPreReadyPlatform", () => {
 
         const result = yield* Effect.all({
           clerk: ClerkShaped,
-          preReady: DesktopPreReadyElectronOptions,
+          preReady: DesktopPreReadyPlatform.DesktopPreReadyElectronOptions,
         }).pipe(Effect.provide(runtimeLayer));
 
         assert.deepEqual(result, {
@@ -131,6 +123,8 @@ describe("DesktopPreReadyPlatform", () => {
           },
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
+        assert.equal(registerSchemesMock.mock.calls.length, 1);
+        assert.equal(appendSwitchMock.mock.calls.length, 0);
       }),
   );
 });

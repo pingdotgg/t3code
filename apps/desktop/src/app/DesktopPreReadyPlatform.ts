@@ -6,15 +6,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
+import * as Electron from "electron";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-export class DesktopPreReadyElectronOptions extends Context.Service<
-  DesktopPreReadyElectronOptions,
-  {
-    readonly linux: DesktopEarlyElectronStartup.EarlyLinuxElectronOptions | null;
-    readonly linuxPasswordStoreCommandLine: string | null;
-  }
->()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
+import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -33,20 +29,6 @@ export function readCommandLineSwitchValue(
   return value.length > 0 ? value : null;
 }
 
-export function makeDesktopElectronPreReadyLayer<E, R, E2, R2>(input: {
-  readonly schemePrivilegesLayer: Layer.Layer<never, E, R>;
-  readonly configureElectronBeforeReady: Effect.Effect<
-    DesktopPreReadyElectronOptions["Service"],
-    E2,
-    R2
-  >;
-}): Layer.Layer<DesktopPreReadyElectronOptions, E | E2, R | R2> {
-  return Layer.mergeAll(
-    input.schemePrivilegesLayer,
-    Layer.effect(DesktopPreReadyElectronOptions, input.configureElectronBeforeReady),
-  );
-}
-
 export const resolveEarlyLinuxElectronOptionsFromProcess =
   (): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
     DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
@@ -55,3 +37,38 @@ export const resolveEarlyLinuxElectronOptionsFromProcess =
       joinPath: NodePath.posix.join,
       readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
     });
+
+export class DesktopPreReadyElectronOptions extends Context.Service<
+  DesktopPreReadyElectronOptions,
+  {
+    readonly linux: DesktopEarlyElectronStartup.EarlyLinuxElectronOptions | null;
+    readonly linuxPasswordStoreCommandLine: string | null;
+  }
+>()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
+
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
+    const linuxPasswordStoreCommandLine =
+      platform === "linux"
+        ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
+        : null;
+    const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
+
+    if (linux !== null) {
+      Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
+      if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
+        Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
+      }
+    }
+
+    return { linux, linuxPasswordStoreCommandLine };
+  });
+}).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
+
+// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
+// observe app readiness before scheme privileges and command-line switches exist.
+export const layer = Layer.mergeAll(
+  ElectronProtocol.layerSchemePrivileges,
+  Layer.effect(DesktopPreReadyElectronOptions, make),
+);
