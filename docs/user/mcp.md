@@ -17,8 +17,11 @@ is a server:
 - **Scope** — `project` for a server from the repo's `.mcp.json`, `local` for one private to that
   workspace. Servers available everywhere show no scope badge.
 - **Detail** — the command line or the server address, with secrets removed. Environment values are
-  never shown, and anything in an argument or URL that could be a credential is replaced with `…`.
-  The full value stays in your config; T3 Code just does not carry it across the network.
+  never shown, a remote server is shown as its address only, and anything in a command line that
+  looks like a credential is replaced with `…`. The one thing that slips through is a bare argument
+  that looks like an ordinary word — `hunter2` is indistinguishable from a subcommand — so a secret
+  passed with no flag in front of it can still be shown. Everything else stays in your config; T3
+  Code does not carry it across the network.
 - **Config file** — where the entry is declared. Click it to copy the full path.
 
 "Refresh all" re-reads every computer, so a config you edited outside T3 Code shows up.
@@ -36,9 +39,10 @@ resolves those outside the filesystem, where T3 Code cannot see them.
 
 ## When a config cannot be read
 
-A row marked **config unreadable** means the config exists but T3 Code could not parse it —
-malformed JSON, a permissions problem, or a `.claude.json` grown too large to read on demand. The
-list may be missing servers.
+When a config exists but T3 Code cannot parse it — malformed JSON, a permissions problem, or a
+`.claude.json` grown too large to read on demand — the page says so and names the file that failed.
+The servers that file would have contributed are missing from the list; the rows you do see are
+still accurate, because each one came from a file that parsed.
 
 This never affects your sessions. T3 Code only reads these files; it does not write to
 `.claude.json` or `.mcp.json`, and Claude Code resolves its own servers at launch exactly as it

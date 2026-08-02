@@ -19,6 +19,7 @@ import {
   formatMcpConfigPath,
   groupMcpServersByHarness,
   mcpServerKey,
+  unreadableConfigMessage,
 } from "./McpServersSettings.logic";
 
 type InventoryState =
@@ -166,7 +167,8 @@ function EnvironmentMcpInventory({
   }, [state, query]);
 
   const serverCount = state.status === "loaded" ? state.inventory.servers.length : null;
-  const unreadableCount = state.status === "loaded" ? state.inventory.unreadable.length : 0;
+  const unreadable = state.status === "loaded" ? state.inventory.unreadable : [];
+  const unreadableCount = unreadable.length;
 
   return (
     <div>
@@ -206,24 +208,33 @@ function EnvironmentMcpInventory({
               {query.trim()
                 ? "No MCP servers match this search."
                 : unreadableCount > 0
-                  ? "Could not read the Claude Code config on this computer, so its MCP servers are unknown."
+                  ? `${unreadableConfigMessage(unreadable)}, so the MCP servers declared there are unknown.`
                   : "No MCP servers configured for Claude Code on this computer."}
             </StatusLine>
           ) : (
-            groups.map((group) => (
-              <div key={group.key} className="pb-1">
-                <p className="px-3 pt-2 pb-1 pl-9 font-medium text-muted-foreground/70 text-xs sm:px-4 sm:pl-9">
-                  {group.harnessDisplayName}
-                </p>
-                {group.servers.map((server) => (
-                  <McpServerRow
-                    key={mcpServerKey(server)}
-                    server={server}
-                    onCopyConfigPath={copyConfigPath}
-                  />
-                ))}
-              </div>
-            ))
+            <>
+              {/* The rows below are accurate; what an unreadable config costs is
+                  the rows it would have added, so this warns about the gap. */}
+              {unreadableCount > 0 && !query.trim() ? (
+                <StatusLine tone="error">
+                  {`${unreadableConfigMessage(unreadable)}, so this list may be missing servers.`}
+                </StatusLine>
+              ) : null}
+              {groups.map((group) => (
+                <div key={group.key} className="pb-1">
+                  <p className="px-3 pt-2 pb-1 pl-9 font-medium text-muted-foreground/70 text-xs sm:px-4 sm:pl-9">
+                    {group.harnessDisplayName}
+                  </p>
+                  {group.servers.map((server) => (
+                    <McpServerRow
+                      key={mcpServerKey(server)}
+                      server={server}
+                      onCopyConfigPath={copyConfigPath}
+                    />
+                  ))}
+                </div>
+              ))}
+            </>
           )}
         </div>
       )}

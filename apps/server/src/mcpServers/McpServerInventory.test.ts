@@ -45,25 +45,38 @@ describe("stdioDetail", () => {
     );
   });
 
+  it("redacts a flag value that itself looks like a flag", () => {
+    // A credential can start with `-`, so "it parses as a flag" is not evidence
+    // that it is one.
+    assert.equal(stdioDetail("server", ["--token", "-secret"]), "server --token …");
+  });
+
+  it("redacts a command that carries a credential", () => {
+    assert.equal(stdioDetail("postgres://user:hunter2@db.example.com/app", []), "…");
+    assert.equal(
+      stdioDetail("/opt/mcp/bin/serve", ["--port", "8080"]),
+      "/opt/mcp/bin/serve --port 8080",
+    );
+  });
+
   it("ignores non-string arguments", () => {
     assert.equal(stdioDetail("server", ["--flag", 42, null]), "server --flag");
   });
 });
 
 describe("remoteDetail", () => {
-  it("keeps the addressable part of a URL", () => {
-    assert.equal(remoteDetail("https://mcp.example.com/sse"), "https://mcp.example.com/sse");
+  it("keeps the origin, which is what identifies the server", () => {
+    assert.equal(remoteDetail("https://mcp.example.com/sse"), "https://mcp.example.com");
   });
 
-  it("drops query strings, fragments, and userinfo", () => {
+  it("drops paths, query strings, fragments, and userinfo", () => {
     assert.equal(
       remoteDetail("https://mcp.example.com/sse?api_key=sk-secret"),
-      "https://mcp.example.com/sse",
+      "https://mcp.example.com",
     );
-    assert.equal(
-      remoteDetail("https://token@mcp.example.com/mcp"),
-      "https://…@mcp.example.com/mcp",
-    );
+    // A token in the path is just as much a credential as one in the query.
+    assert.equal(remoteDetail("https://mcp.example.com/mcp/sk-secret"), "https://mcp.example.com");
+    assert.equal(remoteDetail("https://token@mcp.example.com/mcp"), "https://…@mcp.example.com");
   });
 
   it("redacts anything it cannot parse", () => {
@@ -73,7 +86,7 @@ describe("remoteDetail", () => {
 });
 
 it.layer(NodeServices.layer)("claude inventory entries", (it) => {
-  it.effect("flags rows when a config file cannot be read", () =>
+  it.effect("blames the config that actually failed, not the one it resolved first", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -94,11 +107,18 @@ it.layer(NodeServices.layer)("claude inventory entries", (it) => {
         workspace,
       );
 
+      // The user-scope row came out of a `.claude.json` that parsed, so it is
+      // not suspect; only the project scope is unknown.
       assert.deepEqual(
-        entries.map((entry) => ({ name: entry.name, status: entry.status })),
-        [{ name: "codegraph", status: "config unreadable" }],
+        entries.map((entry) => entry.name),
+        ["codegraph"],
       );
-      assert.equal(unreadable.length, 1);
+      assert.equal(entries[0]?.status, undefined);
+      const resolvedWorkspace = yield* fs.realPath(workspace);
+      assert.deepEqual(
+        unreadable.map((item) => item.configPath),
+        [path.join(resolvedWorkspace, ".mcp.json")],
+      );
     }).pipe(Effect.scoped),
   );
 

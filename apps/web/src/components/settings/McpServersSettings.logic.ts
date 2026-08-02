@@ -1,6 +1,7 @@
 import type {
   McpServerInventory,
   McpServerInventoryEntry,
+  McpServerUnreadableConfig,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 
@@ -16,6 +17,20 @@ export function formatMcpConfigPath(path: string): string {
   const segments = homeRelative.split(/[/\\]/).filter(Boolean);
   if (segments.length <= 4) return homeRelative;
   return `…/${segments.slice(-3).join("/")}`;
+}
+
+/**
+ * Opening clause naming the configs that could not be read. A file is named
+ * whenever discovery could pin the failure on one — blaming `.claude.json` for
+ * a broken `.mcp.json` would send the reader to the wrong file.
+ */
+export function unreadableConfigMessage(
+  unreadable: ReadonlyArray<McpServerUnreadableConfig>,
+): string {
+  const paths = unreadable.flatMap((item) => (item.configPath ? [item.configPath] : []));
+  return paths.length > 0
+    ? `Could not read ${paths.map(formatMcpConfigPath).join(", ")}`
+    : "Could not fully read the Claude Code config on this computer";
 }
 
 export function filterMcpInventory(

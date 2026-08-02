@@ -52,6 +52,12 @@ export interface ClaudeMcpServerRead {
   readonly definitions: ReadonlyArray<ClaudeMcpServerDefinition>;
   /** The `.claude.json` this read resolved to, whether or not it parsed. */
   readonly configPath: string;
+  /**
+   * The config files that exist but could not be read — `.claude.json`,
+   * `.mcp.json`, or both. Naming them separately is what lets a caller blame
+   * the file that actually failed instead of the one it resolved first.
+   */
+  readonly unreadablePaths: ReadonlyArray<string>;
 }
 
 function readServerMap(value: unknown): ReadonlyArray<readonly [string, Record<string, unknown>]> {
@@ -100,7 +106,9 @@ const readJsonObject = Effect.fn("ClaudeMcpConfig.readJsonObject")(function* (
     const exists = yield* fileSystem.exists(filePath).pipe(Effect.orElseSucceed(() => true));
     return exists ? { kind: "unusable" } : { kind: "absent" };
   }
-  if (info.type !== "File") return { kind: "absent" };
+  // Something is there but it is not a regular file (a directory, a socket).
+  // The CLI cannot read it either, so its servers are unknown, not absent.
+  if (info.type !== "File") return { kind: "unusable" };
   if (Number(info.size) > MAX_CONFIG_FILE_BYTES) return { kind: "unusable" };
 
   const contents = yield* fileSystem
@@ -175,6 +183,7 @@ export const readClaudeMcpServers = Effect.fn("ClaudeMcpConfig.readClaudeMcpServ
   const claudeRead = yield* readJsonObject(configPath);
   const claudeJson = claudeRead.kind === "object" ? claudeRead.value : undefined;
   let complete = claudeRead.kind !== "unusable";
+  const unreadablePaths: Array<string> = claudeRead.kind === "unusable" ? [configPath] : [];
 
   const byName = new Map<string, ClaudeMcpServerDefinition>();
   for (const [name, definition] of readServerMap(claudeJson?.mcpServers)) {
@@ -185,7 +194,7 @@ export const readClaudeMcpServers = Effect.fn("ClaudeMcpConfig.readClaudeMcpServ
     // Without a workspace the `local` and `project` scopes cannot be read at
     // all, so the list is knowingly partial. Callers that replace the CLI's own
     // resolution must not treat it as the full set.
-    return { complete: false, definitions: [...byName.values()], configPath };
+    return { complete: false, definitions: [...byName.values()], configPath, unreadablePaths };
   }
 
   // Claude Code keys `projects` by the resolved real path. Matching on the raw
@@ -208,7 +217,10 @@ export const readClaudeMcpServers = Effect.fn("ClaudeMcpConfig.readClaudeMcpServ
   const mcpJsonPath = path.join(resolvedCwd, ".mcp.json");
   const mcpJsonRead = yield* readJsonObject(mcpJsonPath);
   const mcpJson = mcpJsonRead.kind === "object" ? mcpJsonRead.value : undefined;
-  if (mcpJsonRead.kind === "unusable") complete = false;
+  if (mcpJsonRead.kind === "unusable") {
+    complete = false;
+    unreadablePaths.push(mcpJsonPath);
+  }
   const approveAll = projectConfig?.enableAllProjectMcpServers === true;
   const approved = new Set(readStringArray(projectConfig?.enabledMcpjsonServers));
   const rejected = new Set(readStringArray(projectConfig?.disabledMcpjsonServers));
@@ -221,5 +233,5 @@ export const readClaudeMcpServers = Effect.fn("ClaudeMcpConfig.readClaudeMcpServ
     byName.set(name, { name, scope: "local", sourcePath: configPath, definition });
   }
 
-  return { complete, definitions: [...byName.values()], configPath };
+  return { complete, definitions: [...byName.values()], configPath, unreadablePaths };
 });

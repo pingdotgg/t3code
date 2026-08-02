@@ -77,6 +77,11 @@ const SAFE_ARGUMENT_PATTERN =
 const SECRET_HINT_PATTERN =
   /(token|key|secret|password|passwd|credential|auth|bearer|pat|dsn|cookie|session|header)/i;
 
+/** A word that looks structural and does not name a credential. */
+function isSafeToShow(value: string): boolean {
+  return SAFE_ARGUMENT_PATTERN.test(value) && !SECRET_HINT_PATTERN.test(value);
+}
+
 /**
  * Render a stdio server as its command line for display. Environment values are
  * dropped entirely, and an argument is shown only if it both looks structural
@@ -99,11 +104,10 @@ export function stdioDetail(command: string, args: unknown): string {
   for (const part of parts) {
     if (redactNext) {
       redactNext = false;
-      // A flag cannot be the value of the previous flag, so it is not redacted.
-      if (!part.startsWith("-")) {
-        rendered.push(REDACTED);
-        continue;
-      }
+      // Redact whatever it looks like: a credential can start with `-`, so
+      // "it parses as a flag" is not evidence that it is one.
+      rendered.push(REDACTED);
+      continue;
     }
     // `--flag=value` keeps the flag so the shape stays readable; the value goes
     // whenever the flag hints at a credential or the value itself looks unsafe.
@@ -126,20 +130,23 @@ export function stdioDetail(command: string, args: unknown): string {
     if (part.startsWith("-") && SECRET_HINT_PATTERN.test(part)) redactNext = true;
     rendered.push(part);
   }
-  return [command, ...rendered].join(" ");
+  // The command is config data too — it can be a credential-bearing URL, or the
+  // secret itself — so it gets the same treatment as a positional argument.
+  return [isSafeToShow(command) ? command : REDACTED, ...rendered].join(" ");
 }
 
 /**
- * Render a remote server's URL without its credentials. Query strings,
- * fragments, and userinfo routinely carry API keys (`?api_key=…`,
- * `https://token@host/mcp`), so only the addressable part is shown.
+ * Render a remote server's URL without its credentials. Only the origin is
+ * shown: the query, the fragment, the userinfo, *and* the path all routinely
+ * carry API keys (`?api_key=…`, `https://token@host/mcp`, `/mcp/<token>`), and
+ * the host on its own already identifies the server.
  */
 export function remoteDetail(rawUrl: string | undefined): string | undefined {
   if (rawUrl === undefined) return undefined;
   try {
     const url = new URL(rawUrl);
     const credentialed = url.username.length > 0 || url.password.length > 0;
-    return `${url.protocol}//${credentialed ? `${REDACTED}@` : ""}${url.host}${url.pathname}`;
+    return `${url.protocol}//${credentialed ? `${REDACTED}@` : ""}${url.host}`;
   } catch {
     // Not a parseable URL, so nothing can be said about which part is a secret.
     return REDACTED;
@@ -156,7 +163,9 @@ const MAX_DISPLAY_NAME_LENGTH = 120;
 
 function sanitizeDisplayName(name: string): string {
   const stripped = name.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
-  const safe = stripped.length > 0 ? stripped : name.trim();
+  // A name made only of control characters has nothing left to show; falling
+  // back to the raw name would put the override right back on screen.
+  const safe = stripped.length > 0 ? stripped : "?";
   return safe.length > MAX_DISPLAY_NAME_LENGTH
     ? `${safe.slice(0, MAX_DISPLAY_NAME_LENGTH)}…`
     : safe;
@@ -183,7 +192,7 @@ export const discoverClaudeMcpServerEntries = Effect.fn(
   const settings = decoded.value;
 
   const displayName = harnessDisplayName(instance, "Claude");
-  const { complete, definitions, configPath } = yield* readClaudeMcpServers(
+  const { complete, definitions, unreadablePaths } = yield* readClaudeMcpServers(
     settings,
     environment,
     cwd,
@@ -207,28 +216,35 @@ export const discoverClaudeMcpServerEntries = Effect.fn(
       ...(detail ? { detail } : {}),
       configPath: sourcePath,
       scope,
-      // The listing may be missing servers the CLI would load, so say so rather
-      // than presenting a partial list as the whole truth.
-      ...(complete ? {} : { status: "config unreadable" }),
       // Claude Code has no per-server enable flag: everything it resolves is
       // loaded.
       enabled: true,
     });
   }
 
+  // Every row here came out of a file that parsed, so no row is itself
+  // suspect — what an unreadable config costs is the rows it would have
+  // added. That is reported against the failing file instead, one entry per
+  // file, because a broken `.mcp.json` says nothing about `.claude.json`.
+  const unreadable = unreadablePaths.map((path) => ({
+    providerInstanceId: ProviderInstanceId.make(instanceId),
+    harnessDisplayName: displayName,
+    configPath: path,
+  }));
+
   return {
     entries,
-    // Reported separately from the rows because an unreadable config often
-    // yields *no* rows at all, and then there is nothing to hang a status on.
-    unreadable: complete
-      ? []
-      : [
-          {
-            providerInstanceId: ProviderInstanceId.make(instanceId),
-            harnessDisplayName: displayName,
-            configPath,
-          },
-        ],
+    unreadable:
+      complete || unreadable.length > 0
+        ? unreadable
+        : // Incomplete with no file to blame: the scopes that need a workspace
+          // were never read at all.
+          [
+            {
+              providerInstanceId: ProviderInstanceId.make(instanceId),
+              harnessDisplayName: displayName,
+            },
+          ],
   };
 });
 

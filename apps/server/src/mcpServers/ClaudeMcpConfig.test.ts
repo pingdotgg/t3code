@@ -65,6 +65,42 @@ it.layer(NodeServices.layer)("readClaudeMcpServers", (it) => {
       const malformed = yield* readClaudeMcpServers({ homePath: tempDir }, {}, workspace);
       assert.deepEqual(malformed.definitions, []);
       assert.equal(malformed.complete, false);
+      assert.deepEqual(malformed.unreadablePaths, [path.join(tempDir, ".claude.json")]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("treats a config that is not a regular file as unreadable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-mcp-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+      // A directory where the config should be: Claude cannot read it either,
+      // so the server list is unknown rather than empty.
+      yield* fs.makeDirectory(path.join(tempDir, ".claude.json"), { recursive: true });
+
+      const read = yield* readClaudeMcpServers({ homePath: tempDir }, {}, workspace);
+      assert.equal(read.complete, false);
+      assert.deepEqual(read.unreadablePaths, [path.join(tempDir, ".claude.json")]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("names the workspace config when only it is malformed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-mcp-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+      yield* writeClaudeConfig(tempDir, '{ "mcpServers": { "codegraph": { "command": "cg" } } }');
+      yield* fs.writeFileString(path.join(workspace, ".mcp.json"), "{ not json");
+
+      const read = yield* readClaudeMcpServers({ homePath: tempDir }, {}, workspace);
+      assert.equal(read.complete, false);
+      // Blaming `.claude.json` here would send the reader to a file that parsed.
+      const resolvedWorkspace = yield* fs.realPath(workspace);
+      assert.deepEqual(read.unreadablePaths, [path.join(resolvedWorkspace, ".mcp.json")]);
     }).pipe(Effect.scoped),
   );
 
