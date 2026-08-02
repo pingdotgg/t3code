@@ -21,6 +21,7 @@ import React, {
   Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   isValidElement,
   use,
   useCallback,
@@ -39,6 +40,17 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import {
+  ChatTextSelectionPopover,
+  type ChatTextSelectionPopoverProps,
+} from "./chat/ChatTextSelectionPopover";
+import { ChatSelectionAnnotationEditor } from "./chat/ChatSelectionAnnotationEditor";
+import { AssistantMessageIndicators } from "./chat/AssistantMessageIndicators";
+import {
+  deriveChatSelectionIndicators,
+  type ChatSelectionAnnotation,
+  type ChatSelectionIndicator,
+} from "../chatSelectionAnnotation";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -102,9 +114,342 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Enables the answer-selection actions used by assistant messages. */
+  onTextSelection?:
+    | ((input: {
+        selectedText: string;
+        comment: string;
+        sourceStart?: number;
+        sourceEnd?: number;
+      }) => void)
+    | undefined;
+  annotations?: ReadonlyArray<ChatSelectionAnnotation>;
+  editableAnnotationIds?: ReadonlySet<string>;
+  onUpdateAnnotation?: ((annotationId: string, comment: string) => void) | undefined;
+  onRemoveAnnotation?: ((annotationId: string) => void) | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_CHAT_SELECTION_ANNOTATIONS: ReadonlyArray<ChatSelectionAnnotation> = [];
+
+interface ChatMarkdownHighlightRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+interface ChatMarkdownIndicatorPlacement {
+  readonly indicator: ChatSelectionIndicator;
+  readonly top: number;
+}
+
+interface ChatMarkdownTextNodeEntry {
+  readonly node: Text;
+  readonly start: number;
+  readonly end: number;
+}
+
+interface ChatMarkdownTextIndex {
+  readonly text: string;
+  readonly nodes: ReadonlyArray<ChatMarkdownTextNodeEntry>;
+}
+
+function readChatMarkdownTextRects(
+  root: HTMLElement,
+  selectionRect: { top: number; left: number; width: number; height: number },
+): ReadonlyArray<{ top: number; left: number; width: number; height: number }> {
+  const rects: Array<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  }> = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  while (current instanceof Text) {
+    const parentRect = current.parentElement?.getBoundingClientRect();
+    const isNearSelection =
+      parentRect &&
+      parentRect.bottom >= selectionRect.top - 80 &&
+      parentRect.top <= selectionRect.top + selectionRect.height + 80;
+    if (current.data.trim().length > 0 && isNearSelection) {
+      const range = document.createRange();
+      range.selectNodeContents(current);
+      for (const rect of range.getClientRects()) {
+        if (rect.width > 0 && rect.height > 0) {
+          rects.push({
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+          });
+        }
+      }
+    }
+    current = walker.nextNode();
+  }
+  return rects;
+}
+
+const CHAT_MARKDOWN_BLOCK_TAGS = new Set([
+  "blockquote",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+
+function nearestChatMarkdownBlock(node: Text, root: HTMLElement): Element {
+  let current = node.parentElement;
+  while (current && current !== root) {
+    if (CHAT_MARKDOWN_BLOCK_TAGS.has(current.tagName.toLowerCase())) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return root;
+}
+
+function buildChatMarkdownTextIndex(root: HTMLElement): ChatMarkdownTextIndex {
+  const nodes: ChatMarkdownTextNodeEntry[] = [];
+  let text = "";
+  let previousBlock: Element | null = null;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+
+  while (current instanceof Text) {
+    if (current.data.length > 0) {
+      const block = nearestChatMarkdownBlock(current, root);
+      if (previousBlock && block !== previousBlock) {
+        text += "\n";
+      }
+      const start = text.length;
+      text += current.data;
+      nodes.push({ node: current, start, end: text.length });
+      previousBlock = block;
+    }
+    current = walker.nextNode();
+  }
+
+  return { text, nodes };
+}
+
+function findChatMarkdownBoundaryOffset(
+  index: ChatMarkdownTextIndex,
+  container: Node,
+  offset: number,
+): number | null {
+  if (container instanceof Text) {
+    const entry = index.nodes.find((candidate) => candidate.node === container);
+    return entry ? entry.start + Math.max(0, Math.min(offset, container.data.length)) : null;
+  }
+  if (!(container instanceof Element)) return null;
+
+  const descendants = (candidate: Node) =>
+    index.nodes.filter(
+      (entry) =>
+        candidate === entry.node ||
+        (candidate instanceof Element && candidate.contains(entry.node)),
+    );
+  const child = container.childNodes[offset];
+  if (child) {
+    return descendants(child)[0]?.start ?? null;
+  }
+  const entries = descendants(container);
+  return entries.at(-1)?.end ?? null;
+}
+
+function readChatMarkdownSelectionSourceOffsets(
+  root: HTMLElement,
+  range: Range,
+  selectedText: string,
+): { sourceStart: number; sourceEnd: number } | undefined {
+  const index = buildChatMarkdownTextIndex(root);
+  const rawStart = findChatMarkdownBoundaryOffset(index, range.startContainer, range.startOffset);
+  const rawEnd = findChatMarkdownBoundaryOffset(index, range.endContainer, range.endOffset);
+  if (rawStart === null || rawEnd === null || rawEnd <= rawStart) return undefined;
+
+  const sourceStart = Math.min(rawStart, rawEnd);
+  const sourceEnd = Math.max(rawStart, rawEnd);
+  const rawSelectedText = index.text.slice(sourceStart, sourceEnd);
+  const leadingWhitespace = rawSelectedText.length - rawSelectedText.trimStart().length;
+  const trailingWhitespace = rawSelectedText.length - rawSelectedText.trimEnd().length;
+  const trimmedStart = sourceStart + leadingWhitespace;
+  const trimmedEnd = Math.max(trimmedStart, sourceEnd - trailingWhitespace);
+  const sourceSelection = index.text.slice(trimmedStart, trimmedEnd);
+  if (
+    sourceSelection.trim() !== selectedText.trim() &&
+    normalizeChatMarkdownSearchText(sourceSelection) !==
+      normalizeChatMarkdownSearchText(selectedText)
+  ) {
+    return undefined;
+  }
+  return { sourceStart: trimmedStart, sourceEnd: trimmedEnd };
+}
+
+function normalizeChatMarkdownSearchText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function findChatMarkdownTextMatch(
+  source: string,
+  target: string,
+): { start: number; end: number } | null {
+  const trimmedTarget = target.trim();
+  if (trimmedTarget.length === 0) return null;
+
+  const exactStart = source.indexOf(trimmedTarget);
+  if (exactStart >= 0) {
+    return { start: exactStart, end: exactStart + trimmedTarget.length };
+  }
+
+  const normalizedSource = normalizeChatMarkdownSearchText(source);
+  const normalizedTarget = normalizeChatMarkdownSearchText(trimmedTarget);
+  const normalizedStart = normalizedSource.indexOf(normalizedTarget);
+  if (normalizedStart < 0) return null;
+
+  let sourceIndex = 0;
+  let normalizedIndex = 0;
+  let matchStart = -1;
+  let matchEnd = -1;
+  while (
+    sourceIndex < source.length &&
+    normalizedIndex < normalizedStart + normalizedTarget.length
+  ) {
+    const character = source[sourceIndex]!;
+    if (/\s/.test(character)) {
+      if (normalizedIndex > 0 && normalizedSource[normalizedIndex - 1] !== " ") {
+        if (normalizedIndex === normalizedStart) matchStart = sourceIndex;
+        normalizedIndex += 1;
+        if (normalizedIndex === normalizedStart + normalizedTarget.length) {
+          matchEnd = sourceIndex + 1;
+        }
+      }
+    } else {
+      if (normalizedIndex === normalizedStart) matchStart = sourceIndex;
+      normalizedIndex += 1;
+      if (normalizedIndex === normalizedStart + normalizedTarget.length) {
+        matchEnd = sourceIndex + 1;
+      }
+    }
+    sourceIndex += 1;
+  }
+
+  return matchStart >= 0 && matchEnd > matchStart ? { start: matchStart, end: matchEnd } : null;
+}
+
+function resolveChatMarkdownTextRange(
+  root: HTMLElement,
+  target: string,
+  sourceStart?: number,
+  sourceEnd?: number,
+  index: ChatMarkdownTextIndex = buildChatMarkdownTextIndex(root),
+): Range | null {
+  const validSourceStart = sourceStart;
+  const validSourceEnd = sourceEnd;
+  const hasSourceOffsets =
+    typeof validSourceStart === "number" &&
+    typeof validSourceEnd === "number" &&
+    Number.isSafeInteger(validSourceStart) &&
+    Number.isSafeInteger(validSourceEnd) &&
+    validSourceStart >= 0 &&
+    validSourceEnd > validSourceStart &&
+    validSourceEnd <= index.text.length;
+  const offsetMatch = hasSourceOffsets
+    ? index.text.slice(validSourceStart, validSourceEnd).trim() === target.trim() ||
+      normalizeChatMarkdownSearchText(index.text.slice(validSourceStart, validSourceEnd)) ===
+        normalizeChatMarkdownSearchText(target)
+      ? { start: validSourceStart, end: validSourceEnd }
+      : null
+    : null;
+  const match = offsetMatch ?? findChatMarkdownTextMatch(index.text, target);
+  if (!match) return null;
+  const matchStart = match.start;
+  const matchEnd = match.end;
+  if (matchStart === undefined || matchEnd === undefined) return null;
+
+  const startNode = index.nodes.find(
+    (entry) => matchStart >= entry.start && matchStart < entry.end,
+  );
+  const endNode = index.nodes.find((entry) => matchEnd > entry.start && matchEnd <= entry.end);
+  if (!startNode || !endNode) return null;
+
+  const range = document.createRange();
+  range.setStart(startNode.node, matchStart - startNode.start);
+  range.setEnd(endNode.node, matchEnd - endNode.start);
+  return range;
+}
+
+function resolveChatMarkdownHighlightRects(
+  root: HTMLElement,
+  annotation: ChatSelectionAnnotation,
+  index: ChatMarkdownTextIndex,
+): ReadonlyArray<ChatMarkdownHighlightRect> {
+  const range = resolveChatMarkdownTextRange(
+    root,
+    annotation.selectedText,
+    annotation.sourceStart,
+    annotation.sourceEnd,
+    index,
+  );
+  if (!range) return [];
+
+  const rootRect = root.getBoundingClientRect();
+  return Array.from(range.getClientRects())
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => ({
+      left: rect.left - rootRect.left + root.scrollLeft,
+      top: rect.top - rootRect.top + root.scrollTop,
+      width: rect.width,
+      height: rect.height,
+    }));
+}
+
+function resolveChatMarkdownIndicatorPlacements(
+  root: HTMLElement,
+  indicators: ReadonlyArray<ChatSelectionIndicator>,
+  index: ChatMarkdownTextIndex,
+): ReadonlyArray<ChatMarkdownIndicatorPlacement> {
+  const rootRect = root.getBoundingClientRect();
+  const placements: ChatMarkdownIndicatorPlacement[] = [];
+  for (const indicator of indicators) {
+    const range = resolveChatMarkdownTextRange(
+      root,
+      indicator.annotation.selectedText,
+      indicator.annotation.sourceStart,
+      indicator.annotation.sourceEnd,
+      index,
+    );
+    const rects = range ? Array.from(range.getClientRects()) : [];
+    const firstRect = rects[0];
+    if (!firstRect) continue;
+    let top = firstRect.top - rootRect.top + root.scrollTop + firstRect.height / 2;
+    while (placements.some((placement) => Math.abs(placement.top - top) < 28)) {
+      top += 28;
+    }
+    placements.push({ indicator, top });
+  }
+  return placements;
+}
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
@@ -286,9 +631,11 @@ function extractCodeBlock(
 
   const onlyChild = childNodes[0];
   if (
-    !isValidElement<{ className?: string; children?: ReactNode; node?: { tagName?: string } }>(
-      onlyChild,
-    )
+    !isValidElement<{
+      className?: string;
+      children?: ReactNode;
+      node?: { tagName?: string };
+    }>(onlyChild)
   ) {
     return null;
   }
@@ -1133,7 +1480,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         },
         (error) => {
           reportMarkdownActionFailure(
-            { operation: "copy-file-path", target: targetPath, copyTarget: title },
+            {
+              operation: "copy-file-path",
+              target: targetPath,
+              copyTarget: title,
+            },
             error,
           );
           toastManager.add(
@@ -1162,7 +1513,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           [
             { id: "open", label: "Open in editor" },
             ...(onOpenInBrowser
-              ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
+              ? ([
+                  {
+                    id: "open-in-browser",
+                    label: "Open in integrated browser",
+                  },
+                ] as const)
               : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
@@ -1260,7 +1616,34 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  onTextSelection,
+  annotations = EMPTY_CHAT_SELECTION_ANNOTATIONS,
+  editableAnnotationIds,
+  onUpdateAnnotation,
+  onRemoveAnnotation,
 }: ChatMarkdownProps) {
+  const markdownRootRef = useRef<HTMLDivElement | null>(null);
+  const selectionPointerControllerRef = useRef<AbortController | null>(null);
+  const [selectionPopover, setSelectionPopover] = useState<
+    | (Pick<ChatTextSelectionPopoverProps, "text" | "rect" | "avoidRects"> & {
+        sourceStart?: number;
+        sourceEnd?: number;
+      })
+    | null
+  >(null);
+  const [highlightRects, setHighlightRects] = useState<ReadonlyArray<ChatMarkdownHighlightRect>>(
+    [],
+  );
+  const [indicatorPlacements, setIndicatorPlacements] = useState<
+    ReadonlyArray<ChatMarkdownIndicatorPlacement>
+  >([]);
+  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
+  const [editorAnchorRect, setEditorAnchorRect] = useState<
+    ChatTextSelectionPopoverProps["rect"] | null
+  >(null);
+  const indicators = useMemo(() => deriveChatSelectionIndicators(annotations), [annotations]);
+  const activeAnnotation =
+    annotations.find((annotation) => annotation.id === activeAnnotationId) ?? null;
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1443,7 +1826,10 @@ function ChatMarkdown({
                 event.currentTarget.closest("li")?.dataset.taskMarkerOffset,
               );
               if (!Number.isSafeInteger(markerOffset)) return;
-              onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
+              onTaskListChange({
+                markerOffset,
+                checked: event.currentTarget.checked,
+              });
             }}
           />
         );
@@ -1594,13 +1980,191 @@ function ChatMarkdown({
     threadRef,
   ]);
 
+  const readTextSelection = useCallback(() => {
+    if (!onTextSelection) return;
+    const root = markdownRootRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setSelectionPopover(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) {
+      setSelectionPopover(null);
+      return;
+    }
+    const selectedText = selection.toString().trim();
+    const rect = range.getBoundingClientRect();
+    if (selectedText.length === 0 || (rect.width === 0 && rect.height === 0)) {
+      setSelectionPopover(null);
+      return;
+    }
+    const selectionRect = {
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
+    };
+    const sourceOffsets = readChatMarkdownSelectionSourceOffsets(root, range, selectedText);
+    setSelectionPopover({
+      text: selectedText,
+      rect: selectionRect,
+      avoidRects: readChatMarkdownTextRects(root, selectionRect),
+      ...(sourceOffsets
+        ? {
+            sourceStart: sourceOffsets.sourceStart,
+            sourceEnd: sourceOffsets.sourceEnd,
+          }
+        : {}),
+    });
+  }, [onTextSelection]);
+  const selectionActionsEnabled = onTextSelection !== undefined;
+  const scheduleReadTextSelection = useCallback(() => {
+    window.requestAnimationFrame(readTextSelection);
+  }, [readTextSelection]);
+  const handleSelectionPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      selectionPointerControllerRef.current?.abort();
+      const controller = new AbortController();
+      const pointerId = event.pointerId;
+      selectionPointerControllerRef.current = controller;
+      const options = { signal: controller.signal };
+      window.addEventListener(
+        "pointerup",
+        (pointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) return;
+          controller.abort();
+          scheduleReadTextSelection();
+        },
+        options,
+      );
+      window.addEventListener(
+        "pointercancel",
+        (pointerEvent) => {
+          if (pointerEvent.pointerId === pointerId) controller.abort();
+        },
+        options,
+      );
+    },
+    [scheduleReadTextSelection],
+  );
+
+  useEffect(() => () => selectionPointerControllerRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!selectionPopover) return;
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && markdownRootRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-chat-selection-popover]")) return;
+      setSelectionPopover(null);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
+  }, [selectionPopover]);
+
+  useEffect(() => {
+    setSelectionPopover(null);
+  }, [text]);
+
+  useEffect(() => {
+    if (activeAnnotationId && !activeAnnotation) {
+      setActiveAnnotationId(null);
+      setEditorAnchorRect(null);
+    }
+  }, [activeAnnotation, activeAnnotationId]);
+
+  useEffect(() => {
+    if (!activeAnnotation?.selectedText.trim()) return;
+    const root = markdownRootRef.current;
+    if (!root) return;
+    const range = resolveChatMarkdownTextRange(
+      root,
+      activeAnnotation.selectedText,
+      activeAnnotation.sourceStart,
+      activeAnnotation.sourceEnd,
+    );
+    range?.startContainer.parentElement?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [activeAnnotation, text]);
+
+  useEffect(() => {
+    const root = markdownRootRef.current;
+    if (!root || indicators.length === 0) {
+      setHighlightRects((current) => (current.length === 0 ? current : []));
+      setIndicatorPlacements((current) => (current.length === 0 ? current : []));
+      return;
+    }
+
+    let frame: number | null = null;
+    const update = () => {
+      frame = null;
+      const textIndex = buildChatMarkdownTextIndex(root);
+      const nextHighlightRects = activeAnnotation
+        ? resolveChatMarkdownHighlightRects(root, activeAnnotation, textIndex)
+        : [];
+      const nextIndicatorPlacements = resolveChatMarkdownIndicatorPlacements(
+        root,
+        indicators,
+        textIndex,
+      );
+      setHighlightRects((current) =>
+        current.length === nextHighlightRects.length &&
+        current.every((rect, index) => {
+          const next = nextHighlightRects[index];
+          return (
+            next !== undefined &&
+            rect.left === next.left &&
+            rect.top === next.top &&
+            rect.width === next.width &&
+            rect.height === next.height
+          );
+        })
+          ? current
+          : nextHighlightRects,
+      );
+      setIndicatorPlacements((current) =>
+        current.length === nextIndicatorPlacements.length &&
+        current.every((placement, index) => {
+          const next = nextIndicatorPlacements[index];
+          return (
+            next !== undefined &&
+            placement.indicator.id === next.indicator.id &&
+            placement.top === next.top
+          );
+        })
+          ? current
+          : nextIndicatorPlacements,
+      );
+    };
+    const scheduleUpdate = () => {
+      if (frame === null) frame = window.requestAnimationFrame(update);
+    };
+    scheduleUpdate();
+    const observer = new ResizeObserver(scheduleUpdate);
+    observer.observe(root);
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleUpdate);
+    };
+  }, [activeAnnotation, indicators, text]);
+
   return (
     <div
+      ref={markdownRootRef}
+      data-chat-selection-annotation-count={annotations.length || undefined}
       className={cn(
-        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80",
+        "chat-markdown relative w-full min-w-0 text-sm leading-relaxed text-foreground/80",
+        annotations.length > 0 && "pr-8",
         className,
       )}
       onCopy={handleCopy}
+      onPointerDown={selectionActionsEnabled ? handleSelectionPointerDown : undefined}
+      onKeyUp={selectionActionsEnabled ? scheduleReadTextSelection : undefined}
     >
       <ReactMarkdown
         remarkPlugins={
@@ -1612,6 +2176,75 @@ function ChatMarkdown({
       >
         {text}
       </ReactMarkdown>
+      {highlightRects.length > 0 ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 overflow-visible"
+          data-chat-selection-highlight-layer
+        >
+          {highlightRects.map((rect) => (
+            <span
+              className="absolute rounded-sm bg-amber-300/35 ring-1 ring-amber-200/60"
+              key={`${rect.left}:${rect.top}:${rect.width}:${rect.height}`}
+              style={rect}
+            />
+          ))}
+        </div>
+      ) : null}
+      <AssistantMessageIndicators
+        placements={indicatorPlacements}
+        activeIndicatorId={activeAnnotationId}
+        onSelect={(indicator, anchorRect) => {
+          setActiveAnnotationId(indicator.id);
+          setEditorAnchorRect(
+            editableAnnotationIds?.has(indicator.id)
+              ? {
+                  top: anchorRect.top,
+                  left: anchorRect.left,
+                  width: anchorRect.width,
+                  height: anchorRect.height,
+                }
+              : null,
+          );
+        }}
+      />
+      {selectionPopover ? (
+        <ChatTextSelectionPopover
+          text={selectionPopover.text}
+          rect={selectionPopover.rect}
+          avoidRects={selectionPopover.avoidRects}
+          onAddAnnotation={(comment) => {
+            onTextSelection?.({
+              selectedText: selectionPopover.text,
+              comment,
+              ...(selectionPopover.sourceStart !== undefined
+                ? { sourceStart: selectionPopover.sourceStart }
+                : {}),
+              ...(selectionPopover.sourceEnd !== undefined
+                ? { sourceEnd: selectionPopover.sourceEnd }
+                : {}),
+            });
+            setSelectionPopover(null);
+          }}
+          onClose={() => setSelectionPopover(null)}
+        />
+      ) : null}
+      {activeAnnotation && editorAnchorRect && onUpdateAnnotation && onRemoveAnnotation ? (
+        <ChatSelectionAnnotationEditor
+          annotation={activeAnnotation}
+          anchorRect={editorAnchorRect}
+          onCancel={() => setEditorAnchorRect(null)}
+          onDelete={() => {
+            onRemoveAnnotation(activeAnnotation.id);
+            setEditorAnchorRect(null);
+            setActiveAnnotationId(null);
+          }}
+          onSave={(comment) => {
+            onUpdateAnnotation(activeAnnotation.id, comment);
+            setEditorAnchorRect(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -152,7 +152,7 @@ import {
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { cn, randomHex } from "~/lib/utils";
+import { cn, randomHex, randomUUID } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -196,6 +196,10 @@ import {
 } from "../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
+import {
+  appendChatSelectionAnnotationsToPrompt,
+  type ChatSelectionAnnotation,
+} from "../chatSelectionAnnotation";
 import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -274,6 +278,7 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldRestoreClearedPlanFollowUpDraft,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   waitForStartedServerThread,
@@ -309,6 +314,7 @@ import { useAssetUrls } from "../assets/assetUrls";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const EMPTY_CHAT_SELECTION_ANNOTATIONS: ReadonlyArray<ChatSelectionAnnotation> = [];
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -1242,6 +1248,11 @@ function ChatViewContent(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const composerChatSelectionAnnotations = useComposerDraftStore(
+    (store) =>
+      store.getComposerDraft(composerDraftTarget)?.chatSelectionAnnotations ??
+      EMPTY_CHAT_SELECTION_ANNOTATIONS,
+  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1257,6 +1268,15 @@ function ChatViewContent(props: ChatViewProps) {
     (store) => store.setPreviewAnnotations,
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
+  const addComposerDraftChatSelectionAnnotation = useComposerDraftStore(
+    (store) => store.addChatSelectionAnnotation,
+  );
+  const removeComposerDraftChatSelectionAnnotation = useComposerDraftStore(
+    (store) => store.removeChatSelectionAnnotation,
+  );
+  const setComposerDraftChatSelectionAnnotations = useComposerDraftStore(
+    (store) => store.setChatSelectionAnnotations,
+  );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
@@ -2626,6 +2646,39 @@ function ChatViewContent(props: ChatViewProps) {
       composerRef.current?.addTerminalContext(selection);
     },
     [composerRef],
+  );
+  const addChatSelectionAnnotation = useCallback(
+    (input: Omit<ChatSelectionAnnotation, "id">) => {
+      addComposerDraftChatSelectionAnnotation(composerDraftTarget, {
+        id: randomUUID(),
+        ...input,
+      });
+      scheduleComposerFocus();
+    },
+    [addComposerDraftChatSelectionAnnotation, composerDraftTarget, scheduleComposerFocus],
+  );
+  const updateChatSelectionAnnotation = useCallback(
+    (annotationId: string, comment: string) => {
+      const annotation = composerChatSelectionAnnotations.find(
+        (candidate) => candidate.id === annotationId,
+      );
+      if (!annotation) return;
+      addComposerDraftChatSelectionAnnotation(composerDraftTarget, {
+        ...annotation,
+        comment,
+      });
+    },
+    [
+      addComposerDraftChatSelectionAnnotation,
+      composerChatSelectionAnnotations,
+      composerDraftTarget,
+    ],
+  );
+  const removeChatSelectionAnnotation = useCallback(
+    (annotationId: string) => {
+      removeComposerDraftChatSelectionAnnotation(composerDraftTarget, annotationId);
+    },
+    [composerDraftTarget, removeComposerDraftChatSelectionAnnotation],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -4075,7 +4128,8 @@ function ChatViewContent(props: ChatViewProps) {
         draft.terminalContexts.length > 0 ||
         draft.elementContexts.length > 0 ||
         draft.previewAnnotations.length > 0 ||
-        draft.reviewComments.length > 0),
+        draft.reviewComments.length > 0 ||
+        draft.chatSelectionAnnotations.length > 0),
     );
   });
   const activeBranchMismatchKey = branchMismatchKey(
@@ -4579,6 +4633,7 @@ function ChatViewContent(props: ChatViewProps) {
       elementContexts: composerElementContexts,
       previewAnnotations: composerPreviewAnnotations,
       reviewComments: composerReviewComments,
+      chatSelectionAnnotations: composerChatSelectionAnnotations,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -4598,19 +4653,21 @@ function ChatViewContent(props: ChatViewProps) {
       elementContextCount:
         composerElementContexts.length +
         composerPreviewAnnotations.length +
-        composerReviewComments.length,
+        composerReviewComments.length +
+        composerChatSelectionAnnotations.length,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      const composerChatSelectionAnnotationsSnapshot: ChatSelectionAnnotation[] = [
+        ...composerChatSelectionAnnotations,
+      ];
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        chatSelectionAnnotations: composerChatSelectionAnnotationsSnapshot,
       });
       return;
     }
@@ -4619,7 +4676,8 @@ function ChatViewContent(props: ChatViewProps) {
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      composerReviewComments.length === 0 &&
+      composerChatSelectionAnnotations.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -4694,8 +4752,18 @@ function ChatViewContent(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const composerChatSelectionAnnotationsSnapshot: ChatSelectionAnnotation[] = [
+      ...composerChatSelectionAnnotations,
+    ];
+    const messageTextWithSelectionAnnotations = appendChatSelectionAnnotationsToPrompt(
+      promptForSend,
+      composerChatSelectionAnnotationsSnapshot,
+    );
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(
+        messageTextWithSelectionAnnotations,
+        composerTerminalContextsSnapshot,
+      ),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -4792,6 +4860,9 @@ function ChatViewContent(props: ChatViewProps) {
         titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
       } else if (composerElementContextsSnapshot.length > 0) {
         titleSeed = formatElementContextLabel(composerElementContextsSnapshot[0]!);
+      } else if (composerChatSelectionAnnotationsSnapshot.length > 0) {
+        const firstAnnotation = composerChatSelectionAnnotationsSnapshot[0]!;
+        titleSeed = firstAnnotation.comment.trim() || firstAnnotation.selectedText;
       } else {
         titleSeed = "New thread";
       }
@@ -4906,7 +4977,9 @@ function ChatViewContent(props: ChatViewProps) {
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
           .length ?? 0) === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
+          .length ?? 0) === 0 &&
+        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+          ?.chatSelectionAnnotations.length ?? 0) === 0
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -4927,6 +5000,10 @@ function ChatViewContent(props: ChatViewProps) {
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+        setComposerDraftChatSelectionAnnotations(
+          composerDraftTarget,
+          composerChatSelectionAnnotationsSnapshot,
+        );
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,
@@ -5131,9 +5208,11 @@ function ChatViewContent(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      chatSelectionAnnotations = [],
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      chatSelectionAnnotations?: ReadonlyArray<ChatSelectionAnnotation>;
     }) => {
       if (
         !activeThread ||
@@ -5145,7 +5224,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
-      const trimmed = text.trim();
+      const trimmed = appendChatSelectionAnnotationsToPrompt(text, chatSelectionAnnotations).trim();
       if (!trimmed) {
         return;
       }
@@ -5172,10 +5251,16 @@ function ChatViewContent(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: trimmed,
       });
+      const retryChatSelectionAnnotations = chatSelectionAnnotations.map((annotation) => ({
+        ...annotation,
+      }));
 
       sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
 
       // Position this sent row once LegendList has measured the anchored tail.
       isAtEndRef.current = true;
@@ -5269,6 +5354,25 @@ function ChatViewContent(props: ChatViewProps) {
       setOptimisticUserMessages((existing) =>
         existing.filter((message) => message.id !== messageIdForSend),
       );
+      const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        shouldRestoreClearedPlanFollowUpDraft({
+          currentPrompt: promptRef.current,
+          currentChatSelectionAnnotationCount: currentDraft?.chatSelectionAnnotations.length ?? 0,
+        })
+      ) {
+        promptRef.current = text;
+        setComposerDraftPrompt(composerDraftTarget, text);
+        setComposerDraftChatSelectionAnnotations(
+          composerDraftTarget,
+          retryChatSelectionAnnotations,
+        );
+        composerRef.current?.resetCursorState({
+          cursor: collapseExpandedComposerCursor(text, text.length),
+          prompt: text,
+          detectTrigger: true,
+        });
+      }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
@@ -5283,6 +5387,9 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeProposedPlan,
       beginLocalDispatch,
+      clearComposerDraftContent,
+      composerDraftTarget,
+      composerRef,
       isConnecting,
       isSendBusy,
       isServerThread,
@@ -5290,12 +5397,13 @@ function ChatViewContent(props: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
+      setComposerDraftChatSelectionAnnotations,
       setComposerDraftInteractionMode,
+      setComposerDraftPrompt,
       setThreadError,
       startThreadTurn,
       autoOpenPlanSidebar,
       environmentId,
-      composerRef,
     ],
   );
 
@@ -5831,6 +5939,10 @@ function ChatViewContent(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
+                onAddChatSelectionAnnotation={addChatSelectionAnnotation}
+                onUpdateChatSelectionAnnotation={updateChatSelectionAnnotation}
+                onRemoveChatSelectionAnnotation={removeChatSelectionAnnotation}
+                chatSelectionAnnotations={composerChatSelectionAnnotations}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

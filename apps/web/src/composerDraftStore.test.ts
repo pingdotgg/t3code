@@ -679,6 +679,63 @@ describe("composerDraftStore review comments", () => {
   });
 });
 
+describe("composerDraftStore chat selection annotations", () => {
+  const threadId = ThreadId.make("thread-chat-selection");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const annotation = {
+    id: "selection-1",
+    messageId: "assistant-message-1",
+    selectedText: "Restart the adapter, then retry OAuth.",
+    comment: "Why is this needed?",
+  } as const;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("updates annotations without changing their source order", () => {
+    const store = useComposerDraftStore.getState();
+    store.addChatSelectionAnnotation(threadRef, annotation);
+    store.addChatSelectionAnnotation(threadRef, {
+      ...annotation,
+      id: "selection-2",
+      selectedText: "Retry OAuth.",
+    });
+    store.addChatSelectionAnnotation(threadRef, { ...annotation, comment: "Updated question." });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.chatSelectionAnnotations).toEqual([
+      { ...annotation, comment: "Updated question." },
+      { ...annotation, id: "selection-2", selectedText: "Retry OAuth." },
+    ]);
+
+    store.removeChatSelectionAnnotation(threadRef, annotation.id);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.chatSelectionAnnotations).toHaveLength(1);
+    store.removeChatSelectionAnnotation(threadRef, "selection-2");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("persists chat selection annotations and clears them with composer content", () => {
+    const store = useComposerDraftStore.getState();
+    store.addChatSelectionAnnotation(threadRef, annotation);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { chatSelectionAnnotations?: unknown[] }>;
+    };
+
+    expect(
+      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.chatSelectionAnnotations,
+    ).toEqual([annotation]);
+
+    store.clearComposerContent(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+});
+
 describe("composerDraftStore project draft thread mapping", () => {
   const projectId = ProjectId.make("project-a");
   const otherProjectId = ProjectId.make("project-b");

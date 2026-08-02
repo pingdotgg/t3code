@@ -28,6 +28,13 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function shouldRestoreClearedPlanFollowUpDraft(input: {
+  readonly currentPrompt: string;
+  readonly currentChatSelectionAnnotationCount: number;
+}): boolean {
+  return input.currentPrompt.length === 0 && input.currentChatSelectionAnnotationCount === 0;
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
   handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,

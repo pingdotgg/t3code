@@ -206,6 +206,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./chatSelectionAnnotation": {
+      "types": "./src/chatSelectionAnnotation.ts",
+      "import": "./src/chatSelectionAnnotation.ts"
     }
   },
   "scripts": {
