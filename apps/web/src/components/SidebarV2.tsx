@@ -365,7 +365,7 @@ function SidebarV2SettledLifecycleControls({
   onArchive: (event: ReactMouseEvent) => void;
 }) {
   return (
-    <span className="absolute inset-y-0 right-0 -mr-1 inline-flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100">
+    <span className="absolute inset-y-0 right-0 -mr-1 inline-flex items-center opacity-0 transition-opacity has-[:focus-visible]:opacity-100 group-hover/v2-row:opacity-100">
       {settlementSupported ? (
         <button
           type="button"
