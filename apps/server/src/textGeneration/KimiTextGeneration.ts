@@ -87,6 +87,7 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
           runtime,
           currentModelId: currentKimiModelIdFromSessionSetup(started.sessionSetupResult),
           requestedModelId: resolvedModel,
+          selections: modelSelection.options,
           mapError: (cause) =>
             new TextGenerationError({
               operation,
@@ -215,7 +216,6 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
-        policy: input.policy,
       });
 
       const generated = yield* runKimiJson({
@@ -237,7 +237,6 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
         message: input.message,
         previousTitle: input.previousTitle,
         attachments: input.attachments,
-        policy: input.policy,
       });
 
       const generated = yield* runKimiJson({

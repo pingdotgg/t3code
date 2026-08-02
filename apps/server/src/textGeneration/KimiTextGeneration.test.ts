@@ -121,7 +121,7 @@ it.layer(KimiTextGenerationTestLayer)("KimiTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          // Mock agent only knows grok-build / grok-mock-alt model ids.
+          // Short ids are resolved to kimi-code/* by resolveKimiAcpBaseModelId.
           const generated = yield* textGeneration.generateCommitMessage({
             cwd: process.cwd(),
             branch: "feature/kimi",
@@ -144,7 +144,7 @@ it.layer(KimiTextGenerationTestLayer)("KimiTextGeneration", (it) => {
             requests.some(
               (request) =>
                 request.method === "session/set_model" &&
-                request.params?.modelId === "grok-mock-alt",
+                request.params?.modelId === "kimi-code/grok-mock-alt",
             ),
           ).toBe(true);
           expect(

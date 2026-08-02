@@ -163,14 +163,10 @@ function resolveKimiConfigUpdates(
  * effort is wired through `session/set_config_option`.
  */
 export function applyKimiAcpModelSelection<E>(input: {
-  readonly runtime: {
-    readonly setSessionModel: (modelId: string) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
-    readonly getConfigOptions?: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
-    readonly setConfigOption?: (
-      configId: string,
-      value: string | boolean,
-    ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
-  };
+  readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel"> &
+    Partial<
+      Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "getConfigOptions" | "setConfigOption">
+    >;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
   readonly selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
