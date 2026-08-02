@@ -536,6 +536,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     const actions: MenuAction[] = [
       sectionAction(sectionMenu.workingTree, "Working tree"),
       sectionAction(sectionMenu.branchChanges, "Branch changes"),
+      sectionAction(sectionMenu.sinceFork, "Since fork"),
       sectionAction(sectionMenu.latestTurn, "Latest turn"),
     ];
 
@@ -730,6 +731,17 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   }}
                 >
                   <NativeHeaderToolbar.Label>Branch changes</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+                <NativeHeaderToolbar.MenuAction
+                  disabled={sectionMenu.sinceFork === null}
+                  isOn={selectedSection?.id === sectionMenu.sinceFork?.id}
+                  onPress={() => {
+                    if (sectionMenu.sinceFork) {
+                      selectSection(sectionMenu.sinceFork.id);
+                    }
+                  }}
+                >
+                  <NativeHeaderToolbar.Label>Since fork</NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
                 <NativeHeaderToolbar.MenuAction
                   disabled={sectionMenu.latestTurn === null}
