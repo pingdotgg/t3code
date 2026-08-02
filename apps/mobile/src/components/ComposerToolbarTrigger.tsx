@@ -51,6 +51,7 @@ export function ComposerToolbarScroller(props: {
   readonly fadeOpaque: string;
   readonly fadeTransparent: string;
   readonly contentPaddingRight?: number;
+  readonly scrollEnabled?: boolean;
 }) {
   const [metrics, setMetrics] = useState({
     contentWidth: 0,
@@ -94,6 +95,7 @@ export function ComposerToolbarScroller(props: {
         onContentSizeChange={handleContentSizeChange}
         onLayout={handleLayout}
         onScroll={handleScroll}
+        scrollEnabled={props.scrollEnabled}
         scrollEventThrottle={16}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{
