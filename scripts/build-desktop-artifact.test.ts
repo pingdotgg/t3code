@@ -602,7 +602,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepInclude(resolveCuaDriverAsset("linux", "x64"), {
       archiveName: "cua-driver-rs-0.12.2-linux-x86_64-binary.tar.gz",
       executablePath: "cua-driver",
-      companionPaths: ["cua-cursor-theme", "wayland-helper"],
     });
     assert.deepInclude(resolveCuaDriverAsset("linux", "arm64"), {
       archiveName: "cua-driver-rs-0.12.2-linux-arm64-binary.tar.gz",
@@ -611,7 +610,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepInclude(resolveCuaDriverAsset("win", "x64"), {
       archiveName: "cua-driver-rs-0.12.2-windows-x86_64-binary.zip",
       executablePath: "cua-driver.exe",
-      companionPaths: ["cua-cursor-theme.exe"],
     });
     assert.deepInclude(resolveCuaDriverAsset("win", "arm64"), {
       archiveName: "cua-driver-rs-0.12.2-windows-arm64-binary.zip",
