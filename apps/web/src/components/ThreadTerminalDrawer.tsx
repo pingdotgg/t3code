@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -30,7 +31,7 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
@@ -223,6 +224,23 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
+export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+
+/**
+ * Right-click menu for the terminal canvas. Paste is always offered: the
+ * browser (and Electron's default editing menu) can only paste into an
+ * editable element, so a canvas terminal never gets a usable entry from them.
+ */
+export function terminalContextMenuItems(options: {
+  hasSelection: boolean;
+}): ContextMenuItem<TerminalContextMenuAction>[] {
+  return [
+    { id: "add-to-chat", label: "Add to chat", disabled: !options.hasSelection },
+    { id: "copy", label: "Copy", disabled: !options.hasSelection },
+    { id: "paste", label: "Paste" },
+  ];
+}
+
 export function shouldHandleTerminalExit(
   current: TerminalSessionState["status"],
   synchronized: TerminalSessionState["status"],
@@ -386,6 +404,12 @@ export function TerminalViewport({
         onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
+        // The surface listens from construction, so a right-click can land
+        // while `create` is still awaiting WASM — before the handler below it
+        // exists. The ref is only assigned once that setup has run.
+        onContextMenu: (event) => {
+          if (terminalRef.current) void showTerminalContextMenu(event);
+        },
       };
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {
@@ -454,6 +478,88 @@ export function TerminalViewport({
         };
       };
 
+      const addSelectionToChat = (selection: TerminalContextSelection) => {
+        handleAddTerminalContext(selection);
+        terminalRef.current?.clearSelection();
+        terminalRef.current?.focus();
+      };
+
+      const copySelection = async (text: string, requestId: number) => {
+        try {
+          await writeTextToClipboard(text, "terminal selection");
+        } catch (error) {
+          if (requestId !== selectionActionRequestIdRef.current) {
+            return;
+          }
+          const activeTerminal = terminalRef.current;
+          if (activeTerminal) {
+            writeSystemMessage(
+              activeTerminal,
+              error instanceof Error ? error.message : "Unable to copy terminal selection",
+            );
+          }
+        }
+        if (requestId === selectionActionRequestIdRef.current) {
+          terminalRef.current?.focus();
+        }
+      };
+
+      const pasteFromClipboard = async (requestId: number) => {
+        let text: string;
+        try {
+          text = await readTextFromClipboard("terminal input");
+        } catch (error) {
+          if (requestId !== selectionActionRequestIdRef.current) {
+            return;
+          }
+          const activeTerminal = terminalRef.current;
+          if (activeTerminal) {
+            writeSystemMessage(
+              activeTerminal,
+              error instanceof Error ? error.message : "Unable to read the clipboard",
+            );
+          }
+          return;
+        }
+        if (requestId !== selectionActionRequestIdRef.current) {
+          return;
+        }
+        const activeTerminal = terminalRef.current;
+        if (!activeTerminal) return;
+        activeTerminal.paste(text);
+        activeTerminal.focus();
+      };
+
+      const showTerminalContextMenu = async (event: MouseEvent) => {
+        if (!localApi || !terminalRef.current) return;
+        // Own the gesture before anything async: leaving the default alive lets
+        // the browser (or Electron's editing menu) answer with a Paste entry
+        // that is permanently disabled over the terminal canvas.
+        event.preventDefault();
+        // A right-click supersedes a selection popup that is pending or open.
+        clearSelectionAction();
+        const selectionAction = readSelectionAction();
+        const requestId = selectionActionRequestIdRef.current;
+        const clicked = await localApi.contextMenu.show(
+          terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+          { x: event.clientX, y: event.clientY },
+        );
+        if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
+          return;
+        }
+        switch (clicked) {
+          case "add-to-chat":
+            if (selectionAction) addSelectionToChat(selectionAction.selection);
+            return;
+          case "copy":
+            if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
+            return;
+          case "paste":
+            await pasteFromClipboard(requestId);
+            return;
+        }
+      };
+
       const showSelectionAction = async () => {
         if (!localApi) {
           clearSelectionAction();
@@ -485,28 +591,10 @@ export function TerminalViewport({
         }
         switch (clicked) {
           case "add-to-chat":
-            handleAddTerminalContext(nextAction.selection);
-            terminalRef.current?.clearSelection();
-            terminalRef.current?.focus();
+            addSelectionToChat(nextAction.selection);
             return;
           case "copy":
-            try {
-              await writeTextToClipboard(nextAction.clipboardText, "terminal selection");
-            } catch (error) {
-              if (requestId !== selectionActionRequestIdRef.current) {
-                return;
-              }
-              const activeTerminal = terminalRef.current;
-              if (activeTerminal) {
-                writeSystemMessage(
-                  activeTerminal,
-                  error instanceof Error ? error.message : "Unable to copy terminal selection",
-                );
-              }
-            }
-            if (requestId === selectionActionRequestIdRef.current) {
-              terminalRef.current?.focus();
-            }
+            await copySelection(nextAction.clipboardText, requestId);
             return;
         }
       };

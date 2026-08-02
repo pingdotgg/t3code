@@ -4,6 +4,7 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  terminalContextMenuItems,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
@@ -88,5 +89,21 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+
+  it("offers paste on the right-click menu even with nothing selected", () => {
+    expect(terminalContextMenuItems({ hasSelection: false })).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", disabled: true },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  it("enables the selection actions once the terminal has a selection", () => {
+    expect(terminalContextMenuItems({ hasSelection: true })).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", disabled: false },
+      { id: "paste", label: "Paste" },
+    ]);
   });
 });

@@ -318,6 +318,12 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
+  /**
+   * A right-click the running application did not claim through mouse
+   * reporting. The host owns the menu, so it also owns preventing the browser
+   * default — whose Paste entry can never reach a canvas terminal.
+   */
+  readonly onContextMenu?: (event: MouseEvent) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -613,6 +619,18 @@ export class GhosttyTerminalSurface {
 
   focus(): void {
     this.input.focus({ preventScroll: true });
+  }
+
+  /**
+   * Sends clipboard text through the same bracketed-paste encoding as a native
+   * paste event, for hosts that read the clipboard themselves (context menu).
+   */
+  paste(text: string): void {
+    if (text.length === 0) return;
+    // Settle the paste-shortcut race exactly like the native paste event does,
+    // so a clipboard read still in flight cannot deliver the text twice.
+    this.pasteShortcutToken += 1;
+    this.options.onData(this.core.encodePaste(text));
   }
 
   hasSelection(): boolean {
@@ -1066,7 +1084,9 @@ export class GhosttyTerminalSurface {
   private readonly onContextMenu = (event: MouseEvent) => {
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
       event.preventDefault();
+      return;
     }
+    this.options.onContextMenu?.(event);
   };
 
   private readonly onScrollbarPointerDown = (event: PointerEvent) => {
