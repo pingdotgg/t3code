@@ -169,6 +169,16 @@ function EnvironmentMcpInventory({
   const serverCount = state.status === "loaded" ? state.inventory.servers.length : null;
   const unreadable = state.status === "loaded" ? state.inventory.unreadable : [];
   const unreadableCount = unreadable.length;
+  const emptyMessage =
+    groups.length > 0
+      ? null
+      : query.trim()
+        ? "No MCP servers match this search."
+        : unreadableCount > 0
+          ? // The unreadable-config warning already explains the empty list;
+            // "nothing configured" would claim more than we know.
+            null
+          : "No MCP servers configured for Claude Code on this computer.";
 
   return (
     <div>
@@ -203,23 +213,17 @@ function EnvironmentMcpInventory({
             <StatusLine>Loading MCP servers…</StatusLine>
           ) : state.status === "error" ? (
             <StatusLine tone="error">{state.message}</StatusLine>
-          ) : groups.length === 0 ? (
-            <StatusLine {...(unreadableCount > 0 && !query.trim() ? { tone: "error" } : {})}>
-              {query.trim()
-                ? "No MCP servers match this search."
-                : unreadableCount > 0
-                  ? `${unreadableConfigMessage(unreadable)}, so the MCP servers declared there are unknown.`
-                  : "No MCP servers configured for Claude Code on this computer."}
-            </StatusLine>
           ) : (
             <>
-              {/* The rows below are accurate; what an unreadable config costs is
-                  the rows it would have added, so this warns about the gap. */}
-              {unreadableCount > 0 && !query.trim() ? (
+              {/* The rows are accurate; what an unreadable config costs is the
+                  rows it would have added. Shown while searching too — a config
+                  the search could not scan is exactly what "no match" hides. */}
+              {unreadableCount > 0 ? (
                 <StatusLine tone="error">
                   {`${unreadableConfigMessage(unreadable)}, so this list may be missing servers.`}
                 </StatusLine>
               ) : null}
+              {emptyMessage ? <StatusLine>{emptyMessage}</StatusLine> : null}
               {groups.map((group) => (
                 <div key={group.key} className="pb-1">
                   <p className="px-3 pt-2 pb-1 pl-9 font-medium text-muted-foreground/70 text-xs sm:px-4 sm:pl-9">

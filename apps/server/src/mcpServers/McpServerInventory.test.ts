@@ -49,6 +49,9 @@ describe("stdioDetail", () => {
     // A credential can start with `-`, so "it parses as a flag" is not evidence
     // that it is one.
     assert.equal(stdioDetail("server", ["--token", "-secret"]), "server --token …");
+    // Redacting the middle argument must not disarm the next one: whichever of
+    // the two flags owns it, `hunter2` is still a credential value.
+    assert.equal(stdioDetail("server", ["--token", "--api-key", "hunter2"]), "server --token … …");
   });
 
   it("redacts a command that carries a credential", () => {

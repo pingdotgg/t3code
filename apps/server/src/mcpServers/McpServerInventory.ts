@@ -103,9 +103,12 @@ export function stdioDetail(command: string, args: unknown): string {
   let redactNext = false;
   for (const part of parts) {
     if (redactNext) {
-      redactNext = false;
       // Redact whatever it looks like: a credential can start with `-`, so
-      // "it parses as a flag" is not evidence that it is one.
+      // "it parses as a flag" is not evidence that it is one. It may still be
+      // one though — in `--token --api-key hunter2` either reading of the
+      // middle argument leaves `hunter2` a secret — so re-arm rather than
+      // letting the next value through.
+      redactNext = part.startsWith("-") && SECRET_HINT_PATTERN.test(part);
       rendered.push(REDACTED);
       continue;
     }
