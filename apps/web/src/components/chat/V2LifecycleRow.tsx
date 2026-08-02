@@ -213,6 +213,7 @@ export function V2LifecycleRow(props: {
         badge={item.status}
         threadId={item.childThreadId}
         expandedDetail={finalResult}
+        tone={item.status === "failed" ? "danger" : "neutral"}
         onOpenThread={props.onOpenThread}
       />
     );
@@ -228,17 +229,34 @@ function RelatedThreadCard(props: {
   readonly expandedDetail?: string | null;
   readonly badge: string;
   readonly threadId: ThreadId | null;
+  readonly tone?: "danger" | "neutral";
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const Icon = props.icon;
   const threadId = props.threadId;
   const expandedDetail = props.expandedDetail ?? null;
+  const danger = props.tone === "danger";
+  const containerToneClassName = danger
+    ? "border-destructive/40 bg-destructive/5"
+    : "border-border/60 bg-card/30";
   const content = (
     <>
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <Icon
+        className={`size-3.5 shrink-0 ${danger ? "text-destructive" : "text-muted-foreground"}`}
+      />
       <span className="min-w-0 flex-1 truncate text-xs font-medium">{props.title}</span>
-      <span className="max-w-[50%] truncate text-xs text-muted-foreground">{props.detail}</span>
-      <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+      <span
+        className={`max-w-[50%] truncate text-xs ${danger ? "text-destructive" : "text-muted-foreground"}`}
+      >
+        {props.detail}
+      </span>
+      <span
+        className={`rounded-full border px-1.5 py-0.5 font-mono text-[10px] ${
+          danger
+            ? "border-destructive/40 bg-destructive/10 text-destructive"
+            : "border-border/70 text-muted-foreground"
+        }`}
+      >
         {props.badge}
       </span>
     </>
@@ -248,7 +266,10 @@ function RelatedThreadCard(props: {
     return (
       <div
         data-v2-item-type={props.itemType}
-        className="relative min-w-0 overflow-hidden rounded-lg border border-border/60 bg-card/30"
+        data-tone={props.tone ?? "neutral"}
+        className={`relative min-w-0 overflow-hidden rounded-lg border ${
+          danger ? "border-destructive/40 bg-destructive/5" : "border-border/60 bg-card/30"
+        }`}
       >
         <details className="group" data-v2-subagent-result-disclosure="true">
           <summary
@@ -284,7 +305,8 @@ function RelatedThreadCard(props: {
   return threadId === null ? (
     <div
       data-v2-item-type={props.itemType}
-      className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2"
+      data-tone={props.tone ?? "neutral"}
+      className={`flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2 ${containerToneClassName}`}
     >
       {content}
     </div>
@@ -292,9 +314,10 @@ function RelatedThreadCard(props: {
     <button
       type="button"
       data-v2-item-type={props.itemType}
+      data-tone={props.tone ?? "neutral"}
       aria-label={`Open ${props.title}`}
       onClick={() => props.onOpenThread(threadId)}
-      className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-left transition-colors hover:bg-muted/50"
+      className={`flex w-full min-w-0 items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-muted/50 ${containerToneClassName}`}
     >
       {content}
       <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />

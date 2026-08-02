@@ -35,6 +35,7 @@
     "@effect/sql-sqlite-bun": "catalog:",
     "@ff-labs/fff-node": "0.9.4",
     "@opencode-ai/sdk": "^1.3.15",
+    "@opencode-ai/sdk-next": "npm:@opencode-ai/sdk@0.0.0-next-16233",
     "@pierre/diffs": "catalog:",
     "effect": "catalog:",
     "node-pty": "^1.1.0",

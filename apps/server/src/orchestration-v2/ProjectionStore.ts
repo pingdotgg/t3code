@@ -321,6 +321,8 @@ export function applyToProjection(
         checkpoints: upsertById(base.checkpoints, event.payload),
       };
     case "checkpoint.rollback-requested":
+    case "provider-turn.interrupt-requested":
+    case "run.interrupt-noop":
       return base;
     case "context-handoff.updated":
       return {
@@ -448,6 +450,7 @@ type ShellThreadRow = {
   readonly latest_message_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly has_interruptible_provider_native_background_work: number;
   readonly item_count: number;
   readonly runless_item_count: number;
 };
@@ -856,6 +859,35 @@ export function threadShellFromProjection(
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     runs: projection.runs,
   });
+  // This is a projection-local Stop hint. Dispatch revalidates each linked
+  // child turn before emitting an interrupt, so a rolled-back parent can keep
+  // the hint while a genuinely running native child drains. Normal terminal
+  // subagent events remove the hint once that child is no longer running.
+  const hasInterruptibleProviderNativeBackgroundWork =
+    projection.thread.creationSource === "provider" &&
+    projection.thread.lineage.relationshipToParent === "subagent"
+      ? (projection.thread.activeProviderThreadId !== null &&
+          projection.providerTurns.some(
+            (turn) =>
+              turn.providerThreadId === projection.thread.activeProviderThreadId &&
+              turn.status === "running",
+          )) ||
+        projection.subagents.some(
+          (subagent) =>
+            subagent.threadId === projection.thread.id &&
+            subagent.origin === "provider_native" &&
+            subagent.status === "running" &&
+            subagent.childThreadId !== null &&
+            subagent.providerThreadId !== null,
+        )
+      : projection.subagents.some(
+          (subagent) =>
+            subagent.threadId === projection.thread.id &&
+            subagent.origin === "provider_native" &&
+            subagent.status === "running" &&
+            subagent.childThreadId !== null &&
+            subagent.providerThreadId !== null,
+        );
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -904,6 +936,7 @@ export function threadShellFromProjection(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
     pendingBackgroundTasks: [...pendingBackgroundTasks],
+    hasInterruptibleProviderNativeBackgroundWork,
     itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: projection.thread.createdAt,
@@ -949,6 +982,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
+  readonly hasInterruptibleProviderNativeBackgroundWork: boolean;
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1088,6 +1122,8 @@ function shellFromState(input: {
     latestUserMessageAt: input.state.latestUserMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
+    hasInterruptibleProviderNativeBackgroundWork:
+      input.state.hasInterruptibleProviderNativeBackgroundWork,
     itemCount: input.state.itemCount,
     visibleItemCount: input.visibleItemCount,
     createdAt: input.state.thread.createdAt,
@@ -1824,6 +1860,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "checkpoint.rollback-requested":
+          case "provider-turn.interrupt-requested":
+          case "run.interrupt-noop":
             break;
           case "context-handoff.updated": {
             const payloadJson = yield* encodeContextHandoffPayload(event.payload);
@@ -2319,6 +2357,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
               ) AS has_actionable_proposed_plan,
+              CASE
+                WHEN json_extract(t.payload_json, '$.creationSource') = 'provider'
+                  AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                THEN EXISTS (
+                  SELECT 1
+                  FROM orchestration_v2_projection_provider_turns provider_turn
+                  WHERE provider_turn.thread_id = t.thread_id
+                    AND provider_turn.provider_thread_id = json_extract(t.payload_json, '$.activeProviderThreadId')
+                    AND provider_turn.status = 'running'
+                ) OR EXISTS (
+                  SELECT 1
+                  FROM orchestration_v2_projection_subagents subagent
+                  WHERE subagent.thread_id = t.thread_id
+                    AND subagent.origin = 'provider_native'
+                    AND subagent.status = 'running'
+                    AND subagent.provider_thread_id IS NOT NULL
+                    AND subagent.child_thread_id IS NOT NULL
+                )
+                ELSE EXISTS (
+                  SELECT 1
+                  FROM orchestration_v2_projection_subagents subagent
+                  WHERE subagent.thread_id = t.thread_id
+                    AND subagent.origin = 'provider_native'
+                    AND subagent.status = 'running'
+                    AND subagent.provider_thread_id IS NOT NULL
+                    AND subagent.child_thread_id IS NOT NULL
+                )
+              END AS has_interruptible_provider_native_background_work,
               (
                 SELECT COUNT(*)
                 FROM orchestration_v2_projection_turn_items i
@@ -2508,6 +2574,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             hasActiveRun: row.active_run_id !== null,
           }),
         ];
+        const hasInterruptibleProviderNativeBackgroundWork =
+          row.has_interruptible_provider_native_background_work === 1;
         return {
           thread,
           latestRunId,
@@ -2541,6 +2609,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : DateTime.makeUnsafe(row.latest_user_message_at),
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
           pendingBackgroundTasks,
+          hasInterruptibleProviderNativeBackgroundWork,
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           updatedAt: thread.updatedAt,

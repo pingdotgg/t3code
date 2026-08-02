@@ -3,6 +3,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Run,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadProjection,
@@ -75,6 +76,12 @@ export type OrchestratorV2ScenarioStep =
   | {
       readonly type: "capture_shell_snapshot";
       readonly key: string;
+    }
+  | {
+      readonly type: "await_subagent_status";
+      readonly threadId: ThreadId;
+      readonly status: OrchestrationV2Subagent["status"];
+      readonly subagentId?: OrchestrationV2Subagent["id"];
     }
   | {
       readonly type: "respond_to_next_runtime_request";
@@ -498,6 +505,34 @@ export function runOrchestratorV2Scenario(
           return yield* releaseReplayGate(label, attemptsRemaining - 1);
         });
 
+      const waitForSubagentStatus = (
+        threadId: ThreadId,
+        status: OrchestrationV2Subagent["status"],
+        subagentId?: OrchestrationV2Subagent["id"],
+        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
+      ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
+        Effect.gen(function* () {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          if (
+            projection.subagents.some(
+              (subagent) =>
+                subagent.threadId === threadId &&
+                subagent.status === status &&
+                (subagentId === undefined || subagent.id === subagentId),
+            )
+          ) {
+            return;
+          }
+          if (attemptsRemaining <= 0) {
+            return yield* new OrchestratorV2ScenarioStepError({
+              scenario: scenario.name,
+              step: `await_subagent_status:${threadId}:${subagentId ?? "any"}:${status}`,
+            });
+          }
+          yield* yieldToRuntime;
+          return yield* waitForSubagentStatus(threadId, status, subagentId, attemptsRemaining - 1);
+        });
+
       for (const step of scenarioSteps(scenario)) {
         switch (step.type) {
           case "dispatch": {
@@ -549,6 +584,9 @@ export function runOrchestratorV2Scenario(
             break;
           case "capture_shell_snapshot":
             capturedShellSnapshots.set(step.key, yield* orchestrator.getShellSnapshot());
+            break;
+          case "await_subagent_status":
+            yield* waitForSubagentStatus(step.threadId, step.status, step.subagentId);
             break;
           case "respond_to_next_runtime_request": {
             const request = yield* waitForPendingRuntimeRequest(step.threadId);

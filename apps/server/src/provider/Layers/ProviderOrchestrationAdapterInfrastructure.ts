@@ -14,6 +14,7 @@ import {
 } from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 import { layer as providerContinuationRequestsLayer } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { layer as providerInteractionModeReflectionsLayer } from "../../orchestration-v2/ProviderInteractionModeReflections.ts";
 
 export type ProviderOrchestrationAdapterInfrastructure =
   | ClaudeAgentSdkQueryRunner
@@ -23,9 +24,11 @@ export type ProviderOrchestrationAdapterInfrastructure =
 
 /**
  * Infrastructure shared by the V2 adapters materialized inside provider
- * instances. `providerContinuationRequestsLayer` must be the same layer
- * reference the orchestration runtime provides to its continuation worker so
- * Effect layer memoization yields one shared queue.
+ * instances. `providerContinuationRequestsLayer` and
+ * `providerInteractionModeReflectionsLayer` must be the same layer references
+ * the orchestration runtime provides to its worker halves so Effect layer
+ * memoization yields one shared queue each; a missing entry here silently
+ * resolves the Context.Reference default, which drops every offer.
  */
 export const ProviderOrchestrationAdapterInfrastructureLive = Layer.mergeAll(
   claudeAgentSdkQueryRunnerLiveLayer,
@@ -33,4 +36,5 @@ export const ProviderOrchestrationAdapterInfrastructureLive = Layer.mergeAll(
   cursorAgentSdkRunnerLiveLayer,
   idAllocatorLayer,
   providerContinuationRequestsLayer,
+  providerInteractionModeReflectionsLayer,
 );

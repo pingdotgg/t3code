@@ -13,6 +13,8 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
+  type ProviderThreadId,
+  type ProviderTurnId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -142,10 +144,21 @@ export interface ThreadManagementInterruptInput {
   readonly reason?: string;
 }
 
+export interface ThreadManagementProviderInterruptTarget {
+  readonly threadId: ThreadId;
+  readonly providerThreadId: ProviderThreadId;
+  readonly providerTurnId: ProviderTurnId;
+}
+
 export type ThreadManagementInterruptResult =
   | {
       readonly type: "interrupt_requested";
       readonly run: OrchestrationV2Run;
+      readonly dispatch: OrchestratorV2DispatchResult;
+    }
+  | {
+      readonly type: "provider_interrupt_requested";
+      readonly targets: ReadonlyArray<ThreadManagementProviderInterruptTarget>;
       readonly dispatch: OrchestratorV2DispatchResult;
     }
   | { readonly type: "no_active_run" }
@@ -617,17 +630,56 @@ const make = Effect.gen(function* () {
           },
         } as const;
       }
+      // A provider-native child's own live turn gets the first Stop. Once the
+      // child turn is settled, the same path reaches its direct native
+      // descendants without crossing that child boundary.
       const interruptibleRun = latestActiveRun(target);
-      if (interruptibleRun === undefined) {
+      const shell =
+        input.runId === undefined &&
+        (interruptibleRun === undefined || interruptibleRun.status === "waiting")
+          ? yield* orchestrator.getThreadShell(input.threadId)
+          : undefined;
+      const hasProviderNativeBackgroundWork =
+        shell?.hasInterruptibleProviderNativeBackgroundWork === true;
+      const rootInterruptibleRun =
+        input.runId === undefined &&
+        interruptibleRun?.status === "waiting" &&
+        hasProviderNativeBackgroundWork
+          ? undefined
+          : interruptibleRun;
+      if (rootInterruptibleRun === undefined) {
         if (input.runId === undefined) {
-          return { type: "no_active_run" } as const;
+          if (!hasProviderNativeBackgroundWork) {
+            return { type: "no_active_run" } as const;
+          }
+          const dispatch = yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: input.commandId,
+            threadId: input.threadId,
+            intent: "provider_native_only",
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          });
+          const targets = dispatch.storedEvents.flatMap((stored) =>
+            stored.event.type === "provider-turn.interrupt-requested"
+              ? [
+                  {
+                    threadId: stored.event.payload.targetThreadId,
+                    providerThreadId: stored.event.payload.providerThreadId,
+                    providerTurnId: stored.event.payload.providerTurnId,
+                  },
+                ]
+              : [],
+          );
+          return targets.length === 0
+            ? ({ type: "no_active_run" } as const)
+            : ({ type: "provider_interrupt_requested", targets, dispatch } as const);
         }
         return yield* new ThreadManagementThreadNotInterruptibleError({
           threadId: input.threadId,
           runId: input.runId,
         });
       }
-      if (input.runId !== undefined && interruptibleRun.id !== input.runId) {
+      if (input.runId !== undefined && rootInterruptibleRun.id !== input.runId) {
         return yield* new ThreadManagementThreadNotInterruptibleError({
           threadId: input.threadId,
           runId: input.runId,
@@ -637,10 +689,10 @@ const make = Effect.gen(function* () {
         type: "run.interrupt",
         commandId: input.commandId,
         threadId: input.threadId,
-        runId: interruptibleRun.id,
+        runId: rootInterruptibleRun.id,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       });
-      return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
+      return { type: "interrupt_requested", run: rootInterruptibleRun, dispatch } as const;
     });
 
   return ThreadManagementService.of({

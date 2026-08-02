@@ -23,6 +23,7 @@ const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const OPENCODE2_DRIVER = ProviderDriverKind.make("opencode2");
 
 const makeProvider = (
   provider: ProviderDriverKind,
@@ -203,6 +204,194 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       }),
       disabledFallback,
     );
+  });
+
+  it("drops legacy native agent choices from a cached OpenCode 2 snapshot", () => {
+    const legacyCapabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "variant",
+          label: "Reasoning",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { id: "default", label: "Default", isDefault: true },
+            { id: "high", label: "High" },
+          ],
+        },
+        {
+          id: "agent",
+          label: "Agent",
+          type: "select",
+          currentValue: "build",
+          options: [
+            { id: "build", label: "Build", isDefault: true },
+            { id: "plan", label: "Plan" },
+            { id: "release-captain", label: "Release Captain" },
+          ],
+        },
+      ],
+    });
+    const cachedProvider = makeProvider(OPENCODE2_DRIVER, {
+      models: [
+        {
+          slug: "opencode/test",
+          name: "Test",
+          isCustom: false,
+          capabilities: legacyCapabilities,
+        },
+      ],
+    });
+    const fallbackProvider = makeProvider(OPENCODE2_DRIVER, {
+      installed: false,
+      status: "warning",
+      auth: { status: "unknown" },
+      models: [],
+    });
+
+    const hydrated = hydrateCachedProvider({ cachedProvider, fallbackProvider });
+
+    assert.deepStrictEqual(hydrated.models[0]?.capabilities?.optionDescriptors, [
+      {
+        id: "variant",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "high",
+        options: [{ id: "high", label: "High", isDefault: true }],
+      },
+      {
+        id: "agent",
+        label: "Agent",
+        type: "select",
+        currentValue: "auto",
+        options: [
+          { id: "auto", label: "Auto (Build/Plan)" },
+          { id: "release-captain", label: "Release Captain" },
+        ],
+      },
+    ]);
+  });
+
+  it("drops a cached OpenCode 2 Agent descriptor when the native pair is incomplete", () => {
+    const cachedProvider = makeProvider(OPENCODE2_DRIVER, {
+      models: [
+        {
+          slug: "opencode/test",
+          name: "Test",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              {
+                id: "agent",
+                label: "Agent",
+                type: "select",
+                currentValue: "build",
+                options: [
+                  { id: "build", label: "Build", isDefault: true },
+                  { id: "release-captain", label: "Release Captain" },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const fallbackProvider = makeProvider(OPENCODE2_DRIVER, { models: [] });
+
+    const hydrated = hydrateCachedProvider({ cachedProvider, fallbackProvider });
+
+    assert.deepStrictEqual(hydrated.models[0]?.capabilities?.optionDescriptors, []);
+  });
+
+  it("drops a cached OpenCode 2 Agent descriptor with only plan and a custom agent", () => {
+    const cachedProvider = makeProvider(OPENCODE2_DRIVER, {
+      models: [
+        {
+          slug: "opencode/test",
+          name: "Test",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              {
+                id: "agent",
+                label: "Agent",
+                type: "select",
+                currentValue: "plan",
+                options: [
+                  { id: "plan", label: "Plan", isDefault: true },
+                  { id: "release-captain", label: "Release Captain" },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const fallbackProvider = makeProvider(OPENCODE2_DRIVER, { models: [] });
+
+    const hydrated = hydrateCachedProvider({ cachedProvider, fallbackProvider });
+
+    assert.deepStrictEqual(hydrated.models[0]?.capabilities?.optionDescriptors, []);
+  });
+
+  it("drops a native-only cached OpenCode 2 Agent descriptor", () => {
+    const cachedProvider = makeProvider(OPENCODE2_DRIVER, {
+      models: [
+        {
+          slug: "opencode/test",
+          name: "Test",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              {
+                id: "agent",
+                label: "Agent",
+                type: "select",
+                currentValue: "build",
+                options: [
+                  { id: "build", label: "Build", isDefault: true },
+                  { id: "plan", label: "Plan" },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const fallbackProvider = makeProvider(OPENCODE2_DRIVER, { models: [] });
+
+    const hydrated = hydrateCachedProvider({ cachedProvider, fallbackProvider });
+
+    assert.deepStrictEqual(hydrated.models[0]?.capabilities?.optionDescriptors, []);
+  });
+
+  it("does not sanitize similarly shaped non-OpenCode 2 cache entries", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "agent",
+          label: "Agent",
+          type: "select",
+          currentValue: "build",
+          options: [{ id: "build", label: "Build", isDefault: true }],
+        },
+      ],
+    });
+    const cachedProvider = makeProvider(CODEX_DRIVER, {
+      models: [
+        {
+          slug: "gpt-test",
+          name: "GPT Test",
+          isCustom: false,
+          capabilities,
+        },
+      ],
+    });
+    const fallbackProvider = makeProvider(CODEX_DRIVER, { models: [] });
+
+    const hydrated = hydrateCachedProvider({ cachedProvider, fallbackProvider });
+
+    assert.deepStrictEqual(hydrated.models[0]?.capabilities, capabilities);
   });
 
   it("rejects cached snapshots that are not correlated to the fallback instance", () => {

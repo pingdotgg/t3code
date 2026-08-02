@@ -1,6 +1,7 @@
 import {
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { inferOpenCodeDefaultVariant } from "./providerSnapshot.ts";
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
@@ -22,6 +24,88 @@ const mergeProviderModels = (
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
   return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
+};
+
+const sanitizeCachedModels = (
+  provider: ServerProvider,
+): ReadonlyArray<ServerProvider["models"][number]> => {
+  if (provider.driver !== ProviderDriverKind.make("opencode2")) {
+    return provider.models;
+  }
+  return provider.models.map((model) => {
+    const descriptors = model.capabilities?.optionDescriptors;
+    if (!descriptors) return model;
+    let changed = false;
+    const nextDescriptors: Array<ProviderOptionDescriptor> = [];
+    for (const descriptor of descriptors) {
+      if (descriptor.type !== "select") {
+        nextDescriptors.push(descriptor);
+        continue;
+      }
+
+      if (descriptor.id === "variant") {
+        const containsDefaultSentinel = descriptor.options.some(
+          (option) => option.id === "default",
+        );
+        if (!containsDefaultSentinel) {
+          nextDescriptors.push(descriptor);
+          continue;
+        }
+        changed = true;
+        const options = descriptor.options
+          .filter((option) => option.id !== "default")
+          .map(({ isDefault: _isDefault, ...option }) => option);
+        if (options.length === 0) continue;
+        const providerID = model.slug.split("/", 1)[0] ?? "";
+        const optionIDs = options.map((option) => option.id);
+        const defaultVariant =
+          inferOpenCodeDefaultVariant(providerID, optionIDs) ??
+          optionIDs.find((variant) => variant === "medium") ??
+          optionIDs.find((variant) => variant === "high") ??
+          optionIDs.find((variant) => variant !== "none") ??
+          optionIDs[0]!;
+        nextDescriptors.push({
+          ...descriptor,
+          currentValue: defaultVariant,
+          options: options.map((option) =>
+            option.id === defaultVariant ? { ...option, isDefault: true } : option,
+          ),
+        });
+        continue;
+      }
+
+      if (descriptor.id !== "agent") {
+        nextDescriptors.push(descriptor);
+        continue;
+      }
+      const containsBuildAgent = descriptor.options.some((option) => option.id === "build");
+      const containsPlanAgent = descriptor.options.some((option) => option.id === "plan");
+      if (!containsBuildAgent && !containsPlanAgent) {
+        nextDescriptors.push(descriptor);
+        continue;
+      }
+      changed = true;
+      if (!containsBuildAgent || !containsPlanAgent) continue;
+      const customOptions = descriptor.options
+        .filter((option) => option.id !== "auto" && option.id !== "build" && option.id !== "plan")
+        .map(({ isDefault: _isDefault, ...option }) => option);
+      if (customOptions.length > 0) {
+        nextDescriptors.push({
+          ...descriptor,
+          currentValue: "auto",
+          options: [{ id: "auto", label: "Auto (Build/Plan)" }, ...customOptions],
+        });
+      }
+    }
+    if (!changed) return model;
+    return {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        optionDescriptors: nextDescriptors,
+      },
+    };
+  });
 };
 
 export const orderProviderSnapshots = (
@@ -57,9 +141,10 @@ export const hydrateCachedProvider = (input: {
   }
 
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
+  const cachedModels = sanitizeCachedModels(input.cachedProvider);
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
-    models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
+    models: mergeProviderModels(input.fallbackProvider.models, cachedModels),
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,

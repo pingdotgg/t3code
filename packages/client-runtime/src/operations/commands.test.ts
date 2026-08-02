@@ -9,7 +9,9 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   PlanId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   WS_METHODS,
@@ -39,6 +41,7 @@ import {
   archiveThread,
   createProject,
   forkThreadFromRun,
+  interruptThreadTurn,
   mergeThreadBack,
   cancelQueuedRun,
   editQueuedRun,
@@ -71,6 +74,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
+  readonly projectionRequests?: Array<{ readonly threadId: string }>;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -78,8 +82,13 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         input.commands.push(command);
         return { sequence: input.commands.length };
       }),
-    [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: () =>
-      Effect.succeed(input.projection ?? v2Projection),
+    [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (requestInput: {
+      readonly threadId: string;
+    }) =>
+      Effect.sync(() => {
+        input.projectionRequests?.push({ threadId: requestInput.threadId });
+        return input.projection ?? v2Projection;
+      }),
     [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launchInput: OrchestrationV2ThreadLaunchInput) =>
       Effect.sync(() => {
         input.launches?.push(launchInput);
@@ -506,6 +515,208 @@ describe("V2 environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches run.interrupt from a supplied runId without getThreadProjection", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: Array<{ readonly threadId: string }> = [];
+      const runId = RunId.make("run-interrupt-direct");
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+
+      yield* interruptThreadTurn({
+        commandId: CommandId.make("interrupt-by-run"),
+        threadId: v2ThreadId,
+        runId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: "interrupt-by-run",
+          threadId: v2ThreadId,
+          runId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches run.interrupt from legacy turnId without getThreadProjection", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: Array<{ readonly threadId: string }> = [];
+      const turnId = "run-interrupt-legacy-turn";
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+
+      yield* interruptThreadTurn({
+        commandId: CommandId.make("interrupt-by-turn"),
+        threadId: v2ThreadId,
+        turnId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: "interrupt-by-turn",
+          threadId: v2ThreadId,
+          runId: turnId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("falls back to getThreadProjection when no run identifier is supplied", () =>
+    Effect.gen(function* () {
+      const activeRunId = RunId.make("run-active-for-interrupt");
+      const completedRunId = RunId.make("run-completed-for-interrupt");
+      const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        runs: [
+          {
+            id: completedRunId,
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-completed"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+          {
+            id: activeRunId,
+            threadId: v2ThreadId,
+            ordinal: 2,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-active-interrupt"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: Array<{ readonly threadId: string }> = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projection,
+        projectionRequests,
+      });
+
+      yield* interruptThreadTurn({
+        commandId: CommandId.make("interrupt-from-projection"),
+        threadId: v2ThreadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([{ threadId: v2ThreadId }]);
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: "interrupt-from-projection",
+          threadId: v2ThreadId,
+          runId: activeRunId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches a run-less interrupt for provider-native background work", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: Array<{ readonly threadId: string }> = [];
+      const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+      const driver = ProviderDriverKind.make("opencode2");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        subagents: [
+          {
+            id: NodeId.make("node:provider-native-command-test"),
+            threadId: v2ThreadId,
+            runId: null,
+            parentNodeId: NodeId.make("node:provider-native-command-parent"),
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            providerThreadId: ProviderThreadId.make("provider-thread:provider-native-command-test"),
+            childThreadId: ThreadId.make("thread:provider-native-command-test"),
+            nativeTaskRef: { driver, nativeId: "native-task", strength: "strong" },
+            prompt: "background work",
+            title: null,
+            model: null,
+            status: "running",
+            result: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          },
+        ],
+      };
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projection,
+        projectionRequests,
+      });
+
+      yield* interruptThreadTurn({
+        commandId: CommandId.make("interrupt-provider-native-command"),
+        threadId: v2ThreadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([{ threadId: v2ThreadId }]);
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: "interrupt-provider-native-command",
+          threadId: v2ThreadId,
+          intent: "provider_native_only",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("prefers runId over turnId when both are supplied", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: Array<{ readonly threadId: string }> = [];
+      const runId = RunId.make("run-preferred");
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+
+      yield* interruptThreadTurn({
+        commandId: CommandId.make("interrupt-precedence"),
+        threadId: v2ThreadId,
+        runId,
+        turnId: "run-legacy-ignored",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: "interrupt-precedence",
+          threadId: v2ThreadId,
+          runId,
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

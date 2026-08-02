@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Tool } from "effect/unstable/ai";
 
-import { CreateThreadsTool, DelegateTaskTool, ScheduleTaskTool } from "./tools.ts";
+import {
+  CreateThreadsTool,
+  DelegateTaskTool,
+  ScheduleTaskTool,
+  ThreadInterruptTool,
+} from "./tools.ts";
 
 describe("orchestrator MCP tool guidance", () => {
   it("directs subagent requests to delegation instead of ordinary threads", () => {
@@ -24,5 +29,15 @@ describe("orchestrator MCP tool guidance", () => {
     assert.isAtLeast(schema.properties?.schedule?.anyOf?.length ?? 0, 2);
     assert.include(ScheduleTaskTool.description ?? "", "STRUCTURED OBJECT");
     assert.include(ScheduleTaskTool.description ?? "", "nextRunAt");
+  });
+
+  it("documents the no-runId root-run exclusion", () => {
+    assert.include(ThreadInterruptTool.description ?? "", "waiting");
+    assert.include(
+      ThreadInterruptTool.description ?? "",
+      "only when the thread shell reports provider-native background work",
+    );
+    assert.include(ThreadInterruptTool.description ?? "", "post-terminal-drain");
+    assert.include(ThreadInterruptTool.description ?? "", "no-runId selection");
   });
 });

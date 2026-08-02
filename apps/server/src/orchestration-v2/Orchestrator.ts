@@ -1799,16 +1799,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
-      const liveSessions = projection.providerSessions.filter(
+      const sessionsToDetach = projection.providerSessions.filter(
         (session) =>
           detachSessionIds.has(session.id) &&
-          session.status !== "stopped" &&
-          session.status !== "error",
+          (command.type === "thread.delete" ||
+            (session.status !== "stopped" && session.status !== "error")),
       );
       yield* Effect.forEach(
-        liveSessions,
+        sessionsToDetach,
         (session) =>
           Effect.gen(function* () {
+            // Pending and materialized projection rows can share one native id.
+            const providerThreads = Array.from(
+              new Map(
+                projection.providerThreads.flatMap((thread) => {
+                  const nativeThreadRef = thread.nativeThreadRef;
+                  if (thread.providerSessionId !== session.id || nativeThreadRef === null)
+                    return [];
+                  return [
+                    [
+                      JSON.stringify([nativeThreadRef.driver, nativeThreadRef.nativeId]),
+                      thread,
+                    ] as const,
+                  ];
+                }),
+              ).values(),
+            );
             yield* emit(
               events,
               command,
@@ -1855,6 +1871,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 // stays authorized.
                 ...(command.type === "thread.archive" || command.type === "thread.delete"
                   ? { revokeMcpCredential: true }
+                  : {}),
+                ...(command.type === "thread.delete"
+                  ? {
+                      deleteProviderThread: true,
+                      providerInstanceId: session.providerInstanceId,
+                      providerSession: session,
+                      providerThreads,
+                    }
                   : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
@@ -5628,6 +5652,101 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     });
 
+  const providerNativeInterruptTargets = (projection: OrchestrationV2ThreadProjection) =>
+    Effect.gen(function* () {
+      // A provider-native child's own live turn gets the first Stop. Once it
+      // settles, the same path targets its direct descendants. This preserves
+      // the active-turn boundary without leaving nested work unreachable.
+      const targetThreads: Array<{
+        readonly childThreadId: ThreadId;
+        readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+      }> = [];
+      const isProviderNativeChild =
+        projection.thread.creationSource === "provider" &&
+        projection.thread.lineage.relationshipToParent === "subagent";
+
+      const ownProviderThreadId = isProviderNativeChild
+        ? projection.thread.activeProviderThreadId
+        : null;
+      const ownTurnIsRunning =
+        ownProviderThreadId !== null &&
+        projection.providerTurns.some(
+          (candidate) =>
+            candidate.providerThreadId === ownProviderThreadId && candidate.status === "running",
+        );
+
+      if (ownProviderThreadId !== null && ownTurnIsRunning) {
+        targetThreads.push({
+          childThreadId: projection.thread.id,
+          providerThreadId: ownProviderThreadId,
+        });
+      } else {
+        for (const subagent of projection.subagents) {
+          if (
+            subagent.threadId !== projection.thread.id ||
+            subagent.origin !== "provider_native" ||
+            subagent.status !== "running" ||
+            subagent.childThreadId === null
+          ) {
+            continue;
+          }
+          const providerThreadId = subagent.providerThreadId;
+          if (providerThreadId === null) continue;
+          targetThreads.push({
+            childThreadId: subagent.childThreadId,
+            providerThreadId,
+          });
+        }
+      }
+
+      const targets = new Map<
+        string,
+        {
+          readonly threadId: ThreadId;
+          readonly providerThread: OrchestrationV2ProviderThread;
+          readonly providerTurn: OrchestrationV2ProviderTurn;
+        }
+      >();
+      for (const targetThread of targetThreads) {
+        const childProjection = yield* projectionStore
+          .getThreadProjection(targetThread.childThreadId)
+          .pipe(
+            Effect.catchTags({
+              ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+            }),
+            Effect.mapError(
+              (cause) =>
+                new OrchestratorProjectionError({
+                  threadId: targetThread.childThreadId,
+                  cause,
+                }),
+            ),
+          );
+        if (childProjection === null) continue;
+
+        const providerTurn = childProjection.providerTurns
+          .filter(
+            (candidate) =>
+              candidate.providerThreadId === targetThread.providerThreadId &&
+              candidate.status === "running",
+          )
+          .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+        if (providerTurn === undefined) continue;
+        const providerThread = childProjection.providerThreads.find(
+          (candidate) =>
+            candidate.id === targetThread.providerThreadId &&
+            candidate.appThreadId === childProjection.thread.id,
+        );
+        if (providerThread === undefined || providerThread.providerSessionId === null) continue;
+        targets.set(String(providerTurn.id), {
+          threadId: childProjection.thread.id,
+          providerThread,
+          providerTurn,
+        });
+      }
+      return Array.from(targets.values());
+    });
+
   const dispatchRunInterrupt = (
     command: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -5635,7 +5754,107 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const projection = yield* loadProjectionForCommand(command);
-      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      const providerNativeOnly = command.intent === "provider_native_only";
+      let run: OrchestrationV2Run | undefined;
+      if (!providerNativeOnly) {
+        run =
+          command.runId === undefined
+            ? projection.runs
+                .filter(
+                  (candidate) =>
+                    candidate.status === "preparing" ||
+                    candidate.status === "starting" ||
+                    candidate.status === "running",
+                )
+                .toSorted((left, right) => right.ordinal - left.ordinal)[0]
+            : projection.runs.find((candidate) => candidate.id === command.runId);
+      }
+
+      if (run === undefined && (command.runId === undefined || providerNativeOnly)) {
+        const targets = yield* providerNativeInterruptTargets(projection);
+        const now = yield* DateTime.now;
+        const emitEvent = emit(events, command);
+        if (targets.length === 0) {
+          // EventSink.commitCommand requires at least one domain event, so a
+          // successful zero-target receipt must remain durable and replayable.
+          yield* emitEvent({
+            type: "run.interrupt-noop",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: {
+              reason:
+                "All provider-native background targets completed before interruption dispatch.",
+            },
+          });
+          return undefined;
+        }
+
+        const authorizedTargets = yield* Effect.forEach(targets, (target) =>
+          Effect.gen(function* () {
+            const providerSessionId = target.providerThread.providerSessionId;
+            if (providerSessionId === null) {
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: `Provider turn ${target.providerTurn.id} has no provider session target.`,
+              });
+            }
+            const capabilities = yield* providerAdapters
+              .get(target.providerThread.providerInstanceId)
+              .pipe(
+                Effect.flatMap((adapter) => adapter.getCapabilities()),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorProviderAdapterError({
+                      commandId: command.commandId,
+                      providerInstanceId: target.providerThread.providerInstanceId,
+                      cause,
+                    }),
+                ),
+              );
+            yield* enforceCommandPolicy(command)(
+              commandPolicy.ensureInterrupt({
+                commandId: command.commandId,
+                threadId: command.threadId,
+                providerInstanceId: target.providerThread.providerInstanceId,
+                capabilities,
+              }),
+            );
+            return { target, providerSessionId };
+          }),
+        );
+
+        for (const { target, providerSessionId } of authorizedTargets) {
+          yield* emitEvent({
+            type: "provider-turn.interrupt-requested",
+            threadId: command.threadId,
+            driver: target.providerThread.driver,
+            providerInstanceId: target.providerThread.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              targetThreadId: target.threadId,
+              providerThreadId: target.providerThread.id,
+              providerTurnId: target.providerTurn.id,
+              reason: command.reason ?? null,
+            },
+          });
+          yield* Ref.update(effects, (existing) => [
+            ...existing,
+            {
+              id: `effect:${command.commandId}:provider-turn.interrupt:${target.providerTurn.id}`,
+              commandId: command.commandId,
+              threadId: target.threadId,
+              request: {
+                type: "provider-turn.interrupt",
+                providerSessionId,
+                providerThreadId: target.providerThread.id,
+                providerTurnId: target.providerTurn.id,
+              },
+            } satisfies PendingOrchestrationEffectV2,
+          ]);
+        }
+        return undefined;
+      }
       const rootNode =
         run?.rootNodeId === null
           ? undefined
@@ -5652,7 +5871,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Run ${command.runId} is not interruptible.`,
+          cause: `Run ${command.runId ?? "without a run id"} is not interruptible.`,
         });
       }
       const now = yield* DateTime.now;
@@ -5706,7 +5925,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: `Run ${command.runId} has no active attempt to interrupt.`,
+            cause: `Run ${run.id} has no active attempt to interrupt.`,
           });
         }
         const interruptResultItem: OrchestrationV2TurnItem = {
@@ -5819,7 +6038,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Run ${command.runId} is not interruptible.`,
+          cause: `Run ${run.id} is not interruptible.`,
         });
       }
       if (providerThread.providerSessionId === null) {

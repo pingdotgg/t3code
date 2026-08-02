@@ -1103,6 +1103,57 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Explain test isolation");
   });
 
+  it("renders a failed subagent as a prominent danger card", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "failed-subagent",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "failed-subagent",
+              item: {
+                id: "failed-subagent",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "failed",
+                title: "Rate-limited research",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "opencode2",
+                providerInstanceId: "opencode2",
+                childThreadId: "thread-subagent-1",
+                prompt: "Research the provider",
+                result: "HTTP 429: Rate limit exceeded",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('data-tone="danger"');
+    expect(markup).toContain("HTTP 429: Rate limit exceeded");
+    expect(markup).toContain("text-destructive");
+  });
+
   it("keeps live progress when a running subagent streams a partial result", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

@@ -67,6 +67,7 @@ import {
   latestActiveRun,
   latestRun,
   ThreadManagementError,
+  type ThreadManagementInterruptResult,
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
@@ -174,6 +175,31 @@ function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpF
     case "ThreadManagementDurableRunProjectionError":
       return failure("orchestration_error", error.message);
   }
+}
+
+export function orchestratorMcpThreadInterruptResultFor(
+  threadId: ThreadId,
+  result: ThreadManagementInterruptResult,
+): OrchestratorMcpThreadInterruptResult {
+  if (result.type === "no_active_run") {
+    return {
+      threadId,
+      runId: null,
+      status: "no_active_run",
+    } satisfies OrchestratorMcpThreadInterruptResult;
+  }
+  if (result.type === "provider_interrupt_requested") {
+    return {
+      threadId,
+      runId: null,
+      status: "interrupt_requested",
+    } satisfies OrchestratorMcpThreadInterruptResult;
+  }
+  return {
+    threadId,
+    runId: result.run.id,
+    status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
+  } satisfies OrchestratorMcpThreadInterruptResult;
 }
 
 function errorMessage(error: unknown): string {
@@ -1658,18 +1684,7 @@ const make = Effect.gen(function* () {
                   ),
             ),
           );
-        if (result.type === "no_active_run") {
-          return {
-            threadId: input.threadId,
-            runId: null,
-            status: "no_active_run",
-          } satisfies OrchestratorMcpThreadInterruptResult;
-        }
-        return {
-          threadId: input.threadId,
-          runId: result.run.id,
-          status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
-        } satisfies OrchestratorMcpThreadInterruptResult;
+        return orchestratorMcpThreadInterruptResultFor(input.threadId, result);
       }),
   });
 });

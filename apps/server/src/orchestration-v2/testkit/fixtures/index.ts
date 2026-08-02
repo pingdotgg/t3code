@@ -18,6 +18,54 @@ import { messageSteeringInput } from "./message_steering/input.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
 import { multiTurnInput } from "./multi_turn/input.ts";
+import { openCode2BackgroundStopInput } from "./opencode2_background_stop/input.ts";
+import { assertOpenCode2BackgroundStopOutput } from "./opencode2_background_stop/output.ts";
+import { openCode2BackgroundChildStopInput } from "./opencode2_background_child_stop/input.ts";
+import { assertOpenCode2BackgroundChildStopOutput } from "./opencode2_background_child_stop/output.ts";
+import { openCode2BackgroundChildStopRecoveryOrderInput } from "./opencode2_background_child_stop_recovery_order/input.ts";
+import { assertOpenCode2BackgroundChildStopRecoveryOrderOutput } from "./opencode2_background_child_stop_recovery_order/output.ts";
+import { openCode2BackgroundChildStopRecoveryRaceInput } from "./opencode2_background_child_stop_recovery_race/input.ts";
+import { assertOpenCode2BackgroundChildStopRecoveryRaceOutput } from "./opencode2_background_child_stop_recovery_race/output.ts";
+import { openCode2TwoBackgroundChildStopInput } from "./opencode2_two_background_child_stop/input.ts";
+import { assertOpenCode2TwoBackgroundChildStopOutput } from "./opencode2_two_background_child_stop/output.ts";
+import { openCode2TwoBackgroundChildReplayInput } from "./opencode2_two_background_child_replay/input.ts";
+import { assertOpenCode2TwoBackgroundChildReplayOutput } from "./opencode2_two_background_child_replay/output.ts";
+import { openCode2AmbiguousExecutionWakesInput } from "./opencode2_ambiguous_execution_wakes/input.ts";
+import { assertOpenCode2AmbiguousExecutionWakesOutput } from "./opencode2_ambiguous_execution_wakes/output.ts";
+import { openCode2RetiredSuppressWakeInput } from "./opencode2_retired_suppress_wake/input.ts";
+import { assertOpenCode2RetiredSuppressWakeOutput } from "./opencode2_retired_suppress_wake/output.ts";
+import { openCode2SharedExecutionReplayInput } from "./opencode2_shared_execution_replay/input.ts";
+import { assertOpenCode2SharedExecutionReplayOutput } from "./opencode2_shared_execution_replay/output.ts";
+import { openCode2SharedOrdinaryWakeReplayInput } from "./opencode2_shared_ordinary_wake_replay/input.ts";
+import { assertOpenCode2SharedOrdinaryWakeReplayOutput } from "./opencode2_shared_ordinary_wake_replay/output.ts";
+import { openCode2CompactionInput } from "./opencode2_compaction/input.ts";
+import { assertOpenCode2CompactionOutput } from "./opencode2_compaction/output.ts";
+import { openCode2PermissionExternalSubagentInput } from "./opencode2_permission_external_subagent/input.ts";
+import { assertOpenCode2PermissionExternalSubagentOutput } from "./opencode2_permission_external_subagent/output.ts";
+import { openCode2PermissionReplyFailureInput } from "./opencode2_permission_reply_failure/input.ts";
+import { assertOpenCode2PermissionReplyFailureOutput } from "./opencode2_permission_reply_failure/output.ts";
+import { openCode2PermissionReplyFailureSubagentInput } from "./opencode2_permission_reply_failure_subagent/input.ts";
+import { assertOpenCode2PermissionReplyFailureSubagentOutput } from "./opencode2_permission_reply_failure_subagent/output.ts";
+import { openCode2PermissionSessionInput } from "./opencode2_permission_session/input.ts";
+import { assertOpenCode2PermissionSessionOutput } from "./opencode2_permission_session/output.ts";
+import { openCode2QuestionLegacyInput } from "./opencode2_question_legacy/input.ts";
+import { assertOpenCode2QuestionLegacyOutput } from "./opencode2_question_legacy/output.ts";
+import { openCode2RetryInput } from "./opencode2_retry/input.ts";
+import { assertOpenCode2RetryOutput } from "./opencode2_retry/output.ts";
+import { openCode2ShellProjectionInput } from "./opencode2_shell_projection/input.ts";
+import { assertOpenCode2ShellProjectionOutput } from "./opencode2_shell_projection/output.ts";
+import { openCode2ShellTerminalsInput } from "./opencode2_shell_terminals/input.ts";
+import { assertOpenCode2ShellTerminalsOutput } from "./opencode2_shell_terminals/output.ts";
+import { openCode2SubagentBackgroundWakeInput } from "./opencode2_subagent_background_wake/input.ts";
+import { assertOpenCode2SubagentBackgroundWakeOutput } from "./opencode2_subagent_background_wake/output.ts";
+import { openCode2SubagentRateLimitInput } from "./opencode2_subagent_rate_limit/input.ts";
+import { assertOpenCode2SubagentRateLimitOutput } from "./opencode2_subagent_rate_limit/output.ts";
+import { openCode2SubagentQueuedTurnInput } from "./opencode2_subagent_queued_turn/input.ts";
+import { assertOpenCode2SubagentQueuedTurnOutput } from "./opencode2_subagent_queued_turn/output.ts";
+import { openCode2SubagentSupervisedInput } from "./opencode2_subagent_supervised/input.ts";
+import { assertOpenCode2SubagentSupervisedOutput } from "./opencode2_subagent_supervised/output.ts";
+import { openCode2ThreadDeleteInput } from "./opencode2_thread_delete/input.ts";
+import { assertOpenCode2ThreadDeleteOutput } from "./opencode2_thread_delete/output.ts";
 import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
 import { assertPlanQuestionsOutput } from "./plan_questions/codex_output.ts";
@@ -79,6 +127,7 @@ import {
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
+  OPENCODE2_MODEL_SELECTION,
   OPENCODE_MODEL_SELECTION,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
@@ -218,6 +267,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("opencode"),
         transcriptFile: new URL("./simple/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL("./simple/opencode2_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
     ],
@@ -429,6 +484,365 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "opencode2_background_stop",
+    buildInput: openCode2BackgroundStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_background_stop/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2BackgroundStopOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_background_child_stop",
+    buildInput: openCode2BackgroundChildStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_background_child_stop/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2BackgroundChildStopOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_background_child_stop_recovery_order",
+    buildInput: openCode2BackgroundChildStopRecoveryOrderInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_background_child_stop_recovery_order/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2BackgroundChildStopRecoveryOrderOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_background_child_stop_recovery_race",
+    buildInput: openCode2BackgroundChildStopRecoveryRaceInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_background_child_stop_recovery_race/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2BackgroundChildStopRecoveryRaceOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_two_background_child_stop",
+    buildInput: openCode2TwoBackgroundChildStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_two_background_child_stop/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2TwoBackgroundChildStopOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_two_background_child_replay",
+    buildInput: openCode2TwoBackgroundChildReplayInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_two_background_child_replay/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2TwoBackgroundChildReplayOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_shared_ordinary_wake_replay",
+    buildInput: openCode2SharedOrdinaryWakeReplayInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_shared_ordinary_wake_replay/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2SharedOrdinaryWakeReplayOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_shared_execution_replay",
+    buildInput: openCode2SharedExecutionReplayInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_shared_execution_replay/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2SharedExecutionReplayOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_ambiguous_execution_wakes",
+    buildInput: openCode2AmbiguousExecutionWakesInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_ambiguous_execution_wakes/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2AmbiguousExecutionWakesOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_retired_suppress_wake",
+    buildInput: openCode2RetiredSuppressWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_retired_suppress_wake/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2RetiredSuppressWakeOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_compaction",
+    buildInput: openCode2CompactionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_compaction/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2CompactionOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_permission_external_subagent",
+    buildInput: openCode2PermissionExternalSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_permission_external_subagent/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2PermissionExternalSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_permission_reply_failure",
+    buildInput: openCode2PermissionReplyFailureInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_permission_reply_failure/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2PermissionReplyFailureOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_permission_session",
+    buildInput: openCode2PermissionSessionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_permission_session/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        runtimePolicyOverride: RESTRICTED_GRANULAR_POLICY,
+        assertOutput: assertOpenCode2PermissionSessionOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_permission_reply_failure_subagent",
+    buildInput: openCode2PermissionReplyFailureSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_permission_reply_failure_subagent/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2PermissionReplyFailureSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_question_legacy",
+    buildInput: openCode2QuestionLegacyInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_question_legacy/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2QuestionLegacyOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_retry",
+    buildInput: openCode2RetryInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL("./opencode2_retry/opencode2_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2RetryOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_shell_projection",
+    buildInput: openCode2ShellProjectionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_shell_projection/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2ShellProjectionOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_subagent_background_wake",
+    buildInput: openCode2SubagentBackgroundWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_subagent_background_wake/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2SubagentBackgroundWakeOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_subagent_queued_turn",
+    buildInput: openCode2SubagentQueuedTurnInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_subagent_queued_turn/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2SubagentQueuedTurnOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_subagent_rate_limit",
+    buildInput: openCode2SubagentRateLimitInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_subagent_rate_limit/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2SubagentRateLimitOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_subagent_supervised",
+    buildInput: openCode2SubagentSupervisedInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_subagent_supervised/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        runtimePolicyOverride: RESTRICTED_GRANULAR_POLICY,
+        assertOutput: assertOpenCode2SubagentSupervisedOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_shell_terminals",
+    buildInput: openCode2ShellTerminalsInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_shell_terminals/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2ShellTerminalsOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_thread_delete",
+    buildInput: openCode2ThreadDeleteInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL(
+          "./opencode2_thread_delete/opencode2_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2ThreadDeleteOutput,
+      },
+    ],
+  },
+  {
     name: "multi_turn",
     buildInput: multiTurnInput,
     providers: [
@@ -460,6 +874,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL("./multi_turn/opencode2_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
     ],
@@ -522,6 +942,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("opencode2"),
+        transcriptFile: new URL("./queued_turn/opencode2_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
     ],

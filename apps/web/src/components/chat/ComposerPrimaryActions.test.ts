@@ -135,4 +135,138 @@ describe("active-turn primary action", () => {
     expect(markup).toContain('aria-label="Send message to steer active turn"');
     expect(markup).not.toContain('aria-label="Stop generation"');
   });
+
+  it("shows stop for native background work without active-turn copy", () => {
+    const emptyMarkup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: false,
+        canInterrupt: true,
+        hasSendableContent: false,
+      }),
+    );
+    const contentMarkup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: false,
+        canInterrupt: true,
+        showSecondaryStop: true,
+        hasSendableContent: true,
+      }),
+    );
+
+    expect(contentMarkup).toContain('aria-label="Stop generation"');
+    expect(emptyMarkup).toContain('aria-label="Stop generation"');
+    expect(contentMarkup).toContain('aria-label="Send message"');
+    expect(contentMarkup).not.toContain("steer active turn");
+  });
+
+  it("keeps Implement primary with a secondary Stop for background work", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: false,
+        canInterrupt: true,
+        showSecondaryStop: true,
+        showPlanFollowUpPrompt: true,
+        hasSendableContent: false,
+      }),
+    );
+
+    expect(markup).toContain('data-chat-composer-implement-actions="true"');
+    expect(markup).toContain("Implement");
+    expect(markup).toContain('aria-label="Stop generation"');
+  });
+
+  it("keeps Refine primary with a secondary Stop for background work", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: false,
+        canInterrupt: true,
+        showSecondaryStop: true,
+        showPlanFollowUpPrompt: true,
+        promptHasText: true,
+        hasSendableContent: true,
+      }),
+    );
+
+    expect(markup).toContain("Refine");
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain('aria-label="Send message"');
+  });
+
+  it("keeps the pending question action with a secondary Stop for background work", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        pendingAction: {
+          questionIndex: 0,
+          isLastQuestion: true,
+          canAdvance: true,
+          isResponding: false,
+          isComplete: true,
+        },
+        isRunning: false,
+        canInterrupt: true,
+        showSecondaryStop: true,
+        hasSendableContent: false,
+      }),
+    );
+
+    expect(markup).toContain("Submit answer");
+    expect(markup).toContain('aria-label="Stop generation"');
+  });
+
+  it("does not add background Stop to an active pending question", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        pendingAction: {
+          questionIndex: 0,
+          isLastQuestion: true,
+          canAdvance: true,
+          isResponding: false,
+          isComplete: true,
+        },
+        isRunning: true,
+        showSecondaryStop: true,
+        hasSendableContent: false,
+      }),
+    );
+
+    expect(markup).toContain("Submit answer");
+    expect(markup).not.toContain('aria-label="Stop generation"');
+  });
+
+  it("does not add background Stop beside active-turn steering", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: true,
+        showSecondaryStop: true,
+        hasSendableContent: true,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Send message to steer active turn"');
+    expect(markup).not.toContain('aria-label="Stop generation"');
+  });
+
+  it("keeps Stop reachable when a running turn still has a plan follow-up", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: true,
+        canInterrupt: true,
+        showPlanFollowUpPrompt: true,
+        hasSendableContent: false,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain("Implement");
+    expect(markup).not.toContain("Refine");
+    expect(markup).not.toContain('data-chat-composer-implement-actions="true"');
+  });
 });

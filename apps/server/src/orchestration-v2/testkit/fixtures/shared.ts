@@ -50,6 +50,29 @@ export const SUBAGENT_PROMPT =
 export const SUBAGENT_V2_PROMPT = "just say hello";
 export const OPENCODE_SUBAGENT_PROMPT =
   "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
+export const OPENCODE2_COMPACTION_PROMPT =
+  "Compact the current context, then respond exactly: compaction fixture complete";
+export const OPENCODE2_COMPACTION_INTERRUPT_PROMPT =
+  "Begin compacting the current context and wait for it to finish.";
+export const OPENCODE2_RETRY_PROMPT =
+  "Recover from the transient provider error, then respond exactly: retry fixture complete";
+export const OPENCODE2_SUBAGENT_PROMPT =
+  "Use the subagent tool exactly once with description child fixture and prompt Respond exactly CHILD_OK. Then respond exactly PARENT_OK.";
+export const OPENCODE2_SUBAGENT_BACKGROUND_PROMPT =
+  "Start one background subagent with description background child fixture and prompt Respond exactly CHILD_BACKGROUND_OK. Then respond exactly PARENT_RELEASED without waiting for the child.";
+export const OPENCODE2_TWO_SUBAGENT_BACKGROUND_PROMPT =
+  "Start two background subagents: one with description alpha background child fixture and prompt Respond exactly ALPHA_BACKGROUND_OK, and one with description cancel background child fixture and prompt Respond exactly CANCEL_BACKGROUND_PARTIAL. Then respond exactly PARENT_RELEASED without waiting for either child.";
+export const OPENCODE2_TWO_COMPLETED_SUBAGENT_PROMPT =
+  "Start two background subagents: one with description alpha completed child fixture and prompt Respond exactly ALPHA_COMPLETED_OK, and one with description bravo completed child fixture and prompt Respond exactly BRAVO_COMPLETED_OK. Then respond exactly PARENT_RELEASED without waiting for either child.";
+export const OPENCODE2_THREAD_DELETE_PROMPT = "Respond exactly: native deletion fixture complete";
+export const OPENCODE2_SHELL_PROJECTION_PROMPT =
+  "Run a shell command that prints the paged shell fixture output, move it to background observation, then respond exactly: shell projection fixture complete";
+export const OPENCODE2_SHELL_FAILURE_PROMPT =
+  "Run a shell command that exits with status 7, move it to background observation, then respond exactly: shell failure fixture complete";
+export const OPENCODE2_SHELL_DELETION_PROMPT =
+  "Run a long shell command, move it to background observation, then respond exactly: shell deletion fixture complete";
+export const OPENCODE2_BACKGROUND_STOP_PROMPT =
+  "Run this shell command and wait for it: sleep 30 && echo background stop should not finish. Do not respond before it completes.";
 export const SUBAGENT_CONTINUE_PROMPT =
   "Spawn one subagent and have it reply exactly: initial subagent response";
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
@@ -189,6 +212,10 @@ export type OrchestratorFixtureInputStep =
       readonly label: string;
     }
   | {
+      readonly type: "provider_continuation";
+      readonly text?: string;
+    }
+  | {
       readonly type: "steer";
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
@@ -209,6 +236,13 @@ export type OrchestratorFixtureInputStep =
       readonly type: "release_replay_gate_after_waiting";
       readonly label: string;
       readonly targetRunIndex: number;
+    }
+  | {
+      readonly type: "interrupt_provider_native";
+      readonly subagentNativeItemId: string;
+    }
+  | {
+      readonly type: "delete";
     }
   | {
       readonly type: "approve_next_runtime_request";
@@ -294,6 +328,11 @@ export const OPENCODE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "openai/gpt-5.4-mini",
   options: [{ id: "agent", value: "build" }],
+} satisfies ModelSelection;
+
+export const OPENCODE2_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("opencode2"),
+  model: "opencode/big-pickle",
 } satisfies ModelSelection;
 
 export const ACP_REGISTRY_MODEL_SELECTION = {
@@ -475,6 +514,7 @@ export function materializeFixtureInput(input: {
             const shouldRunInBackground =
               (nextStep !== undefined &&
                 ((nextStep.type === "interrupt" && nextStep.targetRunIndex === runIndex) ||
+                  nextStep.type === "interrupt_provider_native" ||
                   nextStep.type === "queue_message" ||
                   (nextStep.type === "restart" && nextStep.targetRunIndex === runIndex) ||
                   (nextStep.type === "release_replay_gate_after_waiting" &&
@@ -501,6 +541,14 @@ export function materializeFixtureInput(input: {
             );
             if (shouldRunInBackground) {
               activeRunDispatchKeys.add(key);
+              if (nextStep?.type === "interrupt_provider_native") {
+                steps.push({
+                  type: "await_run_status",
+                  threadId: ids.threadId,
+                  runId: runIdFor(runIndex),
+                  status: "completed",
+                });
+              }
             } else if (
               !(
                 nextStep !== undefined &&
@@ -511,6 +559,29 @@ export function materializeFixtureInput(input: {
               steps.push({ type: "await_thread_idle", threadId: ids.threadId });
             }
           }
+          break;
+        case "provider_continuation":
+          messageIndex += 1;
+          runIndex += 1;
+          pushDispatch(
+            dispatchMessageCommand({
+              commandId: yield* idAllocator.allocate.command({
+                fixtureName: input.scenario,
+                commandName: `provider-continuation-${messageIndex}`,
+              }),
+              ids,
+              modelSelection: input.modelSelection,
+              messageId: yield* idAllocator.allocate.message({
+                threadId: ids.threadId,
+                ordinal: messageIndex,
+              }),
+              text: step.text ?? "Background task completed.",
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "provider",
+            }),
+          );
+          steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           break;
         case "queue_message": {
           messageIndex += 1;
@@ -742,6 +813,40 @@ export function materializeFixtureInput(input: {
             label: step.label,
             threadId: ids.threadId,
             runId: runIdFor(step.targetRunIndex),
+          });
+          break;
+        case "interrupt_provider_native":
+          pushDispatch(
+            {
+              type: "run.interrupt",
+              commandId: yield* idAllocator.allocate.command({
+                fixtureName: input.scenario,
+                commandName: "interrupt-provider-native",
+              }),
+              threadId: ids.threadId,
+              intent: "provider_native_only",
+            },
+            { advanceClockAfter: false },
+          );
+          steps.push({
+            type: "await_subagent_status",
+            threadId: ids.threadId,
+            status: "interrupted",
+            subagentId: idAllocator.derive.nodeFromProviderItem({
+              driver: input.driver,
+              nativeItemId: step.subagentNativeItemId,
+            }),
+          });
+          steps.push({ type: "advance_clock", duration: "1 millis" });
+          break;
+        case "delete":
+          pushDispatch({
+            type: "thread.delete",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: "thread-delete",
+            }),
+            threadId: ids.threadId,
           });
           break;
         case "advance_clock":
