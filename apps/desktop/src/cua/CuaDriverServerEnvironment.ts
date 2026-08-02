@@ -67,12 +67,19 @@ export const disableCuaDriverServerEnvironment = Effect.fn("disableCuaDriverServ
  * variables in their own environment.
  */
 export const configureCuaDriverServerEnvironment = Effect.fn("configureCuaDriverServerEnvironment")(
-  function* (hostBundleId: string, resourcesPath?: string) {
+  function* (hostBundleId: string, platform: NodeJS.Platform, resourcesPath?: string) {
     const path = yield* Path.Path;
-    const driverPath = resolveEmbeddedDriverPath(
-      process.env,
-      resourcesPath === undefined ? undefined : path.join(resourcesPath, "cua-driver"),
-    );
+    const packagedDriverPath =
+      resourcesPath === undefined
+        ? undefined
+        : platform === "darwin"
+          ? path.join(resourcesPath, "cua-driver")
+          : path.join(
+              resourcesPath,
+              "cua-driver",
+              platform === "win32" ? "cua-driver.exe" : "cua-driver",
+            );
+    const driverPath = resolveEmbeddedDriverPath(process.env, packagedDriverPath);
     if (Option.isNone(driverPath)) {
       return yield* new CuaDriverConfigurationError({ binaryPath: "<not configured>" });
     }

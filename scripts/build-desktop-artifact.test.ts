@@ -10,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BuildCommandFailedError,
+  CUA_DRIVER_EXTRA_RESOURCE,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -27,6 +28,7 @@ import {
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
   resolveCuaDriverMacAsset,
+  resolveCuaDriverAsset,
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
@@ -350,6 +352,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
+      assert.deepStrictEqual(linux.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        CUA_DRIVER_EXTRA_RESOURCE,
+      ]);
+      assert.deepStrictEqual(win.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        CUA_DRIVER_EXTRA_RESOURCE,
+      ]);
       for (const config of [mac, linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
         assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
@@ -585,6 +595,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepInclude(resolveCuaDriverMacAsset("universal"), {
       archiveName: "cua-driver-rs-0.12.2-darwin-universal-binary.tar.gz",
       executablePath: "cua-driver",
+    });
+  });
+
+  it("pins Cua Driver assets for Linux and Windows", () => {
+    assert.deepInclude(resolveCuaDriverAsset("linux", "x64"), {
+      archiveName: "cua-driver-rs-0.12.2-linux-x86_64-binary.tar.gz",
+      executablePath: "cua-driver",
+      companionPaths: ["cua-cursor-theme", "wayland-helper"],
+    });
+    assert.deepInclude(resolveCuaDriverAsset("linux", "arm64"), {
+      archiveName: "cua-driver-rs-0.12.2-linux-arm64-binary.tar.gz",
+      executablePath: "cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverAsset("win", "x64"), {
+      archiveName: "cua-driver-rs-0.12.2-windows-x86_64-binary.zip",
+      executablePath: "cua-driver.exe",
+      companionPaths: ["cua-cursor-theme.exe"],
+    });
+    assert.deepInclude(resolveCuaDriverAsset("win", "arm64"), {
+      archiveName: "cua-driver-rs-0.12.2-windows-arm64-binary.zip",
+      executablePath: "cua-driver.exe",
     });
   });
 

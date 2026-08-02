@@ -256,9 +256,10 @@ const startup = Effect.gen(function* () {
     onNone: () => false,
     onSome: (settings) => settings.enableCua,
   });
-  if (cuaEnabled && environment.platform === "darwin") {
+  if (cuaEnabled) {
     yield* configureCuaDriverServerEnvironment(
       environment.appUserModelId,
+      environment.platform,
       environment.isPackaged ? environment.resourcesPath : undefined,
     ).pipe(
       Effect.catch((error) =>
