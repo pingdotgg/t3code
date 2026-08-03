@@ -1180,7 +1180,6 @@ export default function SidebarV2() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -1584,10 +1583,11 @@ export default function SidebarV2() {
       // or descriptor not loaded yet) never classify as settled: the user
       // could neither un-settle nor pin them, so auto-settling them would
       // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+      const serverConfig = serverConfigs.get(thread.environmentId);
+      const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+      const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+      const autoSettleAfterDays =
+        serverConfig?.settings.threadSettlement.autoSettleAfterDays ?? null;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       // Snooze outranks settled classification: an explicitly snoozed thread
@@ -1616,7 +1616,6 @@ export default function SidebarV2() {
       snoozeNow: preciseNow,
     };
   }, [
-    autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
     scopedProjectKeys,

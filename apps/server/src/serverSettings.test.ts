@@ -116,6 +116,28 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }),
   );
 
+  it.effect("persists thread settlement policy patches", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const updated = yield* serverSettings.updateSettings({
+        threadSettlement: { autoSettleAfterDays: 14 },
+      });
+      assert.deepEqual(updated.threadSettlement, { autoSettleAfterDays: 14 });
+      assert.include(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+        '"threadSettlement": {',
+      );
+
+      const disabled = yield* serverSettings.updateSettings({
+        threadSettlement: { autoSettleAfterDays: null },
+      });
+      assert.isNull(disabled.threadSettlement.autoSettleAfterDays);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "decodes legacy object-shaped textGenerationModelSelection.options from settings.json",
     () =>

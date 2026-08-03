@@ -144,6 +144,7 @@ export const make = Effect.gen(function* () {
       repositoryIdentity: true,
       connectionProbe: true,
       threadSettlement: true,
+      threadSettlementPolicy: true,
       threadSnooze: true,
       threadTitleRegeneration: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
