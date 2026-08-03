@@ -43,7 +43,6 @@ export function ProviderAuthSetupCoordinator() {
         {
           text: "Set up",
           onPress: () => {
-            void finish();
             navigation.navigate("SettingsSheet", { screen: "SettingsProviders" });
           },
         },
