@@ -56,6 +56,24 @@ it.effect("fences a recovered delivery lease from stale workers", () =>
     });
     assert.isTrue(Option.isSome(first));
 
+    assert.isTrue(
+      yield* store.rescheduleClaim({
+        id,
+        leaseToken: "lease-1",
+        nextPollAt: "2026-07-30T12:00:05.000Z",
+        updatedAt: "2026-07-30T12:00:00.000Z",
+        lastError: "Transient delivery failure.",
+      }),
+    );
+    const retrying = yield* store.get(id);
+    assert.isTrue(Option.isSome(retrying));
+    if (Option.isSome(retrying)) {
+      assert.equal(retrying.value.state, "delivering");
+      assert.equal(retrying.value.deliveryLeaseToken, "lease-1");
+      assert.equal(retrying.value.deliveryLeaseExpiresAt, "2026-07-30T12:00:05.000Z");
+      assert.equal(retrying.value.deliveryPrompt, "CI settled. Continue.");
+    }
+
     const recovered = yield* store.claim({
       id,
       now: "2026-07-30T12:01:00.000Z",

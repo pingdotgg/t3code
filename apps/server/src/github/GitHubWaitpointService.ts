@@ -71,29 +71,27 @@ export type GitHubWaitpointMutationError =
   | GitHubWaitpointNotFoundError
   | GitHubWaitpointServiceError;
 
-export interface GitHubWaitpointServiceShape {
-  readonly register: (
-    input: RegisterGitHubWaitpointInput,
-  ) => Effect.Effect<GitHubWaitpointStore.GitHubWaitpoint, GitHubWaitpointMutationError>;
-  readonly get: (
-    id: GitHubWaitpointId,
-  ) => Effect.Effect<GitHubWaitpointStore.GitHubWaitpoint, GitHubWaitpointMutationError>;
-  readonly listForThread: (
-    threadId: ThreadId,
-  ) => Effect.Effect<
-    ReadonlyArray<GitHubWaitpointStore.GitHubWaitpoint>,
-    GitHubWaitpointStore.GitHubWaitpointStoreError
-  >;
-  readonly cancel: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly threadId: ThreadId;
-  }) => Effect.Effect<GitHubWaitpointStore.GitHubWaitpoint, GitHubWaitpointMutationError>;
-  readonly processDue: Effect.Effect<void, GitHubWaitpointStore.GitHubWaitpointStoreError>;
-}
-
 export class GitHubWaitpointService extends Context.Service<
   GitHubWaitpointService,
-  GitHubWaitpointServiceShape
+  {
+    readonly register: (
+      input: RegisterGitHubWaitpointInput,
+    ) => Effect.Effect<GitHubWaitpointStore.GitHubWaitpoint, GitHubWaitpointMutationError>;
+    readonly get: (
+      id: GitHubWaitpointId,
+    ) => Effect.Effect<GitHubWaitpointStore.GitHubWaitpoint, GitHubWaitpointMutationError>;
+    readonly listForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      ReadonlyArray<GitHubWaitpointStore.GitHubWaitpoint>,
+      GitHubWaitpointStore.GitHubWaitpointStoreError
+    >;
+    readonly cancel: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<GitHubWaitpointStore.GitHubWaitpoint, GitHubWaitpointMutationError>;
+    readonly processDue: Effect.Effect<void, GitHubWaitpointStore.GitHubWaitpointStoreError>;
+  }
 >()("t3/github/GitHubWaitpointService") {}
 
 function conditionLabel(condition: OrchestratorMcpGitHubWaitCondition): string {
@@ -139,7 +137,7 @@ export const layer = Layer.effect(
     const store = yield* GitHubWaitpointStore.GitHubWaitpointStore;
     const threads = yield* ThreadManagementService.ThreadManagementService;
 
-    const get: GitHubWaitpointServiceShape["get"] = (id) =>
+    const get: GitHubWaitpointService["Service"]["get"] = (id) =>
       store.get(id).pipe(
         Effect.flatMap(
           Option.match({

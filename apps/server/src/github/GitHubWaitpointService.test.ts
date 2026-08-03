@@ -214,6 +214,99 @@ it.effect("reclaims an expired delivery lease without rechecking a now-advanced 
   }),
 );
 
+it.effect("retries a failed delivery without rechecking the satisfied condition", () =>
+  Effect.gen(function* () {
+    const probeCalls = yield* Ref.make(0);
+    const projectionReads = yield* Ref.make(0);
+    const sendAttempts = yield* Ref.make(0);
+    const storeLayer = GitHubWaitpointStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+    const probeLayer = Layer.succeed(
+      GitHubPullRequestProbe.GitHubPullRequestProbe,
+      GitHubPullRequestProbe.GitHubPullRequestProbe.of({
+        get: () =>
+          Ref.getAndUpdate(probeCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) => {
+              if (count === 0) return Effect.succeed(pending);
+              if (count === 1) return Effect.succeed(settled);
+              return Effect.die("A durable delivery retry must not re-probe GitHub.");
+            }),
+          ),
+      }),
+    );
+    const threadsLayer = Layer.succeed(
+      ThreadManagementService.ThreadManagementService,
+      ThreadManagementService.ThreadManagementService.of({
+        getThreadProjection: () =>
+          Ref.update(projectionReads, (count) => count + 1).pipe(
+            Effect.andThen(Effect.succeed(projection())),
+          ),
+        sendToThread: () =>
+          Ref.getAndUpdate(sendAttempts, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? Effect.fail(
+                    new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                      projectId: ProjectId.make("project-1"),
+                      threadId: ThreadId.make("thread-1"),
+                    }),
+                  )
+                : Effect.succeed({} as never),
+            ),
+          ),
+      } as unknown as ThreadManagementService.ThreadManagementService["Service"]),
+    );
+    const cryptoLayer = Layer.succeed(
+      Crypto.Crypto,
+      Crypto.make({
+        randomBytes: (size) => new Uint8Array(size).fill(4),
+        digest: (_algorithm, bytes) => Effect.succeed(bytes),
+      }),
+    );
+    const serviceLayer = GitHubWaitpointService.layer.pipe(
+      Layer.provideMerge(storeLayer),
+      Layer.provideMerge(probeLayer),
+      Layer.provideMerge(threadsLayer),
+      Layer.provideMerge(cryptoLayer),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* GitHubWaitpointService.GitHubWaitpointService;
+      const id = GitHubWaitpointId.make("github-waitpoint:delivery-retry");
+      yield* service.register({
+        id,
+        projectId: ProjectId.make("project-1"),
+        threadId: ThreadId.make("thread-1"),
+        originatingRunId: RunId.make("run-1"),
+        repository: "pingdotgg/t3code",
+        pullRequestNumber: 2829,
+        condition: "checks_settled",
+        timeoutMinutes: 60,
+      });
+
+      yield* TestClock.adjust("30 seconds");
+      yield* service.processDue;
+
+      const retrying = yield* service.get(id);
+      assert.equal(retrying.state, "delivering");
+      assert.isNotNull(retrying.deliveryPrompt);
+      assert.equal(retrying.deliveryLeaseExpiresAt, "1970-01-01T00:00:35.000Z");
+      assert.equal(yield* Ref.get(probeCalls), 2);
+      assert.equal(yield* Ref.get(projectionReads), 1);
+      assert.equal(yield* Ref.get(sendAttempts), 1);
+
+      yield* TestClock.adjust("5 seconds");
+      yield* service.processDue;
+
+      const delivered = yield* service.get(id);
+      assert.equal(delivered.attemptCount, 2);
+      assert.equal(delivered.state, "delivered");
+      assert.equal(yield* Ref.get(probeCalls), 2);
+      assert.equal(yield* Ref.get(projectionReads), 1);
+      assert.equal(yield* Ref.get(sendAttempts), 2);
+    }).pipe(Effect.provide(Layer.mergeAll(serviceLayer, TestClock.layer())));
+  }),
+);
+
 it.effect("expires a wait when its originating run was interrupted", () =>
   Effect.gen(function* () {
     const probeCalls = yield* Ref.make(0);

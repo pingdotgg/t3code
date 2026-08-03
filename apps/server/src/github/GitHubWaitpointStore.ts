@@ -94,9 +94,13 @@ interface GitHubWaitpointRow {
 const decodeBaseline = Schema.decodeUnknownEffect(Schema.fromJsonString(GitHubPullRequestSnapshot));
 const encodeBaseline = Schema.encodeEffect(Schema.fromJsonString(GitHubPullRequestSnapshot));
 const decodeWaitpoint = Schema.decodeUnknownEffect(GitHubWaitpoint);
+const isGitHubWaitpointStoreError = Schema.is(GitHubWaitpointStoreError);
 
 function storeError(operation: string) {
-  return (cause: unknown) => new GitHubWaitpointStoreError({ operation, cause });
+  return (cause: unknown) =>
+    isGitHubWaitpointStoreError(cause)
+      ? cause
+      : new GitHubWaitpointStoreError({ operation, cause });
 }
 
 const decodeRow = Effect.fn("GitHubWaitpointStore.decodeRow")(function* (row: GitHubWaitpointRow) {
@@ -148,66 +152,64 @@ const columns = `
   completed_at
 ` as const;
 
-export interface GitHubWaitpointStoreShape {
-  readonly register: (
-    input: RegisterGitHubWaitpointInput,
-  ) => Effect.Effect<GitHubWaitpoint, GitHubWaitpointStoreError>;
-  readonly get: (
-    id: GitHubWaitpointId,
-  ) => Effect.Effect<Option.Option<GitHubWaitpoint>, GitHubWaitpointStoreError>;
-  readonly listForThread: (
-    threadId: ThreadId,
-  ) => Effect.Effect<ReadonlyArray<GitHubWaitpoint>, GitHubWaitpointStoreError>;
-  readonly listDue: (input: {
-    readonly now: string;
-    readonly limit: number;
-  }) => Effect.Effect<ReadonlyArray<GitHubWaitpoint>, GitHubWaitpointStoreError>;
-  readonly claim: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly now: string;
-    readonly leaseToken: string;
-    readonly leaseExpiresAt: string;
-    readonly deliveryPrompt: string;
-  }) => Effect.Effect<Option.Option<GitHubWaitpoint>, GitHubWaitpointStoreError>;
-  readonly reschedulePending: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly nextPollAt: string;
-    readonly updatedAt: string;
-    readonly lastError: string | null;
-  }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
-  readonly expirePending: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly completedAt: string;
-    readonly lastError: string;
-  }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
-  readonly rescheduleClaim: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly leaseToken: string;
-    readonly nextPollAt: string;
-    readonly updatedAt: string;
-    readonly lastError: string | null;
-  }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
-  readonly expireClaim: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly leaseToken: string;
-    readonly completedAt: string;
-    readonly lastError: string;
-  }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
-  readonly markDelivered: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly leaseToken: string;
-    readonly completedAt: string;
-  }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
-  readonly cancel: (input: {
-    readonly id: GitHubWaitpointId;
-    readonly threadId: ThreadId;
-    readonly completedAt: string;
-  }) => Effect.Effect<Option.Option<GitHubWaitpoint>, GitHubWaitpointStoreError>;
-}
-
 export class GitHubWaitpointStore extends Context.Service<
   GitHubWaitpointStore,
-  GitHubWaitpointStoreShape
+  {
+    readonly register: (
+      input: RegisterGitHubWaitpointInput,
+    ) => Effect.Effect<GitHubWaitpoint, GitHubWaitpointStoreError>;
+    readonly get: (
+      id: GitHubWaitpointId,
+    ) => Effect.Effect<Option.Option<GitHubWaitpoint>, GitHubWaitpointStoreError>;
+    readonly listForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<GitHubWaitpoint>, GitHubWaitpointStoreError>;
+    readonly listDue: (input: {
+      readonly now: string;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubWaitpoint>, GitHubWaitpointStoreError>;
+    readonly claim: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly now: string;
+      readonly leaseToken: string;
+      readonly leaseExpiresAt: string;
+      readonly deliveryPrompt: string;
+    }) => Effect.Effect<Option.Option<GitHubWaitpoint>, GitHubWaitpointStoreError>;
+    readonly reschedulePending: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly nextPollAt: string;
+      readonly updatedAt: string;
+      readonly lastError: string | null;
+    }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
+    readonly expirePending: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly completedAt: string;
+      readonly lastError: string;
+    }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
+    readonly rescheduleClaim: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly leaseToken: string;
+      readonly nextPollAt: string;
+      readonly updatedAt: string;
+      readonly lastError: string | null;
+    }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
+    readonly expireClaim: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly leaseToken: string;
+      readonly completedAt: string;
+      readonly lastError: string;
+    }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
+    readonly markDelivered: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly leaseToken: string;
+      readonly completedAt: string;
+    }) => Effect.Effect<boolean, GitHubWaitpointStoreError>;
+    readonly cancel: (input: {
+      readonly id: GitHubWaitpointId;
+      readonly threadId: ThreadId;
+      readonly completedAt: string;
+    }) => Effect.Effect<Option.Option<GitHubWaitpoint>, GitHubWaitpointStoreError>;
+  }
 >()("t3/github/GitHubWaitpointStore") {}
 
 export const layer = Layer.effect(
@@ -289,7 +291,7 @@ export const layer = Layer.effect(
           if (Option.isNone(stored)) {
             return yield* new GitHubWaitpointStoreError({
               operation: "register:reload",
-              cause: "Inserted waitpoint could not be reloaded.",
+              cause: new Error("Inserted waitpoint could not be reloaded."),
             });
           }
           return stored.value;
@@ -392,10 +394,8 @@ export const layer = Layer.effect(
           const rows = yield* sql`
             UPDATE github_waitpoints
             SET
-              state = 'pending',
               next_poll_at = ${nextPollAt},
-              delivery_lease_token = NULL,
-              delivery_lease_expires_at = NULL,
+              delivery_lease_expires_at = ${nextPollAt},
               last_error = ${lastError},
               updated_at = ${updatedAt}
             WHERE waitpoint_id = ${id}
