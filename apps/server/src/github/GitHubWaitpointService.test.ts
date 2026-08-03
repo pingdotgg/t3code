@@ -307,6 +307,81 @@ it.effect("retries a failed delivery without rechecking the satisfied condition"
   }),
 );
 
+it.effect("expires a delivery failure that crosses the waitpoint deadline", () =>
+  Effect.gen(function* () {
+    const probeCalls = yield* Ref.make(0);
+    const sendAttempts = yield* Ref.make(0);
+    const storeLayer = GitHubWaitpointStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+    const probeLayer = Layer.succeed(
+      GitHubPullRequestProbe.GitHubPullRequestProbe,
+      GitHubPullRequestProbe.GitHubPullRequestProbe.of({
+        get: () =>
+          Ref.getAndUpdate(probeCalls, (count) => count + 1).pipe(
+            Effect.map((count) => (count === 0 ? pending : settled)),
+          ),
+      }),
+    );
+    const threadsLayer = Layer.succeed(
+      ThreadManagementService.ThreadManagementService,
+      ThreadManagementService.ThreadManagementService.of({
+        getThreadProjection: () => Effect.succeed(projection()),
+        sendToThread: () =>
+          Ref.update(sendAttempts, (count) => count + 1).pipe(
+            Effect.andThen(TestClock.adjust("31 seconds")),
+            Effect.andThen(
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                  projectId: ProjectId.make("project-1"),
+                  threadId: ThreadId.make("thread-1"),
+                }),
+              ),
+            ),
+          ),
+      } as unknown as ThreadManagementService.ThreadManagementService["Service"]),
+    );
+    const cryptoLayer = Layer.succeed(
+      Crypto.Crypto,
+      Crypto.make({
+        randomBytes: (size) => new Uint8Array(size).fill(6),
+        digest: (_algorithm, bytes) => Effect.succeed(bytes),
+      }),
+    );
+    const serviceLayer = GitHubWaitpointService.layer.pipe(
+      Layer.provideMerge(storeLayer),
+      Layer.provideMerge(probeLayer),
+      Layer.provideMerge(threadsLayer),
+      Layer.provideMerge(cryptoLayer),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* GitHubWaitpointService.GitHubWaitpointService;
+      const id = GitHubWaitpointId.make("github-waitpoint:delivery-deadline");
+      yield* service.register({
+        id,
+        projectId: ProjectId.make("project-1"),
+        threadId: ThreadId.make("thread-1"),
+        originatingRunId: RunId.make("run-1"),
+        repository: "pingdotgg/t3code",
+        pullRequestNumber: 2829,
+        condition: "checks_settled",
+        timeoutMinutes: 1,
+      });
+
+      yield* TestClock.adjust("30 seconds");
+      yield* service.processDue;
+
+      const expired = yield* service.get(id);
+      assert.equal(expired.state, "expired");
+      assert.include(expired.lastError ?? "", "deadline elapsed during delivery");
+      assert.equal(expired.completedAt, "1970-01-01T00:01:01.000Z");
+      assert.equal(yield* Ref.get(sendAttempts), 1);
+
+      yield* service.processDue;
+      assert.equal(yield* Ref.get(sendAttempts), 1);
+    }).pipe(Effect.provide(Layer.mergeAll(serviceLayer, TestClock.layer())));
+  }),
+);
+
 it.effect("refreshes the current time before processing each due waitpoint", () =>
   Effect.gen(function* () {
     const probeCalls = yield* Ref.make(0);

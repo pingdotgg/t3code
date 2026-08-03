@@ -176,6 +176,15 @@ export const make = Effect.gen(function* () {
   ) {
     const nowIso = DateTime.formatIso(now);
     const prompt = waitpoint.deliveryPrompt;
+    if (waitpoint.deadlineAt <= nowIso) {
+      yield* store.expireClaim({
+        id: waitpoint.id,
+        leaseToken,
+        completedAt: nowIso,
+        lastError: "GitHub waitpoint deadline elapsed during delivery.",
+      });
+      return;
+    }
     if (prompt === null) {
       yield* store.expireClaim({
         id: waitpoint.id,
@@ -200,19 +209,31 @@ export const make = Effect.gen(function* () {
       }),
     );
     if (Result.isFailure(delivered)) {
+      const failedAt = yield* DateTime.now;
+      const failedAtIso = DateTime.formatIso(failedAt);
+      if (waitpoint.deadlineAt <= failedAtIso) {
+        yield* store.expireClaim({
+          id: waitpoint.id,
+          leaseToken,
+          completedAt: failedAtIso,
+          lastError: `GitHub waitpoint deadline elapsed during delivery: ${errorMessage(delivered.failure)}`,
+        });
+        return;
+      }
       yield* store.rescheduleClaim({
         id: waitpoint.id,
         leaseToken,
-        nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds: DELIVERY_RETRY_SECONDS })),
-        updatedAt: nowIso,
+        nextPollAt: DateTime.formatIso(DateTime.add(failedAt, { seconds: DELIVERY_RETRY_SECONDS })),
+        updatedAt: failedAtIso,
         lastError: errorMessage(delivered.failure),
       });
       return;
     }
+    const deliveredAt = DateTime.formatIso(yield* DateTime.now);
     const marked = yield* store.markDelivered({
       id: waitpoint.id,
       leaseToken,
-      completedAt: nowIso,
+      completedAt: deliveredAt,
     });
     if (marked) {
       yield* Effect.logInfo("github.waitpoint.delivered", {
