@@ -161,14 +161,14 @@ effectIt("does not swallow process probe interruption", () =>
   }),
 );
 
-effectIt("replays snapshots without rescanning unchanged terminal registrations", () => {
+effectIt("rescans once after terminal PIDs settle without repeating unchanged probes", () => {
   let probeCount = 0;
-  let replayCount = 0;
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
   const layer = makeProbeFailureLayer(() =>
     Effect.sync(() => {
       probeCount += 1;
       return {
-        stdout: "",
+        stdout: probeCount === 3 ? "p42\ncnode\nn*:3000\n" : "",
         stderr: "",
         code: null,
         timedOut: false,
@@ -192,14 +192,19 @@ effectIt("replays snapshots without rescanning unchanged terminal registrations"
       terminalId: "terminal-1",
       processIds: [42],
     });
-    yield* scanner.subscribe(() =>
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.subscribe((servers) =>
       Effect.sync(() => {
-        replayCount += 1;
+        replayedPorts.push(servers.map((server) => server.port));
       }),
     );
 
-    expect(probeCount).toBe(2);
-    expect(replayCount).toBe(1);
+    expect(probeCount).toBe(3);
+    expect(replayedPorts).toEqual([[3000]]);
   }).pipe(Effect.provide(layer));
 });
 

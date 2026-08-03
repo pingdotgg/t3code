@@ -88,6 +88,7 @@ interface ScannerState {
     {
       readonly owner: TerminalProcessOwner;
       readonly processIds: ReadonlySet<number>;
+      readonly needsSettleScan: boolean;
     }
   >;
   readonly retainCount: number;
@@ -570,22 +571,24 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const processIds = new Set(
         input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
       );
-      const changed = yield* Ref.modify(stateRef, (state) => {
+      const shouldScan = yield* Ref.modify(stateRef, (state) => {
         const terminalProcesses = new Map(state.terminalProcesses);
         const key = terminalOwnerKey(owner);
         const existing = terminalProcesses.get(key);
         if (existing && processIdsEqual(existing.processIds, processIds)) {
-          return [false, state] as const;
+          if (!existing.needsSettleScan) return [false, state] as const;
+          terminalProcesses.set(key, { ...existing, needsSettleScan: false });
+          return [true, { ...state, terminalProcesses }] as const;
         }
         if (processIds.size === 0) {
           if (!existing) return [false, state] as const;
           terminalProcesses.delete(key);
         } else {
-          terminalProcesses.set(key, { owner, processIds });
+          terminalProcesses.set(key, { owner, processIds, needsSettleScan: true });
         }
         return [true, { ...state, terminalProcesses }] as const;
       });
-      if (changed) yield* pollAfterTerminalChange();
+      if (shouldScan) yield* pollAfterTerminalChange();
     });
 
   const unregisterTerminal: PortDiscovery["Service"]["unregisterTerminal"] = Effect.fn(
