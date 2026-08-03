@@ -71,6 +71,19 @@ export interface ThreadCommandInput extends CommandMetadata {
 export type DeleteThreadInput = ThreadCommandInput;
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
+export type SettleThreadInput = ThreadCommandInput;
+
+export interface UnsettleThreadInput extends ThreadCommandInput {
+  readonly reason: "user";
+}
+
+export interface SnoozeThreadInput extends ThreadCommandInput {
+  readonly snoozedUntil: string;
+}
+
+export interface UnsnoozeThreadInput extends ThreadCommandInput {
+  readonly reason: "user";
+}
 
 export interface VisitThreadInput extends ThreadCommandInput {
   /** Watermark of the thread state the viewer has seen (ISO timestamp). */
@@ -327,7 +340,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 });
 
 function simpleThreadCommand(
-  type: "thread.delete" | "thread.archive" | "thread.unarchive",
+  type: "thread.delete" | "thread.archive" | "thread.unarchive" | "thread.settle",
   input: ThreadCommandInput,
 ) {
   return allocateCommandId(input).pipe(

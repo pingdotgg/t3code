@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -107,6 +108,7 @@ describe("AcpRegistryAdapterV2", () => {
       });
       const instanceId = ProviderInstanceId.make("acp-registry-fixture");
       const adapter = makeAcpRegistryAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         settings,
         environment: {
