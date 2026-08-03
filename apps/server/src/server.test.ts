@@ -912,6 +912,12 @@ const buildAppUnderTest = (options?: {
           getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
           getDescriptor: Effect.succeed(testEnvironmentDescriptor),
           ...options?.layers?.serverEnvironment,
+          getDescriptorForSettings:
+            options?.layers?.serverEnvironment?.getDescriptorForSettings ??
+            ((settings) => ({
+              ...testEnvironmentDescriptor,
+              label: settings.environmentLabel || testEnvironmentDescriptor.label,
+            })),
         }),
       ),
       Layer.provide(
@@ -4586,6 +4592,43 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "keybindingsUpdated",
         payload: { keybindings: [], issues: [] },
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("uses the emitted settings snapshot for environment label updates", () =>
+    Effect.gen(function* () {
+      const updatedSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        environmentLabel: "Studio Mac",
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            streamChanges: Stream.succeed(updatedSettings),
+          },
+          serverEnvironment: {
+            getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+            getDescriptorForSettings: (settings) => ({
+              ...testEnvironmentDescriptor,
+              label: settings.environmentLabel || testEnvironmentDescriptor.label,
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      const update = Array.from(events)[1];
+      assert.equal(update?.type, "settingsUpdated");
+      if (update?.type === "settingsUpdated") {
+        assert.equal(update.payload.settings.environmentLabel, "Studio Mac");
+        assert.equal(update.payload.environment?.label, "Studio Mac");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

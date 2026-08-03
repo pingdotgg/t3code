@@ -2199,13 +2199,18 @@ const makeWsRpcLayer = (
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               const settingsUpdates = serverSettings.streamChanges.pipe(
-                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.mapEffect((settings) =>
                   serverEnvironment.getDescriptor.pipe(
                     Effect.map((environment) => ({
                       version: 1 as const,
                       type: "settingsUpdated" as const,
-                      payload: { settings, environment },
+                      payload: {
+                        settings: ServerSettings.redactServerSettingsForClient(settings),
+                        environment: {
+                          ...serverEnvironment.getDescriptorForSettings(settings),
+                          capabilities: environment.capabilities,
+                        },
+                      },
                     })),
                   ),
                 ),

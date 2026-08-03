@@ -511,6 +511,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
+            getDescriptorForSettings: (settings) => ({
+              ...descriptor,
+              label: settings.environmentLabel || descriptor.label,
+            }),
           }),
           Layer.succeed(OrchestrationEngineService, orchestrationEngine),
           Layer.succeed(ProjectionSnapshotQuery, snapshotQuery),
@@ -661,6 +665,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
+            getDescriptorForSettings: (settings) => ({
+              ...descriptor,
+              label: settings.environmentLabel || descriptor.label,
+            }),
           }),
           Layer.succeed(OrchestrationEngineService, {
             readEvents: () => Stream.empty,

@@ -104,10 +104,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-server-environment-publish-test-",
       });
-      const testLayer = Layer.mergeAll(
-        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
-        ServerSecretStore.layer,
-      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+      const testLayer = ServerEnvironment.layer.pipe(
+        Layer.provideMerge(ServerSettings.layerTest()),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+      );
 
       yield* Effect.gen(function* () {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -157,10 +158,14 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
         yield* serverSettings.updateSettings({ environmentLabel: "Studio Mac" });
         const renamed = yield* serverEnvironment.getDescriptor;
+        const renamedFromSnapshot = serverEnvironment.getDescriptorForSettings({
+          environmentLabel: "Studio Mac",
+        });
         yield* serverSettings.updateSettings({ environmentLabel: "" });
         const reset = yield* serverEnvironment.getDescriptor;
 
         expect(renamed).toEqual({ ...initial, label: "Studio Mac" });
+        expect(renamedFromSnapshot).toEqual(renamed);
         expect(reset).toEqual(initial);
       }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
     }),
