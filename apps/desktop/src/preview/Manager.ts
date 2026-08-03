@@ -421,6 +421,13 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   !input.shift &&
   !input.alt;
 
+const isAbortedNavigationCause = (cause: unknown): boolean => {
+  if (cause instanceof Error && cause.message.includes("ERR_ABORTED")) return true;
+  if (typeof cause !== "object" || cause === null) return false;
+  const error = cause as { readonly code?: unknown; readonly errno?: unknown };
+  return error.code === "ERR_ABORTED" || error.code === -3 || error.errno === -3;
+};
+
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
   if (value.kind === "pointer") {
@@ -2238,9 +2245,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       latestNavStatus.url === pendingUrl &&
       wc.getURL() !== pendingUrl
     ) {
-      const launchToken = Symbol();
-      navigationLaunchTokens.set(tabId, launchToken);
-      return { launchToken, url: pendingUrl, wc };
+      navigationLaunchTokens.delete(tabId);
+      const load = yield* attempt(
+        { operation: "registerWebview.loadPendingUrl", tabId, webContentsId },
+        () => wc.loadURL(pendingUrl),
+      );
+      return { load, wc };
     }
   });
 
@@ -2254,21 +2264,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
     );
     if (!action) return;
-    const load = yield* attempt(
-      { operation: "registerWebview.loadPendingUrl", tabId, webContentsId },
-      () => {
-        if (navigationLaunchTokens.get(tabId) !== action.launchToken || action.wc.isDestroyed()) {
-          return null;
-        }
-        navigationLaunchTokens.delete(tabId);
-        return action.wc.loadURL(action.url);
-      },
-    );
-    if (!load) return;
     runFork(
       attemptPromise(
         { operation: "registerWebview.loadPendingUrl", tabId, webContentsId },
-        () => load,
+        () => action.load,
       ).pipe(Effect.ignore),
     );
   });
@@ -2336,37 +2335,32 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* emit(tabId, detached);
       return;
     }
+    if (navigationLaunchTokens.get(tabId) !== launchToken || wc.isDestroyed()) return;
+    navigationLaunchTokens.delete(tabId);
     if (wc.getURL() === url) {
-      return { kind: "reload" as const, launchToken, wc };
+      yield* attempt({ operation: "navigate.reload", tabId, webContentsId: wc.id }, () =>
+        wc.reload(),
+      );
+      return;
     }
-    return { kind: "load" as const, launchToken, url, wc };
+    const load = yield* attempt(
+      { operation: "navigate.loadURL", tabId, webContentsId: wc.id },
+      () => wc.loadURL(url),
+    );
+    return { load, wc };
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
     const action = yield* withTabLifecycleLock(tabId, navigateUnlocked(tabId, rawUrl));
     if (!action) return;
-    const load = yield* attempt(
-      {
-        operation: action.kind === "load" ? "navigate.loadURL" : "navigate.reload",
-        tabId,
-        webContentsId: action.wc.id,
-      },
-      () => {
-        if (navigationLaunchTokens.get(tabId) !== action.launchToken || action.wc.isDestroyed()) {
-          return null;
-        }
-        navigationLaunchTokens.delete(tabId);
-        if (action.kind === "reload") {
-          action.wc.reload();
-          return null;
-        }
-        return action.wc.loadURL(action.url);
-      },
-    );
-    if (!load) return;
     yield* attemptPromise(
       { operation: "navigate.loadURL", tabId, webContentsId: action.wc.id },
-      () => load,
+      () => action.load,
+    ).pipe(
+      Effect.catchIf(
+        (error) => isAbortedNavigationCause(error.cause),
+        () => Effect.void,
+      ),
     );
   });
 

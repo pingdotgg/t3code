@@ -8,6 +8,23 @@ vi.mock("~/state/session", () => ({ readPreparedConnection }));
 describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
 
+  it.each([
+    "0.0.0.0",
+    "devbox",
+    "devbox.localhost",
+    "::",
+    "::ffff:192.168.1.20",
+    "[::ffff:c0a8:114]",
+  ])("treats %s as a private network host", async (host) => {
+    const { isPrivateNetworkHost } = await import("./browserTargetResolver");
+    expect(isPrivateNetworkHost(host)).toBe(true);
+  });
+
+  it("does not treat a public IPv4-mapped IPv6 address as private", async () => {
+    const { isPrivateNetworkHost } = await import("./browserTargetResolver");
+    expect(isPrivateNetworkHost("::ffff:808:808")).toBe(false);
+  });
+
   it("maps environment ports onto a private network host", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");

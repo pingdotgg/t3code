@@ -541,6 +541,105 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not fail a navigation superseded by a newer load", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let rejectFirstLoad!: (cause: Error) => void;
+        let loadCount = 0;
+        const { webContents, loadURL } = makeFaviconWebContents({
+          url: "http://localhost:3203/current",
+          title: "Superseded navigation",
+          fetch: vi.fn(),
+          loadURL: () => {
+            loadCount += 1;
+            return loadCount === 1
+              ? new Promise<void>((_resolve, reject) => {
+                  rejectFirstLoad = reject;
+                })
+              : Promise.resolve();
+          },
+        });
+        fromId.mockReturnValue(webContents);
+        yield* manager.createTab("tab_superseded_navigation");
+        yield* manager.registerWebview("tab_superseded_navigation", 42);
+
+        const first = yield* manager
+          .navigate("tab_superseded_navigation", "http://localhost:3203/first")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => loadURL.mock.calls.length === 1, 0);
+        yield* manager.navigate("tab_superseded_navigation", "http://localhost:3203/second");
+        rejectFirstLoad(new Error("ERR_ABORTED (-3) loading the superseded URL"));
+
+        yield* Fiber.join(first);
+        expect(loadURL).toHaveBeenCalledTimes(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("still reports non-abort navigation failures", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const { webContents } = makeFaviconWebContents({
+          url: "http://localhost:3204/current",
+          title: "Failed navigation",
+          fetch: vi.fn(),
+          loadURL: () => Promise.reject(new Error("ERR_CONNECTION_REFUSED")),
+        });
+        fromId.mockReturnValue(webContents);
+        yield* manager.createTab("tab_failed_navigation");
+        yield* manager.registerWebview("tab_failed_navigation", 42);
+
+        const exit = yield* Effect.exit(
+          manager.navigate("tab_failed_navigation", "http://localhost:3204/failed"),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("starts navigation before a queued toolbar action can supersede it", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const targetUrl = "http://localhost:3203/next";
+        const { webContents, loadURL, reload } = makeFaviconWebContents({
+          url: "http://localhost:3203/current",
+          title: "Queued toolbar action",
+          fetch: vi.fn(),
+        });
+        fromId.mockReturnValue(webContents);
+        yield* manager.createTab("tab_queued_toolbar_action");
+        yield* manager.registerWebview("tab_queued_toolbar_action", 42);
+
+        const loadingPublished = yield* Deferred.make<void>();
+        yield* manager.subscribeStateChanges((tabId, state) => {
+          if (
+            tabId !== "tab_queued_toolbar_action" ||
+            state.navStatus.kind !== "Loading" ||
+            state.navStatus.url !== targetUrl
+          ) {
+            return Effect.void;
+          }
+          return Deferred.succeed(loadingPublished, undefined).pipe(Effect.asVoid);
+        });
+        const toolbarAction = yield* Deferred.await(loadingPublished).pipe(
+          Effect.andThen(manager.refresh("tab_queued_toolbar_action")),
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* manager.navigate("tab_queued_toolbar_action", targetUrl);
+        yield* Fiber.join(toolbarAction);
+
+        expect(loadURL).toHaveBeenCalledOnce();
+        expect(loadURL).toHaveBeenCalledWith(targetUrl);
+        expect(reload).toHaveBeenCalledOnce();
+        expect(loadURL.mock.invocationCallOrder[0]).toBeLessThan(
+          reload.mock.invocationCallOrder[0]!,
+        );
+      }),
+    ),
+  );
+
   effectIt.effect("stops a pending load without replacing the current favicon", () =>
     withManager((manager) =>
       Effect.gen(function* () {
