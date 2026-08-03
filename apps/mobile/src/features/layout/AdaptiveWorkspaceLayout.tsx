@@ -364,7 +364,9 @@ function AdaptiveWorkspaceLayoutContent(
       ? null
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
-  selectedThreadKeyRef.current = selectedThreadKey;
+  useEffect(() => {
+    selectedThreadKeyRef.current = selectedThreadKey;
+  }, [selectedThreadKey]);
   // Wrapped in an object: bare functions in useState would be treated as
   // lazy initializers/updaters. `active: false` keeps the outgoing route's
   // content mounted so the pane can animate closed (or be replaced
