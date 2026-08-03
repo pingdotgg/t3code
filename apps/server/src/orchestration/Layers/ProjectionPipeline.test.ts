@@ -2543,6 +2543,107 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-ses
       }),
     );
 
+    it.effect("settles a running projected turn when its provider session is interrupted", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-stale-provider-turn");
+        const turnId = TurnId.make("turn-stale-provider-turn");
+        const startedAt = "2026-08-03T07:00:00.000Z";
+        const interruptedAt = "2026-08-03T07:01:00.000Z";
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.make("evt-stale-provider-thread-created"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-stale-provider-thread-created"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-provider-thread-created"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-session-resume"),
+            title: "Stale provider turn",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("copilot"),
+              model: "auto",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            pendingRuntimeMode: null,
+            branch: null,
+            worktreePath: null,
+            createdAt: startedAt,
+            updatedAt: startedAt,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-stale-provider-session-running"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-stale-provider-session-running"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-provider-session-running"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "copilot",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: startedAt,
+            },
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-stale-provider-session-interrupted"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: interruptedAt,
+          commandId: CommandId.make("cmd-stale-provider-session-interrupted"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-provider-session-interrupted"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "interrupted",
+              providerName: "copilot",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: "Provider session is no longer active.",
+              updatedAt: interruptedAt,
+            },
+          },
+        });
+
+        const rows = yield* sql<{
+          readonly state: string;
+          readonly completedAt: string | null;
+        }>`
+          SELECT state, completed_at AS "completedAt"
+          FROM projection_turns
+          WHERE thread_id = ${threadId} AND turn_id = ${turnId}
+        `;
+        assert.deepEqual(rows, [{ state: "interrupted", completedAt: interruptedAt }]);
+      }),
+    );
+
     it.effect("preserves session resume cursor when later lifecycle updates omit it", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;

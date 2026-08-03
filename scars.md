@@ -4,6 +4,7 @@
 - `packages/shared` uses explicit subpath exports; do not add a barrel index.
 - Provider runtime activity is projected into orchestration domain events server-side before the web app consumes it.
 - Session startup/resume and turn lifecycle are fragile paths; optimize for predictable restart/reconnect behavior over quick local fixes.
+- Terminal session reconciliation must settle the matching projected turn as well as clear `session.activeTurnId`; otherwise restart recovery leaves the UI permanently in flight.
 - Bounded provider event channels must preserve teardown event order during normal stops; suppress new events only after adapter-layer shutdown begins instead of detaching terminal offers.
 - A pre-acknowledgement `provider.turn.start.failed` activity terminally settles its user message; preserve the activity's `messageId` so reconnects cannot leave the thread permanently in flight.
 - SQLite migration IDs are globally append-only; choose an ID above every historical ledger entry, including migrations from divergent branches no longer present in the current source tree.
