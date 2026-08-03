@@ -6114,6 +6114,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "OrchestrationThreadNotFoundError");
       assert.equal(result.failure.threadId, defaultThreadId);
+      assert.equal(result.failure.message, `Thread ${defaultThreadId} was not found`);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
