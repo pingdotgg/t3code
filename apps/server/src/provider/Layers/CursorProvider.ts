@@ -7,7 +7,6 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
-import { ProviderDriverKind } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,7 +23,6 @@ import {
 } from "../providerSnapshot.ts";
 import { CursorSdkCatalog } from "./CursorSdkCatalog.ts";
 
-const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
   showInteractionModeToggle: true,
@@ -77,7 +75,7 @@ export function buildInitialCursorProviderSnapshot(
 export function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings([], PROVIDER, cursorSettings.customModels, EMPTY_CAPABILITIES);
+  return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES);
 }
 
 function toTitleCaseWords(value: string): string {

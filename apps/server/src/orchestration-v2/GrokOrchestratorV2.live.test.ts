@@ -14,6 +14,8 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
@@ -47,6 +49,10 @@ const serverSettingsLayer = ServerSettingsService.layerTest({
     grok: { enabled: true },
   },
 });
+const backgroundPolicyLayer = BackgroundPolicy.layer.pipe(
+  Layer.provide(Layer.effect(HostPowerMonitor.HostPowerMonitor, HostPowerMonitor.make())),
+  Layer.provide(serverSettingsLayer),
+);
 const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -67,6 +73,7 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(serverConfigLayer),
   Layer.provide(serverSettingsLayer),
   Layer.provide(providerInstanceRegistryLayer),
+  Layer.provide(backgroundPolicyLayer),
   Layer.provide(NodeServices.layer),
 );
 

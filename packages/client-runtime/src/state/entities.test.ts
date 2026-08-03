@@ -9,12 +9,55 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import {
+  InvalidScopedProjectRefCollectionKeyError,
+  InvalidScopedThreadKeyError,
+  parseProjectRefCollectionKey,
+  parseThreadKey,
+} from "./entities.ts";
 import { presentThreadShell } from "./models.ts";
+import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
-import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
+
+describe("scoped entity keys", () => {
+  it("preserves an invalid thread key as structured error data", () => {
+    const key = "missing-thread-key-separator";
+    let error: unknown;
+
+    try {
+      parseThreadKey(key);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toEqual(new InvalidScopedThreadKeyError({ key }));
+  });
+
+  it("preserves malformed project reference collection input and its cause", () => {
+    const key = "not-json";
+    let error: unknown;
+
+    try {
+      parseProjectRefCollectionKey(key);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toBeInstanceOf(InvalidScopedProjectRefCollectionKeyError);
+    expect(error).toMatchObject({ key, cause: expect.anything() });
+  });
+
+  it("rejects invalid project reference collection shapes", () => {
+    const key = JSON.stringify([["environment-1"]]);
+
+    expect(() => parseProjectRefCollectionKey(key)).toThrowError(
+      InvalidScopedProjectRefCollectionKeyError,
+    );
+  });
+});
 
 describe("V2 client presentation", () => {
   it("presents shell timestamps and status without constructing V1 state", () => {

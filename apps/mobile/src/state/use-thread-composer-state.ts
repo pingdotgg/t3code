@@ -227,8 +227,8 @@ export function useThreadComposerState() {
       setPendingConnectionError(
         error instanceof Error ? error.message : "Failed to save the queued message.",
       );
-      return null;
-    }
+    });
+    return messageId;
   }, [selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(

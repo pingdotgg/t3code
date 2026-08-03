@@ -1,10 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
+import * as ServerConfig from "./config.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
 it("uses the canonical Codex model for auto-bootstrap", () => {
@@ -94,4 +96,44 @@ it.effect("queues commands until startup signals readiness", () =>
       assert.equal(yield* Fiber.join(queued), 1);
     }),
   ),
+);
+
+it.effect("enqueueCommand fails queued work when readiness fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
+      const failure = yield* Deferred.make<void, never>();
+
+      const queuedCommandFiber = yield* commandGate
+        .enqueueCommand(Deferred.await(failure).pipe(Effect.as("should-not-run")))
+        .pipe(Effect.forkScoped);
+
+      yield* commandGate.failCommandReady(
+        new ServerRuntimeStartup.ServerRuntimeStartupError({
+          mode: "web",
+          host: "127.0.0.1",
+          port: 3773,
+          cause: new Error("test startup failure"),
+        }),
+      );
+
+      const error = yield* Effect.flip(Fiber.join(queuedCommandFiber));
+      assert.equal(error.message, "Server runtime startup failed before command readiness.");
+    }),
+  ),
+);
+
+it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
+  Effect.gen(function* () {
+    const welcome = yield* ServerRuntimeStartup.resolveWelcomeBase.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        cwd: "/tmp/startup-project",
+      } as never),
+    );
+
+    assert.deepStrictEqual(welcome, {
+      cwd: "/tmp/startup-project",
+      projectName: "startup-project",
+    });
+  }),
 );

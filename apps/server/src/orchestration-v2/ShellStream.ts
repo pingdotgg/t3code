@@ -1,4 +1,5 @@
 import type {
+  ApplicationStoredEvent,
   OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadShell,

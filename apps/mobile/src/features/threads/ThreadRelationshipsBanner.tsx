@@ -18,7 +18,6 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, View } from "react-nat
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { buildThreadRoutePath } from "../../lib/routes";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadShells } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
@@ -96,7 +95,7 @@ export function ThreadRelationshipsBanner(props: {
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
   const [visible, setVisible] = useState(false);
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
-  const router = useRouter();
+  const navigation = useNavigation();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
   const stopSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const insets = useSafeAreaInsets();
@@ -115,11 +114,14 @@ export function ThreadRelationshipsBanner(props: {
   const openThread = (threadId: ThreadId, archivedThread: boolean) => {
     setVisible(false);
     void Haptics.selectionAsync();
-    router.push(
-      archivedThread
-        ? "/settings/archive"
-        : buildThreadRoutePath({ environmentId: props.environmentId, threadId }),
-    );
+    if (archivedThread) {
+      navigation.navigate("SettingsSheet", { screen: "SettingsArchive" });
+      return;
+    }
+    navigation.navigate("Thread", {
+      environmentId: props.environmentId,
+      threadId,
+    });
   };
 
   const merge = async () => {

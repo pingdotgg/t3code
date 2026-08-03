@@ -36,6 +36,15 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
+const PREPARED: PreparedConnection = {
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: TARGET.httpBaseUrl,
+  socketUrl: TARGET.wsBaseUrl,
+  httpAuthorization: null,
+  target: TARGET,
+};
+
 const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
   ...v2ShellSnapshot,
   snapshotSequence: 1,
@@ -145,34 +154,30 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("requests a full socket snapshot when the HTTP refresh fails", () =>
+  it.effect("refreshes a warm shell cache from HTTP before resuming", () =>
     Effect.gen(function* () {
-      const cachedSnapshot: OrchestrationShellSnapshot = {
+      const cachedSnapshot: OrchestrationV2ShellSnapshot = {
+        ...v2ShellSnapshot,
         snapshotSequence: 5,
-        projects: [],
-        threads: [{ id: "cached-thread" } as never],
-        updatedAt: "2026-06-06T00:00:00.000Z",
       };
-      const resetSnapshot: OrchestrationShellSnapshot = {
-        ...cachedSnapshot,
-        snapshotSequence: 9_999,
-        threads: [],
-        updatedAt: "2026-06-07T00:00:00.000Z",
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
+      const capturedCompletionMarker = yield* Ref.make(false);
+      const loaderCalls = yield* SubscriptionRef.make(0);
+      const httpSnapshot: OrchestrationV2ShellSnapshot = {
+        ...v2ShellSnapshot,
+        snapshotSequence: 9,
       };
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-      const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
-      const subscribeInputs = yield* Queue.unbounded<{
-        readonly afterSequence?: number;
-        readonly requestCompletionMarker?: boolean;
-      }>();
-      const loaderCalls = yield* Ref.make(0);
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: {
           readonly afterSequence?: number;
-          readonly requestCompletionMarker?: boolean;
+          readonly requestCompletionMarker?: true;
         }) =>
           Stream.unwrap(
-            Queue.offer(subscribeInputs, input).pipe(Effect.as(Stream.fromQueue(events))),
+            Effect.all([
+              Ref.set(capturedCompletionMarker, input.requestCompletionMarker === true),
+              SubscriptionRef.set(capturedAfterSequence, input.afterSequence),
+            ]).pipe(Effect.as(Stream.fromQueue(events))),
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
@@ -244,12 +249,12 @@ describe("environment shell synchronization", () => {
 
   it.effect("resubscribes from the in-memory shell cursor when the app becomes active", () =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
       const loaderCalls = yield* Ref.make(0);
       const capturedAfterSequences = yield* Ref.make<ReadonlyArray<number | undefined>>([]);
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: { readonly afterSequence?: number }) =>
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
           Stream.unwrap(
             Ref.update(capturedAfterSequences, (captured) => [
               ...captured,
@@ -393,6 +398,8 @@ describe("environment shell synchronization", () => {
         saveServerConfig: () => Effect.void,
         loadVcsRefs: () => Effect.succeed(Option.none()),
         saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.of({
@@ -533,6 +540,8 @@ describe("environment shell synchronization", () => {
         saveServerConfig: () => Effect.void,
         loadVcsRefs: () => Effect.succeed(Option.none()),
         saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.of({
@@ -651,6 +660,8 @@ describe("environment shell synchronization", () => {
         saveServerConfig: () => Effect.void,
         loadVcsRefs: () => Effect.succeed(Option.none()),
         saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.of({
@@ -744,6 +755,8 @@ describe("environment shell synchronization", () => {
         saveServerConfig: () => Effect.void,
         loadVcsRefs: () => Effect.succeed(Option.none()),
         saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.of({

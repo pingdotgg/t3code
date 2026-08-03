@@ -22,11 +22,11 @@ import { ProviderAdapterV2, type ProviderAdapterV2Shape } from "./ProviderAdapte
 export class ProviderAdapterRegistryLookupError extends Schema.TaggedErrorClass<ProviderAdapterRegistryLookupError>()(
   "ProviderAdapterRegistryLookupError",
   {
-    provider: ProviderKind,
+    instanceId: ProviderInstanceId,
   },
 ) {
   override get message(): string {
-    return `No orchestration provider adapter is registered for ${this.provider}.`;
+    return `No orchestration provider adapter is registered for ${this.instanceId}.`;
   }
 }
 
@@ -44,7 +44,7 @@ export type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Err
 
 export interface ProviderAdapterRegistryV2Shape {
   readonly get: (
-    provider: ProviderKind,
+    instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapterV2Shape, ProviderAdapterRegistryV2Error>;
   readonly list: () => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
   readonly getMetadata?: (instanceId: ProviderInstanceId) => Effect.Effect<
@@ -122,15 +122,15 @@ function makeRegistry(
   adapters: ReadonlyArray<ProviderAdapterV2Shape>,
 ): ProviderAdapterRegistryV2Shape {
   return {
-    get: (provider) =>
+    get: (instanceId) =>
       Effect.gen(function* () {
-        const adapter = adapters.find((candidate) => candidate.provider === provider);
+        const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
         if (!adapter) {
-          return yield* new ProviderAdapterRegistryLookupError({ provider });
+          return yield* new ProviderAdapterRegistryLookupError({ instanceId });
         }
         return adapter;
       }),
-    list: () => Effect.succeed(adapters.map((adapter) => adapter.provider as ProviderKind)),
+    list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
   };
 }
 
@@ -309,11 +309,11 @@ export const layerFromProviderAdapter: Layer.Layer<
   Effect.gen(function* () {
     const adapter = yield* ProviderAdapterV2;
     return ProviderAdapterRegistryV2.of({
-      get: (provider) =>
-        adapter.provider === provider
+      get: (instanceId) =>
+        adapter.instanceId === instanceId
           ? Effect.succeed(adapter)
-          : Effect.fail(new ProviderAdapterRegistryLookupError({ provider })),
-      list: () => Effect.succeed([adapter.provider]),
+          : Effect.fail(new ProviderAdapterRegistryLookupError({ instanceId })),
+      list: () => Effect.succeed([adapter.instanceId]),
     } satisfies ProviderAdapterRegistryV2Shape);
   }),
 );

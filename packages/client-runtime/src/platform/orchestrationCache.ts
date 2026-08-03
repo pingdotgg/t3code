@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 2 as const;
+export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
