@@ -44,7 +44,7 @@ export function ThreadPreviewMiniPlayer(props: {
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
   );
   const previewState = useThreadPreviewState(threadRef);
-  const tabId = props.tabId ?? previewState.activeTabId;
+  const tabId = props.tabId ?? miniPlayer?.tabId ?? previewState.activeTabId;
   if (!tabId) return null;
   const overlay = previewState.desktopByTabId[tabId] ?? null;
   const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);

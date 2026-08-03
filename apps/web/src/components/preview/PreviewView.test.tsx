@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
   capture: null as ((record: boolean) => void) | null,
+  pictureInPicture: null as (() => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
   showEmptyState: false,
 }));
@@ -112,9 +113,11 @@ vi.mock("./PreviewChromeRow", () => ({
   PreviewChromeRow: (props: {
     onSubmit: (url: string) => void;
     onCapture?: (record: boolean) => void;
+    onPictureInPicture?: () => void;
   }) => {
     mocks.submittedUrl = props.onSubmit;
     mocks.capture = props.onCapture ?? null;
+    mocks.pictureInPicture = props.onPictureInPicture ?? null;
     return null;
   },
 }));
@@ -134,6 +137,7 @@ vi.mock("./useLoadingProgress", () => ({ useLoadingProgress: () => 0 }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 
 import { PreviewView } from "./PreviewView";
 
@@ -150,8 +154,10 @@ describe("PreviewView navigation", () => {
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
     mocks.capture = null;
+    mocks.pictureInPicture = null;
     mocks.emptyStateUrl = null;
     mocks.showEmptyState = false;
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   });
 
   it.each([
@@ -279,5 +285,31 @@ describe("PreviewView navigation", () => {
         "tab-1",
       ),
     );
+  });
+
+  it("floats the active browser over chat and closes its panel", () => {
+    const onClose = vi.fn();
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+        onClose={onClose}
+      />,
+    );
+
+    expect(mocks.pictureInPicture).not.toBeNull();
+    mocks.pictureInPicture?.();
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+      }),
+    ).toMatchObject({ tabId: "tab-1" });
   });
 });

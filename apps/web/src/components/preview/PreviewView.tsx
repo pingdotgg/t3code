@@ -8,7 +8,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { PictureInPicture2, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -248,6 +248,16 @@ export function PreviewView({
     if (!localApi) return;
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
+
+  const handleToggleFloatingPreview = useCallback(() => {
+    if (!tabId) return;
+    if (miniPlayerTabId === tabId) {
+      usePreviewMiniPlayerStore.getState().close(threadRef);
+      return;
+    }
+    usePreviewMiniPlayerStore.getState().open(threadRef, tabId);
+    onClose?.();
+  }, [miniPlayerTabId, onClose, tabId, threadRef]);
 
   const handleCapture = useCallback(
     (record: boolean) => {
@@ -596,6 +606,9 @@ export function PreviewView({
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={runtimeTabId !== null && activeRecordingTabIds.has(runtimeTabId)}
+        onPictureInPicture={previewBridge && tabId ? handleToggleFloatingPreview : undefined}
+        pictureInPicture={miniPlayerTabId === tabId}
+        pictureInPictureDisabled={!desktopOverlay || isUnreachable}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
@@ -607,26 +620,6 @@ export function PreviewView({
         }
         trailingActions={
           <>
-            {tabId ? (
-              <Button
-                variant={miniPlayerTabId === tabId ? "secondary" : "ghost"}
-                size="icon-xs"
-                type="button"
-                aria-label={
-                  miniPlayerTabId === tabId ? "Close floating preview" : "Open floating preview"
-                }
-                disabled={!desktopOverlay || isUnreachable}
-                onClick={() => {
-                  if (miniPlayerTabId === tabId) {
-                    usePreviewMiniPlayerStore.getState().close(threadRef);
-                  } else {
-                    usePreviewMiniPlayerStore.getState().open(threadRef, tabId);
-                  }
-                }}
-              >
-                <PictureInPicture2 />
-              </Button>
-            ) : null}
             {previewBridge ? (
               <PreviewMoreMenu
                 tabId={runtimeTabId}
