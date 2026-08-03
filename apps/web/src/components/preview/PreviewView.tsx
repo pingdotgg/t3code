@@ -8,7 +8,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { X } from "lucide-react";
+import { PictureInPicture2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -55,6 +55,7 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -82,6 +83,9 @@ export function PreviewView({
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
+  const miniPlayerTabId = usePreviewMiniPlayerStore(
+    (state) => state.byThreadKey[scopedThreadKey(threadRef)]?.tabId ?? null,
+  );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environment = useEnvironment(threadRef.environmentId);
@@ -603,6 +607,26 @@ export function PreviewView({
         }
         trailingActions={
           <>
+            {tabId ? (
+              <Button
+                variant={miniPlayerTabId === tabId ? "secondary" : "ghost"}
+                size="icon-xs"
+                type="button"
+                aria-label={
+                  miniPlayerTabId === tabId ? "Close floating preview" : "Open floating preview"
+                }
+                disabled={!desktopOverlay || isUnreachable}
+                onClick={() => {
+                  if (miniPlayerTabId === tabId) {
+                    usePreviewMiniPlayerStore.getState().close(threadRef);
+                  } else {
+                    usePreviewMiniPlayerStore.getState().open(threadRef, tabId);
+                  }
+                }}
+              >
+                <PictureInPicture2 />
+              </Button>
+            ) : null}
             {previewBridge ? (
               <PreviewMoreMenu
                 tabId={runtimeTabId}
@@ -633,7 +657,7 @@ export function PreviewView({
           <BrowserSurfaceSlot
             key={runtimeTabId}
             tabId={runtimeTabId}
-            visible={visible && !isUnreachable}
+            visible={visible && miniPlayerTabId !== tabId && !isUnreachable}
             className="absolute inset-0 h-full w-full"
           />
         ) : null}

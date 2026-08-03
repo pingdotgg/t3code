@@ -34,6 +34,15 @@ describe("PreviewNavStatus", () => {
     expect(decodeNavStatus({ _tag: "Idle" })).toEqual({ _tag: "Idle" });
   });
 
+  describe("PreviewAutomationOpenInput", () => {
+    it("accepts open and retains the deprecated show alias for mixed-version hosts", () => {
+      expect(decodeOpenInput({ open: false, show: true })).toMatchObject({
+        open: false,
+        show: true,
+      });
+    });
+  });
+
   it("decodes Loading with title", () => {
     expect(decodeNavStatus({ _tag: "Loading", url: "http://localhost:5173/", title: "" })).toEqual({
       _tag: "Loading",

@@ -7,9 +7,11 @@ import { acquireBrowserSurface } from "./browserSurfaceStore";
 export function BrowserSurfaceSlot(props: {
   readonly tabId: string;
   readonly visible: boolean;
+  /** Re-publishes a position-only layout change such as a floating-player drag. */
+  readonly layoutVersion?: string | number | undefined;
   readonly className?: string;
 }) {
-  const { tabId, visible, className } = props;
+  const { tabId, visible, layoutVersion, className } = props;
   const elementRef = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
@@ -39,7 +41,7 @@ export function BrowserSurfaceSlot(props: {
       window.removeEventListener("scroll", update, true);
       lease.release();
     };
-  }, [tabId, visible]);
+  }, [layoutVersion, tabId, visible]);
 
   return <div ref={elementRef} className={className} data-browser-surface-slot={tabId} />;
 }

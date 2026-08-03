@@ -52,7 +52,10 @@ const handlers = {
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", {
       ...input,
-      show: input.show ?? true,
+      // Keep both fields populated while mixed-version renderer hosts exist.
+      // `open` is authoritative; `show` remains a deprecated compatibility alias.
+      open: input.open ?? input.show ?? true,
+      show: input.open ?? input.show ?? true,
       reuseExistingTab: input.reuseExistingTab ?? true,
     }),
   preview_navigate: (input) =>

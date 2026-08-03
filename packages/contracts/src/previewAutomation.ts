@@ -86,9 +86,16 @@ export const PreviewAutomationOpenInput = Schema.Struct({
     description:
       "Optional initial page URL, for example https://t3.chat or localhost:5173. Omit to open a blank tab.",
   }),
+  open: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Whether to reveal the browser panel to the human. Defaults to true. Set false to initialize a background-only browser tab for automation.",
+    }),
+  ),
   show: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Whether to reveal the preview panel to the human. Defaults to true.",
+      description:
+        "Deprecated alias for open. Whether to reveal the preview panel to the human. Defaults to true.",
     }),
   ),
   reuseExistingTab: Schema.optional(
