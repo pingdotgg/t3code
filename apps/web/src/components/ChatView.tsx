@@ -86,6 +86,9 @@ import {
   hasActionableProposedPlan,
   isLatestTurnSettled,
 } from "../session-logic";
+import { deriveAgentRuns, withAgentRunEntries } from "../agentRuns"; // fork: f3 agent-run visibility
+import type { AgentRunJumpHandler } from "./chat/agentRunJump"; // fork: f3 agent-run visibility
+import { useStableAgentRuns } from "./chat/useStableAgentRuns"; // fork: f3 agent-run visibility
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
@@ -390,6 +393,12 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+// fork: f4 source-control surface
+const SourceControlPanel = lazy(() =>
+  import("./sourceControl/SourceControlPanel").then((module) => ({
+    default: module.SourceControlPanel,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1329,6 +1338,12 @@ function ChatViewContent(props: ChatViewProps) {
     LastInvokedScriptByProjectSchema,
   );
   const legendListRef = useRef<LegendListRef | null>(null);
+  // fork: f3 agent-run visibility — the timeline publishes its jump handler here
+  const agentRunJumpRef = useRef<AgentRunJumpHandler | null>(null);
+  const onJumpToAgentRun = useCallback(
+    (taskId: string) => agentRunJumpRef.current?.(taskId) ?? false,
+    [],
+  );
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const isAtEndRef = useRef(true);
@@ -2042,6 +2057,10 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  // fork: f1 — which environment `providerStatuses` came from; mirrors the
+  // `serverConfig` selection above exactly.
+  const providerStatusEnvironmentId =
+    (activeThread ? activeEnvironment?.environmentId : primaryEnvironment?.environmentId) ?? null;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider,
@@ -2381,10 +2400,33 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  // fork: f3 agent-run visibility — one fold feeds both the transcript and the tracker pill
+  const derivedAgentRuns = useMemo(
+    () =>
+      deriveAgentRuns(threadActivities, {
+        activeTurnId: latestTurnSettled ? null : (activeLatestTurn?.turnId ?? null),
+      }),
+    [activeLatestTurn?.turnId, latestTurnSettled, threadActivities],
+  );
+  const agentRunsState = useStableAgentRuns(derivedAgentRuns); // fork: f3 agent-run visibility
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+      // fork: f3 agent-run visibility — groups task.* work rows into run cards
+      withAgentRunEntries(
+        deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
+        threadActivities,
+        { activeTurnId: latestTurnSettled ? null : (activeLatestTurn?.turnId ?? null) },
+        agentRunsState,
+      ),
+    [
+      activeThread?.proposedPlans,
+      activeLatestTurn?.turnId,
+      agentRunsState,
+      latestTurnSettled,
+      threadActivities,
+      timelineMessages,
+      workLogEntries,
+    ],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -3132,6 +3174,11 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  // fork: f4 source-control surface
+  const addSourceControlSurface = useCallback(() => {
+    if (!activeThreadRef || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+  }, [activeThreadRef, isGitRepo]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -5611,6 +5658,49 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
+  // fork: f4 hunk staging — the changes list opens files in the EXISTING diff
+  // surface rather than a second viewer, and staged/unstaged are distinct
+  // selections so staging a hunk flips the file to the other side.
+  const onOpenWorkingCopyDiff = useCallback(
+    (file: {
+      readonly path: string;
+      readonly area: "staged" | "unstaged" | "conflicted";
+      readonly oldPath?: string | undefined;
+    }) => {
+      if (!activeThreadRef) return;
+      useDiffPanelStore.getState().selectWorkingCopyFile(activeThreadRef, {
+        // A conflicted file has no meaningful index side to stage from; it
+        // opens on the worktree side, where the resolution is happening.
+        side: file.area === "staged" ? "staged" : "unstaged",
+        filePath: file.path,
+        oldPath: file.oldPath,
+      });
+      useRightPanelStore.getState().open(activeThreadRef, "diff");
+      onDiffPanelOpen?.();
+    },
+    [activeThreadRef, onDiffPanelOpen],
+  );
+  // fork: f4 source-control panel — a file inside a History commit opens in the
+  // same diff surface, read-only.
+  const onOpenCommitFileDiff = useCallback(
+    (file: {
+      readonly hash: string;
+      readonly shortHash: string;
+      readonly path: string;
+      readonly oldPath?: string | undefined;
+    }) => {
+      if (!activeThreadRef) return;
+      useDiffPanelStore.getState().selectCommitFile(activeThreadRef, {
+        hash: file.hash,
+        shortHash: file.shortHash,
+        filePath: file.path,
+        oldPath: file.oldPath,
+      });
+      useRightPanelStore.getState().open(activeThreadRef, "diff");
+      onDiffPanelOpen?.();
+    },
+    [activeThreadRef, onDiffPanelOpen],
+  );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
@@ -5689,6 +5779,19 @@ function ChatViewContent(props: ChatViewProps) {
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
+        />
+      </Suspense>
+    ) : /* fork: f4 source-control surface */ activeRightPanelSurface?.kind === "source-control" ? (
+      <Suspense fallback={null}>
+        <SourceControlPanel
+          mode="embedded"
+          environmentId={environmentId}
+          cwd={gitCwd}
+          scopeKey={activeThreadKey ?? routeThreadKey}
+          repoLabel={activeProject?.title ?? gitCwd ?? "Repository"}
+          visible
+          onOpenDiff={onOpenWorkingCopyDiff}
+          onOpenCommitFile={onOpenCommitFileDiff}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
@@ -5771,6 +5874,8 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            agentRuns={agentRunsState.runs /* fork: f3 agent-run visibility */}
+            onJumpToAgentRun={onJumpToAgentRun /* fork: f3 agent-run visibility */}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
@@ -5791,6 +5896,9 @@ function ChatViewContent(props: ChatViewProps) {
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
+                // fork: f1 — the banner's provider comes from THIS environment's
+                // config, so its sign-in/out must too.
+                environmentId={providerStatusEnvironmentId}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
               />
             </div>
@@ -5823,6 +5931,7 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                agentRunJumpRef={agentRunJumpRef /* fork: f3 agent-run visibility */}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
@@ -6134,9 +6243,11 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddSourceControl={addSourceControlSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          sourceControlAvailable={isGitRepo}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6161,9 +6272,11 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddSourceControl={addSourceControlSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            sourceControlAvailable={isGitRepo}
           >
             {rightPanelContent}
           </RightPanelTabs>

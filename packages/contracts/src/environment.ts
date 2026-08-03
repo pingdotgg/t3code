@@ -57,6 +57,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  /** Server understands `settings.systemPromptInjection` and attaches the
+      resolved text at each provider's native instruction slot. Absent on
+      upstream servers, so the settings section renders disabled rather than
+      writing a setting the server would drop. */
+  systemPromptInjection: Schema.optionalKey(Schema.Boolean), // fork: f2
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

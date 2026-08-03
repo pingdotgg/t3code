@@ -17,6 +17,7 @@ import {
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
+  RuntimeTaskId,
   type RuntimeMode,
   ThreadId,
   ProviderInstanceId,
@@ -58,6 +59,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
+  public readonly stopTaskCalls: Array<string> = []; // fork: f3 per-task stop
   public closeCalls = 0;
 
   emit(message: SDKMessage): void {
@@ -108,6 +110,11 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
+  };
+
+  // fork: f3 per-task stop
+  readonly stopTask = async (taskId: string): Promise<void> => {
+    this.stopTaskCalls.push(taskId);
   };
 
   readonly close = (): void => {
@@ -350,6 +357,48 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  // fork: f2 system prompt injection
+  it.effect("leaves the preset system prompt untouched without instructions", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto",
+      });
+
+      const systemPrompt = harness.getLastCreateQueryInput()?.options.systemPrompt;
+      assert.deepEqual(systemPrompt, { type: "preset", preset: "claude_code" });
+      assert.isFalse(Object.hasOwn(systemPrompt as object, "append"));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("appends resolved instructions to the preset system prompt", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto",
+        instructions: "Be concise.\n\nPrefer rg.",
+      });
+
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: "Be concise.\n\nPrefer rg.",
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1747,6 +1796,183 @@ describe("ClaudeAdapterLive", () => {
         );
         assert.equal(progressEvent.payload.description, "Running background teammate");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  // fork: f3 agent-run visibility
+  it.effect("enriches task frames with the SDK fields the agent-run card needs", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-1",
+        tool_use_id: "toolu_1",
+        description: "Review the migration",
+        subagent_type: "code-reviewer",
+        task_type: "local_workflow",
+        workflow_name: "spec",
+        prompt: "Please review the migration edge cases.",
+        skip_transcript: true,
+        session_id: "session",
+        uuid: "ts-1",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-2",
+        description: "Plain task",
+        session_id: "session",
+        uuid: "ts-2",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "tool_progress",
+        tool_use_id: "toolu_2",
+        tool_name: "Bash",
+        parent_tool_use_id: null,
+        elapsed_time_seconds: 2,
+        task_id: "task-1",
+        session_id: "session",
+        uuid: "tp-1",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-1",
+        patch: { status: "running" },
+        session_id: "session",
+        uuid: "tu-running",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-1",
+        patch: { status: "killed", error: "Subagent exceeded its budget" },
+        session_id: "session",
+        uuid: "tu-killed",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-2",
+        status: "succeeded",
+        output_file: "/tmp/out",
+        summary: "All done",
+        usage: { total_tokens: 40, tool_uses: 2, duration_ms: 1200 },
+        session_id: "session",
+        uuid: "tn-1",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const started = runtimeEvents.filter((event) => event.type === "task.started");
+      const ambient = started.find(
+        (event) => event.type === "task.started" && event.payload.taskId === "task-1",
+      );
+      assert.deepStrictEqual(ambient?.type === "task.started" ? ambient.payload : undefined, {
+        taskId: RuntimeTaskId.make("task-1"),
+        description: "Review the migration",
+        taskType: "local_workflow",
+        toolUseId: "toolu_1",
+        subagentType: "code-reviewer",
+        workflowName: "spec",
+        prompt: "Please review the migration edge cases.",
+        ambient: true,
+      });
+
+      const plain = started.find(
+        (event) => event.type === "task.started" && event.payload.taskId === "task-2",
+      );
+      assert.equal(
+        plain?.type === "task.started" ? "ambient" in plain.payload : true,
+        false,
+        "a task without skip_transcript must carry no ambient key",
+      );
+
+      const toolDrivenProgress = runtimeEvents.filter(
+        (event) => event.type === "task.progress" && event.payload.taskId === "task-1",
+      );
+      assert.equal(toolDrivenProgress.length, 1);
+      const progress = toolDrivenProgress[0];
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.lastToolName, "Bash");
+        assert.equal(progress.payload.toolUseId, "toolu_2");
+      }
+
+      const terminalForTaskOne = runtimeEvents.filter(
+        (event) => event.type === "task.completed" && event.payload.taskId === "task-1",
+      );
+      assert.equal(
+        terminalForTaskOne.length,
+        1,
+        "a running patch emits nothing; only the killed patch settles the task",
+      );
+      const killed = terminalForTaskOne[0];
+      if (killed?.type === "task.completed") {
+        assert.equal(killed.payload.status, "failed");
+        assert.equal(killed.payload.error, "Subagent exceeded its budget");
+      }
+
+      const notification = runtimeEvents.find(
+        (event) => event.type === "task.completed" && event.payload.taskId === "task-2",
+      );
+      if (notification?.type === "task.completed") {
+        assert.equal(
+          notification.payload.status,
+          "failed",
+          "an undeclared notification status must never render as done",
+        );
+        assert.equal(notification.payload.totalTokens, 40);
+        assert.equal(notification.payload.toolUses, 2);
+        assert.equal(notification.payload.durationMs, 1200);
+      }
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  // fork: f3 per-task stop (increment 4)
+  it.effect("forwards stopTask to the SDK query and stays safe on repeats", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const stopTask = adapter.stopTask;
+      assert.equal(typeof stopTask, "function");
+      if (stopTask === undefined) {
+        return;
+      }
+
+      yield* stopTask(THREAD_ID, RuntimeTaskId.make("task-1"));
+      // Idempotent: the adapter holds no "already stopped" state, so a repeat
+      // and a stop for a task that already settled are both plain forwards.
+      yield* stopTask(THREAD_ID, RuntimeTaskId.make("task-1"));
+      yield* stopTask(THREAD_ID, RuntimeTaskId.make("task-already-settled"));
+
+      assert.deepEqual(harness.query.stopTaskCalls, ["task-1", "task-1", "task-already-settled"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

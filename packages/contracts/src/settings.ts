@@ -6,6 +6,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { SystemPromptInjectionSettings } from "./systemPrompt.ts"; // fork: f2 system prompt injection
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -530,6 +531,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // fork: f2 system prompt injection
+  systemPromptInjection: SystemPromptInjectionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -670,6 +675,10 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // fork: f2 whole-struct replacement — `rules` is ordered, so a shallow
+  // merge of it has no meaning and a half-applied array is a silently wrong
+  // prompt. The settings UI sends the complete object on every edit.
+  systemPromptInjection: Schema.optionalKey(SystemPromptInjectionSettings),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

@@ -71,6 +71,14 @@
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
     },
+    "./state/provider-auth": {
+      "types": "./src/state/providerAuth.ts",
+      "default": "./src/state/providerAuth.ts"
+    },
+    "./state/provider-task": {
+      "types": "./src/state/providerTask.ts",
+      "default": "./src/state/providerTask.ts"
+    },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
@@ -111,6 +119,10 @@
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
     },
+    "./state/system-prompt": {
+      "types": "./src/state/systemPrompt.ts",
+      "default": "./src/state/systemPrompt.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
@@ -138,6 +150,14 @@
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./state/working-copy": {
+      "types": "./src/state/workingCopy.ts",
+      "default": "./src/state/workingCopy.ts"
+    },
+    "./state/working-copy-logic": {
+      "types": "./src/state/workingCopy.logic.ts",
+      "default": "./src/state/workingCopy.logic.ts"
     }
   },
   "scripts": {

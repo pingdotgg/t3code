@@ -64,6 +64,57 @@ describe("diffPanelStore", () => {
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
   });
 
+  // fork: f4 hunk staging
+  it("keeps the staged and unstaged sides of one file as distinct selections", () => {
+    useDiffPanelStore
+      .getState()
+      .selectWorkingCopyFile(THREAD_REF, { side: "unstaged", filePath: "src/app.ts" });
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({
+      kind: "working-copy",
+      side: "unstaged",
+      filePath: "src/app.ts",
+      oldPath: null,
+      revealRequestId: 1,
+    });
+
+    useDiffPanelStore
+      .getState()
+      .selectWorkingCopyFile(THREAD_REF, { side: "staged", filePath: "src/app.ts" });
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({
+      kind: "working-copy",
+      side: "staged",
+      filePath: "src/app.ts",
+      oldPath: null,
+      // Same file, other side: the reveal token still advances so the viewer
+      // scrolls back to it.
+      revealRequestId: 2,
+    });
+  });
+
+  // fork: f4 hunk staging
+  it("normalizes a rename source and leaves the git scopes reachable", () => {
+    useDiffPanelStore.getState().selectWorkingCopyFile(THREAD_REF, {
+      side: "unstaged",
+      filePath: "new/name.ts",
+      oldPath: "  old/name.ts  ",
+    });
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({ oldPath: "old/name.ts" });
+
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "unstaged");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "unstaged" });
+  });
+
   it("reconciles a missing turn selection to the latest available turn", () => {
     const missingTurnId = TurnId.make("turn-missing");
     const latestTurnId = TurnId.make("turn-latest");

@@ -1411,6 +1411,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          ...(input.instructions ? { instructions: input.instructions } : {}), // fork: f2
           ...(mcpSession
             ? {
                 environment: {
@@ -1703,6 +1704,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      instructionInjection: "session", // fork: f2 developerInstructions on thread/start
     },
     startSession,
     sendTurn,

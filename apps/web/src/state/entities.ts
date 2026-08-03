@@ -241,6 +241,19 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
   );
 }
 
+/** Whether the environment's server applies settings.systemPromptInjection.
+    Absent on upstream servers, so the settings section renders disabled
+    instead of writing a setting that would be dropped. */
+export function readEnvironmentSupportsSystemPromptInjection(
+  environmentId: EnvironmentId,
+): boolean {
+  // fork: f2 system prompt injection
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .systemPromptInjection === true
+  );
+}
+
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }

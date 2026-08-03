@@ -296,4 +296,28 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
+
+  // fork: f2 system prompt injection
+  it("defaults systemPromptInjection to enabled with no rules", () => {
+    expect(DEFAULT_SERVER_SETTINGS.systemPromptInjection).toEqual({
+      schemaVersion: 1,
+      enabled: true,
+      rules: [],
+    });
+  });
+
+  it("accepts a whole systemPromptInjection struct in a patch", () => {
+    const patch = decodeServerSettingsPatch({
+      systemPromptInjection: {
+        enabled: true,
+        rules: [{ id: "global", text: "Be concise." }],
+      },
+    });
+
+    expect(patch.systemPromptInjection).toEqual({
+      schemaVersion: 1,
+      enabled: true,
+      rules: [{ id: "global", enabled: true, match: {}, text: "Be concise." }],
+    });
+  });
 });

@@ -1171,3 +1171,62 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
   });
 });
+
+// fork: f3 agent-run visibility
+describe("deriveMessagesTimelineRows agent-run rows", () => {
+  const run = {
+    taskId: "task-1",
+    rowId: "activity-1",
+    createdAt: "2026-01-01T00:00:05Z",
+    settledAt: null,
+    turnId: null,
+    title: "code-reviewer",
+    phase: "running",
+    ambient: false,
+    detailsUnavailable: false,
+    feed: [],
+  } as never;
+
+  function derive(runValue: unknown) {
+    return deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "agent-run:activity-1",
+          kind: "agent-run",
+          createdAt: "2026-01-01T00:00:05Z",
+          run: runValue,
+        } as never,
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+  }
+
+  it("yields exactly one row per agent-run entry", () => {
+    const rows = derive(run);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe("agent-run");
+    expect(rows[0]?.id).toBe("agent-run:activity-1");
+  });
+
+  it("keeps row identity stable across re-derivations of the same run", () => {
+    const initial = computeStableMessagesTimelineRows(derive(run), { byId: new Map(), result: [] });
+    const rederived = computeStableMessagesTimelineRows(derive(run), initial);
+
+    expect(rederived).toBe(initial);
+    expect(rederived.result[0]).toBe(initial.result[0]);
+  });
+
+  it("emits a new row object when the run changes", () => {
+    const initial = computeStableMessagesTimelineRows(derive(run), { byId: new Map(), result: [] });
+    const changed = computeStableMessagesTimelineRows(
+      derive({ ...(run as object), phase: "done" }),
+      initial,
+    );
+
+    expect(changed).not.toBe(initial);
+    expect(changed.result[0]).not.toBe(initial.result[0]);
+  });
+});

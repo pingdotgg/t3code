@@ -1701,6 +1701,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        instructionInjection: "unsupported", // fork: f2 agent selection only
       },
       startSession,
       sendTurn,

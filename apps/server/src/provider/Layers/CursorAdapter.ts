@@ -1164,7 +1164,8 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      // fork: f2 ACP exposes session/set_mode only, no instruction text slot
+      capabilities: { sessionModelSwitch: "in-session", instructionInjection: "unsupported" },
       startSession,
       sendTurn,
       interruptTurn,

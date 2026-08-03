@@ -57,6 +57,8 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import { makeCodexAccountOps } from "./CodexAccountService.ts"; // fork: f1 provider account sign-in
+import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts"; // fork: f1 provider account sign-in
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -198,6 +200,18 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
       );
 
+      // fork: f1 — account ops get their own short-lived app-server spawn with
+      // this instance's effective CODEX_HOME, so multi-account is per-instance.
+      const auth = yield* makeCodexAccountOps({
+        instanceId,
+        binaryPath: effectiveConfig.binaryPath,
+        homePath: homeLayout.effectiveHomePath,
+        launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+        cwd: process.cwd(),
+        environment: processEnv,
+        spawner,
+      });
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -208,6 +222,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        auth, // fork: f1 provider account sign-in
       } satisfies ProviderInstance;
     }),
 };

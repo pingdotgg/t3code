@@ -63,6 +63,15 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
 } from "./orchestration.ts";
+// fork: f1 provider account sign-in
+import {
+  ProviderAuthError,
+  ProviderSignInEvent,
+  ProviderSignOutInput,
+  ProviderStartSignInInput,
+} from "./providerAuth.ts";
+// fork: f3 per-task stop
+import { ProviderStopTaskError, ProviderStopTaskInput } from "./providerTask.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   RelayClientInstallFailedError,
@@ -161,6 +170,41 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+// fork: f4 source-control panel
+import {
+  WorkingCopyAbortOperationInput,
+  WorkingCopyAmendCommitInput,
+  WorkingCopyApplyPatchInput,
+  WorkingCopyBatchResult,
+  WorkingCopyCheckoutCommitInput,
+  WorkingCopyCherryPickInput,
+  WorkingCopyCommitDetail,
+  WorkingCopyCommitDetailInput,
+  WorkingCopyCommitFileDiffInput,
+  WorkingCopyCommitResult,
+  WorkingCopyCommitStagedInput,
+  WorkingCopyCwdInput,
+  WorkingCopyDiffInput,
+  WorkingCopyDiffResult,
+  WorkingCopyDiscardPathsInput,
+  WorkingCopyDiscardResult,
+  WorkingCopyError,
+  WorkingCopyFileAtRefInput,
+  WorkingCopyFileContentResult,
+  WorkingCopyLastCommitMessageResult,
+  WorkingCopyLogInput,
+  WorkingCopyLogPage,
+  WorkingCopyPathsInput,
+  WorkingCopyResetToCommitInput,
+  WorkingCopyResolveConflictInput,
+  WorkingCopyRevertCommitInput,
+  WorkingCopyStashEntry,
+  WorkingCopyStashPushInput,
+  WorkingCopyStashRefInput,
+  WorkingCopyStatusInput,
+  WorkingCopyStatusResult,
+  WorkingCopyTagCommitInput,
+} from "./workingCopy.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -241,6 +285,11 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
 
+  // Provider account methods — fork: f1 provider account sign-in
+  providerStartSignIn: "provider.startSignIn",
+  providerSignOut: "provider.signOut",
+  providerStopTask: "provider.stopTask", // fork: f3 per-task stop
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -249,6 +298,38 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Working-copy (source-control panel) methods — fork: f4.
+  // Namespaced `workingCopy.*`: surface-neutral (mobile reuses it) and
+  // fork-distinct (an upstream `vcs.stagePaths` cannot collide). All unary.
+  workingCopyStatus: "workingCopy.status",
+  workingCopyDiff: "workingCopy.diff",
+  workingCopyFileAtRef: "workingCopy.fileAtRef",
+  workingCopyStagePaths: "workingCopy.stagePaths",
+  workingCopyUnstagePaths: "workingCopy.unstagePaths",
+  workingCopyApplyPatch: "workingCopy.applyPatch",
+  workingCopyDiscardPaths: "workingCopy.discardPaths",
+  workingCopyRestoreDiscardBackup: "workingCopy.restoreDiscardBackup",
+  workingCopyListDiscardBackups: "workingCopy.listDiscardBackups",
+  workingCopyCommitStaged: "workingCopy.commitStaged",
+  workingCopyAmendCommit: "workingCopy.amendCommit",
+  workingCopyUndoLastCommit: "workingCopy.undoLastCommit",
+  workingCopyLastCommitMessage: "workingCopy.lastCommitMessage",
+  workingCopyLog: "workingCopy.log",
+  workingCopyCommitDetail: "workingCopy.commitDetail",
+  workingCopyCommitFileDiff: "workingCopy.commitFileDiff",
+  workingCopyStashList: "workingCopy.stashList",
+  workingCopyStashPush: "workingCopy.stashPush",
+  workingCopyStashApply: "workingCopy.stashApply",
+  workingCopyStashPop: "workingCopy.stashPop",
+  workingCopyStashDrop: "workingCopy.stashDrop",
+  workingCopyResolveConflict: "workingCopy.resolveConflict",
+  workingCopyAbortOperation: "workingCopy.abortOperation",
+  workingCopyCherryPick: "workingCopy.cherryPick",
+  workingCopyRevertCommit: "workingCopy.revertCommit",
+  workingCopyCheckoutCommit: "workingCopy.checkoutCommit",
+  workingCopyResetToCommit: "workingCopy.resetToCommit",
+  workingCopyTagCommit: "workingCopy.tagCommit",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -381,6 +462,27 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
+});
+
+// fork: f1 — one streaming login RPC; the client unsubscribing IS the cancel.
+export const WsProviderStartSignInRpc = Rpc.make(WS_METHODS.providerStartSignIn, {
+  payload: ProviderStartSignInInput,
+  success: ProviderSignInEvent,
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+// fork: f1 provider account sign-out
+export const WsProviderSignOutRpc = Rpc.make(WS_METHODS.providerSignOut, {
+  payload: ProviderSignOutInput,
+  error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
+});
+
+// fork: f3 — per-task stop. Unary and void-success: the terminal
+// `task.completed` activity is the receipt, so the RPC returns nothing.
+export const WsProviderStopTaskRpc = Rpc.make(WS_METHODS.providerStopTask, {
+  payload: ProviderStopTaskInput,
+  error: Schema.Union([ProviderStopTaskError, EnvironmentAuthorizationError]),
 });
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -783,6 +885,178 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+// fork: f4 — source-control panel. One contiguous block so a rebase conflict
+// resolves by re-adding it whole. Every method is **unary**: liveness comes
+// from the existing `subscribeVcsStatus` local-update push plus explicit
+// post-mutation refresh, so nothing here needs a `client.ts` stream tag.
+const WorkingCopyRpcError = Schema.Union([WorkingCopyError, EnvironmentAuthorizationError]);
+
+export const WsWorkingCopyStatusRpc = Rpc.make(WS_METHODS.workingCopyStatus, {
+  payload: WorkingCopyStatusInput,
+  success: WorkingCopyStatusResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyDiffRpc = Rpc.make(WS_METHODS.workingCopyDiff, {
+  payload: WorkingCopyDiffInput,
+  success: WorkingCopyDiffResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyFileAtRefRpc = Rpc.make(WS_METHODS.workingCopyFileAtRef, {
+  payload: WorkingCopyFileAtRefInput,
+  success: WorkingCopyFileContentResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyStagePathsRpc = Rpc.make(WS_METHODS.workingCopyStagePaths, {
+  payload: WorkingCopyPathsInput,
+  success: WorkingCopyBatchResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyUnstagePathsRpc = Rpc.make(WS_METHODS.workingCopyUnstagePaths, {
+  payload: WorkingCopyPathsInput,
+  success: WorkingCopyBatchResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyApplyPatchRpc = Rpc.make(WS_METHODS.workingCopyApplyPatch, {
+  payload: WorkingCopyApplyPatchInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyDiscardPathsRpc = Rpc.make(WS_METHODS.workingCopyDiscardPaths, {
+  payload: WorkingCopyDiscardPathsInput,
+  success: WorkingCopyDiscardResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyRestoreDiscardBackupRpc = Rpc.make(
+  WS_METHODS.workingCopyRestoreDiscardBackup,
+  {
+    payload: WorkingCopyStashRefInput,
+    error: WorkingCopyRpcError,
+  },
+);
+
+export const WsWorkingCopyListDiscardBackupsRpc = Rpc.make(
+  WS_METHODS.workingCopyListDiscardBackups,
+  {
+    payload: WorkingCopyCwdInput,
+    success: Schema.Array(WorkingCopyStashEntry),
+    error: WorkingCopyRpcError,
+  },
+);
+
+// The panel must never commit through `git.runStackedAction`: that path resets
+// the index and re-adds `-A` before committing, so a hand-staged subset would
+// be silently replaced. This is `commit -F -` with the message over stdin and
+// no `add` at all.
+export const WsWorkingCopyCommitStagedRpc = Rpc.make(WS_METHODS.workingCopyCommitStaged, {
+  payload: WorkingCopyCommitStagedInput,
+  success: WorkingCopyCommitResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyAmendCommitRpc = Rpc.make(WS_METHODS.workingCopyAmendCommit, {
+  payload: WorkingCopyAmendCommitInput,
+  success: WorkingCopyCommitResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyUndoLastCommitRpc = Rpc.make(WS_METHODS.workingCopyUndoLastCommit, {
+  payload: WorkingCopyCwdInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyLastCommitMessageRpc = Rpc.make(WS_METHODS.workingCopyLastCommitMessage, {
+  payload: WorkingCopyCwdInput,
+  success: WorkingCopyLastCommitMessageResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyLogRpc = Rpc.make(WS_METHODS.workingCopyLog, {
+  payload: WorkingCopyLogInput,
+  success: WorkingCopyLogPage,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyCommitDetailRpc = Rpc.make(WS_METHODS.workingCopyCommitDetail, {
+  payload: WorkingCopyCommitDetailInput,
+  success: WorkingCopyCommitDetail,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyCommitFileDiffRpc = Rpc.make(WS_METHODS.workingCopyCommitFileDiff, {
+  payload: WorkingCopyCommitFileDiffInput,
+  success: WorkingCopyDiffResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyStashListRpc = Rpc.make(WS_METHODS.workingCopyStashList, {
+  payload: WorkingCopyCwdInput,
+  success: Schema.Array(WorkingCopyStashEntry),
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyStashPushRpc = Rpc.make(WS_METHODS.workingCopyStashPush, {
+  payload: WorkingCopyStashPushInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyStashApplyRpc = Rpc.make(WS_METHODS.workingCopyStashApply, {
+  payload: WorkingCopyStashRefInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyStashPopRpc = Rpc.make(WS_METHODS.workingCopyStashPop, {
+  payload: WorkingCopyStashRefInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyStashDropRpc = Rpc.make(WS_METHODS.workingCopyStashDrop, {
+  payload: WorkingCopyStashRefInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyResolveConflictRpc = Rpc.make(WS_METHODS.workingCopyResolveConflict, {
+  payload: WorkingCopyResolveConflictInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyAbortOperationRpc = Rpc.make(WS_METHODS.workingCopyAbortOperation, {
+  payload: WorkingCopyAbortOperationInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyCherryPickRpc = Rpc.make(WS_METHODS.workingCopyCherryPick, {
+  payload: WorkingCopyCherryPickInput,
+  success: WorkingCopyCommitResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyRevertCommitRpc = Rpc.make(WS_METHODS.workingCopyRevertCommit, {
+  payload: WorkingCopyRevertCommitInput,
+  success: WorkingCopyCommitResult,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyCheckoutCommitRpc = Rpc.make(WS_METHODS.workingCopyCheckoutCommit, {
+  payload: WorkingCopyCheckoutCommitInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyResetToCommitRpc = Rpc.make(WS_METHODS.workingCopyResetToCommit, {
+  payload: WorkingCopyResetToCommitInput,
+  error: WorkingCopyRpcError,
+});
+
+export const WsWorkingCopyTagCommitRpc = Rpc.make(WS_METHODS.workingCopyTagCommit, {
+  payload: WorkingCopyTagCommitInput,
+  error: WorkingCopyRpcError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -804,6 +1078,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
+  WsProviderStartSignInRpc, // fork: f1 provider account sign-in
+  WsProviderSignOutRpc, // fork: f1 provider account sign-in
+  WsProviderStopTaskRpc, // fork: f3 per-task stop
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,
@@ -829,6 +1106,36 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  // fork: f4 source-control panel — one contiguous block
+  WsWorkingCopyStatusRpc,
+  WsWorkingCopyDiffRpc,
+  WsWorkingCopyFileAtRefRpc,
+  WsWorkingCopyStagePathsRpc,
+  WsWorkingCopyUnstagePathsRpc,
+  WsWorkingCopyApplyPatchRpc,
+  WsWorkingCopyDiscardPathsRpc,
+  WsWorkingCopyRestoreDiscardBackupRpc,
+  WsWorkingCopyListDiscardBackupsRpc,
+  WsWorkingCopyCommitStagedRpc,
+  WsWorkingCopyAmendCommitRpc,
+  WsWorkingCopyUndoLastCommitRpc,
+  WsWorkingCopyLastCommitMessageRpc,
+  WsWorkingCopyLogRpc,
+  WsWorkingCopyCommitDetailRpc,
+  WsWorkingCopyCommitFileDiffRpc,
+  WsWorkingCopyStashListRpc,
+  WsWorkingCopyStashPushRpc,
+  WsWorkingCopyStashApplyRpc,
+  WsWorkingCopyStashPopRpc,
+  WsWorkingCopyStashDropRpc,
+  WsWorkingCopyResolveConflictRpc,
+  WsWorkingCopyAbortOperationRpc,
+  WsWorkingCopyCherryPickRpc,
+  WsWorkingCopyRevertCommitRpc,
+  WsWorkingCopyCheckoutCommitRpc,
+  WsWorkingCopyResetToCommitRpc,
+  WsWorkingCopyTagCommitRpc,
+  // end fork: f4
   WsReviewGetDiffPreviewRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,

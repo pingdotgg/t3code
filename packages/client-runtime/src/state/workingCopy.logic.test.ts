@@ -1,0 +1,276 @@
+import type { WorkingCopyLogEntry } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  COMMIT_SUBJECT_HARD_LIMIT,
+  COMMIT_SUBJECT_SOFT_LIMIT,
+  commitDraftKey,
+  commitPrimaryAction,
+  commitPrimaryActionLabel,
+  commitSubjectLengthState,
+  historyAuthorFacets,
+  historyFilterKey,
+  isCommitPrimaryActionEnabled,
+  isHashIshQuery,
+  isHistoryFilterActive,
+  joinCommitMessage,
+  matchesHistoryFilter,
+  mergeHistorySearchResults,
+  nextStatusFailureStreak,
+  shouldPollWorkingCopy,
+  shouldShowStatusErrorBanner,
+  splitCommitMessage,
+} from "./workingCopy.logic.ts";
+
+function entry(overrides: Partial<WorkingCopyLogEntry> & { hash: string }): WorkingCopyLogEntry {
+  return {
+    shortHash: overrides.hash.slice(0, 7),
+    subject: "a subject",
+    authorName: "Ada",
+    authorEmail: "ada@example.com",
+    authoredAt: "2024-05-01T10:00:00+00:00",
+    parents: [],
+    ...overrides,
+  };
+}
+
+describe("commit message parts", () => {
+  it("splits on the first blank line", () => {
+    expect(splitCommitMessage("subject\n\nbody line 1\nbody line 2")).toEqual({
+      subject: "subject",
+      body: "body line 1\nbody line 2",
+    });
+  });
+
+  it("treats a single newline as a subject/body break too", () => {
+    expect(splitCommitMessage("subject\nbody")).toEqual({ subject: "subject", body: "body" });
+  });
+
+  it("normalizes CRLF so a Windows paste does not leave a stray \\r in the subject", () => {
+    expect(splitCommitMessage("subject\r\n\r\nbody")).toEqual({ subject: "subject", body: "body" });
+  });
+
+  it("has no body when there is no separator", () => {
+    expect(splitCommitMessage("just a subject")).toEqual({ subject: "just a subject", body: "" });
+  });
+
+  it("round-trips through join", () => {
+    const message = "subject\n\nbody one\n\nbody two";
+    expect(joinCommitMessage(splitCommitMessage(message))).toBe(message);
+  });
+
+  it("omits the blank line when the body is only whitespace", () => {
+    expect(joinCommitMessage({ subject: "subject", body: "   \n " })).toBe("subject");
+  });
+});
+
+describe("commitSubjectLengthState", () => {
+  it("is ok at the soft limit and soft one past it", () => {
+    expect(commitSubjectLengthState("x".repeat(COMMIT_SUBJECT_SOFT_LIMIT))).toBe("ok");
+    expect(commitSubjectLengthState("x".repeat(COMMIT_SUBJECT_SOFT_LIMIT + 1))).toBe("soft");
+  });
+
+  it("is hard only past the hard limit", () => {
+    expect(commitSubjectLengthState("x".repeat(COMMIT_SUBJECT_HARD_LIMIT))).toBe("soft");
+    expect(commitSubjectLengthState("x".repeat(COMMIT_SUBJECT_HARD_LIMIT + 1))).toBe("hard");
+  });
+});
+
+describe("commitDraftKey", () => {
+  it("is the cwd, so two worktrees of one repo keep separate drafts", () => {
+    expect(commitDraftKey("/repo/main")).not.toBe(commitDraftKey("/repo/.worktrees/feature"));
+  });
+});
+
+describe("commitPrimaryAction", () => {
+  it("commits the staged subset when anything is staged", () => {
+    expect(commitPrimaryAction({ amend: false, stagedCount: 2, dirtyCount: 5, ahead: 0 })).toBe(
+      "commit",
+    );
+  });
+
+  it("offers commit all only when nothing is staged", () => {
+    expect(commitPrimaryAction({ amend: false, stagedCount: 0, dirtyCount: 3, ahead: 0 })).toBe(
+      "commit-all",
+    );
+  });
+
+  it("falls through to push on a clean tree that is ahead", () => {
+    expect(commitPrimaryAction({ amend: false, stagedCount: 0, dirtyCount: 0, ahead: 4 })).toBe(
+      "push",
+    );
+    expect(commitPrimaryActionLabel("push", 4)).toBe("Push 4");
+  });
+
+  it("never disappears — a clean tree with nothing to push still shows Commit", () => {
+    expect(commitPrimaryAction({ amend: false, stagedCount: 0, dirtyCount: 0, ahead: 0 })).toBe(
+      "commit",
+    );
+  });
+
+  it("amend wins over everything, and is enabled on a clean tree", () => {
+    const input = { amend: true, stagedCount: 0, dirtyCount: 0, ahead: 7 };
+    expect(commitPrimaryAction(input)).toBe("amend");
+    expect(isCommitPrimaryActionEnabled("amend", { ...input, hasMessage: false })).toBe(true);
+  });
+
+  it("commit needs both a message and staged files", () => {
+    const base = { amend: false, stagedCount: 1, dirtyCount: 1, ahead: 0 };
+    expect(isCommitPrimaryActionEnabled("commit", { ...base, hasMessage: false })).toBe(false);
+    expect(isCommitPrimaryActionEnabled("commit", { ...base, hasMessage: true })).toBe(true);
+    expect(
+      isCommitPrimaryActionEnabled("commit", { ...base, stagedCount: 0, hasMessage: true }),
+    ).toBe(false);
+  });
+});
+
+describe("history filter", () => {
+  it("keys off the trimmed, lowercased query and author together", () => {
+    expect(historyFilterKey({ query: " Fix ", author: "Ada" })).toBe(
+      historyFilterKey({ query: "fix", author: "ada" }),
+    );
+  });
+
+  it("distinguishes a query from an author with the same text", () => {
+    expect(historyFilterKey({ query: "ada", author: "" })).not.toBe(
+      historyFilterKey({ query: "", author: "ada" }),
+    );
+  });
+
+  it("is inactive only when both are blank", () => {
+    expect(isHistoryFilterActive({ query: "   ", author: "" })).toBe(false);
+    expect(isHistoryFilterActive({ query: "", author: "a" })).toBe(true);
+  });
+
+  it("recognizes a hash-ish query", () => {
+    expect(isHashIshQuery("deadbeef")).toBe(true);
+    expect(isHashIshQuery("dea")).toBe(false);
+    expect(isHashIshQuery("fix: thing")).toBe(false);
+  });
+
+  it("matches subject, hash prefix and author name", () => {
+    const commit = entry({ hash: "abc123def", subject: "Fix the parser", authorName: "Grace" });
+    expect(matchesHistoryFilter(commit, { query: "parser", author: "" })).toBe(true);
+    expect(matchesHistoryFilter(commit, { query: "abc1", author: "" })).toBe(true);
+    expect(matchesHistoryFilter(commit, { query: "grace", author: "" })).toBe(true);
+    expect(matchesHistoryFilter(commit, { query: "nope", author: "" })).toBe(false);
+  });
+
+  it("matches an author by email as well as name", () => {
+    const commit = entry({ hash: "a1", authorName: "Grace", authorEmail: "gh@example.com" });
+    expect(matchesHistoryFilter(commit, { query: "", author: "gh@example" })).toBe(true);
+  });
+});
+
+describe("mergeHistorySearchResults", () => {
+  const filter = { query: "fix", author: "" };
+
+  it("keeps only matching loaded entries, and adds server-only ones", () => {
+    const loaded = [
+      entry({ hash: "aaa", subject: "fix a", authoredAt: "2024-05-03T00:00:00+00:00" }),
+      entry({ hash: "bbb", subject: "feat b", authoredAt: "2024-05-02T00:00:00+00:00" }),
+    ];
+    const server = [
+      entry({ hash: "ccc", subject: "fix c", authoredAt: "2024-05-01T00:00:00+00:00" }),
+    ];
+    expect(mergeHistorySearchResults(loaded, server, filter).map((item) => item.hash)).toEqual([
+      "aaa",
+      "ccc",
+    ]);
+  });
+
+  it("dedupes by hash and prefers the locally loaded entry", () => {
+    const local = entry({ hash: "aaa", subject: "fix a (local)" });
+    const merged = mergeHistorySearchResults(
+      [local],
+      [entry({ hash: "aaa", subject: "fix a" })],
+      filter,
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.subject).toBe("fix a (local)");
+  });
+
+  it("sorts newest first regardless of which side supplied the entry", () => {
+    const merged = mergeHistorySearchResults(
+      [entry({ hash: "old", subject: "fix old", authoredAt: "2024-01-01T00:00:00+00:00" })],
+      [entry({ hash: "new", subject: "fix new", authoredAt: "2024-09-01T00:00:00+00:00" })],
+      filter,
+    );
+    expect(merged.map((item) => item.hash)).toEqual(["new", "old"]);
+  });
+
+  it("breaks ties by hash so the order is stable across renders", () => {
+    const at = "2024-05-01T00:00:00+00:00";
+    const merged = mergeHistorySearchResults(
+      [
+        entry({ hash: "bbb", subject: "fix", authoredAt: at }),
+        entry({ hash: "aaa", subject: "fix", authoredAt: at }),
+      ],
+      [],
+      filter,
+    );
+    expect(merged.map((item) => item.hash)).toEqual(["aaa", "bbb"]);
+  });
+});
+
+describe("historyAuthorFacets", () => {
+  it("counts authors in the loaded page, most frequent first", () => {
+    const entries = [
+      entry({ hash: "a", authorName: "Ada" }),
+      entry({ hash: "b", authorName: "Grace" }),
+      entry({ hash: "c", authorName: "Ada" }),
+    ];
+    expect(historyAuthorFacets(entries)).toEqual([
+      { name: "Ada", count: 2 },
+      { name: "Grace", count: 1 },
+    ]);
+  });
+});
+
+describe("liveness", () => {
+  it("never polls while the panel is hidden", () => {
+    expect(shouldPollWorkingCopy({ visible: false, hasCwd: true, busy: false })).toBe(false);
+  });
+
+  it("never polls without a cwd or during a mutation", () => {
+    expect(shouldPollWorkingCopy({ visible: true, hasCwd: false, busy: false })).toBe(false);
+    expect(shouldPollWorkingCopy({ visible: true, hasCwd: true, busy: true })).toBe(false);
+  });
+
+  it("polls when visible and idle", () => {
+    expect(shouldPollWorkingCopy({ visible: true, hasCwd: true, busy: false })).toBe(true);
+  });
+
+  // fork: f4 — a non-repository cwd cannot become one under the panel, so
+  // re-asking every 15s is a request that can only ever fail.
+  it("stops polling once the cwd answers isRepo: false", () => {
+    expect(shouldPollWorkingCopy({ visible: true, hasCwd: true, busy: false, isRepo: false })).toBe(
+      false,
+    );
+    expect(shouldPollWorkingCopy({ visible: true, hasCwd: true, busy: false, isRepo: true })).toBe(
+      true,
+    );
+    expect(shouldPollWorkingCopy({ visible: true, hasCwd: true, busy: false, isRepo: null })).toBe(
+      true,
+    );
+  });
+});
+
+describe("status failure banner", () => {
+  it("stays quiet for a single failure", () => {
+    expect(shouldShowStatusErrorBanner({ consecutiveFailures: 1, dismissed: false })).toBe(false);
+  });
+
+  it("shows at two consecutive failures", () => {
+    expect(shouldShowStatusErrorBanner({ consecutiveFailures: 2, dismissed: false })).toBe(true);
+  });
+
+  it("stays dismissed once dismissed", () => {
+    expect(shouldShowStatusErrorBanner({ consecutiveFailures: 9, dismissed: true })).toBe(false);
+  });
+
+  it("resets the streak on any success", () => {
+    expect(nextStatusFailureStreak(3, false)).toBe(0);
+    expect(nextStatusFailureStreak(3, true)).toBe(4);
+  });
+});

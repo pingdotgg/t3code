@@ -1,5 +1,6 @@
 import {
   AuthAccessReadScope,
+  AuthAccessWriteScope, // fork: f1 provider account sign-in
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -48,6 +49,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
+  // fork: f1 — signing in/out mutates the environment's provider credentials,
+  // an access-control concern. A read-only paired client must not be able to
+  // log the host out.
+  [WS_METHODS.providerStartSignIn]: AuthAccessWriteScope,
+  [WS_METHODS.providerSignOut]: AuthAccessWriteScope,
+  // fork: f3 — stopping one agent task operates on a running turn, so it is a
+  // thread operation (`orchestration:operate`), not a credential mutation.
+  [WS_METHODS.providerStopTask]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
@@ -74,6 +83,39 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.vcsCreateRef]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsSwitchRef]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsInit]: AuthOrchestrationOperateScope,
+  // fork: f4 — source-control panel. Reads are `orchestration:read`; anything
+  // that touches the index, the worktree, refs or the stash is
+  // `orchestration:operate`, so a read-only paired client can look but not
+  // stage, commit, discard or reset.
+  [WS_METHODS.workingCopyStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyFileAtRef]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyStagePaths]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyUnstagePaths]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyApplyPatch]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyDiscardPaths]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyRestoreDiscardBackup]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyListDiscardBackups]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyCommitStaged]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyAmendCommit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyUndoLastCommit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyLastCommitMessage]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyLog]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyCommitDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyCommitFileDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyStashList]: AuthOrchestrationReadScope,
+  [WS_METHODS.workingCopyStashPush]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyStashApply]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyStashPop]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyStashDrop]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyResolveConflict]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyAbortOperation]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyCherryPick]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyRevertCommit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyCheckoutCommit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyResetToCommit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.workingCopyTagCommit]: AuthOrchestrationOperateScope,
+  // end fork: f4
   [WS_METHODS.reviewGetDiffPreview]: AuthReviewWriteScope,
   [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
   [WS_METHODS.terminalAttach]: AuthTerminalOperateScope,

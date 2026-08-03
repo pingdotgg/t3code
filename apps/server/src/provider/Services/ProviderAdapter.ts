@@ -13,6 +13,7 @@ import type {
   ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
+  RuntimeTaskId, // fork: f3 per-task stop
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -25,11 +26,23 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
+// fork: f2 system prompt injection
+export type ProviderInstructionInjectionMode = "session" | "turn" | "unsupported";
+
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+
+  /**
+   * Where this adapter can attach caller-supplied instructions. `session`
+   * attaches them once when the session opens. `unsupported` adapters receive
+   * no `instructions` at all — the text is never smuggled into a user message,
+   * because the first user message is what thread titles and checkpoint diffs
+   * read.
+   */
+  readonly instructionInjection: ProviderInstructionInjectionMode; // fork: f2
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -67,6 +80,16 @@ export interface ProviderAdapterShape<TError> {
    * Interrupt an active turn.
    */
   readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
+
+  /**
+   * Stop one in-flight subagent/workflow task without ending the turn.
+   *
+   * fork: f3 — **optional**: an adapter whose protocol has no per-task stop
+   * simply omits it, and `ProviderService.stopTask` turns that into a typed
+   * refusal rather than a silent no-op. Implementations must be idempotent and
+   * must not fail because the task already settled.
+   */
+  readonly stopTask?: (threadId: ThreadId, taskId: RuntimeTaskId) => Effect.Effect<void, TError>;
 
   /**
    * Respond to an interactive approval request.

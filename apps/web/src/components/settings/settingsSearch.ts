@@ -3,6 +3,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/prompt" // fork: f2 system prompt injection
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/beta"
@@ -24,6 +25,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/prompt": "System Prompt", // fork: f2 system prompt injection
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/beta": "Beta",
@@ -135,6 +137,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+  },
+  // fork: f2 system prompt injection
+  {
+    id: "system-prompt",
+    title: "System prompt",
+    to: "/settings/prompt",
   },
   {
     id: "source-control",

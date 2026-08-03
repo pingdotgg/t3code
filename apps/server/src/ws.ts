@@ -79,6 +79,9 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts"; // fork: f1 provider account sign-in
+import * as ProviderService from "./provider/Services/ProviderService.ts"; // fork: f3 per-task stop
+import { makeProviderTaskRpcHandlers } from "./provider/Services/providerTaskRpcHandlers.ts"; // fork: f3 per-task stop
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -89,6 +92,9 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+// fork: f4 source-control panel — the 28 `workingCopy.*` handlers live outside this file
+import { WorkingCopyService } from "./vcs/workingCopy/WorkingCopyService.ts";
+import { makeWorkingCopyRpcHandlers } from "./vcs/workingCopy/workingCopyRpcHandlers.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -362,10 +368,13 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const workingCopy = yield* WorkingCopyService; // fork: f4 source-control panel
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const providerAuth = yield* ProviderAuthService; // fork: f1 provider account sign-in
+      const providerService = yield* ProviderService.ProviderService; // fork: f3 per-task stop
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1018,6 +1027,9 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        // fork: f4 source-control panel — one spread, handlers defined in
+        // `vcs/workingCopy/workingCopyRpcHandlers.ts`.
+        ...makeWorkingCopyRpcHandlers({ workingCopy, observeRpcEffect, refreshGitStatus }),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1541,6 +1553,21 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetBackgroundPolicy, backgroundPolicy.snapshot, {
             "rpc.aggregate": "server",
           }),
+        // fork: f1 — provider account sign-in. The stream's scope IS the
+        // login's lifetime: when the client unsubscribes, the server cancels
+        // the login and kills the app-server child.
+        [WS_METHODS.providerStartSignIn]: (input) =>
+          observeRpcStream(WS_METHODS.providerStartSignIn, providerAuth.startSignIn(input), {
+            "rpc.aggregate": "provider",
+          }),
+        // fork: f1 provider account sign-out
+        [WS_METHODS.providerSignOut]: (input) =>
+          observeRpcEffect(WS_METHODS.providerSignOut, providerAuth.signOut(input), {
+            "rpc.aggregate": "provider",
+          }),
+        // fork: f3 per-task stop — handler body lives in
+        // `provider/Services/providerTaskRpcHandlers.ts`.
+        ...makeProviderTaskRpcHandlers({ providerService, observeRpcEffect }),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",

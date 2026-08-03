@@ -19,6 +19,9 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+// fork: f3 agent-run visibility
+import type { AgentRun } from "../../agentRuns";
+import { AgentRunTracker } from "./AgentRunTracker";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -34,6 +37,9 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  // fork: f3 agent-run visibility
+  agentRuns?: ReadonlyArray<AgentRun>;
+  onJumpToAgentRun?: (taskId: string) => boolean;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -70,6 +76,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  agentRuns, // fork: f3 agent-run visibility
+  onJumpToAgentRun, // fork: f3 agent-run visibility
   onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
@@ -140,6 +148,13 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {/* fork: f3 agent-run visibility */}
+        {agentRuns && agentRuns.length > 0 && (
+          <AgentRunTracker
+            runs={agentRuns}
+            {...(onJumpToAgentRun ? { onJumpToRun: onJumpToAgentRun } : {})}
+          />
+        )}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

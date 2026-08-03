@@ -22,11 +22,16 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import {
+  PREFERRED_DEFAULT_CODEX_MODELS,
+  PROVIDER_SIGN_IN_MODES, // fork: f1 provider account sign-in
+  ServerSettingsError,
+} from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexAuthQuotaFields } from "./codexAccountQuota.ts"; // fork: f1 account quota
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -48,6 +53,11 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  // fork: f1 increment 2 — quota rides the existing probe rather than a spawn
+  // of its own, so it refreshes exactly when the snapshot does and never per
+  // render. Absent whenever the read failed or the account is unauthenticated.
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse | undefined;
+  readonly usage?: CodexSchema.V2GetAccountTokenUsageResponse | undefined;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -395,12 +405,18 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits, usage] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      // fork: f1 increment 2 — quota is decoration on a status probe: a
+      // failure here must never cost the caller its model catalog.
+      client
+        .request("account/rateLimits/read", undefined)
+        .pipe(Effect.orElseSucceed(() => undefined)),
+      client.request("account/usage/read", undefined).pipe(Effect.orElseSucceed(() => undefined)),
     ],
     { concurrency: "unbounded" },
   );
@@ -412,6 +428,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    // fork: f1 increment 2
+    ...(rateLimits !== undefined ? { rateLimits } : {}),
+    ...(usage !== undefined ? { usage } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -595,20 +614,35 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
 
-  return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
-    enabled: codexSettings.enabled,
-    checkedAt,
-    models: snapshot.models,
-    skills: snapshot.skills,
-    probe: {
-      installed: true,
-      version: snapshot.version ?? null,
-      status: accountStatus.status,
-      auth: accountStatus.auth,
-      ...(accountStatus.message ? { message: accountStatus.message } : {}),
-    },
-  });
+  return {
+    ...buildServerProvider({
+      presentation: CODEX_PRESENTATION,
+      enabled: codexSettings.enabled,
+      checkedAt,
+      models: snapshot.models,
+      skills: snapshot.skills,
+      probe: {
+        installed: true,
+        version: snapshot.version ?? null,
+        status: accountStatus.status,
+        // fork: f1 increment 2 — plan tier + quota, spread onto the auth the
+        // probe already produced. `label` is untouched: old clients read it.
+        auth: {
+          ...accountStatus.auth,
+          ...codexAuthQuotaFields({
+            account: snapshot.account,
+            rateLimits: snapshot.rateLimits,
+            usage: snapshot.usage,
+            checkedAt,
+          }),
+        },
+        ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      },
+    }),
+    // fork: f1 — a probe that got this far proves the binary speaks the
+    // app-server protocol, so in-app sign-in is offerable for this instance.
+    authMethods: PROVIDER_SIGN_IN_MODES,
+  };
 });
 
 // NOTE: the singleton `CodexProviderLive` Layer has been removed as part of

@@ -7,6 +7,7 @@ import {
   ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { fromLenientJson } from "@t3tools/shared/schemaJson"; // fork: f2
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
@@ -22,6 +23,8 @@ import * as ServerSettingsModule from "./serverSettings.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+// fork: f2 reads the persisted settings file back in the injection test
+const decodeServerSettingsJson = Schema.decodeUnknownEffect(fromLenientJson(ServerSettings));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -201,6 +204,70 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             { id: "fastMode", value: false },
           ],
         ),
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  // fork: f2 system prompt injection
+  it.effect("replaces the system prompt rules array wholesale instead of merging it", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      yield* serverSettings.updateSettings({
+        systemPromptInjection: {
+          schemaVersion: 1,
+          enabled: true,
+          rules: [
+            { id: "first", enabled: true, match: {}, text: "One." },
+            { id: "second", enabled: true, match: {}, text: "Two." },
+          ],
+        },
+      });
+
+      const next = yield* serverSettings.updateSettings({
+        systemPromptInjection: {
+          schemaVersion: 1,
+          enabled: false,
+          rules: [{ id: "only", enabled: true, match: {}, text: "Replaced." }],
+        },
+      });
+
+      assert.deepEqual(next.systemPromptInjection, {
+        schemaVersion: 1,
+        enabled: false,
+        rules: [{ id: "only", enabled: true, match: {}, text: "Replaced." }],
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists system prompt rules to disk and reloads them", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      yield* serverSettings.updateSettings({
+        systemPromptInjection: {
+          schemaVersion: 1,
+          enabled: true,
+          rules: [
+            { id: "global", enabled: true, match: {}, text: "Be concise." },
+            {
+              id: "codex",
+              enabled: true,
+              match: { instanceId: ProviderInstanceId.make("codex") },
+              text: "Prefer rg.",
+            },
+          ],
+        },
+      });
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      const raw = yield* fileSystem.readFileString(config.settingsPath);
+      const persisted = yield* decodeServerSettingsJson(raw);
+
+      assert.deepEqual(
+        persisted.systemPromptInjection.rules.map((rule) => rule.id),
+        ["global", "codex"],
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

@@ -105,6 +105,8 @@ import {
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
+import { AgentRunCard } from "./AgentRunCard"; // fork: f3 agent-run visibility
+import { useAgentRunJumpTarget, type AgentRunJumpHandler } from "./agentRunJump"; // fork: f3
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -176,6 +178,8 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  // fork: f3 agent-run visibility — the tracker pill publishes its jump target here
+  agentRunJumpRef?: React.RefObject<AgentRunJumpHandler | null>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -211,6 +215,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
+  agentRunJumpRef, // fork: f3 agent-run visibility
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
@@ -324,6 +329,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  // fork: f3 agent-run visibility
+  useAgentRunJumpTarget(agentRunJumpRef, rows, listRef);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -861,6 +868,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         <AssistantTimelineRow row={row} />
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {/* fork: f3 agent-run visibility */}
+      {row.kind === "agent-run" ? <AgentRunCard run={row.run} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
     </div>
   );

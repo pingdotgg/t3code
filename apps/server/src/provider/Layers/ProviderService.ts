@@ -19,6 +19,7 @@ import {
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderStopTaskInput, // fork: f3 per-task stop
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -45,11 +46,16 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderUnsupportedError, // fork: f3 per-task stop
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import { SystemPromptResolver } from "../SystemPromptResolver.ts"; // fork: f2
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -212,6 +218,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const systemPromptResolver = yield* SystemPromptResolver; // fork: f2
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
@@ -590,6 +597,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
+        // fork: f2 system prompt injection — resolved here because this is the
+        // only place holding both the driver kind and the adapter's declared
+        // capability. Adapters that cannot take instructions receive none.
+        const instructions =
+          adapter.capabilities.instructionInjection === "unsupported"
+            ? undefined
+            : yield* systemPromptResolver.resolve({
+                driverKind: resolvedProvider,
+                instanceId: resolvedInstanceId,
+                modelSlug: input.modelSelection?.model,
+              });
         yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
           .startSession({
@@ -597,6 +615,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+            ...(instructions !== undefined ? { instructions } : {}), // fork: f2
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 
@@ -759,6 +778,37 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     },
   );
+
+  // fork: f3 — per-task stop. Sibling of `interruptTurn`: same routing, same
+  // recovery, one adapter call. No in-flight guard and no state of its own, so
+  // the operation is idempotent by construction; the durable receipt is the
+  // `task.completed status=stopped` activity the provider emits afterwards.
+  const stopTask: ProviderServiceMethod<"stopTask"> = Effect.fn("stopTask")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.stopTask",
+      schema: ProviderStopTaskInput,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.stopTask",
+      allowRecovery: true,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "stop-task",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+      "provider.task_id": input.taskId,
+    });
+    const adapterStopTask = routed.adapter.stopTask;
+    if (adapterStopTask === undefined) {
+      return yield* new ProviderUnsupportedError({ provider: routed.adapter.provider });
+    }
+    yield* adapterStopTask(routed.threadId, input.taskId);
+    yield* analytics.record("provider.task.stopped", {
+      provider: routed.adapter.provider,
+    });
+  });
 
   const respondToRequest: ProviderServiceMethod<"respondToRequest"> = Effect.fn("respondToRequest")(
     function* (rawInput) {
@@ -1078,6 +1128,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    stopTask, // fork: f3 per-task stop
     respondToRequest,
     respondToUserInput,
     stopSession,

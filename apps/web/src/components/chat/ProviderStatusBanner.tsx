@@ -1,8 +1,11 @@
-import { type ServerProvider } from "@t3tools/contracts";
+import { type EnvironmentId, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+import { ProviderSignInAction } from "../settings/ProviderSignInDialog"; // fork: f1 provider account sign-in
+import { supportsInAppSignIn } from "../settings/providerSignInFlows"; // fork: f1 provider account sign-in
+import { providerQuotaNotice } from "../settings/providerQuotaPresentation"; // fork: f1 account quota
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
@@ -22,9 +25,13 @@ export function shouldShowProviderStatusBanner(
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
   status,
+  // fork: f1 — the environment whose serverConfig produced `status`. Sign-in
+  // and sign-out must target it, not the primary environment.
+  environmentId = null,
 }: {
   onDismiss: () => void;
   status: ServerProvider | null;
+  environmentId?: EnvironmentId | null;
 }) {
   if (!status || status.status === "ready" || status.status === "disabled") {
     return null;
@@ -35,8 +42,16 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : `${providerName} provider status`;
+  // fork: f1 — when the driver can drive a login in-app, say so instead of
+  // sending the user to a terminal. Falls back to the upstream copy otherwise.
+  const canSignInHere = supportsInAppSignIn(status);
+  // fork: f1 increment 2 — the banner only ever renders for a non-ready
+  // provider, so a quota line here is additional context, never new chrome.
+  const quotaNotice = providerQuotaNotice(status.auth, Date.now());
   const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
+    ? canSignInHere
+      ? "Sign in to authenticate again."
+      : "Sign in via the CLI to authenticate again."
     : (status.message ??
       (status.status === "error"
         ? `${providerName} provider is unavailable.`
@@ -64,6 +79,13 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
               {message}
             </TooltipPopup>
           </Tooltip>
+          {/* fork: f1 increment 2 — one quota line, only when the account is
+              actually out of quota or about to lose its credential. */}
+          {quotaNotice ? <div className="text-muted-foreground">{quotaNotice}</div> : null}
+          {/* fork: f1 provider account sign-in */}
+          {isUnauthenticated ? (
+            <ProviderSignInAction provider={status} environmentId={environmentId} />
+          ) : null}
         </div>
         <button
           type="button"

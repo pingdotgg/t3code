@@ -505,6 +505,13 @@ export function runtimeEventToActivities(
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
+            // fork: f3 agent-run visibility — top level, never nested under
+            // `data`: that is what keeps ActivityPayloadProjection untouched.
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
+            ...(event.payload.workflowName ? { workflowName: event.payload.workflowName } : {}),
+            ...(event.payload.prompt ? { prompt: truncateDetail(event.payload.prompt) } : {}),
+            ...(event.payload.ambient === true ? { ambient: true } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -532,6 +539,16 @@ export function runtimeEventToActivities(
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            // fork: f3 agent-run visibility — top level, never nested under `data`.
+            ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
+            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
+            ...(event.payload.totalTokens !== undefined
+              ? { totalTokens: event.payload.totalTokens }
+              : {}),
+            ...(event.payload.toolUses !== undefined ? { toolUses: event.payload.toolUses } : {}),
+            ...(event.payload.durationMs !== undefined
+              ? { durationMs: event.payload.durationMs }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -565,6 +582,16 @@ export function runtimeEventToActivities(
                 }
               : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            // fork: f3 agent-run visibility — top level, never nested under `data`.
+            // `error` is the only failure reason the SDK puts on the wire.
+            ...(event.payload.error ? { error: truncateDetail(event.payload.error) } : {}),
+            ...(event.payload.totalTokens !== undefined
+              ? { totalTokens: event.payload.totalTokens }
+              : {}),
+            ...(event.payload.toolUses !== undefined ? { toolUses: event.payload.toolUses } : {}),
+            ...(event.payload.durationMs !== undefined
+              ? { durationMs: event.payload.durationMs }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

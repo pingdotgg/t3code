@@ -468,4 +468,82 @@ describe("openCodexThread", () => {
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
     }),
   );
+
+  // fork: f2 system prompt injection
+  const recordingClient = (calls: Array<{ method: string; payload: unknown }>) => ({
+    request: <M extends "thread/start" | "thread/resume">(
+      method: M,
+      payload: CodexRpc.ClientRequestParamsByMethod[M],
+    ) => {
+      calls.push({ method, payload });
+      return Effect.succeed(
+        makeThreadOpenResponse("thread-open") as CodexRpc.ClientRequestResponsesByMethod[M],
+      );
+    },
+  });
+
+  it.effect("omits developerInstructions when no instructions are supplied", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      yield* openCodexThread({
+        client: recordingClient(calls),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.equal(calls[0]?.method, "thread/start");
+      NodeAssert.ok(!Object.hasOwn(calls[0]?.payload as object, "developerInstructions"));
+    }),
+  );
+
+  it.effect("sets developerInstructions on thread/start", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      yield* openCodexThread({
+        client: recordingClient(calls),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        instructions: "Be concise.",
+      });
+
+      NodeAssert.equal(calls[0]?.method, "thread/start");
+      NodeAssert.equal(
+        (calls[0]?.payload as { developerInstructions?: string }).developerInstructions,
+        "Be concise.",
+      );
+    }),
+  );
+
+  // The resume path spreads `buildThreadStartParams`. A refactor that stopped
+  // spreading would silently drop injection from every resumed thread.
+  it.effect("carries developerInstructions into thread/resume", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      yield* openCodexThread({
+        client: recordingClient(calls),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "existing-thread",
+        instructions: "Be concise.",
+      });
+
+      NodeAssert.equal(calls[0]?.method, "thread/resume");
+      NodeAssert.equal(
+        (calls[0]?.payload as { developerInstructions?: string }).developerInstructions,
+        "Be concise.",
+      );
+      NodeAssert.equal((calls[0]?.payload as { threadId?: string }).threadId, "existing-thread");
+    }),
+  );
 });

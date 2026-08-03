@@ -16,6 +16,7 @@ import {
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  ScrollTextIcon, // fork: f2 system prompt injection
   SearchIcon,
   Settings2Icon,
   XIcon,
@@ -50,6 +51,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/prompt": ScrollTextIcon, // fork: f2 system prompt injection
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/beta": FlaskConicalIcon,

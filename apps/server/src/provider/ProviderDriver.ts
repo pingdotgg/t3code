@@ -31,6 +31,7 @@ import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import type { ProviderAuthOps } from "./ProviderAuthOps.ts"; // fork: f1 provider account sign-in
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
@@ -71,6 +72,8 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /** fork: f1 — present only for drivers with a native account protocol. */
+  readonly auth?: ProviderAuthOps;
 }
 
 export interface ProviderContinuationIdentity {

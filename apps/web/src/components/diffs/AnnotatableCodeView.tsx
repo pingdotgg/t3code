@@ -23,10 +23,23 @@ import { nextFileCommentId } from "../files/fileCommentAnnotations";
 
 interface DiffCommentAnnotationEntry {
   id: string;
-  kind: "draft" | "comment";
+  // fork: f4 hunk staging — `hunk` entries carry an action cluster instead of
+  // comment text; they ride the annotation channel because it is the only
+  // virtualization-aware, measured seam the viewer exposes inside a file.
+  kind: "draft" | "comment" | "hunk";
   range: SelectedLineRange;
   rangeLabel: string;
   text: string;
+  /** Set only on `hunk` entries: which hunk of which file the cluster acts on. */
+  hunk?: { fileKey: string; index: number };
+}
+
+/** fork: f4 hunk staging — one action cluster's anchor inside a rendered file. */
+export interface HunkActionAnchor {
+  readonly fileKey: string;
+  readonly hunkIndex: number;
+  readonly side: AnnotationSide;
+  readonly lineNumber: number;
 }
 
 interface DiffCommentAnnotationGroup {
@@ -88,6 +101,10 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
+  // fork: f4 hunk staging — both absent for every upstream caller, which keeps
+  // the rendered item list byte-identical to today.
+  hunkActionAnchors?: ReadonlyArray<HunkActionAnchor>;
+  renderHunkActions?: (fileKey: string, hunkIndex: number) => ReactNode;
 }
 
 interface DiffSelectionContext {
@@ -103,6 +120,8 @@ export function AnnotatableCodeView({
   viewerRef,
   className,
   renderHeaderPrefix,
+  hunkActionAnchors,
+  renderHunkActions,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -140,8 +159,29 @@ export function AnnotatableCodeView({
               text: comment.text,
             });
           }, []);
+        // fork: f4 hunk staging — one entry per hunk, with an id derived from
+        // the file key and the hunk index so the version hash below stays
+        // constant while an action runs.
+        const withHunks = (hunkActionAnchors ?? [])
+          .filter((anchor) => anchor.fileKey === fileKey)
+          .reduce<DiffCommentLineAnnotation[]>((annotations, anchor) => {
+            const range: SelectedLineRange = {
+              start: anchor.lineNumber,
+              end: anchor.lineNumber,
+              side: anchor.side,
+              endSide: anchor.side,
+            };
+            return appendAnnotationEntry(annotations, range, {
+              id: `hunk:${fileKey}:${anchor.hunkIndex}`,
+              kind: "hunk",
+              range,
+              rangeLabel: "",
+              text: "",
+              hunk: { fileKey, index: anchor.hunkIndex },
+            });
+          }, persisted);
         const annotations =
-          draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+          draft?.fileKey === fileKey ? [...withHunks, draft.annotation] : withHunks;
         return {
           id: fileKey,
           type: "diff",
@@ -159,7 +199,7 @@ export function AnnotatableCodeView({
           ),
         };
       }),
-    [draft, files, reviewComments, sectionId],
+    [draft, files, hunkActionAnchors, reviewComments, sectionId],
   );
 
   const removeEntry = useCallback(
@@ -250,17 +290,24 @@ export function AnnotatableCodeView({
       }
       renderAnnotation={(annotation) => (
         <div className="py-1">
-          {annotation.metadata.entries.map((entry) => (
-            <LocalCommentAnnotation
-              key={entry.id}
-              kind={entry.kind}
-              rangeLabel={entry.rangeLabel}
-              text={entry.text}
-              onCancel={() => removeEntry(entry.id)}
-              onComment={(text) => submitEntry(entry.id, text)}
-              onDelete={() => removeEntry(entry.id)}
-            />
-          ))}
+          {annotation.metadata.entries.map((entry) =>
+            // fork: f4 hunk staging
+            entry.kind === "hunk" ? (
+              <div key={entry.id}>
+                {entry.hunk ? renderHunkActions?.(entry.hunk.fileKey, entry.hunk.index) : null}
+              </div>
+            ) : (
+              <LocalCommentAnnotation
+                key={entry.id}
+                kind={entry.kind}
+                rangeLabel={entry.rangeLabel}
+                text={entry.text}
+                onCancel={() => removeEntry(entry.id)}
+                onComment={(text) => submitEntry(entry.id, text)}
+                onDelete={() => removeEntry(entry.id)}
+              />
+            ),
+          )}
         </div>
       )}
     />

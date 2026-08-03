@@ -19,6 +19,12 @@ import {
 } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
+// fork: f1 provider account sign-in (+ increment 2 plan/quota)
+import {
+  ProviderAccountRateLimits,
+  ProviderAccountUsage,
+  ProviderSignInMode,
+} from "./providerAuth.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -58,6 +64,14 @@ export const ServerProviderAuth = Schema.Struct({
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  // fork: f1 — structured account plan/quota (increment 2). All optional, all
+  // additive: `label` keeps its pre-formatted English so older clients render
+  // exactly as before. `planType` is a free string, never a literal union, so
+  // a new plan tier cannot break an old client's `ServerConfig` decode.
+  planType: Schema.optional(TrimmedNonEmptyString),
+  requiresReauth: Schema.optional(Schema.Boolean),
+  rateLimits: Schema.optional(ProviderAccountRateLimits),
+  usage: Schema.optional(ProviderAccountUsage),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -176,6 +190,11 @@ export const ServerProvider = Schema.Struct({
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
   auth: ServerProviderAuth,
+  // fork: f1 — sign-in modes this instance's driver can drive from inside the
+  // app. Absent/empty means "sign in via the CLI"; the Sign-in affordance only
+  // renders when it is non-empty. Optional so older clients ignore it and
+  // every non-Codex driver simply omits it.
+  authMethods: Schema.optional(Schema.Array(ProviderSignInMode)),
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and

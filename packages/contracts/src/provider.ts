@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
   EventId,
@@ -61,6 +61,9 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  // fork: f2 resolved system prompt injection, attached at the provider's
+  // native session instruction slot. Absent for adapters that cannot take it.
+  instructions: Schema.optional(TrimmedString),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

@@ -42,6 +42,8 @@ import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { ProviderSignInAction } from "./ProviderSignInDialog"; // fork: f1 provider account sign-in
+import { ProviderQuotaRow } from "./ProviderQuotaRow"; // fork: f1 account plan/quota
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -705,6 +707,10 @@ export function ProviderInstanceCard({
               {titleTailNode}
             </div>
             {authRowNode}
+            {/* fork: f1 increment 2 — renders nothing unless the snapshot carries quota */}
+            <ProviderQuotaRow provider={liveProvider} className="pt-1.5" />
+            {/* fork: f1 — renders nothing unless the server advertises authMethods */}
+            <ProviderSignInAction provider={liveProvider} className="pt-1" />
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button

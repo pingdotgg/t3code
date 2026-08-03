@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope, // fork: f1 provider account sign-in
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -35,6 +36,76 @@ describe("RPC authorization scopes", () => {
       AuthRelayReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
+  });
+
+  // fork: f1 — signing in/out mutates provider credentials, so it is gated on
+  // access:write rather than orchestration:operate. A read-only paired client
+  // must not be able to log the host out.
+  it("requires access:write to sign a provider account in or out", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerStartSignIn)).toBe(AuthAccessWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerSignOut)).toBe(AuthAccessWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerStartSignIn)).not.toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  // fork: f3 — stopping one agent task is a thread operation, not a
+  // credential mutation: it must not require `access:write`, and it must not
+  // be readable-client territory either.
+  it("requires orchestration:operate to stop an agent task", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerStopTask)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerStopTask)).not.toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerStopTask)).not.toBe(AuthAccessWriteScope);
+  });
+
+  // fork: f4 — the source-control panel. The split is the whole reason a
+  // read-only paired client is safe to hand the panel: it can look at the
+  // working copy but cannot change it.
+  it("lets a read-only client read the working copy", () => {
+    for (const method of [
+      WS_METHODS.workingCopyStatus,
+      WS_METHODS.workingCopyDiff,
+      WS_METHODS.workingCopyFileAtRef,
+      WS_METHODS.workingCopyLog,
+      WS_METHODS.workingCopyCommitDetail,
+      WS_METHODS.workingCopyCommitFileDiff,
+      WS_METHODS.workingCopyStashList,
+      WS_METHODS.workingCopyListDiscardBackups,
+      WS_METHODS.workingCopyLastCommitMessage,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("requires orchestration:operate for everything that touches the index, tree, refs or stash", () => {
+    for (const method of [
+      WS_METHODS.workingCopyStagePaths,
+      WS_METHODS.workingCopyUnstagePaths,
+      WS_METHODS.workingCopyApplyPatch,
+      WS_METHODS.workingCopyDiscardPaths,
+      WS_METHODS.workingCopyRestoreDiscardBackup,
+      WS_METHODS.workingCopyCommitStaged,
+      WS_METHODS.workingCopyAmendCommit,
+      WS_METHODS.workingCopyUndoLastCommit,
+      WS_METHODS.workingCopyStashPush,
+      WS_METHODS.workingCopyStashApply,
+      WS_METHODS.workingCopyStashPop,
+      WS_METHODS.workingCopyStashDrop,
+      WS_METHODS.workingCopyResolveConflict,
+      WS_METHODS.workingCopyAbortOperation,
+      WS_METHODS.workingCopyCherryPick,
+      WS_METHODS.workingCopyRevertCommit,
+      WS_METHODS.workingCopyCheckoutCommit,
+      WS_METHODS.workingCopyResetToCommit,
+      WS_METHODS.workingCopyTagCommit,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(requiredScopeForRpcMethod(method)).not.toBe(AuthOrchestrationReadScope);
+    }
   });
 
   it("rejects unknown RPC method names", () => {

@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  RuntimeTaskId, // fork: f3 per-task stop
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -42,7 +43,11 @@ import {
   ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderInstructionInjectionMode, // fork: f2
+} from "../Services/ProviderAdapter.ts";
+import * as SystemPromptResolver from "../SystemPromptResolver.ts"; // fork: f2
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -84,7 +89,13 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
-function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
+function makeFakeCodexAdapter(
+  provider: ProviderDriverKind = CODEX_DRIVER,
+  // fork: f2 lets a test declare an adapter that cannot take instructions
+  instructionInjection: ProviderInstructionInjectionMode = "session",
+  // fork: f3 lets a test declare an adapter with no per-task stop
+  supportsStopTask = true,
+) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
@@ -133,6 +144,12 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
 
   const interruptTurn = vi.fn(
     (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.void,
+  );
+
+  // fork: f3 per-task stop
+  const stopTask = vi.fn(
+    (_threadId: ThreadId, _taskId: RuntimeTaskId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.void,
   );
 
@@ -203,10 +220,12 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      instructionInjection, // fork: f2
     },
     startSession,
     sendTurn,
     interruptTurn,
+    ...(supportsStopTask ? { stopTask } : {}), // fork: f3 per-task stop
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -242,6 +261,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     startSession,
     sendTurn,
     interruptTurn,
+    stopTask, // fork: f3 per-task stop
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -270,7 +290,8 @@ const hasMetricSnapshot = (
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
-  const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  // fork: f3 — cursor stands in for an adapter with no per-task stop.
+  const cursor = makeFakeCodexAdapter(CURSOR_DRIVER, "session", false);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
@@ -292,6 +313,7 @@ function makeProviderServiceLayer() {
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -343,6 +365,7 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -402,6 +425,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -426,6 +450,80 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
     assert.instanceOf(failure, ProviderValidationError);
     assert.include(failure.issue, "Provider instance 'claudeAgent' is disabled");
     assert.equal(claude.startSession.mock.calls.length, 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// fork: f2 system prompt injection
+const makeInjectionLayer = (
+  adapter: ReturnType<typeof makeFakeCodexAdapter>,
+  instructions?: string,
+) => {
+  const registry = makeAdapterRegistryMock({ [CODEX_DRIVER]: adapter.adapter });
+  const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  return makeProviderServiceLive().pipe(
+    Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+    Layer.provide(ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))),
+    Layer.provide(defaultServerSettingsLayer),
+    Layer.provide(SystemPromptResolver.layerTest(instructions)),
+    Layer.provide(AnalyticsService.layerTest),
+    Layer.provide(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
+  );
+};
+
+it.effect("ProviderServiceLive passes resolved instructions to a session-capable adapter", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter(CODEX_DRIVER, "session");
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(asThreadId("thread-injection"), {
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-injection"),
+        runtimeMode: "full-access",
+      });
+    }).pipe(Effect.provide(makeInjectionLayer(codex, "Be concise.")));
+
+    assert.equal(codex.startSession.mock.calls[0]?.[0].instructions, "Be concise.");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive sends no instructions to an unsupported adapter", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter(CODEX_DRIVER, "unsupported");
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(asThreadId("thread-no-injection"), {
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-no-injection"),
+        runtimeMode: "full-access",
+      });
+    }).pipe(Effect.provide(makeInjectionLayer(codex, "Be concise.")));
+
+    const input = codex.startSession.mock.calls[0]?.[0];
+    assert.isFalse(Object.hasOwn(input as object, "instructions"));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive omits instructions when nothing resolves", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter(CODEX_DRIVER, "session");
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(asThreadId("thread-empty-injection"), {
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-empty-injection"),
+        runtimeMode: "full-access",
+      });
+    }).pipe(Effect.provide(makeInjectionLayer(codex)));
+
+    const input = codex.startSession.mock.calls[0]?.[0];
+    assert.isFalse(Object.hasOwn(input as object, "instructions"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -486,6 +584,7 @@ it.effect(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(serverSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -556,6 +655,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -611,6 +711,7 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
       Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -671,6 +772,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
       Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -737,6 +839,7 @@ it.effect(
         ),
         Layer.provide(firstDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -796,6 +899,7 @@ it.effect(
         ),
         Layer.provide(secondDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -965,6 +1069,83 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  // fork: f3 — per-task stop.
+  it.effect("routes stopTask to the adapter and stays idempotent", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const taskId = RuntimeTaskId.make("task-1");
+
+      const session = yield* provider.startSession(asThreadId("thread-stop-task"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-stop-task"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      routing.codex.stopTask.mockClear();
+
+      yield* provider.stopTask({ threadId: session.threadId, taskId });
+      // A second stop for the same task is not refused, not queued, and not
+      // deduplicated: repeated presses simply forward again.
+      yield* provider.stopTask({ threadId: session.threadId, taskId });
+
+      assert.deepEqual(routing.codex.stopTask.mock.calls, [
+        [session.threadId, taskId],
+        [session.threadId, taskId],
+      ]);
+    }),
+  );
+
+  it.effect("stops a task the adapter no longer knows about without failing", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-stop-settled"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-stop-settled"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      routing.codex.stopTask.mockClear();
+
+      // An already-settled task is indistinguishable from a live one here, and
+      // must not become an error: the button races the task's own completion.
+      yield* provider.stopTask({
+        threadId: session.threadId,
+        taskId: RuntimeTaskId.make("task-already-finished"),
+      });
+
+      assert.equal(routing.codex.stopTask.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("refuses stopTask for an adapter that cannot stop tasks", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-stop-unsupported"), {
+        provider: CURSOR_DRIVER,
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        threadId: asThreadId("thread-stop-unsupported"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      const failure = yield* Effect.flip(
+        provider.stopTask({
+          threadId: session.threadId,
+          taskId: RuntimeTaskId.make("task-1"),
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderUnsupportedError);
+      assert.equal(routing.cursor.stopTask.mock.calls.length, 0);
+      // The shared harness is layer-scoped; leave no cursor session behind.
+      yield* provider.stopSession({ threadId: session.threadId });
     }),
   );
 
@@ -1307,6 +1488,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         ),
         Layer.provide(firstDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -1345,6 +1527,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         ),
         Layer.provide(secondDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -1413,6 +1596,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           ),
           Layer.provide(firstDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
+          Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(
             Layer.succeed(
@@ -1446,6 +1630,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           ),
           Layer.provide(secondDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
+          Layer.provide(SystemPromptResolver.layerTest()), // fork: f2
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(
             Layer.succeed(

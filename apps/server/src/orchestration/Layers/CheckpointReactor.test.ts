@@ -106,11 +106,14 @@ function createProviderServiceHarness(
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
+    stopTask: () => unsupported(), // fork: f3 per-task stop
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    // fork: f2 instructionInjection
+    getCapabilities: () =>
+      Effect.succeed({ sessionModelSwitch: "in-session", instructionInjection: "session" }),
     getInstanceInfo: (instanceId) =>
       Effect.succeed({
         instanceId,

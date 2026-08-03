@@ -11,12 +11,16 @@ export * from "./terminal.ts";
 export * from "./provider.ts";
 export * from "./providerInstance.ts";
 export * from "./providerRuntime.ts";
+export * from "./providerAuth.ts"; // fork: f1 provider account sign-in contract
+export * from "./providerTask.ts"; // fork: f3 per-task stop contract
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
+export * from "./systemPrompt.ts"; // fork: f2 system prompt injection contract
 export * from "./git.ts";
 export * from "./vcs.ts";
+export * from "./workingCopy.ts"; // fork: f4 source-control panel contract
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";

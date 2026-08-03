@@ -57,6 +57,10 @@ export type EnvironmentSubscriptionRpcTag =
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
+  // fork: f1 — a login is a scoped stream command, not a durable subscription:
+  // it must never auto-resubscribe on reconnect, because resubscribing would
+  // silently restart the handshake.
+  | typeof WS_METHODS.providerStartSignIn
   | typeof WS_METHODS.gitRunStackedAction;
 
 export type EnvironmentStreamRpcTag =

@@ -492,6 +492,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       provider,
       capabilities: {
         sessionModelSwitch: "in-session",
+        instructionInjection: "session", // fork: f2
       },
       startSession,
       sendTurn,
