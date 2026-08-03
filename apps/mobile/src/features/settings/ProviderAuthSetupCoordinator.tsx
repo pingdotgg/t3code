@@ -13,7 +13,7 @@ export function ProviderAuthSetupCoordinator() {
   const configs = useServerConfigs();
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
-  const presentedEnvironmentRef = useRef<string | null>(null);
+  const hasPresentedPromptRef = useRef(false);
 
   useEffect(() => {
     if (!AsyncResult.isSuccess(preferences)) return;
@@ -23,18 +23,16 @@ export function ProviderAuthSetupCoordinator() {
         !dismissed.includes(environmentId) &&
         selectProviderAuthSetupCandidates(config.providers).length > 0,
     );
-    if (!candidate || presentedEnvironmentRef.current === candidate[0]) return;
+    if (!candidate || hasPresentedPromptRef.current) return;
     const environmentId = candidate[0];
-    presentedEnvironmentRef.current = environmentId;
+    hasPresentedPromptRef.current = true;
     const finish = async () => {
       try {
         await savePreferences({
           providerAuthSetupDismissedEnvironmentIds: [...new Set([...dismissed, environmentId])],
         });
       } catch {
-        if (presentedEnvironmentRef.current === environmentId) {
-          presentedEnvironmentRef.current = null;
-        }
+        hasPresentedPromptRef.current = false;
       }
     };
     Alert.alert(
