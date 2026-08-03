@@ -39,6 +39,25 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Authentication sessions
+
+A driver may expose a provider-authentication capability with fixed sign-in and
+sign-out commands. [`ProviderAuthSessionManager`][auth-manager] runs those
+commands in a PTY using the provider instance's resolved binary, environment,
+and auth-home configuration. Clients may start, attach, write, resize, or
+cancel a session over typed RPC methods.
+
+One authentication session may run per provider instance. Its bounded terminal
+history and detected URL/code hints live only in server memory; only the
+provider CLI's credential files persist. The provider registry publishes the
+active session ID as volatile capability metadata so another web, desktop, or
+mobile client can reconnect. It refreshes only that provider snapshot when the
+command exits.
+
+Clients never submit an executable or argument list. Command selection remains
+inside the driver boundary, which also preserves instance-specific
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and environment variables.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
@@ -85,6 +104,7 @@ when a request opens (approval) or user input is requested, via
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts
+[auth-manager]: ../../apps/server/src/provider/Layers/ProviderAuthSessionManager.ts
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts

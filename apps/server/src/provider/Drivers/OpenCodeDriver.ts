@@ -42,6 +42,10 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeProviderAuthenticationCapability,
+  PROVIDER_AUTH_COMMAND_ARGS,
+} from "../providerAuthentication.ts";
+import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
@@ -189,6 +193,12 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         snapshot,
         adapter,
         textGeneration,
+        authentication: makeProviderAuthenticationCapability({
+          command: effectiveConfig.binaryPath,
+          env: processEnv,
+          signInArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signIn,
+          signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signOut,
+        }),
       } satisfies ProviderInstance;
     }),
 };

@@ -14,7 +14,7 @@ Common reasons:
 
 Use the default provider.
 
-Log in with Claude Code normally:
+Choose **Sign in** on the Claude provider row in T3 Code. The equivalent manual command is:
 
 ```bash
 claude auth login
@@ -47,7 +47,7 @@ default config dir           work account
 
 ### Set Up The First Account
 
-Log in normally:
+Choose **Sign in** on the Claude Work row, or log in manually:
 
 ```bash
 claude auth login
@@ -70,7 +70,10 @@ mkdir -p ~/.claude_personal_home
 CLAUDE_CONFIG_DIR=~/.claude_personal_home claude auth login
 ```
 
-Use `CLAUDE_CONFIG_DIR`, not `HOME`. Setting `HOME` writes the login to
+Alternatively, add the second provider first and choose **Sign in** on its
+row; T3 Code supplies its configured `CLAUDE_CONFIG_DIR` automatically.
+
+For manual login, use `CLAUDE_CONFIG_DIR`, not `HOME`. Setting `HOME` writes the login to
 `~/.claude_personal_home/.claude`, which is not where T3 Code looks.
 
 Then add another Claude provider in T3 Code:

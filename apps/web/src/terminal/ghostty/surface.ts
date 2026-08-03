@@ -623,6 +623,21 @@ export class GhosttyTerminalSurface {
     return this.core.selectionText();
   }
 
+  getTranscript(): string {
+    const anchor = this.selectionAnchorScreen;
+    const end = this.selectionEndScreen;
+    this.core.selectAll();
+    try {
+      return this.core.selectionText();
+    } finally {
+      if (anchor !== null && end !== null) {
+        this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 });
+      } else {
+        this.core.clearSelection();
+      }
+    }
+  }
+
   getSelectionPosition(): GhosttySelectionPosition | null {
     if (!this.selectionAnchorScreen || !this.selectionEndScreen || !this.hasSelection())
       return null;

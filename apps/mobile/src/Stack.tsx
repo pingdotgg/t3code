@@ -48,6 +48,9 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { SettingsProvidersRouteScreen } from "./features/settings/SettingsProvidersRouteScreen";
+import { SettingsProviderAuthRouteScreen } from "./features/settings/SettingsProviderAuthRouteScreen";
+import { ProviderAuthSetupCoordinator } from "./features/settings/ProviderAuthSetupCoordinator";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -181,6 +184,16 @@ const SettingsSheetStack = createNativeStackNavigator({
       options: {
         title: "Client Storage",
       },
+    }),
+    SettingsProviders: createNativeStackScreen({
+      screen: SettingsProvidersRouteScreen,
+      linking: "providers",
+      options: { title: "Provider accounts" },
+    }),
+    SettingsProviderAuth: createNativeStackScreen({
+      screen: SettingsProviderAuthRouteScreen,
+      linking: "providers/auth",
+      options: SHEET_SOLID_HEADER_OPTIONS,
     }),
     SettingsAuth: createNativeStackScreen({
       screen: SettingsAuthRouteScreen,
@@ -330,6 +343,7 @@ function RootStackLayout(props: {
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
+      <ProviderAuthSetupCoordinator />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ClerkSettingsSheetDetentProvider initiallyExpanded={false}>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>

@@ -28,6 +28,10 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeProviderAuthenticationCapability,
+  PROVIDER_AUTH_COMMAND_ARGS,
+} from "../providerAuthentication.ts";
+import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -158,6 +162,12 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        authentication: makeProviderAuthenticationCapability({
+          command: effectiveConfig.binaryPath,
+          env: processEnv,
+          signInArgs: PROVIDER_AUTH_COMMAND_ARGS.grok.signIn,
+          signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.grok.signOut,
+        }),
       } satisfies ProviderInstance;
     }),
 };

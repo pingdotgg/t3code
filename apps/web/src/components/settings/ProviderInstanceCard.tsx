@@ -6,6 +6,8 @@ import {
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
+  LogInIcon,
+  LogOutIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -16,6 +18,7 @@ import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
+  type ProviderAuthAction,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
   type ProviderDriverKind,
@@ -349,6 +352,7 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onAuthAction?: ((action: ProviderAuthAction) => void) | undefined;
 }
 
 /**
@@ -393,6 +397,7 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  onAuthAction,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -412,6 +417,13 @@ export function ProviderInstanceCard({
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const authManagement = liveProvider?.authManagement;
+  const activeAuthAction = authManagement?.activeSession?.action;
+  const authAction: ProviderAuthAction =
+    activeAuthAction ?? (liveProvider?.auth.status === "authenticated" ? "signOut" : "signIn");
+  const canRunAuthAction =
+    activeAuthAction !== undefined ||
+    (authAction === "signIn" ? authManagement?.canSignIn : authManagement?.canSignOut);
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -707,6 +719,22 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {authManagement && onAuthAction ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                disabled={!canRunAuthAction}
+                onClick={() => onAuthAction(authAction)}
+              >
+                {authAction === "signOut" ? <LogOutIcon /> : <LogInIcon />}
+                {activeAuthAction !== undefined
+                  ? "Continue"
+                  : authAction === "signOut"
+                    ? "Sign out"
+                    : "Sign in"}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"

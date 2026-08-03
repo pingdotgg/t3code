@@ -54,4 +54,19 @@ describe("ProviderStatusBanner", () => {
 
     expect(markup).toContain('aria-label="Dismiss Codex provider error"');
   });
+
+  it("offers in-app sign in for an unauthenticated provider", () => {
+    const provider = {
+      ...warningProvider(),
+      status: "error" as const,
+      auth: { status: "unauthenticated" as const },
+      authManagement: { canSignIn: true, canSignOut: true, activeSession: null },
+    };
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner status={provider} onDismiss={() => {}} onAuthenticate={() => {}} />,
+    );
+
+    expect(markup).toContain("Sign in to authenticate this environment.");
+    expect(markup).toContain("Sign in</button>");
+  });
 });

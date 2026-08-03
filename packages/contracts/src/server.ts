@@ -20,6 +20,7 @@ import {
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderAuthAction, ProviderAuthSessionId } from "./providerAuth.ts";
 import { ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -60,6 +61,18 @@ export const ServerProviderAuth = Schema.Struct({
   email: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
+
+export const ServerProviderAuthManagement = Schema.Struct({
+  canSignIn: Schema.Boolean,
+  canSignOut: Schema.Boolean,
+  activeSession: Schema.NullOr(
+    Schema.Struct({
+      sessionId: ProviderAuthSessionId,
+      action: ProviderAuthAction,
+    }),
+  ),
+});
+export type ServerProviderAuthManagement = typeof ServerProviderAuthManagement.Type;
 
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
@@ -176,6 +189,7 @@ export const ServerProvider = Schema.Struct({
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
   auth: ServerProviderAuth,
+  authManagement: Schema.optionalKey(ServerProviderAuthManagement),
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and

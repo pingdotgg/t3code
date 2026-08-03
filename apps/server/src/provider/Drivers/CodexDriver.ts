@@ -43,6 +43,10 @@ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeProviderAuthenticationCapability,
+  PROVIDER_AUTH_COMMAND_ARGS,
+} from "../providerAuthentication.ts";
+import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -208,6 +212,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        authentication: makeProviderAuthenticationCapability({
+          command: effectiveConfig.binaryPath,
+          env: {
+            ...processEnv,
+            ...(homeLayout.effectiveHomePath ? { CODEX_HOME: homeLayout.effectiveHomePath } : {}),
+          },
+          signInArgs: PROVIDER_AUTH_COMMAND_ARGS.codex.signIn,
+          signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.codex.signOut,
+        }),
       } satisfies ProviderInstance;
     }),
 };

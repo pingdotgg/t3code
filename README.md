@@ -13,13 +13,13 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build and OpenCode. Install and authenticate at least one provider before use:
+> T3 Code currently supports Codex, Claude, Cursor, Grok Build and OpenCode. Install at least one provider before use. After T3 Code opens, its setup flow can authenticate the CLI in the environment that runs the server:
 >
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
-> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+> - Codex: [Codex CLI](https://developers.openai.com/codex/cli)
+> - Claude: [Claude Code](https://claude.com/product/claude-code)
+> - Cursor: [Cursor CLI](https://cursor.com/cli)
+> - Grok Build: [Grok Build CLI](https://x.ai/cli)
+> - OpenCode: [OpenCode](https://opencode.ai)
 
 ### Try it out (install-free)
 
@@ -32,6 +32,16 @@ npx t3@latest
 This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
 
 Tip: Use `npx t3@latest --help` for the full CLI reference.
+
+### Docker Compose
+
+The repository includes a Compose setup with Codex, Claude Code, Cursor Agent,
+Grok, and OpenCode preinstalled. Workspaces, T3 Code state, and provider
+authentication all live in dedicated Docker volumes, with no host filesystem
+or credential mounts.
+
+See [Run T3 Code with Docker Compose](docs/user/containers.md) for setup,
+authentication, and host-permission details.
 
 ### Desktop app
 

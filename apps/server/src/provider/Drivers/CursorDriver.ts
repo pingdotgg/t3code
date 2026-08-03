@@ -41,6 +41,10 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeProviderAuthenticationCapability,
+  PROVIDER_AUTH_COMMAND_ARGS,
+} from "../providerAuthentication.ts";
+import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -183,6 +187,12 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        authentication: makeProviderAuthenticationCapability({
+          command: effectiveConfig.binaryPath,
+          env: { ...processEnv, NO_OPEN_BROWSER: "1" },
+          signInArgs: PROVIDER_AUTH_COMMAND_ARGS.cursor.signIn,
+          signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.cursor.signOut,
+        }),
       } satisfies ProviderInstance;
     }),
 };

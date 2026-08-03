@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderAuthManagement,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -292,6 +293,9 @@ export const ProviderRegistryLive = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
+    const authSessionStatesRef = yield* Ref.make<
+      ReadonlyMap<ProviderInstanceId, ServerProviderAuthManagement["activeSession"]>
+    >(new Map());
 
     // Live-source registry — the dynamic counterpart to the boot-time
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
@@ -321,7 +325,8 @@ export const ProviderRegistryLive = Layer.effect(
           cacheDir: config.providerStatusCacheDir,
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
-        yield* writeProviderStatusCache({ filePath, provider }).pipe(
+        const { authManagement: _authManagement, ...persistedProvider } = provider;
+        yield* writeProviderStatusCache({ filePath, provider: persistedProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.tapError(Effect.logError),
@@ -334,13 +339,22 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      if (!updateState) {
-        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
-        return providerWithoutUpdateState;
-      }
+      const instance = yield* instanceRegistry.getInstance(provider.instanceId);
+      const authentication = instance?.authentication;
+      const authSessionStates = yield* Ref.get(authSessionStatesRef);
+      const { updateState: _updateState, authManagement: _authManagement, ...base } = provider;
       return {
-        ...provider,
-        updateState,
+        ...base,
+        ...(updateState ? { updateState } : {}),
+        ...(authentication
+          ? {
+              authManagement: {
+                canSignIn: authentication.canSignIn,
+                canSignOut: authentication.canSignOut,
+                activeSession: authSessionStates.get(provider.instanceId) ?? null,
+              },
+            }
+          : {}),
       };
     });
 
@@ -448,6 +462,25 @@ export const ProviderRegistryLive = Layer.effect(
         });
       },
     );
+
+    const setProviderAuthSessionState = Effect.fn("setProviderAuthSessionState")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly activeSession: ServerProviderAuthManagement["activeSession"];
+    }) {
+      yield* Ref.update(authSessionStatesRef, (previous) => {
+        const next = new Map(previous);
+        if (input.activeSession === null) next.delete(input.instanceId);
+        else next.set(input.instanceId, input.activeSession);
+        return next;
+      });
+      const existingProviders = yield* Ref.get(providersRef);
+      const matchingProvider = existingProviders.find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (!matchingProvider) return existingProviders;
+      const nextProvider = yield* applyProviderUpdateState(matchingProvider);
+      return yield* upsertProviders([nextProvider], { persist: false });
+    });
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
@@ -627,6 +660,13 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
+        yield* Ref.update(authSessionStatesRef, (previous) => {
+          const next = new Map(previous);
+          for (const instanceId of previous.keys()) {
+            if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
+          }
+          return next;
+        });
       }),
     );
     const syncLiveSourcesAndContinue = syncLiveSources.pipe(
@@ -712,6 +752,7 @@ export const ProviderRegistryLive = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      setProviderAuthSessionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

@@ -10,6 +10,7 @@ export * from "./ipc.ts";
 export * from "./terminal.ts";
 export * from "./provider.ts";
 export * from "./providerInstance.ts";
+export * from "./providerAuth.ts";
 export * from "./providerRuntime.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";

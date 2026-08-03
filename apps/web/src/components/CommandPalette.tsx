@@ -34,6 +34,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   LinkIcon,
+  LogInIcon,
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -66,6 +67,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { useProviderAuthController } from "./provider-auth/ProviderAuthController";
 import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -550,6 +552,7 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { openProviderAuth } = useProviderAuthController();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
@@ -1405,6 +1408,35 @@ function OpenCommandPaletteDialog(props: {
       openOverlayMode("files");
     },
   });
+
+  for (const provider of providers) {
+    const authentication = provider.authManagement;
+    const activeSession = authentication?.activeSession;
+    if (
+      primaryEnvironmentId === null ||
+      !authentication ||
+      (!activeSession && (provider.auth.status !== "unauthenticated" || !authentication.canSignIn))
+    ) {
+      continue;
+    }
+    const displayName = provider.displayName?.trim() || provider.driver;
+    actionItems.push({
+      kind: "action",
+      value: `action:provider-auth:${provider.instanceId}`,
+      searchTerms: ["provider", "account", "login", "sign in", displayName],
+      title: activeSession ? `Continue ${displayName} sign-in` : `Sign in to ${displayName}`,
+      icon: <LogInIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openProviderAuth({
+          environmentId: primaryEnvironmentId,
+          instanceId: provider.instanceId,
+          displayName,
+          action: activeSession?.action ?? "signIn",
+          ...(activeSession ? { activeSessionId: activeSession.sessionId } : {}),
+        });
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

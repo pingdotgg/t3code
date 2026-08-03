@@ -73,7 +73,6 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
-
   it("decodes optional legacy model metadata", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -96,6 +95,30 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.models[0]?.isLegacy).toBe(true);
+  });
+
+  it("decodes volatile provider authentication session metadata", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "warning",
+      auth: { status: "unauthenticated" },
+      authManagement: {
+        canSignIn: true,
+        canSignOut: true,
+        activeSession: { sessionId: "auth-1", action: "signIn" },
+      },
+      checkedAt: "2026-08-03T00:00:00.000Z",
+      models: [],
+    });
+
+    expect(parsed.authManagement?.activeSession).toEqual({
+      sessionId: "auth-1",
+      action: "signIn",
+    });
   });
 });
 

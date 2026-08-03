@@ -10,6 +10,7 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderAuthManagement,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -67,6 +68,12 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /** Project volatile authentication capability/session state onto snapshots. */
+  readonly setProviderAuthSessionState: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly activeSession: ServerProviderAuthManagement["activeSession"];
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

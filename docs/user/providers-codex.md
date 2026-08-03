@@ -22,7 +22,10 @@ CODEX_HOME path: ~/.codex
 Shadow home path: empty
 ```
 
-Log in with Codex normally:
+Choose **Sign in** on the Codex provider row in T3 Code. This uses Codex's
+device-auth flow and opens the correct `CODEX_HOME` for that provider instance.
+
+The equivalent manual command is:
 
 ```bash
 codex login
@@ -47,7 +50,7 @@ The idea is:
 
 ### Set Up The First Account
 
-Log in normally:
+Choose **Sign in** on the Codex Work row, or log in manually:
 
 ```bash
 codex login
@@ -65,7 +68,8 @@ Shadow home path: empty
 
 ### Set Up The Second Account
 
-Log in with a separate Codex home:
+After adding the second provider, choose **Sign in** on its row. T3 Code uses
+the configured shadow home automatically. The equivalent manual command is:
 
 ```bash
 mkdir -p ~/.codex_p
