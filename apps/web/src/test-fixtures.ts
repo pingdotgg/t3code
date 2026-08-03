@@ -124,6 +124,11 @@ export function makeThreadFixture(overrides: ThreadFixtureOverrides = {}): Threa
     createdAt,
     updatedAt,
     archivedAt,
+    settledOverride: overrides.settledOverride ?? null,
+    settledAt:
+      overrides.settledAt === null || overrides.settledAt === undefined
+        ? null
+        : DateTime.makeUnsafe(overrides.settledAt),
     deletedAt,
   });
 

@@ -2,9 +2,12 @@ import { type ReactNode } from "react";
 
 import { isElectron } from "~/env";
 import {
+  getPreviewPanelMaxWidth,
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
+
+export { getPreviewPanelMaxWidth };
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";

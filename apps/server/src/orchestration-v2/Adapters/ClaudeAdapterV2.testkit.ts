@@ -23,6 +23,9 @@ import * as Stream from "effect/Stream";
 import { ServerConfig } from "../../config.ts";
 import {
   CLAUDE_PROVIDER,
+  CLAUDE_DEFAULT_INSTANCE_ID,
+  CLAUDE_DRIVER_KIND,
+  ClaudeAdapterV2Driver,
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
   makeClaudeUserMessage,
@@ -159,6 +162,11 @@ export const ClaudeAgentSdkReplayError = Schema.Union([
   ClaudeReplayDriverError,
 ]);
 export type ClaudeAgentSdkReplayError = typeof ClaudeAgentSdkReplayError.Type;
+export const ClaudeOrchestratorReplayHarnessError = Schema.Union([
+  ClaudeAgentSdkReplayError,
+  ProviderAdapterDriverCreateError,
+]);
+export type ClaudeOrchestratorReplayHarnessError = typeof ClaudeOrchestratorReplayHarnessError.Type;
 
 interface ClaudeQueryOpenFrame {
   readonly type: "query.open";
@@ -761,7 +769,6 @@ export function makeClaudeProviderAdapterRegistryReplayLayer(
       ),
     ),
   );
-  return layerFromProviderAdapter.pipe(Layer.provide(adapterLayer));
 }
 
 export async function replayClaudeAgentSdkTranscript(input: {
@@ -2405,7 +2412,7 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
 
 export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   ClaudeAgentSdkReplayTranscript,
-  ClaudeAgentSdkReplayError
+  ClaudeOrchestratorReplayHarnessError
 > = {
   driver: CLAUDE_PROVIDER,
   decodeTranscript: (transcript) =>

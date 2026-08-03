@@ -31,6 +31,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -1094,6 +1095,10 @@ export const layer: Layer.Layer<
             return;
           }
 
+          // A provider turn is a sign that the session is still alive. Keep
+          // its already-issued MCP credential valid even when the agent goes
+          // a long time between browser-tool calls.
+          yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
           yield* input.session
             .startTurn({
               appThread: input.appThread,
