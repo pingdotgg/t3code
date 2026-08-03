@@ -733,7 +733,10 @@ export const makeCodexSessionRuntime = (
       ...options.environment,
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
-    const extendEnv = options.environment === undefined;
+    // Codex discovers personal skills from `$HOME/.agents/skills`. Provider
+    // environment overrides must not prevent the app-server from inheriting
+    // host variables such as HOME/USERPROFILE.
+    const extendEnv = true;
     const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,

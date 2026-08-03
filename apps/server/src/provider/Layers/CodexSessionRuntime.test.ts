@@ -1,10 +1,13 @@
 import * as NodeAssert from "node:assert/strict";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
 import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -18,6 +21,7 @@ import {
   buildTurnStartParams,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
+  makeCodexSessionRuntime,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -37,6 +41,47 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
       "Failed to generate Codex App Server identifier for provider-event.",
     );
   });
+});
+
+it.layer(NodeServices.layer)("CodexSessionRuntime process environment", (it) => {
+  it.effect("inherits host variables when provider environment overrides are present", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let spawnedCommand: unknown;
+        const spawner = ChildProcessSpawner.make((command) => {
+          spawnedCommand = command;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "expected test spawn failure",
+            }),
+          );
+        });
+
+        yield* makeCodexSessionRuntime({
+          threadId: ThreadId.make("thread-1"),
+          binaryPath: "codex",
+          cwd: "/tmp/project",
+          runtimeMode: "full-access",
+          environment: { T3_TEST_OVERRIDE: "enabled" },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.flip,
+        );
+
+        const command = spawnedCommand as {
+          readonly options?: {
+            readonly env?: NodeJS.ProcessEnv;
+            readonly extendEnv?: boolean;
+          };
+        };
+        NodeAssert.equal(command.options?.extendEnv, true);
+        NodeAssert.equal(command.options?.env?.T3_TEST_OVERRIDE, "enabled");
+      }),
+    ),
+  );
 });
 
 function makeThreadOpenResponse(
