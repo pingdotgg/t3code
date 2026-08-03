@@ -2,13 +2,15 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { openExternalMock, writeTextMock } = vi.hoisted(() => ({
+const { beepMock, openExternalMock, writeTextMock } = vi.hoisted(() => ({
+  beepMock: vi.fn(),
   openExternalMock: vi.fn(),
   writeTextMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
   shell: {
+    beep: beepMock,
     openExternal: openExternalMock,
   },
   clipboard: {
@@ -20,9 +22,20 @@ import * as ElectronShell from "./ElectronShell.ts";
 
 describe("ElectronShell", () => {
   beforeEach(() => {
+    beepMock.mockReset();
     openExternalMock.mockReset();
     writeTextMock.mockReset();
   });
+
+  it.effect("plays the native beep", () =>
+    Effect.gen(function* () {
+      const electronShell = yield* ElectronShell.ElectronShell;
+
+      yield* electronShell.beep;
+
+      assert.equal(beepMock.mock.calls.length, 1);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
 
   it.effect("opens safe external URLs", () =>
     Effect.gen(function* () {

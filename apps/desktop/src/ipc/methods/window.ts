@@ -268,3 +268,18 @@ export const openExternal = DesktopIpc.makeIpcMethod({
     return yield* shell.openExternal(url);
   }),
 });
+
+export const playTurnCompletionSound = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PLAY_TURN_COMPLETION_SOUND_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.playTurnCompletionSound")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "linux") {
+      return;
+    }
+
+    const shell = yield* ElectronShell.ElectronShell;
+    yield* shell.beep;
+  }),
+});

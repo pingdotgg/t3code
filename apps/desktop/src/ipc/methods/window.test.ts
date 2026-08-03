@@ -5,10 +5,16 @@ import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  playTurnCompletionSound,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -142,6 +148,52 @@ describe("getWindowFullscreenState", () => {
         Layer.mock(ElectronWindow.ElectronWindow)({
           currentMainOrFirst: Effect.succeed(Option.some(window)),
         }),
+      ),
+    );
+  });
+});
+
+describe("playTurnCompletionSound", () => {
+  it.effect("plays the native beep on Linux", () => {
+    let beepCount = 0;
+
+    return Effect.gen(function* () {
+      yield* playTurnCompletionSound.handler(undefined);
+      assert.equal(beepCount, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "linux",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Layer.mock(ElectronShell.ElectronShell)({
+            beep: Effect.sync(() => {
+              beepCount += 1;
+            }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does nothing on other desktop platforms", () => {
+    let beepCount = 0;
+
+    return Effect.gen(function* () {
+      yield* playTurnCompletionSound.handler(undefined);
+      assert.equal(beepCount, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "darwin",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Layer.mock(ElectronShell.ElectronShell)({
+            beep: Effect.sync(() => {
+              beepCount += 1;
+            }),
+          }),
+        ),
       ),
     );
   });
