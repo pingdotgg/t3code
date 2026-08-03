@@ -589,6 +589,7 @@ export interface ChatComposerProps {
   composerRef: React.RefObject<ChatComposerHandle | null>;
 
   // Callbacks
+  onPromptMutation?: () => void;
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -677,6 +678,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onPromptMutation,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -1212,6 +1214,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         scheduleComposerFocus();
         return;
       }
+      onPromptMutation?.();
       promptRef.current = nextPrompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
@@ -1219,7 +1222,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
       scheduleComposerFocus();
     },
-    [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
+    [
+      composerDraftTarget,
+      onPromptMutation,
+      promptRef,
+      scheduleComposerFocus,
+      setComposerDraftPrompt,
+    ],
   );
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
@@ -1308,6 +1317,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       if (contextIndex < 0) return;
       const removal = removeInlineTerminalContextPlaceholder(promptRef.current, contextIndex);
+      onPromptMutation?.();
       promptRef.current = removal.prompt;
       setPrompt(removal.prompt);
       removeComposerDraftTerminalContext(composerDraftTarget, contextId);
@@ -1319,6 +1329,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerDraftTarget,
       composerTerminalContexts,
       promptRef,
+      onPromptMutation,
       removeComposerDraftTerminalContext,
       setPrompt,
     ],
@@ -1555,6 +1566,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       terminalContextIds: string[],
     ) => {
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
+        if (nextPrompt !== promptRef.current) onPromptMutation?.();
         setComposerCursor(nextCursor);
         setComposerTrigger(
           cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
@@ -1568,6 +1580,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         return;
       }
+      if (nextPrompt !== promptRef.current) onPromptMutation?.();
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
@@ -1584,6 +1597,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activePendingProgress?.activeQuestion,
       pendingUserInputs.length,
+      onPromptMutation,
       onChangeActivePendingUserInputCustomAnswer,
       promptRef,
       setPrompt,
@@ -1615,6 +1629,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
       const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
       const nextExpandedCursor = expandCollapsedComposerCursor(next.text, nextCursor);
+      if (next.text !== promptRef.current) onPromptMutation?.();
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
@@ -1641,6 +1656,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       onChangeActivePendingUserInputCustomAnswer,
+      onPromptMutation,
       promptRef,
       setPrompt,
     ],

@@ -314,6 +314,7 @@ import { useAssetUrls } from "../assets/assetUrls";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const EMPTY_CHAT_SELECTION_ANNOTATIONS: ReadonlyArray<ChatSelectionAnnotation> = [];
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -1247,6 +1248,11 @@ function ChatViewContent(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const composerChatSelectionAnnotations = useComposerDraftStore(
+    (store) =>
+      store.getComposerDraft(composerDraftTarget)?.chatSelectionAnnotations ??
+      EMPTY_CHAT_SELECTION_ANNOTATIONS,
+  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1264,6 +1270,9 @@ function ChatViewContent(props: ChatViewProps) {
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const addComposerDraftChatSelectionAnnotation = useComposerDraftStore(
     (store) => store.addChatSelectionAnnotation,
+  );
+  const removeComposerDraftChatSelectionAnnotation = useComposerDraftStore(
+    (store) => store.removeChatSelectionAnnotation,
   );
   const setComposerDraftChatSelectionAnnotations = useComposerDraftStore(
     (store) => store.setChatSelectionAnnotations,
@@ -1283,6 +1292,7 @@ function ChatViewContent(props: ChatViewProps) {
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const promptRef = useRef("");
+  const composerMutationVersionRef = useRef(0);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
@@ -2632,6 +2642,9 @@ function ChatViewContent(props: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const markComposerMutation = useCallback(() => {
+    composerMutationVersionRef.current += 1;
+  }, []);
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
@@ -2640,13 +2653,45 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const addChatSelectionAnnotation = useCallback(
     (input: Omit<ChatSelectionAnnotation, "id">) => {
+      markComposerMutation();
       addComposerDraftChatSelectionAnnotation(composerDraftTarget, {
         id: randomUUID(),
         ...input,
       });
       scheduleComposerFocus();
     },
-    [addComposerDraftChatSelectionAnnotation, composerDraftTarget, scheduleComposerFocus],
+    [
+      addComposerDraftChatSelectionAnnotation,
+      composerDraftTarget,
+      markComposerMutation,
+      scheduleComposerFocus,
+    ],
+  );
+  const updateChatSelectionAnnotation = useCallback(
+    (annotationId: string, comment: string) => {
+      const annotation = composerChatSelectionAnnotations.find(
+        (candidate) => candidate.id === annotationId,
+      );
+      if (!annotation) return;
+      markComposerMutation();
+      addComposerDraftChatSelectionAnnotation(composerDraftTarget, {
+        ...annotation,
+        comment,
+      });
+    },
+    [
+      addComposerDraftChatSelectionAnnotation,
+      composerChatSelectionAnnotations,
+      composerDraftTarget,
+      markComposerMutation,
+    ],
+  );
+  const removeChatSelectionAnnotation = useCallback(
+    (annotationId: string) => {
+      markComposerMutation();
+      removeComposerDraftChatSelectionAnnotation(composerDraftTarget, annotationId);
+    },
+    [composerDraftTarget, markComposerMutation, removeComposerDraftChatSelectionAnnotation],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -5200,6 +5245,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (!trimmed) {
         return;
       }
+      const submittedComposerMutationVersion = composerMutationVersionRef.current;
 
       const sendCtx = composerRef.current?.getSendContext();
       if (!sendCtx?.providerAvailable) {
@@ -5331,6 +5377,8 @@ function ChatViewContent(props: ChatViewProps) {
         shouldRestoreClearedPlanFollowUpDraft({
           currentPrompt: promptRef.current,
           currentChatSelectionAnnotationCount: currentDraft?.chatSelectionAnnotations.length ?? 0,
+          currentComposerMutationVersion: composerMutationVersionRef.current,
+          submittedComposerMutationVersion,
         })
       ) {
         promptRef.current = draftTextToRestore;
@@ -5912,6 +5960,9 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 onAddChatSelectionAnnotation={addChatSelectionAnnotation}
+                onUpdateChatSelectionAnnotation={updateChatSelectionAnnotation}
+                onRemoveChatSelectionAnnotation={removeChatSelectionAnnotation}
+                chatSelectionAnnotations={composerChatSelectionAnnotations}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6040,6 +6091,7 @@ function ChatViewContent(props: ChatViewProps) {
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
                             gitCwd={gitCwd}
                             promptRef={promptRef}
+                            onPromptMutation={markComposerMutation}
                             composerImagesRef={composerImagesRef}
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}

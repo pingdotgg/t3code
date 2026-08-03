@@ -3310,18 +3310,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           if (!threadKey || !isChatSelectionAnnotation(annotation)) return;
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
-            if (existing.chatSelectionAnnotations.some((entry) => entry.id === annotation.id)) {
-              return state;
-            }
+            const existingIndex = existing.chatSelectionAnnotations.findIndex(
+              (entry) => entry.id === annotation.id,
+            );
+            const chatSelectionAnnotations =
+              existingIndex === -1
+                ? [...existing.chatSelectionAnnotations, { ...annotation }]
+                : existing.chatSelectionAnnotations.map((entry, index) =>
+                    index === existingIndex ? { ...annotation } : entry,
+                  );
             return {
               draftsByThreadKey: {
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  chatSelectionAnnotations: [
-                    ...existing.chatSelectionAnnotations,
-                    { ...annotation },
-                  ],
+                  chatSelectionAnnotations,
                 },
               },
             };

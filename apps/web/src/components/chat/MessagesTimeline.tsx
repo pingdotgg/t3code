@@ -109,6 +109,7 @@ import {
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
+  collectChatSelectionAnnotationsByMessageId,
   parseChatSelectionMessageSegments,
   stripAppendedChatSelectionAnnotations,
   type ChatSelectionAnnotation,
@@ -142,6 +143,11 @@ interface TimelineRowSharedState {
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
   onAddChatSelectionAnnotation: (annotation: Omit<ChatSelectionAnnotation, "id">) => void;
+  onUpdateChatSelectionAnnotation: (annotationId: string, comment: string) => void;
+  onRemoveChatSelectionAnnotation: (annotationId: string) => void;
+  pendingChatSelectionAnnotationIds: ReadonlySet<string>;
+  chatSelectionAnnotationNumberById: ReadonlyMap<string, number>;
+  chatSelectionAnnotationsByMessageId: ReadonlyMap<string, ReadonlyArray<ChatSelectionAnnotation>>;
 }
 
 interface TimelineRowActivityState {
@@ -156,6 +162,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const EMPTY_TIMELINE_CHAT_SELECTION_ANNOTATIONS: ReadonlyArray<ChatSelectionAnnotation> = [];
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 // ---------------------------------------------------------------------------
@@ -192,6 +199,9 @@ interface MessagesTimelineProps {
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   onAddChatSelectionAnnotation: (annotation: Omit<ChatSelectionAnnotation, "id">) => void;
+  onUpdateChatSelectionAnnotation: (annotationId: string, comment: string) => void;
+  onRemoveChatSelectionAnnotation: (annotationId: string) => void;
+  chatSelectionAnnotations?: ReadonlyArray<ChatSelectionAnnotation>;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +238,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   onAddChatSelectionAnnotation,
+  onUpdateChatSelectionAnnotation,
+  onRemoveChatSelectionAnnotation,
+  chatSelectionAnnotations = EMPTY_TIMELINE_CHAT_SELECTION_ANNOTATIONS,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -331,6 +344,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
+  );
+  const chatSelectionAnnotationsByMessageId = useMemo(
+    () => collectChatSelectionAnnotationsByMessageId(chatSelectionAnnotations),
+    [chatSelectionAnnotations],
+  );
+  const pendingChatSelectionAnnotationIds = useMemo(
+    () => new Set(chatSelectionAnnotations.map((annotation) => annotation.id)),
+    [chatSelectionAnnotations],
+  );
+  const chatSelectionAnnotationNumberById = useMemo(
+    () => new Map(chatSelectionAnnotations.map((annotation, index) => [annotation.id, index + 1])),
+    [chatSelectionAnnotations],
   );
   const rows = useStableRows(rawRows);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
@@ -440,6 +465,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
       onToggleWorkGroup,
       onAddChatSelectionAnnotation,
+      onUpdateChatSelectionAnnotation,
+      onRemoveChatSelectionAnnotation,
+      pendingChatSelectionAnnotationIds,
+      chatSelectionAnnotationNumberById,
+      chatSelectionAnnotationsByMessageId,
     }),
     [
       timestampFormat,
@@ -455,6 +485,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
       onToggleWorkGroup,
       onAddChatSelectionAnnotation,
+      onUpdateChatSelectionAnnotation,
+      onRemoveChatSelectionAnnotation,
+      pendingChatSelectionAnnotationIds,
+      chatSelectionAnnotationNumberById,
+      chatSelectionAnnotationsByMessageId,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -901,10 +936,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const userPromptText =
     chatSelectionAnnotations.length > 0
-      ? chatSelectionSegments
-          .flatMap((segment) => (segment.kind === "text" ? [segment.text] : []))
-          .join("")
-          .trim()
+      ? stripAppendedChatSelectionAnnotations(elementContextState.promptText)
       : elementContextState.promptText;
   const userCopyText =
     chatSelectionAnnotations.length > 0
@@ -1067,6 +1099,9 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const selectionAnnotations =
+    ctx.chatSelectionAnnotationsByMessageId.get(row.message.id) ??
+    EMPTY_TIMELINE_CHAT_SELECTION_ANNOTATIONS;
 
   return (
     <>
@@ -1077,7 +1112,20 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           threadRef={ctx.threadRef ?? undefined}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
-          onTextSelection={ctx.onAddChatSelectionAnnotation}
+          annotations={selectionAnnotations}
+          indicatorNumberByAnnotationId={ctx.chatSelectionAnnotationNumberById}
+          editableAnnotationIds={ctx.pendingChatSelectionAnnotationIds}
+          onUpdateAnnotation={ctx.onUpdateChatSelectionAnnotation}
+          onRemoveAnnotation={ctx.onRemoveChatSelectionAnnotation}
+          onTextSelection={
+            row.message.text
+              ? (input) =>
+                  ctx.onAddChatSelectionAnnotation({
+                    ...input,
+                    messageId: row.message.id,
+                  })
+              : undefined
+          }
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}

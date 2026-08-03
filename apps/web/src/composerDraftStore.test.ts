@@ -730,6 +730,7 @@ describe("composerDraftStore chat selection annotations", () => {
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
   const annotation = {
     id: "selection-1",
+    messageId: "assistant-message-1",
     selectedText: "Restart the adapter, then retry OAuth.",
     comment: "Why is this needed?",
   } as const;
@@ -738,7 +739,7 @@ describe("composerDraftStore chat selection annotations", () => {
     resetComposerDraftStore();
   });
 
-  it("adds and removes annotations in source order", () => {
+  it("updates annotations without changing their source order", () => {
     const store = useComposerDraftStore.getState();
     store.addChatSelectionAnnotation(threadRef, annotation);
     store.addChatSelectionAnnotation(threadRef, {
@@ -746,9 +747,10 @@ describe("composerDraftStore chat selection annotations", () => {
       id: "selection-2",
       selectedText: "Retry OAuth.",
     });
+    store.addChatSelectionAnnotation(threadRef, { ...annotation, comment: "Updated question." });
 
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.chatSelectionAnnotations).toEqual([
-      annotation,
+      { ...annotation, comment: "Updated question." },
       { ...annotation, id: "selection-2", selectedText: "Retry OAuth." },
     ]);
 

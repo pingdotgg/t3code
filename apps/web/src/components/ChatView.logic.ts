@@ -31,8 +31,14 @@ export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.
 export function shouldRestoreClearedPlanFollowUpDraft(input: {
   readonly currentPrompt: string;
   readonly currentChatSelectionAnnotationCount: number;
+  readonly currentComposerMutationVersion: number;
+  readonly submittedComposerMutationVersion: number;
 }): boolean {
-  return input.currentPrompt.length === 0 && input.currentChatSelectionAnnotationCount === 0;
+  return (
+    input.currentPrompt.length === 0 &&
+    input.currentChatSelectionAnnotationCount === 0 &&
+    input.currentComposerMutationVersion === input.submittedComposerMutationVersion
+  );
 }
 
 export function startNewThreadForProject(

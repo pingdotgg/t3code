@@ -38,18 +38,32 @@ describe("shouldRestoreClearedPlanFollowUpDraft", () => {
       shouldRestoreClearedPlanFollowUpDraft({
         currentPrompt: "",
         currentChatSelectionAnnotationCount: 0,
+        currentComposerMutationVersion: 0,
+        submittedComposerMutationVersion: 0,
       }),
     ).toBe(true);
     expect(
       shouldRestoreClearedPlanFollowUpDraft({
         currentPrompt: "new draft",
         currentChatSelectionAnnotationCount: 0,
+        currentComposerMutationVersion: 1,
+        submittedComposerMutationVersion: 0,
       }),
     ).toBe(false);
     expect(
       shouldRestoreClearedPlanFollowUpDraft({
         currentPrompt: "",
         currentChatSelectionAnnotationCount: 1,
+        currentComposerMutationVersion: 1,
+        submittedComposerMutationVersion: 0,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRestoreClearedPlanFollowUpDraft({
+        currentPrompt: "",
+        currentChatSelectionAnnotationCount: 0,
+        currentComposerMutationVersion: 1,
+        submittedComposerMutationVersion: 0,
       }),
     ).toBe(false);
   });
