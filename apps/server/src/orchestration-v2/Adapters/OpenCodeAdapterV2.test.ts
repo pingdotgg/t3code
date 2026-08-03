@@ -158,6 +158,17 @@ describe("OpenCodeAdapterV2", () => {
     );
     assert.equal(permissionAction(granularApproval, "bash"), "ask");
     assert.equal(permissionAction(granularApproval, "read"), "allow");
+
+    const approvalRequiredWorkspaceWrite = openCodePermissionRules(
+      runtimePolicy("approval-required", {
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: ["/tmp/opencode-workspace"],
+          networkAccess: false,
+        },
+      }),
+    );
+    assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
   });
 
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {

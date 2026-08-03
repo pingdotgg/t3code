@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("039_ApplicationEventSource", (it) => {
+layer("040_ApplicationEventSource", (it) => {
   it.effect("moves V2 events and current project state behind one global sequence", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
