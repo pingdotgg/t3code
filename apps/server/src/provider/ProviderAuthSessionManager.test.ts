@@ -12,13 +12,13 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
-import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
-import { makeProviderAuthenticationCapability } from "../providerAuthentication.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
-import { makeProviderRegistryMock } from "../testUtils/providerRegistryMock.ts";
-import { make } from "../ProviderAuthSessionManager.ts";
+import * as PtyAdapter from "../terminal/PtyAdapter.ts";
+import type { ProviderInstance } from "./ProviderDriver.ts";
+import * as ProviderAuthSessionManager from "./ProviderAuthSessionManager.ts";
+import { makeProviderAuthenticationCapability } from "./providerAuthentication.ts";
+import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "./testUtils/providerRegistryMock.ts";
 
 const INSTANCE_ID = ProviderInstanceId.make("codex");
 const PROVIDER: ServerProvider = {
@@ -138,7 +138,7 @@ describe("ProviderAuthSessionManager", () => {
       const output = yield* Deferred.make<ProviderAuthAttachStreamEvent>();
       const settled = yield* Deferred.make<ProviderAuthAttachStreamEvent>();
       const program = Effect.gen(function* () {
-        const manager = yield* make();
+        const manager = yield* ProviderAuthSessionManager.make();
         const first = yield* manager.start({
           instanceId: INSTANCE_ID,
           action: "signIn",
@@ -194,7 +194,7 @@ describe("ProviderAuthSessionManager", () => {
     Effect.gen(function* () {
       const harness = testHarness({ yieldBeforeSpawn: true });
       const program = Effect.gen(function* () {
-        const manager = yield* make();
+        const manager = yield* ProviderAuthSessionManager.make();
         const [first, second] = yield* Effect.all(
           [
             manager.start({ instanceId: INSTANCE_ID, action: "signIn" }),
@@ -214,7 +214,7 @@ describe("ProviderAuthSessionManager", () => {
     Effect.gen(function* () {
       const harness = testHarness({ exitOnSpawn: true });
       const program = Effect.gen(function* () {
-        const manager = yield* make();
+        const manager = yield* ProviderAuthSessionManager.make();
         const session = yield* manager.start({ instanceId: INSTANCE_ID, action: "signIn" });
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -243,7 +243,7 @@ describe("ProviderAuthSessionManager", () => {
       const harness = testHarness({ refreshedAuth: "unknown" });
       const settled = yield* Deferred.make<ProviderAuthSessionSnapshot>();
       const program = Effect.gen(function* () {
-        const manager = yield* make();
+        const manager = yield* ProviderAuthSessionManager.make();
         const session = yield* manager.start({ instanceId: INSTANCE_ID, action: "signIn" });
         yield* manager.attachStream({ sessionId: session.sessionId }, (event) =>
           event.type === "settled" ? Deferred.succeed(settled, event.snapshot) : Effect.void,
@@ -262,7 +262,7 @@ describe("ProviderAuthSessionManager", () => {
     Effect.gen(function* () {
       const harness = testHarness();
       const program = Effect.gen(function* () {
-        const manager = yield* make();
+        const manager = yield* ProviderAuthSessionManager.make();
         const session = yield* manager.start({ instanceId: INSTANCE_ID, action: "signIn" });
         const conflict = yield* Effect.flip(
           manager.start({ instanceId: INSTANCE_ID, action: "signOut" }),

@@ -104,7 +104,7 @@ when a request opens (approval) or user input is requested, via
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts
-[auth-manager]: ../../apps/server/src/provider/Layers/ProviderAuthSessionManager.ts
+[auth-manager]: ../../apps/server/src/provider/ProviderAuthSessionManager.ts
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts

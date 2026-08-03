@@ -97,6 +97,8 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
   const { resolvedTheme } = useTheme();
+  const resolvedThemeRef = useRef(resolvedTheme);
+  resolvedThemeRef.current = resolvedTheme;
   const write = useAtomCommand(providerAuthEnvironment.write, { reportFailure: false });
   const resize = useAtomCommand(providerAuthEnvironment.resize, { reportFailure: false });
   const cancel = useAtomCommand(providerAuthEnvironment.cancel, { reportFailure: false });
@@ -120,7 +122,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
     setTranscript("");
     setTerminalError(null);
     void GhosttyTerminalSurface.create(mount, {
-      theme: authTerminalTheme(resolvedTheme),
+      theme: authTerminalTheme(resolvedThemeRef.current),
       onData: (data) => {
         void write({ environmentId: state.environmentId, input: { sessionId, data } });
       },
@@ -139,6 +141,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
         }
         surface = created;
         terminalRef.current = created;
+        created.setTheme(authTerminalTheme(resolvedThemeRef.current));
         writtenHistoryRef.current = latestHistoryRef.current;
         if (writtenHistoryRef.current) created.resetAndWrite(writtenHistoryRef.current);
         setTranscript(created.getTranscript());
@@ -151,7 +154,6 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
             ? cause.message
             : "Could not initialize the authentication terminal.";
         setTerminalError(message);
-        void cancel({ environmentId: state.environmentId, input: { sessionId } });
       });
     return () => {
       disposed = true;
@@ -159,7 +161,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       if (terminalRef.current === surface) terminalRef.current = null;
       writtenHistoryRef.current = "";
     };
-  }, [cancel, resize, state.environmentId, state.sessionId, write]);
+  }, [resize, state.environmentId, state.sessionId, write]);
 
   useEffect(() => {
     terminalRef.current?.setTheme(authTerminalTheme(resolvedTheme));

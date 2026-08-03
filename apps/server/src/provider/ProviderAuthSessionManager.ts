@@ -72,7 +72,10 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
   const instanceChanges = yield* instances.subscribeChanges;
   const sessions = new Map<ProviderAuthSessionId, Session>();
   const activeByInstance = new Map<ProviderInstanceId, ProviderAuthSessionId>();
-  const startSemaphores = new Map<ProviderInstanceId, Semaphore.Semaphore>();
+  const startSemaphores = new Map<
+    ProviderInstanceId,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
 
   const publish = (session: Session, event: ProviderAuthAttachStreamEvent) =>
     Effect.forEach(session.listeners, (listener) => listener(event), {
@@ -339,10 +342,26 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     return session.snapshot;
   });
   const start: ProviderAuthSessionManager["Service"]["start"] = (input) => {
-    const existing = startSemaphores.get(input.instanceId);
-    const semaphore = existing ?? Semaphore.makeUnsafe(1);
-    if (!existing) startSemaphores.set(input.instanceId, semaphore);
-    return semaphore.withPermit(startUnlocked(input));
+    return Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const existing = startSemaphores.get(input.instanceId);
+        if (existing) {
+          existing.users += 1;
+          return existing;
+        }
+        const entry = { semaphore: Semaphore.makeUnsafe(1), users: 1 };
+        startSemaphores.set(input.instanceId, entry);
+        return entry;
+      }),
+      (entry) => entry.semaphore.withPermit(startUnlocked(input)),
+      (entry) =>
+        Effect.sync(() => {
+          entry.users -= 1;
+          if (entry.users === 0 && startSemaphores.get(input.instanceId) === entry) {
+            startSemaphores.delete(input.instanceId);
+          }
+        }),
+    );
   };
 
   const lookup = (sessionId: ProviderAuthSessionId) => {
