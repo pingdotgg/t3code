@@ -20,6 +20,7 @@ import {
 import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
+  previewAutomationInputWithRemainingTimeout,
   previewAutomationRemainingBudget,
   serializePreviewAutomationError,
 } from "./previewAutomationRequestConsumer";
@@ -81,6 +82,24 @@ describe("previewAutomationRequestConsumer", () => {
   it("reports an expired operation budget instead of clamping it to one millisecond", () => {
     expect(previewAutomationRemainingBudget(1_000, 15_000, 999)).toBe(1);
     expect(previewAutomationRemainingBudget(1_000, 15_000, 1_001)).toBe(-1);
+  });
+
+  it("clamps timeout-bearing desktop inputs to the remaining host budget", () => {
+    const remainingOperationBudget = vi.fn((requestedTimeoutMs: number) =>
+      Math.min(requestedTimeoutMs, 125),
+    );
+
+    expect(
+      previewAutomationInputWithRemainingTimeout(
+        { locator: "text=Continue", timeoutMs: 500 },
+        15_000,
+        remainingOperationBudget,
+      ),
+    ).toEqual({ locator: "text=Continue", timeoutMs: 125 });
+    expect(
+      previewAutomationInputWithRemainingTimeout({ text: "ready" }, 750, remainingOperationBudget),
+    ).toEqual({ text: "ready", timeoutMs: 125 });
+    expect(remainingOperationBudget.mock.calls).toEqual([[500], [750]]);
   });
 
   it("acknowledges a replacement stream before consuming requests from it", async () => {

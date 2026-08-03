@@ -256,6 +256,9 @@ export async function withPreviewAutomationBackgroundPresentation<A>(
     const stillBackground = !isPreviewAutomationTabPresented(input);
     const capture = input.use(stillBackground);
     captureStarted = true;
+    // Keep the finalized capture in the race: Promise.race retains its rejection
+    // handler after the deadline wins, so a delayed capture failure is observed
+    // while this finalizer releases the presentation lease.
     const operation = capture.finally(releaseCapture);
     const captureDeadline = new Promise<never>((_resolve, reject) => {
       timer = globalThis.setTimeout(() => reject(timeoutError()), remainingMs);

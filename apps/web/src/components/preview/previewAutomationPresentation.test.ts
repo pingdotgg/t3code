@@ -528,4 +528,59 @@ describe("preview automation presentation", () => {
       vi.useRealTimers();
     }
   });
+
+  it("handles a delayed capture rejection after the presentation deadline wins", async () => {
+    vi.useFakeTimers();
+    const runtimeTabId = addRuntimeTab("tab-background");
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [
+        {
+          dataset: {
+            previewViewport: runtimeTabId,
+            previewBackgroundCapture: "true",
+          },
+          offsetWidth: 800,
+        },
+      ],
+    });
+    vi.stubGlobal("window", {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    });
+    try {
+      let rejectOperation!: (cause: Error) => void;
+      const stalledOperation = new Promise<void>((_resolve, reject) => {
+        rejectOperation = reject;
+      });
+      const operation = withPreviewAutomationBackgroundPresentation({
+        threadRef,
+        requestId: "request-rejected-after-timeout",
+        tabId: "tab-background",
+        runtimeTabId,
+        timeoutMs: 40,
+        use: () => stalledOperation,
+      });
+      const rejection = expect(operation).rejects.toMatchObject({
+        _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
+        requestId: "request-rejected-after-timeout",
+        tabId: "tab-background",
+        timeoutMs: 40,
+      });
+
+      await vi.advanceTimersByTimeAsync(40);
+      await rejection;
+
+      rejectOperation(new Error("delayed desktop capture failure"));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId],
+      ).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
 });

@@ -67,6 +67,7 @@ import {
 import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
+  previewAutomationInputWithRemainingTimeout,
   previewAutomationRemainingBudget,
 } from "./previewAutomationRequestConsumer";
 import {
@@ -632,16 +633,26 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "click": {
             const ready = await requireReadyTab();
+            const input = request.input as Parameters<typeof ready.bridge.automation.click>[1];
             return await ready.bridge.automation.click(
               ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.click>[1],
+              previewAutomationInputWithRemainingTimeout(
+                input,
+                request.timeoutMs,
+                remainingOperationBudget,
+              ),
             );
           }
           case "type": {
             const ready = await requireReadyTab();
+            const input = request.input as Parameters<typeof ready.bridge.automation.type>[1];
             return await ready.bridge.automation.type(
               ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.type>[1],
+              previewAutomationInputWithRemainingTimeout(
+                input,
+                request.timeoutMs,
+                remainingOperationBudget,
+              ),
             );
           }
           case "press": {
@@ -667,9 +678,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "waitFor": {
             const ready = await requireReadyTab();
+            const input = request.input as Parameters<typeof ready.bridge.automation.waitFor>[1];
             return await ready.bridge.automation.waitFor(
               ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
+              previewAutomationInputWithRemainingTimeout(
+                input,
+                request.timeoutMs,
+                remainingOperationBudget,
+              ),
             );
           }
           case "recordingStart": {

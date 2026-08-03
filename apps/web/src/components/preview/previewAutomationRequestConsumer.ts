@@ -28,6 +28,15 @@ export const previewAutomationRemainingBudget = (
   now = Date.now(),
 ): number => Math.min(requestedTimeoutMs, operationDeadline - now);
 
+export const previewAutomationInputWithRemainingTimeout = <Input extends object>(
+  input: Input & { readonly timeoutMs?: number | undefined },
+  requestTimeoutMs: number,
+  remainingOperationBudget: (requestedTimeoutMs: number) => number,
+): Input & { readonly timeoutMs: number } => ({
+  ...input,
+  timeoutMs: remainingOperationBudget(input.timeoutMs ?? requestTimeoutMs),
+});
+
 const handleWithinResponseBudget = (
   request: PreviewAutomationRequest,
   environmentId: PreviewAutomationHost["environmentId"],
