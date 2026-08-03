@@ -150,7 +150,13 @@ describe("resolveWorkspaceDetailInvalidationAction", () => {
         ],
         overlayRouteNames: overlays,
       }),
-    ).toEqual({ type: "pop", count: 1, source: "thread" });
+    ).toEqual({
+      type: "reset",
+      routes: [
+        { key: "home", name: "Home" },
+        { key: "settings", name: "SettingsSheet" },
+      ],
+    });
   });
 
   it("removes the whole thread workspace stack below an overlay", () => {
@@ -161,6 +167,25 @@ describe("resolveWorkspaceDetailInvalidationAction", () => {
           { key: "thread", name: "Thread" },
           { key: "files", name: "ThreadFiles" },
           { key: "new-task", name: "NewTaskSheet" },
+        ],
+        overlayRouteNames: overlays,
+      }),
+    ).toEqual({
+      type: "reset",
+      routes: [
+        { key: "home", name: "Home" },
+        { key: "new-task", name: "NewTaskSheet" },
+      ],
+    });
+  });
+
+  it("pops the workspace stack when no overlay needs preserving", () => {
+    expect(
+      resolveWorkspaceDetailInvalidationAction({
+        routes: [
+          { key: "home", name: "Home" },
+          { key: "thread", name: "Thread" },
+          { key: "files", name: "ThreadFiles" },
         ],
         overlayRouteNames: overlays,
       }),

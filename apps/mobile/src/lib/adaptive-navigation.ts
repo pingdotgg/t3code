@@ -110,6 +110,14 @@ export function resolveWorkspaceDetailInvalidationAction<
     };
   }
 
+  const overlayRoutes = input.routes.slice(workspaceRouteIndex + 1);
+  if (overlayRoutes.length > 0) {
+    return {
+      type: "reset",
+      routes: [...input.routes.slice(0, homeRouteIndex + 1), ...overlayRoutes],
+    };
+  }
+
   return {
     type: "pop",
     count: workspaceRouteIndex - homeRouteIndex,
