@@ -49,12 +49,12 @@ import { previewBridge } from "./previewBridge";
 import {
   revealPreviewAutomationTab,
   waitForBrowserSurfaceVisibility,
+  waitForPreviewPresentation,
   withPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
 import {
   PreviewAutomationHostDeadlineExceededError,
   PreviewAutomationOperationError,
-  PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
@@ -64,6 +64,7 @@ import {
   resolvePreviewAutomationOpenWaitPolicy,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
+import { waitForDesktopOverlay } from "./previewAutomationOverlayReadiness";
 import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
@@ -82,44 +83,6 @@ import {
 } from "./previewAutomationTarget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
-
-const PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS = 500;
-
-const waitForPreviewPresentation = async (runtimeTabId: string): Promise<void> => {
-  const deadline = Date.now() + PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS;
-  while (Date.now() <= deadline) {
-    if (useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible) return;
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
-  }
-};
-
-const waitForDesktopOverlay = async (
-  threadRef: ScopedThreadRef,
-  requestId: string,
-  tabId: string,
-  runtimeTabId: string,
-  operation: PreviewAutomationRequest["operation"],
-  timeoutMs: number,
-): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    const state = assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
-      operation,
-      requestId,
-    });
-    if (state.desktopByTabId[tabId] && previewBridge) {
-      const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available) return;
-    }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
-  throw new PreviewAutomationOverlayTimeoutError({
-    requestId,
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
-    timeoutMs,
-  });
-};
 
 interface ExecutablePreviewWebview extends Element {
   readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
@@ -477,7 +440,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               // briefly so active-thread opens report visible=true, without
               // turning a background thread's offscreen mini player into an
               // operation failure.
-              await waitForPreviewPresentation(activeRuntimeTabId);
+              await waitForPreviewPresentation(activeRuntimeTabId, remainingOperationBudget());
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);

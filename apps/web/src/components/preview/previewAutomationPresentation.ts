@@ -146,6 +146,21 @@ export function isPreviewAutomationTabPresented(
   return requestedSurfaceIsActive && (presentation?.visible ?? false);
 }
 
+const PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS = 500;
+
+export async function waitForPreviewPresentation(
+  runtimeTabId: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + Math.min(PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS, timeoutMs);
+  while (true) {
+    if (useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible) return;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, Math.min(16, remainingMs)));
+  }
+}
+
 export async function waitForBrowserSurfaceVisibility(
   input: PreviewAutomationVisibilityInput,
 ): Promise<void> {

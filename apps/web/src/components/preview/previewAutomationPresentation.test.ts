@@ -18,6 +18,7 @@ import {
   readPreviewAutomationPresentationDiagnostics,
   revealPreviewAutomationTab,
   waitForBrowserSurfaceVisibility,
+  waitForPreviewPresentation,
   withPreviewAutomationBackgroundPresentation,
   waitForPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
@@ -258,6 +259,27 @@ describe("preview automation presentation", () => {
 
       await vi.advanceTimersByTimeAsync(40);
       await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("clamps best-effort presentation settling to the remaining operation budget", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    try {
+      const settled = vi.fn();
+      const presentation = waitForPreviewPresentation("tab-open", 40).then(settled);
+
+      await vi.advanceTimersByTimeAsync(39);
+      expect(settled).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await presentation;
+      expect(settled).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();
