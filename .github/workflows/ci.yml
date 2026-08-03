@@ -51,6 +51,12 @@ jobs:
       - name: Build desktop pipeline
         run: vp run build:desktop
 
+      - name: Upload web demo build
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3code-web-demo
+          path: apps/web/dist
+
       - name: Verify preload bundle output
         run: |
           test -f apps/desktop/dist-electron/preload.cjs
