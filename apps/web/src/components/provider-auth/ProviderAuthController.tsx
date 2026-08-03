@@ -7,7 +7,7 @@ import type {
 import { useAtomValue } from "@effect/atom-react";
 import { selectProviderAuthSetupCandidates } from "@t3tools/client-runtime/state/provider-auth";
 import * as Cause from "effect/Cause";
-import { LoaderIcon, SquareIcon } from "lucide-react";
+import { FileTextIcon, LoaderIcon, TerminalIcon } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -91,6 +91,10 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const writtenHistoryRef = useRef("");
   const latestHistoryRef = useRef("");
+  const [viewMode, setViewMode] = useState<"transcript" | "terminal">("transcript");
+  const [transcript, setTranscript] = useState("");
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
   const { resolvedTheme } = useTheme();
   const write = useAtomCommand(providerAuthEnvironment.write, { reportFailure: false });
   const resize = useAtomCommand(providerAuthEnvironment.resize, { reportFailure: false });
@@ -112,6 +116,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
     if (mount === null || sessionId === null) return;
     let disposed = false;
     let surface: GhosttyTerminalSurface | null = null;
+    setTranscript("");
     void GhosttyTerminalSurface.create(mount, {
       theme: authTerminalTheme(resolvedTheme),
       onData: (data) => {
@@ -133,7 +138,8 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       terminalRef.current = created;
       writtenHistoryRef.current = latestHistoryRef.current;
       if (writtenHistoryRef.current) created.resetAndWrite(writtenHistoryRef.current);
-      created.focus();
+      setTranscript(created.getTranscript());
+      if (viewModeRef.current === "terminal") created.focus();
     });
     return () => {
       disposed = true;
@@ -148,6 +154,16 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
   }, [resolvedTheme]);
 
   useEffect(() => {
+    const terminal = terminalRef.current;
+    if (terminal === null) return;
+    if (viewMode === "terminal") {
+      terminal.focus();
+    } else {
+      terminal.input.blur();
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
     const surface = terminalRef.current;
     const history = snapshot?.history ?? "";
     if (surface === null || history === writtenHistoryRef.current) return;
@@ -157,6 +173,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       surface.resetAndWrite(history);
     }
     writtenHistoryRef.current = history;
+    setTranscript(surface.getTranscript());
   }, [snapshot?.history]);
 
   const status = snapshot?.status;
@@ -164,11 +181,52 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
 
   return (
     <div className="space-y-3 px-6 pb-4">
-      <div
-        ref={mountRef}
-        className="relative h-[min(22rem,52vh)] overflow-hidden rounded-lg border bg-white dark:bg-[#0e1218]"
-        onClick={() => terminalRef.current?.focus()}
-      />
+      <div className="flex items-start justify-between gap-4">
+        <p id="provider-auth-view-help" className="text-sm text-muted-foreground">
+          {viewMode === "transcript"
+            ? "Select and copy the provider's output below. Use the interactive terminal if it asks for keyboard input."
+            : "Keyboard input is sent directly to the provider. Return to the transcript to select and copy its output."}
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          aria-describedby="provider-auth-view-help"
+          onClick={() =>
+            setViewMode((current) => (current === "transcript" ? "terminal" : "transcript"))
+          }
+        >
+          {viewMode === "transcript" ? (
+            <>
+              <TerminalIcon /> Interactive terminal
+            </>
+          ) : (
+            <>
+              <FileTextIcon /> View transcript
+            </>
+          )}
+        </Button>
+      </div>
+      <div className="relative h-[min(22rem,52vh)] overflow-hidden rounded-lg border bg-white dark:bg-[#0e1218]">
+        <pre
+          className={
+            viewMode === "transcript"
+              ? "h-full overflow-auto whitespace-pre-wrap p-2 font-mono text-xs text-foreground select-text"
+              : "hidden"
+          }
+        >
+          {transcript}
+        </pre>
+        <div
+          ref={mountRef}
+          className={
+            viewMode === "terminal"
+              ? "absolute inset-0"
+              : "invisible pointer-events-none absolute inset-0"
+          }
+          onClick={() => terminalRef.current?.focus()}
+        />
+      </div>
       {state.sessionId === null && state.error === null ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderIcon className="size-4 animate-spin" /> Starting provider authentication…
@@ -197,7 +255,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
             })
           }
         >
-          <SquareIcon /> Cancel session
+          Cancel session
         </Button>
       ) : null}
     </div>

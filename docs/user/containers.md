@@ -68,9 +68,14 @@ next export.
 
 Open the pairing URL, then use the first-run provider setup or open
 **Settings** → **Providers**. Choose **Sign in** for a provider and follow the
-provider CLI's instructions in the interactive terminal. The command runs
-inside the container, so credentials are written directly to the isolated
-`t3-home` volume.
+provider CLI's instructions. The dialog starts in a selectable transcript view
+so you can copy links and codes normally. Choose **Interactive terminal** when
+the provider asks for keyboard input, then return to **View transcript** when
+you want to select or copy output. Switching views does not interrupt the login
+command.
+
+The command runs inside the container, so credentials are written directly to
+the isolated `t3-home` volume.
 
 If the browser disconnects or the app closes, the login keeps running for up
 to 30 minutes. Reopen the provider row and choose **Continue** to reconnect to

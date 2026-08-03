@@ -59,9 +59,11 @@ Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
 
 T3 Code runs the provider's official login command in the environment that owns the server and
-shows its interactive terminal in the web, desktop, or mobile client. Browser links and device
-codes are surfaced as buttons. Closing a client does not cancel the login; choose **Continue** on
-the provider row to reconnect. Choose **Cancel session** to stop it.
+shows its output in the client. The sign-in dialog starts with a selectable transcript so links,
+device codes, and other instructions can be copied normally without T3 Code interpreting the
+provider's text. Choose **Interactive terminal** when the provider asks for keyboard input, then
+return to **View transcript** to select or copy output. Closing a client does not cancel the login;
+choose **Continue** on the provider row to reconnect. Choose **Cancel session** to stop it.
 
 The commands in the table remain useful as a manual fallback. Run them on the machine or in the
 container that runs the T3 Code server, not on the device you browse from.
