@@ -7,12 +7,13 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { makeThreadShellFixture } from "../../test-fixtures";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -29,27 +30,10 @@ const environmentId = EnvironmentId.make("environment-1");
 function makeThread(
   input: Partial<EnvironmentThreadShell> & Pick<EnvironmentThreadShell, "id" | "title">,
 ): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     environmentId,
-    projectId: ProjectId.make("project-1"),
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-06-01T00:00:00.000Z",
-    updatedAt: "2026-06-01T00:00:00.000Z",
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    session: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
     ...input,
-  };
+  });
 }
 
 const NOW = "2026-06-02T00:00:00.000Z";
@@ -122,18 +106,16 @@ describe("resolveThreadListV2Enabled", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
-  it("prioritizes approval over a running session", () => {
+  it("prioritizes approval over a running runtime", () => {
     const thread = makeThread({
       id: ThreadId.make("t"),
       title: "t",
       hasPendingApprovals: true,
-      session: {
-        threadId: ThreadId.make("t"),
+      runtime: {
         status: "running",
+        activeRunId: RunId.make("run-t"),
         providerName: "Codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: "full-access",
-        activeTurnId: null,
         lastError: null,
         updatedAt: NOW,
       },
@@ -637,10 +619,11 @@ describe("buildThreadListV2Items", () => {
   });
 
   it("scopes the flat list to one project", () => {
+    const projectId = ProjectId.make("project-1");
     const otherProjectId = ProjectId.make("project-2");
     const { items } = buildThreadListV2Items({
       threads: [
-        makeThread({ id: ThreadId.make("included"), title: "Included" }),
+        makeThread({ id: ThreadId.make("included"), projectId, title: "Included" }),
         makeThread({
           id: ThreadId.make("excluded"),
           projectId: otherProjectId,
@@ -648,7 +631,7 @@ describe("buildThreadListV2Items", () => {
         }),
       ],
       environmentId: null,
-      projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
+      projectRefs: [{ environmentId, projectId }],
       searchQuery: "",
       now: NOW,
     });
@@ -658,19 +641,21 @@ describe("buildThreadListV2Items", () => {
 
   it("scopes the flat list to every environment member of a logical project", () => {
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const projectId = ProjectId.make("project-1");
     const { items } = buildThreadListV2Items({
       threads: [
-        makeThread({ id: ThreadId.make("local"), title: "Local" }),
+        makeThread({ id: ThreadId.make("local"), projectId, title: "Local" }),
         makeThread({
           environmentId: remoteEnvironmentId,
           id: ThreadId.make("remote"),
+          projectId,
           title: "Remote",
         }),
       ],
       environmentId: null,
       projectRefs: [
-        { environmentId, projectId: ProjectId.make("project-1") },
-        { environmentId: remoteEnvironmentId, projectId: ProjectId.make("project-1") },
+        { environmentId, projectId },
+        { environmentId: remoteEnvironmentId, projectId },
       ],
       searchQuery: "",
       now: NOW,
@@ -693,9 +678,9 @@ describe("buildThreadListV2Items settled paging", () => {
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
           // A turn adopted the message (same requestedAt): without it the
           // thread reads as a queued turn start, which never settles.
-          latestTurn: {
-            turnId: TurnId.make(`turn-${index}`),
-            state: "completed",
+          latestRun: {
+            runId: RunId.make(`run-${index}`),
+            status: "completed",
             requestedAt: `2026-06-01T0${index}:00:00.000Z`,
             startedAt: `2026-06-01T0${index}:00:00.000Z`,
             completedAt: `2026-06-01T0${index}:10:00.000Z`,

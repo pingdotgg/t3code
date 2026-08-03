@@ -64,10 +64,8 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
-import {
-  type EventNdjsonLogger,
-  makeEventNdjsonLogger,
-} from "../../provider/Layers/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -477,15 +475,12 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
 export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
-  Crypto.Crypto | ServerConfig
+  Crypto.Crypto | ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
-    const { providerEventLogPath } = yield* ServerConfig;
     const crypto = yield* Crypto.Crypto;
-    const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "native",
-    });
+    const { native: nativeEventLogger } = yield* ProviderEventLoggers;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto.randomUUIDv4.pipe(
@@ -1176,6 +1171,8 @@ function permissionModeForClaudeRuntimePolicy(
       return "default";
     case "auto-accept-edits":
       return "acceptEdits";
+    case "auto":
+      return "auto";
     case "full-access":
       return "bypassPermissions";
   }

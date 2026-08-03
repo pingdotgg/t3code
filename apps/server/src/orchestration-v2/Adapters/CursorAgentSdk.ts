@@ -17,11 +17,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../../config.ts";
-import {
-  type EventNdjsonLogger,
-  makeEventNdjsonLogger,
-} from "../../provider/Layers/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 
 export const CURSOR_AGENT_SDK_PROTOCOL = "cursor-agent-sdk.local" as const;
 export const CURSOR_PROVIDER = ProviderDriverKind.make("cursor");
@@ -298,231 +295,231 @@ export function makeCursorAgentSdkProtocolLogger(input: {
       .pipe(Effect.ignore);
 }
 
-export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, never, ServerConfig> =
-  Layer.effect(
-    CursorAgentSdkRunner,
-    Effect.gen(function* () {
-      const { providerEventLogPath } = yield* ServerConfig;
-      const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
-        stream: "native",
-      });
+export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<
+  CursorAgentSdkRunner,
+  never,
+  ProviderEventLoggers
+> = Layer.effect(
+  CursorAgentSdkRunner,
+  Effect.gen(function* () {
+    const { native: nativeEventLogger } = yield* ProviderEventLoggers;
 
-      return CursorAgentSdkRunner.of({
-        open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
-          const protocolLogger = makeCursorAgentSdkProtocolLogger({
-            nativeEventLogger,
-            threadId: input.threadId,
-            providerSessionId: input.providerSessionId,
-          });
-          const log = (event: CursorAgentSdkProtocolLogEvent) =>
-            protocolLogger === undefined ? Effect.void : protocolLogger(event);
+    return CursorAgentSdkRunner.of({
+      open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
+        const protocolLogger = makeCursorAgentSdkProtocolLogger({
+          nativeEventLogger,
+          threadId: input.threadId,
+          providerSessionId: input.providerSessionId,
+        });
+        const log = (event: CursorAgentSdkProtocolLogEvent) =>
+          protocolLogger === undefined ? Effect.void : protocolLogger(event);
 
-          yield* log({
-            direction: "outgoing",
-            stage: "decoded",
-            payload: {
-              type: "agent.open",
-              operation: input.operation,
-              ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
-              options: loggedCursorAgentOptions(input.options),
-            },
-          });
+        yield* log({
+          direction: "outgoing",
+          stage: "decoded",
+          payload: {
+            type: "agent.open",
+            operation: input.operation,
+            ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+            options: loggedCursorAgentOptions(input.options),
+          },
+        });
 
-          const agent = yield* Effect.tryPromise({
-            try: () =>
-              input.operation === "create"
-                ? Agent.create(input.options)
-                : Agent.resume(input.agentId!, input.options),
-            catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-          });
+        const agent = yield* Effect.tryPromise({
+          try: () =>
+            input.operation === "create"
+              ? Agent.create(input.options)
+              : Agent.resume(input.agentId!, input.options),
+          catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+        });
 
-          yield* log({
-            direction: "incoming",
-            stage: "decoded",
-            payload: {
-              type: "agent.opened",
-              agentId: agent.agentId,
-            },
-          });
-
-          const cwd =
-            typeof input.options.local?.cwd === "string"
-              ? input.options.local.cwd
-              : input.options.local?.cwd?.[0];
-
-          return {
+        yield* log({
+          direction: "incoming",
+          stage: "decoded",
+          payload: {
+            type: "agent.opened",
             agentId: agent.agentId,
-            send: Effect.fn("CursorAgentSdkSession.send")(function* (sendInput) {
-              const context = yield* Effect.context();
-              yield* log({
-                direction: "outgoing",
-                stage: "decoded",
-                payload: {
-                  type: "run.start",
-                  message: sendInput.message,
-                  options: loggedCursorSendOptions(sendInput.options),
-                },
-              });
+          },
+        });
 
-              let callbacksReady = false;
-              const pendingUpdates: Array<InteractionUpdate> = [];
-              let callbackFailure: { readonly cause: unknown } | undefined;
-              let callbackChain = Promise.resolve();
-              let runId = "";
-              const dispatchUpdate = (update: InteractionUpdate): Promise<void> => {
-                callbackChain = callbackChain
-                  .then(() => {
-                    if (callbackFailure !== undefined) {
-                      return;
-                    }
-                    return Effect.runPromiseWith(context)(
-                      log({
-                        direction: "incoming",
-                        stage: "decoded",
-                        payload: {
-                          type: "interaction.update",
-                          runId,
-                          update,
-                        },
-                      }).pipe(Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void)),
-                    );
-                  })
-                  .catch((cause) => {
-                    callbackFailure ??= { cause };
-                  });
-                return callbackChain;
-              };
+        const cwd =
+          typeof input.options.local?.cwd === "string"
+            ? input.options.local.cwd
+            : input.options.local?.cwd?.[0];
 
-              const run = yield* Effect.tryPromise({
-                try: () =>
-                  agent.send(sendInput.message, {
-                    ...sendInput.options,
-                    onDelta: async ({ update }) => {
-                      if (!callbacksReady) {
-                        pendingUpdates.push(update);
-                        return;
-                      }
-                      await dispatchUpdate(update);
-                    },
-                  }),
-                catch: (cause) => runnerError(cause, "run.start"),
-              });
-              runId = run.id;
-              yield* log({
-                direction: "incoming",
-                stage: "decoded",
-                payload: {
-                  type: "run.started",
-                  runId: run.id,
-                  agentId: run.agentId,
-                },
-              });
-              callbacksReady = true;
-              for (const update of pendingUpdates) {
-                yield* Effect.tryPromise({
-                  try: () => dispatchUpdate(update),
-                  catch: (cause) => runnerError(cause, "run.onDelta"),
-                });
-              }
+        return {
+          agentId: agent.agentId,
+          send: Effect.fn("CursorAgentSdkSession.send")(function* (sendInput) {
+            const context = yield* Effect.context();
+            yield* log({
+              direction: "outgoing",
+              stage: "decoded",
+              payload: {
+                type: "run.start",
+                message: sendInput.message,
+                options: loggedCursorSendOptions(sendInput.options),
+              },
+            });
 
-              return {
-                runId: run.id,
-                agentId: run.agentId,
-                wait: Effect.tryPromise({
-                  try: async () => {
-                    const result = await run.wait();
-                    await callbackChain;
-                    if (callbackFailure !== undefined) {
-                      throw callbackFailure.cause;
-                    }
-                    return result;
-                  },
-                  catch: (cause) => runnerError(cause, "run.wait"),
-                }).pipe(
-                  Effect.tap((result) =>
+            let callbacksReady = false;
+            const pendingUpdates: Array<InteractionUpdate> = [];
+            let callbackFailure: { readonly cause: unknown } | undefined;
+            let callbackChain = Promise.resolve();
+            let runId = "";
+            const dispatchUpdate = (update: InteractionUpdate): Promise<void> => {
+              callbackChain = callbackChain
+                .then(() => {
+                  if (callbackFailure !== undefined) {
+                    return;
+                  }
+                  return Effect.runPromiseWith(context)(
                     log({
                       direction: "incoming",
                       stage: "decoded",
                       payload: {
-                        type: "run.completed",
-                        result,
+                        type: "interaction.update",
+                        runId,
+                        update,
                       },
-                    }),
-                  ),
-                ),
-                cancel: log({
-                  direction: "outgoing",
-                  stage: "decoded",
-                  payload: {
-                    type: "run.cancel",
-                    runId: run.id,
+                    }).pipe(Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void)),
+                  );
+                })
+                .catch((cause) => {
+                  callbackFailure ??= { cause };
+                });
+              return callbackChain;
+            };
+
+            const run = yield* Effect.tryPromise({
+              try: () =>
+                agent.send(sendInput.message, {
+                  ...sendInput.options,
+                  onDelta: async ({ update }) => {
+                    if (!callbacksReady) {
+                      pendingUpdates.push(update);
+                      return;
+                    }
+                    await dispatchUpdate(update);
                   },
-                }).pipe(
-                  Effect.andThen(
-                    Effect.tryPromise({
-                      try: async () => {
-                        try {
-                          await run.cancel();
-                        } catch (cause) {
-                          if (!isCursorCancellationError(cause)) {
-                            throw cause;
-                          }
+                }),
+              catch: (cause) => runnerError(cause, "run.start"),
+            });
+            runId = run.id;
+            yield* log({
+              direction: "incoming",
+              stage: "decoded",
+              payload: {
+                type: "run.started",
+                runId: run.id,
+                agentId: run.agentId,
+              },
+            });
+            callbacksReady = true;
+            for (const update of pendingUpdates) {
+              yield* Effect.tryPromise({
+                try: () => dispatchUpdate(update),
+                catch: (cause) => runnerError(cause, "run.onDelta"),
+              });
+            }
+
+            return {
+              runId: run.id,
+              agentId: run.agentId,
+              wait: Effect.tryPromise({
+                try: async () => {
+                  const result = await run.wait();
+                  await callbackChain;
+                  if (callbackFailure !== undefined) {
+                    throw callbackFailure.cause;
+                  }
+                  return result;
+                },
+                catch: (cause) => runnerError(cause, "run.wait"),
+              }).pipe(
+                Effect.tap((result) =>
+                  log({
+                    direction: "incoming",
+                    stage: "decoded",
+                    payload: {
+                      type: "run.completed",
+                      result,
+                    },
+                  }),
+                ),
+              ),
+              cancel: log({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: {
+                  type: "run.cancel",
+                  runId: run.id,
+                },
+              }).pipe(
+                Effect.andThen(
+                  Effect.tryPromise({
+                    try: async () => {
+                      try {
+                        await run.cancel();
+                      } catch (cause) {
+                        if (!isCursorCancellationError(cause)) {
+                          throw cause;
                         }
-                      },
-                      catch: (cause) => runnerError(cause, "run.cancel"),
-                    }),
-                  ),
+                      }
+                    },
+                    catch: (cause) => runnerError(cause, "run.cancel"),
+                  }),
                 ),
-              } satisfies CursorAgentSdkRun;
-            }),
-            listMessages: log({
-              direction: "outgoing",
-              stage: "decoded",
-              payload: {
-                type: "agent.messages.list",
-                agentId: agent.agentId,
-              },
-            }).pipe(
-              Effect.andThen(
-                Effect.tryPromise({
-                  try: () =>
-                    Agent.messages.list(agent.agentId, {
-                      runtime: "local",
-                      ...(cwd === undefined ? {} : { cwd }),
-                    }),
-                  catch: (cause) => runnerError(cause, "agent.messages.list"),
-                }),
               ),
-              Effect.tap((messages) =>
-                log({
-                  direction: "incoming",
-                  stage: "decoded",
-                  payload: {
-                    type: "agent.messages",
-                    agentId: agent.agentId,
-                    messages,
-                  },
-                }),
-              ),
+            } satisfies CursorAgentSdkRun;
+          }),
+          listMessages: log({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: {
+              type: "agent.messages.list",
+              agentId: agent.agentId,
+            },
+          }).pipe(
+            Effect.andThen(
+              Effect.tryPromise({
+                try: () =>
+                  Agent.messages.list(agent.agentId, {
+                    runtime: "local",
+                    ...(cwd === undefined ? {} : { cwd }),
+                  }),
+                catch: (cause) => runnerError(cause, "agent.messages.list"),
+              }),
             ),
-            close: log({
-              direction: "outgoing",
-              stage: "decoded",
-              payload: {
-                type: "agent.close",
-                agentId: agent.agentId,
-              },
-            }).pipe(
-              Effect.andThen(
-                Effect.try({
-                  try: () => agent.close(),
-                  catch: (cause) => runnerError(cause, "agent.close"),
-                }),
-              ),
+            Effect.tap((messages) =>
+              log({
+                direction: "incoming",
+                stage: "decoded",
+                payload: {
+                  type: "agent.messages",
+                  agentId: agent.agentId,
+                  messages,
+                },
+              }),
             ),
-          } satisfies CursorAgentSdkSession;
-        }),
-        assertComplete: Effect.void,
-      });
-    }),
-  );
+          ),
+          close: log({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: {
+              type: "agent.close",
+              agentId: agent.agentId,
+            },
+          }).pipe(
+            Effect.andThen(
+              Effect.try({
+                try: () => agent.close(),
+                catch: (cause) => runnerError(cause, "agent.close"),
+              }),
+            ),
+          ),
+        } satisfies CursorAgentSdkSession;
+      }),
+      assertComplete: Effect.void,
+    });
+  }),
+);

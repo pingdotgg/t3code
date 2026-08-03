@@ -24,7 +24,7 @@ interface BranchToolbarEnvironmentSelectorProps {
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
-  onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   displayMode?: "toolbar" | "panel";
 }
 
@@ -52,17 +52,21 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     return (
       <span
         className={cn(
-          "inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
+          "inline-flex min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
           displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
       >
         {activeEnvironment?.isPrimary ? (
           <MonitorIcon
-            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+            className={
+              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
+            }
           />
         ) : (
           <CloudIcon
-            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+            className={
+              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
+            }
           />
         )}
         <span className="truncate">{activeEnvironment?.label ?? "Run on"}</span>
@@ -81,18 +85,22 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         variant="ghost"
         size={displayMode === "panel" ? "default" : "xs"}
         className={cn(
-          "font-medium",
+          "min-w-0 max-w-full font-medium",
           displayMode === "panel" && THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
         )}
         aria-label="Run on"
       >
         {activeEnvironment?.isPrimary ? (
           <MonitorIcon
-            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+            className={
+              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
+            }
           />
         ) : (
           <CloudIcon
-            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+            className={
+              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
+            }
           />
         )}
         <SelectValue />

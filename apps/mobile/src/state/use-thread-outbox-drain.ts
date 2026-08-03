@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   threadRuntimeIsActive,
+  type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -374,8 +375,7 @@ export function useThreadOutboxDrain(): void {
           appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
           nextQueuedMessage,
         );
-        const freshThreadBusy =
-          freshThread?.session?.status === "running" || freshThread?.session?.status === "starting";
+        const freshThreadBusy = threadRuntimeIsActive(freshThread?.runtime);
         if (deliveryAction === "send" && creation === undefined && freshThreadBusy) {
           return true;
         }

@@ -37,6 +37,7 @@ import {
   CodexAdapterV2Driver,
   type CodexAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -75,6 +76,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
  */
 export type CodexDriverEnv =
   | CodexAdapterV2DriverEnv
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem

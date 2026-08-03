@@ -235,6 +235,21 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
+  it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "auto",
+      installPermissionCallback: false,
+    });
+  });
+
   it("keeps approval-required mode interactive with danger-full-access sandboxing", () => {
     const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapterV2RuntimePolicy.make({

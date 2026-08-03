@@ -138,7 +138,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       }),
     ),
     saveThread: Effect.fn("MobileEnvironmentCache.saveThread")(function* (environmentId, snapshot) {
-      const threadId = snapshot.thread.id;
+      const threadId = snapshot.projection.thread.id;
       const payload = yield* encodeStoredThreadSnapshot({
         schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
         environmentId,

@@ -16,8 +16,6 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/bin.ts",
-    "build": "node scripts/cli.ts build",
-    "build:bundle": "tsdown",
     "record:codex-replay": "bun scripts/record-codex-app-server-replay-fixture.ts",
     "record:claude-replay": "bun scripts/record-claude-agent-sdk-replay-fixture.ts",
     "record:cursor-replay": "node --env-file-if-exists=../../.env --experimental-strip-types scripts/record-cursor-agent-sdk-replay-fixture.ts",
@@ -52,9 +50,7 @@
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
-    "tsdown": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   },
   "engines": {
     "node": "^22.16 || ^23.11 || >=24.10"

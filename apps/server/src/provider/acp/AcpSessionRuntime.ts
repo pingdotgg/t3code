@@ -1279,13 +1279,13 @@ export const make = (
 ): Effect.Effect<
   AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
-    const eventQueue = yield* Queue.unbounded<AcpParsedSessionEvent>();
+    const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
@@ -1638,7 +1638,6 @@ export const make = (
         });
       }),
     );
-
     const initializeClientCapabilities = {
       fs: {
         readTextFile: false,
@@ -2054,6 +2053,14 @@ export const make = (
       handleExtNotification: acp.handleExtNotification,
       start: () => start,
       getEvents: () => Stream.fromQueue(eventQueue),
+      drainEvents: Effect.gen(function* () {
+        const acknowledge = yield* Deferred.make<void>();
+        yield* Queue.offer(eventQueue, {
+          _tag: "EventStreamBarrier",
+          acknowledge,
+        });
+        yield* Deferred.await(acknowledge);
+      }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       loadSession: (sessionId, activationOptions) =>
@@ -2227,7 +2234,7 @@ export const make = (
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,
-    } satisfies AcpSessionRuntimeShape;
+    } satisfies AcpSessionRuntime["Service"];
   });
 
 export const layer = (

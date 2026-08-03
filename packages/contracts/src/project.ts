@@ -8,6 +8,7 @@ import {
   PositiveInt,
   ProjectId,
   TrimmedNonEmptyString,
+  TrimmedString,
 } from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
@@ -103,6 +104,9 @@ export class ProjectMutationError extends Schema.TaggedErrorClass<ProjectMutatio
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
+export type ProjectEntryKind = typeof ProjectEntryKind.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,

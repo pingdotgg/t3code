@@ -889,7 +889,7 @@ function ThreadNavigationSidebarPane(
                   ?.providers.find(
                     (provider) =>
                       provider.instanceId ===
-                      (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+                      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
                   )?.driver ?? null
               }
               environmentLabel={

@@ -12,7 +12,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import {
+  createModelCapabilities,
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
@@ -376,8 +383,74 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   );
 }
 
-export function resolveClaudeApiModelId(modelSelection: ClaudeModelSelection): string {
-  switch (modelSelection.options?.contextWindow) {
+export function resolveClaudeEffort(
+  caps: ModelCapabilities,
+  raw: string | null | undefined,
+): string | undefined {
+  const descriptors = getProviderOptionDescriptors({
+    caps,
+    ...(raw ? { selections: [{ id: "effort", value: raw }] } : {}),
+  });
+  const effortDescriptor = descriptors.find((descriptor) => descriptor.id === "effort");
+  const value = getProviderOptionCurrentValue(effortDescriptor);
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * Normalize a resolved Claude effort value into one suitable for the Claude
+ * CLI's `--effort` flag.
+ *
+ * Mirrors the mapping used when invoking the Claude Agent SDK
+ * ({@link getEffectiveClaudeAgentEffort} in ClaudeAdapter): `ultracode` is a
+ * Claude Code setting that pairs with `xhigh`, `ultrathink` is filtered out
+ * because it is a prompt-prefix mode, and older model compatibility mappings
+ * are preserved for current Claude Code behavior.
+ */
+export function normalizeClaudeCliEffort(
+  effort: string | null | undefined,
+  model: string | null | undefined,
+): string | undefined {
+  if (!effort || effort === "ultrathink") {
+    return undefined;
+  }
+  if (effort === "ultracode") {
+    return "xhigh";
+  }
+  if (
+    effort === "xhigh" &&
+    model !== "claude-fable-5" &&
+    model !== "claude-opus-5" &&
+    model !== "claude-opus-4-8" &&
+    model !== "claude-sonnet-5"
+  ) {
+    return "max";
+  }
+  if (effort === "max" && model === "claude-sonnet-4-6") {
+    return "high";
+  }
+  return effort;
+}
+
+export function isClaudeUltracodeEffort(effort: string | null | undefined): boolean {
+  return effort === "ultracode";
+}
+
+export function resolveClaudeContextWindow(
+  modelSelection: ModelSelection | undefined,
+): string | undefined {
+  const caps = getClaudeModelCapabilities(modelSelection?.model);
+  const raw = getModelSelectionStringOptionValue(modelSelection, "contextWindow");
+  const descriptors = getProviderOptionDescriptors({
+    caps,
+    ...(raw ? { selections: [{ id: "contextWindow", value: raw }] } : {}),
+  });
+  const descriptor = descriptors.find((candidate) => candidate.id === "contextWindow");
+  const value = getProviderOptionCurrentValue(descriptor);
+  return typeof value === "string" ? value : undefined;
+}
+
+export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
+  switch (resolveClaudeContextWindow(modelSelection)) {
     case "1m":
       return `${modelSelection.model}[1m]`;
     default:
@@ -929,43 +1002,4 @@ export const makePendingClaudeProvider = (
     });
   });
 
-export const ClaudeProviderLive = Layer.effect(
-  ClaudeProvider,
-  Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-    const subscriptionProbeCache = yield* Cache.make({
-      capacity: 1,
-      timeToLive: Duration.minutes(5),
-      lookup: (binaryPath: string) => probeClaudeCapabilities(binaryPath),
-    });
-
-    const checkProvider = checkClaudeProviderStatus(
-      (binaryPath) =>
-        Cache.get(subscriptionProbeCache, binaryPath).pipe(
-          Effect.map((probe) => probe?.subscriptionType),
-        ),
-      (binaryPath) =>
-        Cache.get(subscriptionProbeCache, binaryPath).pipe(
-          Effect.map((probe) => probe?.slashCommands),
-        ),
-    ).pipe(
-      Effect.provideService(ServerSettingsService, serverSettings),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
-    return yield* makeManagedServerProvider<ClaudeSettings>({
-      getSettings: serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.providers.claudeAgent),
-        Effect.orDie,
-      ),
-      streamSettings: serverSettings.streamChanges.pipe(
-        Stream.map((settings) => settings.providers.claudeAgent),
-      ),
-      haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      initialSnapshot: makePendingClaudeProvider,
-      checkProvider,
-    });
-  }),
-);
+export { probeClaudeCapabilities };

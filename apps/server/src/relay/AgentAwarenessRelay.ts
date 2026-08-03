@@ -44,6 +44,7 @@ import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environme
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { forkParked } from "../serverActivation.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -183,7 +184,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
 
 // Compact, log-safe view of the fields the awareness phase ladder reads.
 export function describeThreadShellForAwareness(
-  thread: Option.Option<OrchestrationThreadShell>,
+  thread: Option.Option<OrchestrationV2ThreadShell>,
 ): Record<string, unknown> {
   if (Option.isNone(thread)) {
     return { found: false };
@@ -191,13 +192,11 @@ export function describeThreadShellForAwareness(
   const shell = thread.value;
   return {
     found: true,
-    sessionStatus: shell.session?.status ?? null,
-    sessionActiveTurnId: shell.session?.activeTurnId ?? null,
-    latestTurnId: shell.latestTurn?.turnId ?? null,
-    latestTurnState: shell.latestTurn?.state ?? null,
-    latestTurnCompletedAt: shell.latestTurn?.completedAt ?? null,
-    hasPendingApprovals: shell.hasPendingApprovals,
-    hasPendingUserInput: shell.hasPendingUserInput,
+    status: shell.status,
+    activeRunId: shell.activeRunId ?? null,
+    latestRunId: shell.latestRunId ?? null,
+    pendingRuntimeRequestKind: shell.pendingRuntimeRequest?.kind ?? null,
+    hasActionableProposedPlan: shell.hasActionableProposedPlan,
   };
 }
 
@@ -586,7 +585,7 @@ export const make = Effect.gen(function* () {
           Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
         ),
       );
-      yield* Effect.forkScoped(
+      yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) => {
           const threadId = eventThreadId(event);
           if (!shouldPublishAgentAwarenessEvent(event)) {

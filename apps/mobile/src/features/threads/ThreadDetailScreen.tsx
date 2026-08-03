@@ -1,5 +1,6 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import type {
@@ -423,6 +424,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         <View className="flex-1" />
       )}
 
+      {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
+      {showContent ? (
+        <KeyboardStickyView
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+          offset={{ closed: 0, opened: 0 }}
+        >
+          {/* No paddingTop here: the overlay's measured height becomes the
+              list's bottom inset, so any padding above the pill/composer
+              pushes the resting content floor up by the same amount. */}
+          <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+            <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
               <ThreadQueueControl
                 environmentId={props.environmentId}
                 threadId={props.selectedThread.id}

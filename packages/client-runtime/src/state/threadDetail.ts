@@ -3,7 +3,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThread } from "./models.ts";
-import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threads.ts";
+import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 

@@ -118,51 +118,14 @@ interface HomeScreenProps {
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
 
-function statusColors(thread: EnvironmentThreadShell): { bg: string; fg: string } {
-  switch (thread.runtime?.status) {
-    case "running":
-    case "waiting":
-      return { bg: "rgba(249,115,22,0.14)", fg: "#f97316" };
-    case "completed":
-      return { bg: "rgba(34,197,94,0.14)", fg: "#22c55e" };
-    case "queued":
-    case "starting":
-      return { bg: "rgba(59,130,246,0.14)", fg: "#3b82f6" };
-    case "failed":
-      return { bg: "rgba(239,68,68,0.14)", fg: "#ef4444" };
-    default:
-      return { bg: "rgba(163,163,163,0.10)", fg: "#a3a3a3" };
-  }
-}
-
-const COLLAPSED_THREAD_LIMIT = 6;
-const THREAD_LAYOUT_TRANSITION = LinearTransition.duration(220).easing(Easing.out(Easing.cubic));
-
-function threadRowExit(values: ExitAnimationsValues) {
-  "worklet";
-
-  return {
-    initialValues: {
-      height: values.currentHeight,
-      opacity: 1,
-      originX: values.currentOriginX,
-    },
-    animations: {
-      height: withDelay(
-        90,
-        withTiming(0, {
-          duration: 170,
-          easing: Easing.inOut(Easing.cubic),
-        }),
-      ),
-      opacity: withDelay(80, withTiming(0, { duration: 100 })),
-      originX: withTiming(values.currentOriginX - values.windowWidth, {
-        duration: 190,
-        easing: Easing.out(Easing.cubic),
-      }),
-    },
-  };
-}
+const ESTIMATED_THREAD_ROW_HEIGHT = 72;
+const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
+/**
+ * Top spacing between the list and the Android custom header. The Android
+ * header (AndroidHomeHeader) is rendered in-flow above this screen and
+ * already consumes the top safe-area inset, so the list only needs breathing
+ * room here.
+ */
 
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
@@ -769,7 +732,7 @@ export function HomeScreen(props: HomeScreenProps) {
               ?.providers.find(
                 (provider) =>
                   provider.instanceId ===
-                  (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+                  (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
               )?.driver ?? null
           }
           environmentLabel={
@@ -1008,17 +971,25 @@ export function HomeScreen(props: HomeScreenProps) {
             onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
             variant="plain"
           />
-        ) : !hasResults ? (
-          <EmptyState
-            title="No threads yet"
-            detail="Create a task to start a new coding runtime."
-          />
-        ) : (
-          projectGroups.map((group) => {
-            const isExpanded = expandedProjects.has(group.key);
-            const visibleThreads = isExpanded
-              ? group.threads
-              : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
+          {emptyState.loading && !shouldShowConnectionStatus ? (
+            <View className="mt-4 items-center">
+              <ActivityIndicator color={accentColor} />
+            </View>
+          ) : null}
+          {shouldShowConnectionStatus && Platform.OS === "ios" ? (
+            <View className="mt-4">
+              <WorkspaceConnectionStatus
+                state={props.catalogState}
+                onPress={props.onOpenEnvironments}
+                variant="sidebar"
+              />
+            </View>
+          ) : null}
+        </View>
+        {connectionStatus}
+      </View>
+    );
+  }
 
   const listHeader = (
     <>
@@ -1054,7 +1025,7 @@ export function HomeScreen(props: HomeScreenProps) {
         detail="Choose another environment or create a new task."
       />
     ) : (
-      <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
+      <EmptyState title="No threads yet" detail="Create a task to start a new coding runtime." />
     )
   ) : null;
   // Self-contained: v1's listEmpty keys off projectGroups, which ignores the

@@ -179,33 +179,6 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
-describe("ServerSettings.sourceControlWritingStyle", () => {
-  it("defaults all style settings for legacy configs", () => {
-    const settings = decodeServerSettings({});
-
-    expect(settings.sourceControlWritingStyle).toEqual({
-      mode: "repo_conventions",
-      customInstructions: "",
-      followChangeRequestTemplates: true,
-    });
-    expect(settings.sourceControlWriterModelSelection).toBeNull();
-  });
-
-  it("trims partial style updates", () => {
-    const patch = decodeServerSettingsPatch({
-      sourceControlWritingStyle: {
-        mode: "custom",
-        customInstructions: "  Prefer concise wording.  ",
-      },
-    });
-
-    expect(patch.sourceControlWritingStyle).toEqual({
-      mode: "custom",
-      customInstructions: "Prefer concise wording.",
-    });
-  });
-});
-
 describe("ServerSettings Cursor legacy settings", () => {
   it("ignores obsolete Cursor CLI settings when reading server settings", () => {
     const decoded = decodeServerSettings({
@@ -237,6 +210,33 @@ describe("ServerSettings Cursor legacy settings", () => {
     expect(patch.providers?.cursor?.enabled).toBe(true);
     expect(patch.providers?.cursor).not.toHaveProperty("binaryPath");
     expect(patch.providers?.cursor).not.toHaveProperty("apiEndpoint");
+  });
+});
+
+describe("ServerSettings.sourceControlWritingStyle", () => {
+  it("defaults all style settings for legacy configs", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.sourceControlWritingStyle).toEqual({
+      mode: "repo_conventions",
+      customInstructions: "",
+      followChangeRequestTemplates: true,
+    });
+    expect(settings.sourceControlWriterModelSelection).toBeNull();
+  });
+
+  it("trims partial style updates", () => {
+    const patch = decodeServerSettingsPatch({
+      sourceControlWritingStyle: {
+        mode: "custom",
+        customInstructions: "  Prefer concise wording.  ",
+      },
+    });
+
+    expect(patch.sourceControlWritingStyle).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer concise wording.",
+    });
   });
 });
 

@@ -82,6 +82,12 @@ export interface OrchestrationEventStoreShape {
 
   readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
 
+  /** Read the finite retained application-event range `(afterSequence, throughSequence]`. */
+  readonly readApplicationEvents: (input: {
+    readonly afterSequence: number;
+    readonly throughSequence: number;
+  }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
+
   /** Publish only after the surrounding event/projection transaction commits. */
   readonly publishCommitted: (events: ReadonlyArray<ApplicationStoredEvent>) => Effect.Effect<void>;
 

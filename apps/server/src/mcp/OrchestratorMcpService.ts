@@ -334,8 +334,10 @@ function runtimeModeRank(mode: RuntimeMode): number {
       return 0;
     case "auto-accept-edits":
       return 1;
-    case "full-access":
+    case "auto":
       return 2;
+    case "full-access":
+      return 3;
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
@@ -32,6 +33,9 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 );
 const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("web-thread-projection:empty"),
+);
+const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
+  Atom.withLabel("web-thread-status:empty"),
 );
 const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make(EMPTY_VISIBLE_TURN_ITEMS).pipe(
   Atom.withLabel("web-thread-visible-turn-items:empty"),
@@ -118,6 +122,22 @@ export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThr
   return useAtomValue(
     ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.threadAtom(ref),
   );
+}
+
+export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
+  );
+}
+
+export function resolveThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  options: {
+    shellExists: boolean;
+    waitForShell: boolean;
+  },
+): ScopedThreadRef | null {
+  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
 }
 
 export function useThreadVisibleTurnItems(

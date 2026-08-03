@@ -106,8 +106,8 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
 
-const isEffectRpcRequestId = (requestId: string): boolean =>
-  requestId !== "" && /^-?\d+$/.test(requestId);
+const isEffectRpcRequestId = (requestId: AcpError.AcpRequestId): boolean =>
+  typeof requestId === "number" && Number.isSafeInteger(requestId);
 
 export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(function* (
   options: AcpPatchedProtocolOptions,
@@ -122,7 +122,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     intentionalEnd: false,
     outstandingAcknowledgements: new Set(),
   });
-  const nextRequestId = yield* Ref.make(1n);
+  const nextRequestId = yield* Ref.make(1);
   const terminationHandled = yield* Ref.make(false);
   const extPending = yield* Ref.make(new Map<string, AcpPendingRequest>());
 
@@ -226,7 +226,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         yield* Deferred.await(acknowledgement);
       }
       if (message._tag === "Exit" && options.onOutgoingResponse !== undefined) {
-        yield* options.onOutgoingResponse(message.requestId);
+        yield* options.onOutgoingResponse(String(message.requestId));
       }
     }
   });
@@ -406,7 +406,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     }
 
     const observeIncoming =
-      options.onIncomingRequest?.(message.id, message.tag, message.payload) ?? Effect.void;
+      options.onIncomingRequest?.(String(message.id), message.tag, message.payload) ?? Effect.void;
 
     if (!options.serverRequestMethods.has(message.tag)) {
       return observeIncoming.pipe(Effect.andThen(handleExtRequest(message))).pipe(
@@ -720,7 +720,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       offerOutgoing(response).pipe(
         Effect.tapError((error) =>
           response._tag === "Exit" && options.onOutgoingResponseFailure !== undefined
-            ? options.onOutgoingResponseFailure(response.requestId, error)
+            ? options.onOutgoingResponseFailure(String(response.requestId), error)
             : Effect.void,
         ),
         Effect.orDie,

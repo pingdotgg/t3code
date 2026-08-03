@@ -14,6 +14,7 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  type ApplicationStoredEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
@@ -22,6 +23,7 @@ import {
   type GitManagerServiceError,
   type MessageId,
   OrchestrationGetFullThreadDiffError,
+  OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2DispatchCommandError,
@@ -29,6 +31,7 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
+  type OrchestrationV2ShellSnapshot,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -41,12 +44,15 @@ import {
   ProjectMutationError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
+  type ServerSelfUpdateError,
+  type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   ChatAttachmentId,
   PersistChatAttachmentsError,
+  RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -56,6 +62,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -129,6 +136,16 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+
+const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+export const resolveAvailableEditorsForConfig = <A, E, R>(
+  discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
+) =>
+  discovery.pipe(
+    Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
+    Effect.map(Option.getOrElse(() => [])),
+  );
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -307,74 +324,20 @@ function projectFileFailureContext(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
-  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
-  [ORCHESTRATION_V2_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
-  [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
-  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
-  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection, AuthOrchestrationReadScope],
-  [ORCHESTRATION_V2_WS_METHODS.launchThread, AuthOrchestrationOperateScope],
-  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell, AuthOrchestrationReadScope],
-  [ORCHESTRATION_V2_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
-  [ORCHESTRATION_V2_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
-  [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
-  [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
-  [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
-  [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
-  [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
-  [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
-  [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
-  [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
-  [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
-  [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
-  [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
-  [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
-  [WS_METHODS.scheduledTasksList, AuthOrchestrationReadScope],
-  [WS_METHODS.scheduledTasksSubscribe, AuthOrchestrationReadScope],
-  [WS_METHODS.scheduledTasksUpsert, AuthOrchestrationOperateScope],
-  [WS_METHODS.scheduledTasksSetEnabled, AuthOrchestrationOperateScope],
-  [WS_METHODS.scheduledTasksDelete, AuthOrchestrationOperateScope],
-  [WS_METHODS.scheduledTasksRunNow, AuthOrchestrationOperateScope],
-  [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
-  [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
-  [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
-  [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
-  [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
-  [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
-  [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
-  [WS_METHODS.projectsMutate, AuthOrchestrationOperateScope],
-  [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
-  [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
-  [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
-  [WS_METHODS.assetsPersistChatAttachments, AuthOrchestrationOperateScope],
-  [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
-  [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
-  [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
-  [WS_METHODS.gitRunStackedAction, AuthOrchestrationOperateScope],
-  [WS_METHODS.gitResolvePullRequest, AuthOrchestrationOperateScope],
-  [WS_METHODS.gitPreparePullRequestThread, AuthOrchestrationOperateScope],
-  [WS_METHODS.vcsListRefs, AuthOrchestrationReadScope],
-  [WS_METHODS.vcsCreateWorktree, AuthOrchestrationOperateScope],
-  [WS_METHODS.vcsRemoveWorktree, AuthOrchestrationOperateScope],
-  [WS_METHODS.vcsCreateRef, AuthOrchestrationOperateScope],
-  [WS_METHODS.vcsSwitchRef, AuthOrchestrationOperateScope],
-  [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
-  [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
-  [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
-  [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
-  [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
-  [WS_METHODS.terminalResize, AuthTerminalOperateScope],
-  [WS_METHODS.terminalClear, AuthTerminalOperateScope],
-  [WS_METHODS.terminalRestart, AuthTerminalOperateScope],
-  [WS_METHODS.terminalClose, AuthTerminalOperateScope],
-  [WS_METHODS.subscribeTerminalEvents, AuthTerminalOperateScope],
-  [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
-  [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
-  [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
-  [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
-]);
-
 const ServerWsRpcGroup = WsRpcGroup;
+// When a resuming client's cursor is more than this many events behind the
+// current head, skip the per-event catch-up replay and send a fresh shell
+// snapshot instead. Replaying each intervening event costs a shell refetch;
+// past this gap a single O(active-threads) snapshot is cheaper and bounded.
+// Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
+const SHELL_RESUME_MAX_GAP = 1_000;
+
+// Same bound for thread resume. The replay reads the *global* event range and
+// filters per-thread afterwards, so a stale cursor far behind the head would
+// otherwise decode every intervening event's payload — reconnects with cursors
+// hundreds of thousands of events behind have OOM-killed servers on large
+// databases. Past this gap the client is reset with a fresh thread snapshot.
+const THREAD_RESUME_MAX_GAP = 1_000;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -416,7 +379,10 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+const makeWsRpcLayer = (
+  currentSession: EnvironmentAuth.AuthenticatedSession,
+  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+) =>
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -465,11 +431,11 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
-      const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+      const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -477,10 +443,28 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+      const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+      const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
+      yield* Effect.addFinalizer(() =>
+        Ref.get(rpcClientIds).pipe(
+          Effect.flatMap((clientIds) =>
+            Effect.forEach(
+              clientIds,
+              (clientId) => backgroundPolicy.removeRpcClient(currentSessionId, clientId),
+              {
+                discard: true,
+              },
+            ),
+          ),
+          Effect.ignore,
+        ),
+      );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.automaticGitFetchInterval),
+        Effect.map(
+          (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
+        ),
         Effect.catch((cause) =>
           Effect.logWarning("Failed to read automatic Git fetch interval setting", {
             detail: cause.message,
@@ -493,6 +477,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -513,13 +498,6 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         currentSession.scopes.includes(requiredScope)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
-      const requiredScopeForMethod = (method: string): AuthEnvironmentScope => {
-        const requiredScope = RPC_REQUIRED_SCOPE.get(method);
-        if (requiredScope === undefined) {
-          throw new Error(`RPC method ${method} has no declared authorization scope.`);
-        }
-        return requiredScope;
-      };
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
@@ -527,7 +505,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       ) =>
         instrumentRpcEffect(
           method,
-          authorizeEffect(requiredScopeForMethod(method), effect),
+          authorizeEffect(requiredScopeForRpcMethod(method), effect),
           traceAttributes,
         );
       const observeRpcStream = <A, E, R>(
@@ -537,7 +515,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       ) =>
         instrumentRpcStream(
           method,
-          authorizeStream(requiredScopeForMethod(method), stream),
+          authorizeStream(requiredScopeForRpcMethod(method), stream),
           traceAttributes,
         );
       const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
@@ -551,7 +529,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       ) =>
         instrumentRpcStreamEffect(
           method,
-          authorizeEffect(requiredScopeForMethod(method), effect),
+          authorizeEffect(requiredScopeForRpcMethod(method), effect),
           traceAttributes,
         );
       const loadAuthAccessSnapshot = () =>
@@ -609,7 +587,11 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subscribeThread")(
-        function* (input: { readonly threadId: ThreadId }) {
+        function* (input: {
+          readonly threadId: ThreadId;
+          readonly afterSequence?: number;
+          readonly requestCompletionMarker?: boolean;
+        }) {
           yield* Effect.annotateCurrentSpan({
             "orchestration_v2.thread_id": input.threadId,
           });
@@ -624,6 +606,80 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             ),
           );
 
+          const eventStreamFrom = (afterSequence: number) =>
+            threadManagement
+              .streamStoredEventsFrom({
+                threadId: input.threadId,
+                afterSequence,
+              })
+              .pipe(
+                Stream.map((stored) => ({
+                  kind: "event" as const,
+                  sequence: stored.sequence,
+                  event: stored.event,
+                })),
+                Stream.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+
+          const replayThrough = (afterSequence: number, throughSequence: number) =>
+            applicationEvents
+              .readAgentEvents({
+                threadId: input.threadId,
+                afterSequence,
+                throughSequence,
+              })
+              .pipe(
+                Stream.map((stored) => ({
+                  kind: "event" as const,
+                  sequence: stored.sequence,
+                  event: stored.event,
+                })),
+                Stream.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed while replaying orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+
+          const completionMarker =
+            input.requestCompletionMarker === true
+              ? Stream.make({ kind: "synchronized" as const })
+              : Stream.empty;
+
+          // When the client already holds the projection (cached, or loaded over
+          // HTTP) it passes that snapshot's sequence, and we resume by replaying
+          // persisted events after it instead of re-sending the (potentially
+          // multi-KB) snapshot frame over the socket. The event sink subscribes
+          // to live events before reading the persisted tail, so no event
+          // published during the replay window is lost; overlapping events are
+          // deduped by sequence on the client.
+          if (input.afterSequence !== undefined) {
+            const highWater = yield* applicationEvents.latestAgentSequence(input.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to prepare orchestration V2 thread ${input.threadId} replay`,
+                    cause,
+                  }),
+              ),
+            );
+            return Stream.concat(
+              Stream.concat(replayThrough(input.afterSequence, highWater), completionMarker),
+              eventStreamFrom(highWater),
+            );
+          }
+
           const snapshot = yield* threadManagement.getThreadSnapshot(input.threadId).pipe(
             Effect.mapError(
               (cause) =>
@@ -636,40 +692,25 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           );
           const { projection, snapshotSequence } = snapshot;
 
-          const liveStream = threadManagement
-            .streamStoredEventsFrom({
-              threadId: input.threadId,
-              afterSequence: snapshotSequence,
-            })
-            .pipe(
-              Stream.map((stored) => ({
-                kind: "event" as const,
-                sequence: stored.sequence,
-                event: stored.event,
-              })),
-              Stream.mapError(
-                (cause) =>
-                  new OrchestrationV2GetThreadProjectionError({
-                    threadId: input.threadId,
-                    message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
-                    cause,
-                  }),
-              ),
-            );
-
           return Stream.concat(
-            Stream.make({
-              kind: "snapshot" as const,
-              snapshotSequence,
-              projection,
-            }),
-            liveStream,
+            Stream.concat(
+              Stream.make({
+                kind: "snapshot" as const,
+                snapshotSequence,
+                projection,
+              }),
+              completionMarker,
+            ),
+            eventStreamFrom(snapshotSequence),
           );
         },
       );
 
       const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subscribeShell")(
-        function* () {
+        function* (input: {
+          readonly afterSequence?: number;
+          readonly requestCompletionMarker?: boolean;
+        }) {
           const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
           const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
             const base = yield* sql.withTransaction(
@@ -691,15 +732,32 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
             };
           });
-          const snapshot = yield* loadSnapshot().pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationV2GetShellSnapshotError({
-                  message: "Failed to load the application shell snapshot",
-                  cause,
-                }),
-            ),
-          );
+          const projectItem = Effect.fn("ws.orchestrationV2.projectShellItem")(function* (
+            stored: Extract<ApplicationStoredEvent, { readonly aggregateKind: "project" }>,
+          ) {
+            if (stored.type === "project.deleted") {
+              return {
+                kind: "project.removed" as const,
+                sequence: stored.sequence,
+                projectId: stored.payload.projectId,
+              };
+            }
+            const project = yield* projectionSnapshotQuery.getProjectShellById(
+              stored.payload.projectId,
+            );
+            return Option.match(project, {
+              onNone: () => ({
+                kind: "project.removed" as const,
+                sequence: stored.sequence,
+                projectId: stored.payload.projectId,
+              }),
+              onSome: (value) => ({
+                kind: "project.updated" as const,
+                sequence: stored.sequence,
+                project: value,
+              }),
+            });
+          });
 
           // Coalescing makes each per-thread shell read represent every event
           // for that thread in the current window; reading only the affected
@@ -720,6 +778,17 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 }),
               { concurrency: 8 },
             );
+          });
+
+          const toShellStream = <E, R>(stream: Stream.Stream<ApplicationStoredEvent, E, R>) =>
+            stream.pipe(
+              Stream.groupedWithin(512, Duration.millis(50)),
+              Stream.mapEffect((events) => projectShellItems(Array.from(events))),
+              Stream.flatMap(Stream.fromIterable),
+            );
+
+          const liveFrom = (afterSequence: number) =>
+            toShellStream(applicationEvents.streamApplicationEvents({ afterSequence }));
 
           const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
             Stream.filter((change) => change.repositoryIdentityResolved),
@@ -785,7 +854,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
 
             const highWater = yield* applicationEvents.latestApplicationSequence;
             const replayGap = highWater - input.afterSequence;
-            if (replayGap < 0 || replayGap > 1_000) {
+            if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
               return composeShellStreamWithEnrichment({
                 initial,
                 tail: completionThenLive(loaded.snapshot.snapshotSequence),
@@ -1018,6 +1087,20 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.searchThreads,
+            projectionSnapshotQuery.searchThreads(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationSearchThreadsError({
+                    message: "Failed to search threads",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
@@ -1097,10 +1180,10 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             subscribeOrchestrationV2ArchivedShell(),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (_input) =>
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeShell,
-            subscribeOrchestrationV2Shell(),
+            subscribeOrchestrationV2Shell(input),
             {
               "rpc.aggregate": "orchestrationV2",
             },
@@ -1140,6 +1223,10 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
             "rpc.aggregate": "scheduledTasks",
             "scheduled_task.id": input.id,
+          }),
+        [WS_METHODS.serverProbe]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
+            "rpc.aggregate": "server",
           }),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {

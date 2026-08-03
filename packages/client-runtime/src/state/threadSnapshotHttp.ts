@@ -1,4 +1,4 @@
-import type { OrchestrationThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -72,7 +72,7 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
-    ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+    ) => Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
 
@@ -91,7 +91,7 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     return ThreadSnapshotLoader.of({
       load: (prepared: PreparedConnection, threadId: ThreadId) =>
         fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
-          Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
+          Effect.map(Option.some<OrchestrationV2ThreadDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           // A genuinely missing thread (404) is expected — the socket
           // subscription is the source of truth for thread existence and will
@@ -103,7 +103,7 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
                 "Thread snapshot not found over HTTP; deferring to the socket subscription.",
               ).pipe(
                 Effect.annotateLogs({ threadId }),
-                Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+                Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>()),
               ),
           }),
           Effect.catchCause((cause) =>
@@ -111,7 +111,7 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
               "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+              Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>()),
             ),
           ),
         ),

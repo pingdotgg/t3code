@@ -239,7 +239,7 @@ export interface FixtureIds {
 }
 
 export const CODEX_MODEL_SELECTION = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
 } satisfies ModelSelection;
 

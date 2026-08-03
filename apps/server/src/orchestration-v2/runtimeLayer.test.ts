@@ -15,6 +15,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -54,7 +55,13 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-runtime-layer-",
 });
 
-const GitCoreTestLayer = GitCoreLive.pipe(
+const modelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+} satisfies ModelSelection;
+
+const VcsDriverRegistryTestLayer = VcsDriverRegistry.layer.pipe(
+  Layer.provide(VcsProcess.layer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(NodeServices.layer),
 );
@@ -161,10 +168,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
         threadId,
         projectId,
         title: "Runtime layer thread",
-        modelSelection: {
-          provider: "codex",
-          model: "gpt-5.4",
-        },
+        modelSelection: modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
@@ -617,6 +621,25 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         modelSelection: { ...modelSelection, model: "gpt-5.5" },
       });
+
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-settle"),
+        threadId,
+      });
+      const settledProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settledProjection.thread.settledOverride, "settled");
+      assert.isNotNull(settledProjection.thread.settledAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("runtime-layer-lifecycle-unsettle"),
+        threadId,
+        reason: "user",
+      });
+      const activeProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(activeProjection.thread.settledOverride, "active");
+      assert.isNull(activeProjection.thread.settledAt);
 
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",

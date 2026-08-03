@@ -33,7 +33,7 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
-import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
+import { layer as ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -90,21 +90,32 @@ import {
 } from "./orchestration-v2/runtimeLayer.ts";
 import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
+import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
+import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
+import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
+import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import { orchestrationHttpApiLayer } from "./orchestration-v2/http.ts";
 import { projectHttpApiLayer } from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import { forkParked, ServerActivation } from "./serverActivation.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
 // already closes the websocket gracefully. Do not add an artificial drain before
 // those finalizers get a chance to run.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
+const ResourceAttributionLayerLive = ResourceAttribution.layer;
+const ApplicationObservabilityLive = ObservabilityLive.pipe(
+  Layer.provideMerge(ResourceAttributionLayerLive),
+);
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -293,14 +304,12 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspaceFileSystemLayerLive,
 );
 
-const OrchestrationV2RuntimeLayerLive = OrchestrationV2LayerLive.pipe(
-  Layer.provide(CheckpointStoreLive),
-  Layer.provide(GitCoreLive),
-  Layer.provide(PersistenceLayerLive),
-  Layer.provide(ServerSettingsLive),
+const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
+  Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const AuthLayerLive = ServerAuthLive.pipe(
+const AuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerSecretStore.layer),
 );
@@ -327,6 +336,7 @@ const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
 const RuntimeCoreDependenciesBaseLive = AgentAwarenessRelay.layer.pipe(
   // Core Services
   Layer.provideMerge(OrchestrationApplicationLayerLive),
+  Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
@@ -343,6 +353,11 @@ const RuntimeCoreDependenciesBaseLive = AgentAwarenessRelay.layer.pipe(
 );
 
 const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
+  // Shared native/canonical NDJSON writers used by both the per-instance
+  // V2 drivers and the orchestration runtime. Provide resource attribution so
+  // the rewritten telemetry pipeline can account for logical NDJSON writes.
+  // Provided once at the runtime level so every consumer sees the same
+  // logger instances.
   Layer.provideMerge(ProviderEventLoggersLive),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
@@ -356,12 +371,16 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
-
-  // Misc.
-  Layer.provideMerge(AnalyticsServiceLayerLive),
-  Layer.provideMerge(OpenLive),
-  Layer.provideMerge(ServerLifecycleEventsLive),
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      CloudCliTokenManager.layer.pipe(
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(ExternalLauncher.layer),
+      ),
+      CloudManagedEndpointRuntimeLive,
+    ),
+  ),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
@@ -388,6 +407,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
+      Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(projectHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
@@ -397,8 +417,14 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer,
-).pipe(Layer.provide(browserApiCorsLayer));
+  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+).pipe(
+  Layer.provide(PreviewAutomationBroker.layer),
+  Layer.provide(ServerSelfUpdate.layer),
+  Layer.provide(commandReadinessLayer),
+  Layer.provide(browserApiCorsLayer),
+  Layer.provide(httpCompressionLayer),
+);
 
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -589,8 +615,9 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
-      Layer.provideMerge(RuntimeServicesLive),
+      Layer.provideMerge(runtimeServicesLive),
       Layer.provideMerge(McpSessionRegistry.layer.pipe(Layer.provide(ServerEnvironment.layer))),
+      Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ApplicationObservabilityLive),

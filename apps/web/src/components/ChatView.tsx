@@ -21,7 +21,11 @@ import {
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
-import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  connectionStatusTitle,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   deriveThreadActivityRun,
   deriveLatestThreadRun,
@@ -150,10 +154,18 @@ import {
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
+import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon } from "lucide-react";
+import {
+  AlarmClockIcon,
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  GitBranchIcon,
+  TriangleAlertIcon,
+  WifiOffIcon,
+} from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -215,6 +227,7 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  resolveThreadDetailRef,
   useProject,
   useProjects,
   useThreadProjection,
@@ -248,14 +261,22 @@ import {
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl } from "./chat/QueuedRunsControl";
+import { resolveThreadPr } from "./ThreadStatusIndicators";
+import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import {
+  DRAFT_HERO_TRANSITION_ANIMATION_ID,
+  DRAFT_HERO_TRANSITION_DURATION_MS,
+  DRAFT_HERO_TRANSITION_EASING,
+  MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
+  MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+  runMobileComposerTransition,
+} from "./chat/draftHeroTransition";
 import type { ComposerDispatchMode } from "./chat/composerDispatch";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
-  buildLoadingThreadFromShell,
-  buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
@@ -278,15 +299,16 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldShowComposerContextStrip,
+  startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
-import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { Button } from "./ui/button";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -323,6 +345,7 @@ const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PROJECTION_RUNS: OrchestrationV2ThreadProjection["runs"] = [];
 const EMPTY_ATTACHMENT_IDS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -335,6 +358,7 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const attachComposerAnchorRef = (element: HTMLDivElement | null) => {
     composerAnchorRef.current = element;
   };
+
   const captureComposerRect = () => {
     previousComposerRectRef.current = composerAnchorRef.current?.getBoundingClientRect() ?? null;
   };
@@ -352,7 +376,6 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
 
     animationRef.current?.cancel();
     animationRef.current = null;
-
     const previousComposerRect = previousComposerRectRef.current;
     if (
       stateChanged &&
@@ -381,20 +404,21 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
         void animation.finished
           .catch(() => undefined)
           .then(() => {
-            if (animationRef.current !== animation) {
-              return;
-            }
-            animationRef.current = null;
+            if (animationRef.current === animation) animationRef.current = null;
           });
       }
     }
-
     previousStateRef.current = isDraftHeroState;
     previousComposerRectRef.current = nextComposerRect;
   }, [isDraftHeroState]);
 
-  return [attachTransitionGroupRef, attachComposerAnchorRef, captureComposerRect] as const;
+  return {
+    transitionGroupRef: attachTransitionGroupRef,
+    composerAnchorRef: attachComposerAnchorRef,
+    captureComposerRect,
+  } as const;
 }
+
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
@@ -482,7 +506,6 @@ type ChatViewProps =
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
-      threadSyncPhase?: ThreadSyncPhase | null;
       routeKind: "server";
       draftId?: never;
     }
@@ -492,7 +515,6 @@ type ChatViewProps =
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
-      threadSyncPhase?: never;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -508,14 +530,13 @@ type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "work
 function useLocalDispatchState(input: {
   activeThread: Thread | undefined;
   activeLatestRun: Thread["latestRun"] | null;
+  latestUserMessageId: MessageId | null;
   phase: SessionPhase;
   activePendingApproval: RuntimeRequestId | null;
   activePendingUserInput: RuntimeRequestId | null;
   threadError: string | null | undefined;
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
-  const latestUserMessageId =
-    input.activeThread?.messages.findLast((message) => message.role === "user")?.id ?? null;
 
   const resetLocalDispatch = useCallback(() => {
     setLocalDispatch(null);
@@ -527,6 +548,7 @@ function useLocalDispatchState(input: {
         localDispatch,
         phase: input.phase,
         latestRun: input.activeLatestRun,
+        latestUserMessageId: input.latestUserMessageId,
         runtime: input.activeThread?.runtime ?? null,
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
@@ -534,12 +556,12 @@ function useLocalDispatchState(input: {
       }),
     [
       input.activeLatestRun,
+      input.latestUserMessageId,
       input.activePendingApproval,
       input.activePendingUserInput,
       input.activeThread?.runtime,
       input.phase,
       input.threadError,
-      latestUserMessageId,
       localDispatch,
     ],
   );
@@ -554,10 +576,13 @@ function useLocalDispatchState(input: {
             ? active
             : { ...active, preparingWorktree };
         }
-        return createLocalDispatchSnapshot(input.activeThread, options);
+        return createLocalDispatchSnapshot(input.activeThread, {
+          ...options,
+          latestUserMessageId: input.latestUserMessageId,
+        });
       });
     },
-    [input.activeThread, serverAcknowledgedLocalDispatch],
+    [input.activeThread, input.latestUserMessageId, serverAcknowledgedLocalDispatch],
   );
 
   return {
@@ -640,7 +665,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const serverThread = useThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
@@ -1010,7 +1034,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
 }: PersistentThreadTerminalPanelProps) {
   const serverThread = useThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
@@ -1165,8 +1188,6 @@ function ChatViewContent(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
-  const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
-  const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -1219,14 +1240,21 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
-  const serverThread = useThreadShell(routeKind === "server" ? routeThreadRef : null);
-  const serverThreadProjection = useThreadProjection(
-    routeKind === "server" ? routeThreadRef : null,
+  const draftThread = useComposerDraftStore((store) =>
+    routeKind === "server"
+      ? store.getDraftSessionByRef(routeThreadRef)
+      : draftId
+        ? store.getDraftSession(draftId)
+        : null,
   );
+  const serverThread = useThreadShell(routeThreadRef);
+  const routeThreadDetailRef = resolveThreadDetailRef(routeThreadRef, {
+    shellExists: serverThread !== null,
+    waitForShell: draftThread !== null,
+  });
+  const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
-  const serverVisibleTurnItems = useThreadVisibleTurnItems(
-    routeKind === "server" ? routeThreadRef : null,
-  );
+  const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const committedServerMessageIds = useMemo(
     () => deriveCommittedServerUserMessageIds(serverVisibleTurnItems),
     [serverVisibleTurnItems],
@@ -1416,7 +1444,7 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
   const fallbackDraftProject = useProject(fallbackDraftProjectRef);
-  const localDraftError = activeServerThread
+  const localDraftError = serverThread
     ? null
     : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey]?.message ?? null;
@@ -1425,7 +1453,7 @@ function ChatViewContent(props: ChatViewProps) {
   // a failed send would silently disappear on promotion. When both keys hold
   // an entry, the most recent write wins.
   useEffect(() => {
-    if (!activeServerThread || !draftId) {
+    if (!serverThread || !draftId) {
       return;
     }
     const pendingDraftEntry = localDraftErrorsByDraftId[draftId];
@@ -1454,7 +1482,7 @@ function ChatViewContent(props: ChatViewProps) {
         [routeThreadKey]: pendingDraftEntry,
       };
     });
-  }, [activeServerThread, draftId, localDraftErrorsByDraftId, routeThreadKey]);
+  }, [draftId, localDraftErrorsByDraftId, routeThreadKey, serverThread]);
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -1466,7 +1494,7 @@ function ChatViewContent(props: ChatViewProps) {
         : undefined,
     [draftThread, fallbackDraftProject?.defaultModelSelection, threadId],
   );
-  const isServerThread = routeKind === "server" && serverThread !== null;
+  const isServerThread = serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const serverLatestRun = useMemo(
     () => (serverProjection === null ? null : deriveLatestThreadRun(serverProjection)),
@@ -1831,6 +1859,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
     return envs;
   }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
+  const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
       if (!canCheckoutPullRequestIntoThread) {
@@ -2046,6 +2075,156 @@ function ChatViewContent(props: ChatViewProps) {
     dismissVersionMismatch(versionMismatchDismissKey);
     setDismissedVersionMismatchKey(versionMismatchDismissKey);
   }, [setDismissedVersionMismatchKey, versionMismatchDismissKey]);
+  const versionMismatchEnvironmentId =
+    versionMismatch && activeThread ? activeThread.environmentId : null;
+  const serverUpdateEnvironmentId = activeThread?.environmentId ?? null;
+  const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
+  const serverUpdateState = useAtomValue(
+    serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
+  );
+  const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const items: ComposerBannerStackItem[] = [];
+    const updateRunning = serverUpdateState.status === "running";
+    const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
+    const environmentReconnecting =
+      unavailableConnection !== null &&
+      (unavailableConnection.phase === "connecting" ||
+        unavailableConnection.phase === "reconnecting");
+    // Reconnecting to a version-skewed server with no update in flight
+    // usually means the server is restarting mid-update and a refresh wiped
+    // the in-memory update state. Fold the reconnect and version banners
+    // into one calm line instead of stacking "Failed to connect" on
+    // "versions differ". A failed update never folds: its error and retry
+    // action must stay visible.
+    const reconnectingThroughVersionSkew =
+      serverUpdateState.status === "idle" && environmentReconnecting && versionMismatch !== null;
+    // While an update runs, transient connect blips are expected (the server
+    // restarts) and the update banner already shows progress. Hard failure
+    // phases still surface so the Reconnect action stays reachable.
+    const suppressUnavailableBanner = updateRunning && environmentReconnecting;
+    if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
+      if (reconnectingThroughVersionSkew) {
+        items.push({
+          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
+          variant: "default",
+          icon: (
+            <span
+              className="size-1.5 animate-status-pulse rounded-full bg-foreground"
+              aria-hidden="true"
+            />
+          ),
+          title: `${unavailableConnection.phase === "connecting" ? "Connecting" : "Reconnecting"} to ${activeEnvironmentUnavailableState.label}`,
+          description: "It may be finishing an update. One moment.",
+        });
+      } else {
+        items.push({
+          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
+          variant: unavailableConnection.phase === "error" ? "error" : "warning",
+          icon: <WifiOffIcon />,
+          title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(unavailableConnection)}`,
+          description:
+            unavailableConnection.error ??
+            "Reconnect this environment before sending messages or running actions.",
+          actions: (
+            <>
+              <Button
+                size="xs"
+                disabled={environmentReconnecting}
+                onClick={() =>
+                  void handleReconnectActiveEnvironment(
+                    activeEnvironmentUnavailableState.environmentId,
+                  )
+                }
+              >
+                {environmentReconnecting ? "Reconnecting..." : "Reconnect"}
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => void navigate({ to: "/settings/connections" })}
+              >
+                Connections
+              </Button>
+            </>
+          ),
+        });
+      }
+    }
+    if (
+      serverUpdateEnvironmentId &&
+      !reconnectingThroughVersionSkew &&
+      (serverUpdateState.status !== "idle" ||
+        (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
+    ) {
+      const updateInProgress = serverUpdateState.status === "running";
+      const updateFailed = serverUpdateState.status === "failed";
+      items.push({
+        id: `server-version:${serverUpdateEnvironmentId}`,
+        variant: updateFailed ? "error" : updateInProgress ? "default" : "warning",
+        icon: updateInProgress ? (
+          <span
+            className="size-1.5 animate-status-pulse rounded-full bg-foreground"
+            aria-hidden="true"
+          />
+        ) : (
+          <TriangleAlertIcon />
+        ),
+        title:
+          updateInProgress || updateFailed
+            ? `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
+            : "Client and server versions differ",
+        description:
+          updateInProgress || updateFailed ? (
+            <ServerUpdateProgress
+              fromVersion={serverUpdateState.fromVersion}
+              state={serverUpdateState}
+            />
+          ) : versionMismatch ? (
+            <>
+              Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
+              {versionMismatch.serverVersion}.{" "}
+              {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+            </>
+          ) : null,
+        // The desktop-managed guidance is already the description; the action
+        // slot would only repeat it.
+        actions:
+          updateInProgress ||
+          !versionMismatch ||
+          versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
+            <ServerUpdateAction
+              environmentId={serverUpdateEnvironmentId}
+              serverLabel={versionMismatchServerLabel}
+              selfUpdate={versionMismatchSelfUpdate}
+              targetVersion={versionMismatch.clientVersion}
+              {...(updateFailed ? { label: "Retry update" } : {})}
+            />
+          ),
+        ...(updateInProgress || updateFailed || !versionMismatchDismissKey
+          ? {}
+          : {
+              dismissLabel: "Dismiss version mismatch warning",
+              onDismiss: () => {
+                dismissVersionMismatch(versionMismatchDismissKey);
+                setDismissedVersionMismatchKey(versionMismatchDismissKey);
+              },
+            }),
+      });
+    }
+    return items;
+  }, [
+    activeEnvironmentUnavailableState,
+    handleReconnectActiveEnvironment,
+    navigate,
+    setDismissedVersionMismatchKey,
+    showVersionMismatchBanner,
+    serverUpdateState,
+    versionMismatch,
+    versionMismatchDismissKey,
+    serverUpdateEnvironmentId,
+    versionMismatchSelfUpdate,
+    versionMismatchServerLabel,
+  ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
@@ -2139,6 +2318,8 @@ function ChatViewContent(props: ChatViewProps) {
   } = useLocalDispatchState({
     activeThread,
     activeLatestRun,
+    latestUserMessageId:
+      serverProjection?.messages.findLast((message) => message.role === "user")?.id ?? null,
     phase,
     activePendingApproval: activePendingApproval?.requestId ?? null,
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
@@ -2379,6 +2560,13 @@ function ChatViewContent(props: ChatViewProps) {
     [optimisticUserMessages],
   );
   const timelineEntries = isServerThread ? serverTimelineEntries : draftTimelineEntries;
+  const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
+  const draftHeroDockRequested =
+    activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
+  const isDraftHeroState =
+    isLocalDraftThread && timelineEntries.length === 0 && !isWorking && !draftHeroDockRequested;
+  const draftHeroTransition = useDraftHeroLayoutTransition(isDraftHeroState);
+  const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
@@ -2552,11 +2740,10 @@ function ChatViewContent(props: ChatViewProps) {
       const nextError = sanitizeThreadErrorMessage(error);
       const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
       if (
-        shouldWriteThreadErrorToCurrentServerThread({
-          activeServerThread,
-          routeThreadRef,
-          targetThreadId,
-        })
+        serverThread &&
+        targetThreadId === routeThreadRef.threadId &&
+        serverThread.environmentId === routeThreadRef.environmentId &&
+        serverThread.id === targetThreadId
       ) {
         setLocalServerErrorsByThreadKey((existing) => {
           if ((existing[routeThreadKey]?.message ?? null) === nextError) {
@@ -2580,7 +2767,7 @@ function ChatViewContent(props: ChatViewProps) {
         };
       });
     },
-    [activeServerThread, draftId, routeThreadKey, routeThreadRef],
+    [draftId, routeThreadKey, routeThreadRef, serverThread],
   );
 
   const focusComposer = useCallback(() => {
@@ -3090,7 +3277,14 @@ function ChatViewContent(props: ChatViewProps) {
     }
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
-  }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
+  }, [
+    activeThreadRef,
+    dismissPlanSidebarForCurrentTurn,
+    isGitRepo,
+    isServerThread,
+    onDiffPanelOpen,
+    planSidebarOpen,
+  ]);
   const openChangesFromThreadPanel = useCallback(() => {
     addDiffSurface();
   }, [addDiffSurface]);
@@ -4746,7 +4940,6 @@ function ChatViewContent(props: ChatViewProps) {
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      threadDetailLoading ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     )
@@ -5147,7 +5340,9 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
       environmentId,
-      input: buildThreadTurnInterruptInput(activeThread),
+      input: {
+        threadId: activeThread.id,
+      },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -5351,7 +5546,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx) {
+    if (!sendCtx?.providerAvailable) {
       return;
     }
     const {
@@ -5377,11 +5572,18 @@ function ChatViewContent(props: ChatViewProps) {
     beginLocalDispatch({ preparingWorktree: false });
     setThreadError(threadIdForSend, null);
 
-    // Scroll to the current end *before* adding the optimistic message.
+    // Position this sent row once LegendList has measured the anchored tail.
     isAtEndRef.current = true;
+    timelineScrollModeRef.current = "anchoring-new-turn";
+    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    pendingTimelineAnchorRef.current = messageIdForSend;
+    activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
-    await legendListRef.current?.scrollToEnd?.({ animated: false });
+    setTimelineAnchor({
+      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      messageId: messageIdForSend,
+    });
 
     setOptimisticUserMessages((existing) => [
       ...existing,
@@ -5400,6 +5602,7 @@ function ChatViewContent(props: ChatViewProps) {
       threadId: threadIdForSend,
       createdAt: messageCreatedAt,
       modelSelection: ctxSelectedModelSelection,
+      ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
       runtimeMode,
       interactionMode: nextInteractionMode,
     });
@@ -5453,6 +5656,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
       sendInFlightRef.current = false;
+      resetLocalDispatch();
       return;
     }
 
@@ -5993,9 +6197,6 @@ function ChatViewContent(props: ChatViewProps) {
       ref={workspaceLayoutRef}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
-      {isElectron && activeThreadRef ? (
-        <PreviewAutomationOwner threadRef={activeThreadRef} visible={previewPanelOpen} />
-      ) : null}
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -6009,7 +6210,7 @@ function ChatViewContent(props: ChatViewProps) {
           ref={threadPanelPopoverAnchorRef}
           data-chat-header
           className={cn(
-            "relative border-b border-border transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
                   "workspace-topbar drag-region relative px-3 sm:px-5",
@@ -6027,8 +6228,12 @@ function ChatViewContent(props: ChatViewProps) {
               ? panelLayoutControls
               : null}
           <ChatHeader
+            activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.title}
+            activeProjectCwd={activeProject?.workspaceRoot ?? null}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
+            onNewThreadInProject={handleNewThreadInActiveProject}
           />
         </header>
 
@@ -6086,7 +6291,7 @@ function ChatViewContent(props: ChatViewProps) {
                 contentInsetEndAdjustment={composerOverlayHeight}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                hideEmptyPlaceholder={isDraftHeroState}
                 topFadeEnabled={!hasTimelineTopBanner}
               />
 
@@ -6110,7 +6315,7 @@ function ChatViewContent(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
+            {/* Input bar — centered for an empty draft, docked after sending. */}
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
@@ -6121,15 +6326,30 @@ function ChatViewContent(props: ChatViewProps) {
               }
             >
               <div
-                ref={attachDraftHeroTransitionGroupRef}
+                ref={draftHeroTransition.transitionGroupRef}
                 className="chat-composer-horizontal-inset w-full"
               >
-                <div className="chat-content-lane relative h-full overflow-clip rounded-t-[20px]">
-                  <div className="chat-composer-shared-blur absolute -inset-8" />
-                </div>
-              </div>
-              <div className="chat-composer-horizontal-inset">
-                <div className="pointer-events-auto relative z-10 isolate">
+                <div className="pointer-events-auto relative z-10">
+                  {isDraftHeroState ? (
+                    <div className="absolute inset-x-0 bottom-full">
+                      <div
+                        className="pb-8"
+                        style={
+                          forceExpandedMobileComposer
+                            ? { viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME }
+                            : undefined
+                        }
+                      >
+                        <DraftHeroHeadline
+                          activeProjectRef={activeProjectRef}
+                          activeProjectTitle={activeProject?.title ?? null}
+                        />
+                      </div>
+                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    </div>
+                  ) : (
+                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  )}
                   {isServerThread && activeThread ? (
                     <QueuedRunsControl
                       environmentId={activeThread.environmentId}

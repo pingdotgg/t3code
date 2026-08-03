@@ -19,6 +19,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,7 +27,6 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
@@ -49,6 +49,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   EyeIcon,
   GitForkIcon,
@@ -73,6 +74,7 @@ import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveTimelineToolPresentation,
@@ -86,6 +88,7 @@ import {
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -165,7 +168,7 @@ interface TimelineRowActivityState {
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
-  latestTurnId: TurnId | null;
+  latestRunId: RunId | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -269,16 +272,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
     new Set(),
   );
+  const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
 
-  // Toggling a fold inserts/removes rows between the fold row and the final
-  // message — everything above the trigger is unchanged, so the trigger stays
-  // put as long as the list doesn't re-anchor. maintainScrollAtEnd would do
-  // exactly that (pin the bottom content when row data changes while scrolled
-  // to the end), yanking the trigger out of view. Suppress it for the frames
-  // in which the toggle's data change and item measurements settle.
-  const [foldToggleSettling, setFoldToggleSettling] = useState(false);
   const onToggleTurnFold = useCallback((runId: RunId) => {
-    setFoldToggleSettling(true);
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -290,7 +286,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
   }, []);
   const onToggleAttemptFold = useCallback((attemptId: RunAttemptId) => {
-    setFoldToggleSettling(true);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
       if (next.has(attemptId)) {
@@ -301,33 +296,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return next;
     });
   }, []);
-  useEffect(() => {
-    if (!foldToggleSettling) {
-      return;
-    }
-    let secondFrameId: number | null = null;
-    const firstFrameId = window.requestAnimationFrame(() => {
-      secondFrameId = window.requestAnimationFrame(() => {
-        setFoldToggleSettling(false);
-      });
-
-      if (anchorBottomBeforeToggle === null || !anchorElement) {
-        return;
-      }
-
-      const delta = anchorElement.getBoundingClientRect().bottom - anchorBottomBeforeToggle;
-      if (Math.abs(delta) < 0.5) {
-        return;
-      }
-
-      const list = listRef.current;
-      const currentScroll = list?.getState?.().scroll;
-      if (list && typeof currentScroll === "number") {
-        list.scrollToOffset({ offset: currentScroll + delta, animated: false });
-      }
-    },
-    [listRef],
-  );
 
   // An in-session interrupt leaves its turn expanded so the user keeps their
   // place; the next turn (or a reload, since this is local state) folds it.
@@ -415,6 +383,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ? { ...config, onReady: handleAnchorReady, onSizeChanged: handleAnchorSizeChanged }
       : undefined;
   }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows]);
+  const maintainVisibleContentPosition = useMemo(
+    () => ({
+      data: true,
+      size: false,
+    }),
+    [],
+  );
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -527,9 +502,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       isRevertingCheckpoint,
       activeTurnInProgress,
-      latestTurnId: latestTurn?.turnId ?? null,
+      latestRunId: latestRun?.runId ?? null,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId],
+    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestRun?.runId],
   );
   const listHeader = useMemo(
     () =>
@@ -565,6 +540,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   if (rows.length === 0 && !isWorking && parentThreadLink === null) {
+    if (hideEmptyPlaceholder) {
+      return null;
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground/30">
@@ -597,14 +575,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEnd={false}
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             onScroll={handleScroll}
-            className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
-            ListHeaderComponent={listHeader}
+            className={cn(
+              "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              topFadeEnabled && "chat-timeline-scroll-fade",
+            )}
+            ListHeaderComponent={
+              topFadeEnabled && parentThreadLink === null ? TIMELINE_LIST_FADE_HEADER : listHeader
+            }
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
           <TimelineMinimap
             items={minimapItems}
             bottomInset={contentInsetEndAdjustment}
             hasPersistentGutter={minimapHasPersistentGutter}
+            hitStripWidth={minimapHitStripWidth}
             stripMap={minimapStripMap}
             onSelect={(item) => {
               onManualNavigation();
@@ -946,7 +930,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
-      {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -992,7 +975,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           Sent by another agent
         </p>
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
+      <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
@@ -1565,17 +1548,26 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
 // re-render only the affected row, not the entire list.
 // ---------------------------------------------------------------------------
 
-/** Renders one or more already-derived work log rows. Overflow expansion is modeled as LegendList data. */
+/** Collapsed state shows the earliest chunk so "Show more" only appends rows downward. */
 const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries,
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
+  const anchorBottomBeforeToggleRef = useRef<number | null>(null);
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
     [groupedEntries],
   );
+  const hasOverflow = nonEmptyEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleEntries =
+    hasOverflow && !isExpanded
+      ? nonEmptyEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+      : nonEmptyEntries;
+  const hiddenCount = nonEmptyEntries.length - visibleEntries.length;
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
   const groupLabel = onlyToolEntries
     ? nonEmptyEntries.length === 1
@@ -1583,17 +1575,49 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : `${nonEmptyEntries.length} tool calls`
     : "Work Log";
 
+  useLayoutEffect(() => {
+    const anchorBottomBeforeToggle = anchorBottomBeforeToggleRef.current;
+    anchorBottomBeforeToggleRef.current = null;
+
+    if (anchorBottomBeforeToggle === null) {
+      return;
+    }
+
+    const section = sectionRef.current;
+    if (!section) {
+      return;
+    }
+
+    const delta = section.getBoundingClientRect().bottom - anchorBottomBeforeToggle;
+    if (Math.abs(delta) < 0.5) {
+      return;
+    }
+
+    const scroller = findNearestVerticalScroller(section);
+    if (scroller) {
+      scroller.scrollTop += delta;
+    } else {
+      window.scrollBy(0, delta);
+    }
+  }, [isExpanded]);
+
+  const toggleExpanded = () => {
+    anchorBottomBeforeToggleRef.current =
+      sectionRef.current?.getBoundingClientRect().bottom ?? null;
+    setIsExpanded((v) => !v);
+  };
+
   if (nonEmptyEntries.length === 0) return null;
 
   return (
-    <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
+    <section ref={sectionRef} className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
       {!onlyToolEntries && (
         <p className="px-0.5 pb-0.5 font-medium text-[11px] text-muted-foreground/65">
           {groupLabel}
         </p>
       )}
       <div className="space-y-px">
-        {nonEmptyEntries.map((workEntry) => (
+        {visibleEntries.map((workEntry) => (
           <SimpleWorkEntryRow
             key={workEntry.id}
             workEntry={workEntry}
@@ -1601,54 +1625,45 @@ const WorkGroupSection = memo(function WorkGroupSection({
           />
         ))}
       </div>
+      {hasOverflow && (
+        <button
+          type="button"
+          className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          onClick={toggleExpanded}
+        >
+          <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/65">
+            {isExpanded ? (
+              <ChevronUpIcon className="size-3.5 shrink-0 opacity-70" />
+            ) : (
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+            )}
+          </span>
+          {isExpanded ? (
+            <span className="font-medium text-foreground/82">Show fewer tool calls</span>
+          ) : (
+            <span className="font-medium text-foreground/82">
+              +{hiddenCount} previous tool {hiddenCount === 1 ? "call" : "calls"}
+            </span>
+          )}
+        </button>
+      )}
     </section>
   );
 });
 
-function WorkGroupToggleTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "work-toggle" }>;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const labelNoun = row.onlyToolEntries
-    ? row.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : row.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
-
-  return (
-    <button
-      type="button"
-      className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-expanded={row.expanded}
-      onClick={(event) => {
-        const anchorElement =
-          event.currentTarget.closest<HTMLElement>("[data-timeline-row-id]") ?? event.currentTarget;
-        ctx.onToggleWorkGroup(row.groupId, anchorElement);
-      }}
-    >
-      <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/65">
-        <ChevronDownIcon
-          className={cn(
-            "size-3.5 shrink-0 opacity-70 transition-transform duration-200",
-            row.expanded && "rotate-180",
-          )}
-        />
-      </span>
-      {row.expanded ? (
-        <span className="font-medium text-foreground/82">
-          Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
-        </span>
-      ) : (
-        <span className="font-medium text-foreground/82">
-          +{row.hiddenCount} previous {labelNoun}
-        </span>
-      )}
-    </button>
-  );
+function findNearestVerticalScroller(element: HTMLElement): HTMLElement | null {
+  let parent = element.parentElement;
+  while (parent) {
+    const { overflowY } = window.getComputedStyle(parent);
+    if (
+      (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+      parent.scrollHeight > parent.clientHeight
+    ) {
+      return parent;
+    }
+    parent = parent.parentElement;
+  }
+  return null;
 }
 
 /** Subscribes directly to the UI state store for expand/collapse state,
@@ -1694,57 +1709,30 @@ function AssistantChangedFilesSectionInner({
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
-  const allDirectoriesExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId] ?? true,
+  const activity = use(TimelineRowActivityCtx);
+  const isLatestRun = activity.latestRunId === turnSummary.runId;
+  const persistedExpanded = useUiStateStore(
+    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
-  const [autoExpanded] = useState(() =>
-    shouldAutoExpandChangedFiles(checkpointFiles, isLatestTurn),
-  );
+  const [autoExpanded] = useState(() => shouldAutoExpandChangedFiles(checkpointFiles, isLatestRun));
   const [allDirectoriesExpanded, setAllDirectoriesExpanded] = useState(autoExpanded);
-  const expanded = persistedExpanded ?? (isLatestTurn && autoExpanded);
+  const expanded = persistedExpanded ?? (isLatestRun && autoExpanded);
 
   return (
-    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-      <div className="sticky top-2 z-10 mb-1.5 flex items-center justify-between gap-2 bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:content-['']">
-        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-          <span>Changed files ({changedFileCountLabel})</span>
-          {hasNonZeroStat(summaryStat) && (
-            <>
-              <span className="mx-1">•</span>
-              <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
-            </>
-          )}
-        </p>
-        <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            data-scroll-anchor-ignore
-            onClick={() => setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)}
-          >
-            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => onOpenTurnDiff(turnSummary.runId, checkpointFiles[0]?.path)}
-          >
-            View diff
-          </Button>
-        </div>
-      </div>
-      <ChangedFilesTree
-        key={`changed-files-tree:${turnSummary.runId}`}
-        runId={turnSummary.runId}
-        files={checkpointFiles}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
-    </div>
+    <ChangedFilesCard
+      runId={turnSummary.runId}
+      files={checkpointFiles}
+      expanded={expanded}
+      showCompactPreview={isLatestRun}
+      allDirectoriesExpanded={allDirectoriesExpanded}
+      resolvedTheme={resolvedTheme}
+      onExpandedChange={(nextExpanded) =>
+        setExpanded(routeThreadKey, turnSummary.runId, nextExpanded)
+      }
+      onToggleAllDirectories={() => setAllDirectoriesExpanded((current) => !current)}
+      onOpenTurnDiff={onOpenTurnDiff}
+    />
   );
 }
 

@@ -147,7 +147,7 @@ describe("buildThreadFeed", () => {
     ]);
     const activity = feed.find((entry) => entry.type === "activity-group")?.activities[0];
     expect(activity?.projectedItem).toBe(rows[1]);
-    expect(activity?.fullDetail).toContain('"input": "vp check"');
+    expect(activity?.getFullDetail()).toContain('"input": "vp check"');
   });
 
   it("retains inherited and synthetic rows with their original projected identity", () => {
@@ -301,7 +301,7 @@ describe("buildThreadFeed", () => {
     ): ThreadFeedActivity => ({
       id,
       createdAt,
-      turnId: null,
+      runId: null,
       summary: `Tool ${id}`,
       detail: null,
       canExpand: false,
@@ -310,14 +310,16 @@ describe("buildThreadFeed", () => {
       icon: "command",
       logo: null,
       toolLike: true,
+      prominent: false,
       status,
+      projectedItem: projected(command(createdAt), 0),
     });
     const feed: ThreadFeedEntry[] = [
       {
         type: "activity-group",
         id: "work-group-1",
         createdAt: "2026-04-01T00:00:01.000Z",
-        turnId: null,
+        runId: null,
         activities: [
           activity("activity-1", "2026-04-01T00:00:01.000Z"),
           activity("activity-neutral", "2026-04-01T00:00:02.000Z", "neutral"),
@@ -363,6 +365,6 @@ describe("buildThreadFeed", () => {
 
     expect(activity?.summary).toBe("Read a T3 thread");
     expect(activity?.logo).toBe("t3-code");
-    expect(activity?.copyText.split("\n")[0]).toBe("Read a T3 thread");
+    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a T3 thread");
   });
 });

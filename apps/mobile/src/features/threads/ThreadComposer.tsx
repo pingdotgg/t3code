@@ -91,6 +91,12 @@ export interface ThreadComposerProps {
   readonly connectionState: RemoteClientConnectionState;
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
+  /**
+   * Message sync phase for the selected thread (drives the status pill):
+   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
+   * are on screen while they reconcile with the server.
+   */
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: EnvironmentThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;

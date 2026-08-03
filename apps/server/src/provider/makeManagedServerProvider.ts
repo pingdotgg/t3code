@@ -31,7 +31,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
-  readonly initialSnapshot: (settings: Settings) => ServerProvider;
+  readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
@@ -40,14 +40,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
-}): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
+}): Effect.fn.Return<
+  ServerProviderShape,
+  ServerSettingsError,
+  Scope.Scope | BackgroundPolicy.BackgroundPolicy | ServerSettingsService
+> {
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const serverSettings = yield* ServerSettingsService;
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
   );
   const initialSettings = yield* input.getSettings;
-  const initialSnapshot = input.initialSnapshot(initialSettings);
+  const initialSnapshot = yield* input.initialSnapshot(initialSettings);
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
@@ -141,6 +147,42 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return yield* applySnapshot(nextSettings, { forceRefresh: true });
   });
 
+  const hasProviderStatusDemand = Effect.gen(function* () {
+    const state = yield* Ref.get(snapshotStateRef);
+    const instanceId = state.snapshot.instanceId;
+    const [genericDemand, instanceDemand] = yield* Effect.all([
+      backgroundPolicy.shouldRunScopeWork({ type: "provider-status" }),
+      backgroundPolicy.shouldRunScopeWork({ type: "provider-status", instanceId }),
+    ]);
+    return genericDemand || instanceDemand;
+  });
+
+  const getRefreshInterval =
+    input.refreshInterval !== undefined
+      ? Effect.succeed(input.refreshInterval)
+      : serverSettings.getSettings.pipe(
+          Effect.map(
+            (settings) =>
+              resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+          ),
+          Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
+        );
+
+  const refreshIntervalChanges = yield* Queue.sliding<void>(1);
+  if (input.refreshInterval === undefined) {
+    const serverSettingsChanges = yield* serverSettings.subscribeChanges;
+    yield* serverSettingsChanges.pipe(
+      Stream.map((settings) =>
+        Duration.toMillis(
+          resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+        ),
+      ),
+      Stream.changes,
+      Stream.runForEach(() => Queue.offer(refreshIntervalChanges, undefined).pipe(Effect.asVoid)),
+      Effect.forkScoped,
+    );
+  }
+
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
     Effect.asVoid(applySnapshot(nextSettings)),
   ).pipe(Effect.forkScoped);
@@ -177,11 +219,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
 
   return {
-    getSnapshot: input.getSettings.pipe(
-      Effect.flatMap(applySnapshot),
-      Effect.tapError(Effect.logError),
-      Effect.orDie,
-    ),
+    maintenanceCapabilities: input.maintenanceCapabilities,
+    getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

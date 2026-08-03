@@ -129,8 +129,6 @@ export function BranchToolbarBranchSelector({
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
-  const serverSession = serverThread?.session ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
   const activeProjectRef = serverThread
@@ -611,8 +609,14 @@ export function BranchToolbarBranchSelector({
     startFromOrigin,
   });
 
-  // Change request state is compact in the composer and gets a dedicated row in the panel.
-  const branchPr = resolveThreadPr(resolvedActiveBranch, branchStatusQuery.data ?? null);
+  // PR pill shown next to the branch selector when the active branch has one.
+  const branchPr = resolveThreadPr({
+    threadBranch: resolveBranchToolbarPrBranch({
+      activeThreadBranch,
+      resolvedActiveBranch,
+    }),
+    gitStatus: branchStatusQuery.data ?? null,
+  });
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
   // state-description tooltip.
@@ -749,35 +753,40 @@ export function BranchToolbarBranchSelector({
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
-        <ComboboxTrigger
-          render={<Button variant="ghost" size={displayMode === "panel" ? "sm" : "xs"} />}
-          className={cn(
-            "min-w-0 text-muted-foreground/70 hover:text-foreground/80",
-            displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
-          )}
-          disabled={isInitialBranchesLoadPending || isBranchActionPending}
+        <span
+          className="flex min-w-0"
+          onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
-          <GitBranchIcon
+          <ComboboxTrigger
+            render={<Button variant="ghost" size={displayMode === "panel" ? "sm" : "xs"} />}
             className={cn(
-              "size-3 shrink-0 opacity-70",
-              displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+              "min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80",
+              displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
             )}
-          />
-          <span
-            className={cn(
-              "min-w-0 max-w-[240px] truncate",
-              displayMode === "panel" && "max-w-none flex-1 text-left",
-            )}
+            disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
-            {triggerLabel}
-          </span>
-          <ChevronDownIcon
-            className={cn(
-              "size-3 shrink-0 opacity-50",
-              displayMode === "panel" && THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-            )}
-          />
-        </ComboboxTrigger>
+            <GitBranchIcon
+              className={cn(
+                "size-3 shrink-0 opacity-70",
+                displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+              )}
+            />
+            <span
+              className={cn(
+                "min-w-0 max-w-[240px] truncate",
+                displayMode === "panel" && "max-w-none flex-1 text-left",
+              )}
+            >
+              {triggerLabel}
+            </span>
+            <ChevronDownIcon
+              className={cn(
+                "size-3 shrink-0 opacity-50",
+                displayMode === "panel" && THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+              )}
+            />
+          </ComboboxTrigger>
+        </span>
         {displayMode === "panel" && branchPr && branchPrStatus ? (
           <Tooltip>
             <TooltipTrigger

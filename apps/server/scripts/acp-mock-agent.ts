@@ -83,18 +83,30 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let authenticated = !requiresAuthentication;
+let promptCount = 0;
+let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
+
+function promptIdFromRequestMeta(
+  request: Pick<AcpSchema.PromptRequest, "_meta">,
+): string | undefined {
+  const meta = request._meta;
+  if (meta === null || typeof meta !== "object") {
+    return undefined;
+  }
+  const promptId = meta.promptId ?? meta.requestId;
+  return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
+}
 
 function logExit(reason: string): void {
   if (!exitLogPath) {
     return;
   }
-  appendFileSync(exitLogPath, `${reason}\n`, "utf8");
+  NodeFS.appendFileSync(exitLogPath, `${reason}\n`, "utf8");
 }
 
-function logResidualCallbackResponse(kind: string): void {
-  if (!residualCallbackResponseLogPath) return;
-  NodeFS.appendFileSync(residualCallbackResponseLogPath, `${kind}\n`, "utf8");
+function writeJsonRpcNotification(method: string, params: unknown): void {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
 }
 
 function logResidualCallbackResponse(kind: string): void {

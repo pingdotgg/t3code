@@ -171,6 +171,8 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { openCommandPalette } from "../commandPaletteBus";
 import {
+  archiveSelectedThreadEntries,
+  buildMultiSelectThreadContextMenuItems,
   getSidebarForkParentThreadId,
   getSidebarThreadIdsToPrewarm,
   isSidebarSubagentThread,
@@ -1807,7 +1809,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
       });
       const hasRunningThread = selectedThreadEntries.some(
-        ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
+        ({ thread }) => thread.runtime?.status === "running" && thread.runtime.activeRunId !== null,
       );
 
       const clicked = await api.contextMenu.show(

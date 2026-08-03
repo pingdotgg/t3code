@@ -100,23 +100,51 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           </span>
         </button>
         <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            data-scroll-anchor-ignore
-            onClick={onToggleAllDirectories}
-          >
-            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
-          >
-            View diff
-          </Button>
+          {expanded ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="outline"
+                    className="!size-[22px]"
+                    aria-label={
+                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                    }
+                    data-scroll-anchor-ignore
+                    onClick={onToggleAllDirectories}
+                  />
+                }
+              >
+                {allDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  aria-label="Open diff"
+                  onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
+                />
+              }
+            >
+              <FileDiffIcon className="size-3" />
+              <span className="hidden sm:inline">Open diff</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+          </Tooltip>
         </div>
       </div>
       {expanded ? (
@@ -148,7 +176,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 type="button"
                 title={file.path}
                 className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onOpenTurnDiff(turnId, file.path)}
+                onClick={() => onOpenTurnDiff(runId, file.path)}
               >
                 <PierreEntryIcon
                   pathValue={file.path}

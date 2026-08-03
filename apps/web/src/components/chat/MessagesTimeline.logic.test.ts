@@ -1130,67 +1130,6 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("does not fold the session's running turn when latestTurn regresses", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "previous-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "previous-work",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Read files",
-            tone: "tool" as const,
-          },
-        },
-        {
-          id: "user-followup-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:01:00Z",
-          message: {
-            id: "user-followup" as never,
-            role: "user",
-            text: "continue",
-            turnId: null,
-            createdAt: "2026-01-01T00:01:00Z",
-            updatedAt: "2026-01-01T00:01:00Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "running-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:01:05Z",
-          entry: {
-            id: "running-work",
-            createdAt: "2026-01-01T00:01:05Z",
-            turnId: "turn-2" as never,
-            label: "Searched files",
-            tone: "tool" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "completed",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: "2026-01-01T00:00:25Z",
-      },
-      runningTurnId: "turn-2" as never,
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:01:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.filter((row) => row.kind === "turn-fold").map((row) => row.turnId)).toEqual([
-      "turn-1",
-    ]);
-    expect(rows.map((row) => row.id)).toContain("running-work-entry");
-  });
-
   it("only shows assistant metadata on the terminal assistant message", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -1277,7 +1216,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.showAssistantCopyButton).toBe(false);
   });
 
-  it("models work log overflow expansion as inserted list rows", () => {
+  it("groups contiguous work log entries into one timeline row", () => {
     const timelineEntries = [
       {
         id: "work-entry-1",
@@ -1324,27 +1263,17 @@ describe("deriveMessagesTimelineRows", () => {
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     };
-    const collapsedRows = deriveMessagesTimelineRows(baseInput);
-    const expandedRows = deriveMessagesTimelineRows({
-      ...baseInput,
-      expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
-    });
+    const rows = deriveMessagesTimelineRows(baseInput);
 
-    expect(collapsedRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:work-entry-1"]);
-    expect(collapsedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
-      groupId: "work-group:work-entry-1",
-      hiddenCount: 2,
-      expanded: false,
-      onlyToolEntries: true,
-    });
-    expect(expandedRows.map((row) => row.id)).toEqual([
-      "work-1",
-      "work-2",
-      "work-3",
-      "work-toggle:work-entry-1",
-    ]);
-    expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
-      expanded: true,
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "work",
+      id: "work-entry-1",
+      groupedEntries: [
+        expect.objectContaining({ id: "work-1" }),
+        expect.objectContaining({ id: "work-2" }),
+        expect.objectContaining({ id: "work-3" }),
+      ],
     });
   });
 });

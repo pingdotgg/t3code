@@ -26,6 +26,10 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import {
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadDetailSnapshot,
+} from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -77,6 +81,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "client_session_revoke_failed",
   "project_snapshot_failed",
   "project_mutation_failed",
+  "orchestration_snapshot_failed",
+  "orchestration_thread_snapshot_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -283,6 +289,15 @@ const EnvironmentProjectSnapshotErrors = [
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
 ] as const;
+const EnvironmentOrchestrationSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentOrchestrationThreadSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
 const EnvironmentProjectMutationErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
@@ -441,6 +456,27 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
+  threadId: ThreadId,
+});
+
+export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
+  .add(
+    HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
+      headers: OptionalBearerHeaders,
+      success: OrchestrationV2ShellSnapshot,
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationV2ThreadDetailSnapshot,
+      error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")
   .add(
     HttpApiEndpoint.get("snapshot", "/api/projects", {
@@ -522,5 +558,6 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
+  .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

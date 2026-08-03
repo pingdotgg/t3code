@@ -351,6 +351,12 @@ export function trimOrNull<T extends string>(value: T | null | undefined): T | n
   return trimmed || null;
 }
 
+function cloneSelections(
+  selections: ReadonlyArray<ProviderOptionSelection>,
+): Array<ProviderOptionSelection> {
+  return selections.map(cloneSelection);
+}
+
 export function createModelSelection(
   instanceId: ProviderInstanceId,
   model: string,

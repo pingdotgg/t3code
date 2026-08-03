@@ -28,6 +28,7 @@ import {
   OpenCodeAdapterV2Driver,
   type OpenCodeAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/OpenCodeAdapterV2.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -79,6 +80,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 
 export type OpenCodeDriverEnv =
   | OpenCodeAdapterV2DriverEnv
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem

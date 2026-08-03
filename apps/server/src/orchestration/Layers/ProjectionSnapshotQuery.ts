@@ -17,6 +17,7 @@ import {
   OrchestrationThreadSearchSource,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadDetailSnapshot,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
   type OrchestrationMessage,
@@ -729,31 +730,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadSearchRow,
     execute: ({ pattern, limit }) =>
       sql`
-        WITH ranked AS (
+        WITH candidate AS (
           SELECT
             threads.thread_id AS thread_id,
             threads.project_id AS project_id,
-            CASE messages.role
-              WHEN 'user' THEN 'user'
-              ELSE 'assistant'
-            END AS source,
+            messages.role AS role,
             messages.text AS match_text,
             messages.created_at AS message_created_at,
-            CASE messages.role
-              WHEN 'user' THEN 0
-              ELSE 1
-            END AS match_rank,
-            threads.updated_at AS thread_updated_at,
-            ROW_NUMBER() OVER (
-              PARTITION BY threads.thread_id
-              ORDER BY
-                CASE messages.role
-                  WHEN 'user' THEN 0
-                  ELSE 1
-                END ASC,
-                messages.created_at DESC,
-                messages.message_id ASC
-            ) AS thread_match_rank
+            messages.message_id AS message_id,
+            threads.updated_at AS thread_updated_at
           FROM projection_thread_messages AS messages
           INNER JOIN projection_threads AS threads
             ON threads.thread_id = messages.thread_id
@@ -775,6 +760,53 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               )
             )
             AND messages.text LIKE ${pattern} ESCAPE '!'
+          UNION ALL
+          SELECT
+            v2_threads.thread_id AS thread_id,
+            v2_threads.project_id AS project_id,
+            v2_messages.role AS role,
+            json_extract(v2_messages.payload_json, '$.text') AS match_text,
+            v2_messages.created_at AS message_created_at,
+            v2_messages.message_id AS message_id,
+            v2_threads.updated_at AS thread_updated_at
+          FROM orchestration_v2_projection_messages AS v2_messages
+          INNER JOIN orchestration_v2_projection_threads AS v2_threads
+            ON v2_threads.thread_id = v2_messages.thread_id
+          INNER JOIN projection_projects AS projects
+            ON projects.project_id = v2_threads.project_id
+          WHERE v2_threads.deleted_at IS NULL
+            AND v2_threads.archived_at IS NULL
+            AND projects.deleted_at IS NULL
+            AND v2_messages.streaming = 0
+            AND v2_messages.role IN ('user', 'assistant')
+            AND json_extract(v2_messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+        ),
+        ranked AS (
+          SELECT
+            thread_id,
+            project_id,
+            CASE role
+              WHEN 'user' THEN 'user'
+              ELSE 'assistant'
+            END AS source,
+            match_text,
+            message_created_at,
+            CASE role
+              WHEN 'user' THEN 0
+              ELSE 1
+            END AS match_rank,
+            thread_updated_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY
+                CASE role
+                  WHEN 'user' THEN 0
+                  ELSE 1
+                END ASC,
+                message_created_at DESC,
+                message_id ASC
+            ) AS thread_match_rank
+          FROM candidate
         )
         SELECT
           thread_id AS "threadId",
@@ -1660,6 +1692,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                         archivedAt: row.archivedAt,
+                        settledOverride: row.settledOverride,
+                        settledAt: row.settledAt,
+                        snoozedUntil: row.snoozedUntil,
+                        snoozedAt: row.snoozedAt,
+                        titleRegeneration: mapTitleRegeneration(row),
                         session: sessionByThread.get(row.threadId) ?? null,
                         latestUserMessageAt: row.latestUserMessageAt,
                         hasPendingApprovals: row.pendingApprovalCount > 0,

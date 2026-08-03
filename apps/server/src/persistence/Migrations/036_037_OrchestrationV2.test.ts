@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
+import { migrationEntries, runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
@@ -13,7 +13,7 @@ layer("036_037_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 43 }, (_, index) => index + 1),
+        Array.from({ length: 44 }, (_, index) => index + 1),
       );
     }),
   );
@@ -64,7 +64,7 @@ layer("036_037_OrchestrationV2", (it) => {
     }),
   );
 
-  it.effect("backfills provider-session thread bindings in migration 036", () =>
+  it.effect("backfills provider-session thread bindings in migration 038", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 38 });

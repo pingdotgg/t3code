@@ -18,8 +18,6 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
-  buildLoadingThreadFromShell,
-  buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
@@ -31,6 +29,8 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  startNewThreadForProject,
+  shouldShowBranchMismatchBanner,
   shouldShowComposerContextStrip,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -85,51 +85,6 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
-
-describe("buildLoadingThreadFromShell", () => {
-  it("preserves shell metadata and supplies empty detail collections", () => {
-    const shell = {
-      environmentId,
-      id: threadId,
-      projectId,
-      title: "Loading thread",
-      modelSelection: {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.4",
-      },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      latestTurn: null,
-      createdAt: now,
-      updatedAt: now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      snoozedUntil: null,
-      snoozedAt: null,
-      session: null,
-      latestUserMessageAt: now,
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      hasActionableProposedPlan: false,
-    } satisfies ThreadShell;
-
-    expect(buildLoadingThreadFromShell(shell)).toMatchObject({
-      environmentId,
-      id: threadId,
-      projectId,
-      title: "Loading thread",
-      branch: "main",
-      deletedAt: null,
-      messages: [],
-      proposedPlans: [],
-      activities: [],
-      checkpoints: [],
-    });
-  });
-});
 
 describe("resolveThreadMetadataUpdateForNextTurn", () => {
   const modelSelection = {
@@ -486,24 +441,19 @@ describe("reconcileRetainedMountedThreadIds", () => {
 });
 
 describe("shouldWriteThreadErrorToCurrentServerThread", () => {
-  it("writes errors for a shell-derived active server thread", () => {
+  it("requires the environment, route thread, and target thread to match", () => {
     const routeThreadRef = { environmentId, threadId };
 
     expect(
       shouldWriteThreadErrorToCurrentServerThread({
-        activeServerThread: { environmentId, id: threadId },
+        serverThread: { environmentId, id: threadId },
         routeThreadRef,
         targetThreadId: threadId,
       }),
     ).toBe(true);
-  });
-
-  it("requires an active server thread matching the environment, route, and target", () => {
-    const routeThreadRef = { environmentId, threadId };
-
     expect(
       shouldWriteThreadErrorToCurrentServerThread({
-        activeServerThread: null,
+        serverThread: null,
         routeThreadRef,
         targetThreadId: threadId,
       }),
@@ -627,42 +577,29 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
-  it("acknowledges a steering message projected onto the current running turn", () => {
-    const runningTurn = {
+  it("acknowledges a steering message projected onto the current running run", () => {
+    const runningRun = {
       ...completedTurn,
-      state: "running" as const,
+      status: "running" as const,
       completedAt: null,
     };
-    const runningSession = {
+    const runningRuntime = {
       ...readySession,
       status: "running" as const,
-      activeTurnId: runningTurn.turnId,
+      activeRunId: runningRun.runId,
     };
     const localDispatch = createLocalDispatchSnapshot(
-      makeThread({
-        latestTurn: runningTurn,
-        session: runningSession,
-        messages: [
-          {
-            id: MessageId.make("message-before-steer"),
-            role: "user",
-            text: "Initial prompt",
-            turnId: runningTurn.turnId,
-            createdAt: runningTurn.requestedAt,
-            updatedAt: runningTurn.requestedAt,
-            streaming: false,
-          },
-        ],
-      }),
+      makeThread({ latestRun: runningRun, runtime: runningRuntime }),
+      { latestUserMessageId: MessageId.make("message-before-steer") },
     );
 
     expect(
       hasServerAcknowledgedLocalDispatch({
         localDispatch,
         phase: "running",
-        latestTurn: runningTurn,
+        latestRun: runningRun,
         latestUserMessageId: MessageId.make("message-steer"),
-        session: runningSession,
+        runtime: runningRuntime,
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,

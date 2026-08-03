@@ -50,6 +50,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
+    creationSource: "mobile" as const,
     threadId: ThreadId.make(spec.threadId),
     message: {
       messageId: MessageId.make(spec.messageId),

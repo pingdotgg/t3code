@@ -206,6 +206,20 @@ layer("OrchestrationEventStore", (it) => {
       assert.isTrue("aggregateKind" in applicationEvents[0]!);
       assert.isTrue("event" in applicationEvents[1]!);
 
+      const finiteReplay = yield* eventStore
+        .readApplicationEvents({
+          afterSequence: baselineSequence,
+          throughSequence: threadEvent!.sequence,
+        })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) => Array.from(chunk)),
+        );
+      assert.deepEqual(
+        finiteReplay.map((event) => event.sequence),
+        [projectEvent.sequence, threadEvent!.sequence],
+      );
+
       const legacyReplay = yield* eventStore.readFromSequence(projectEvent.sequence - 1).pipe(
         Stream.runCollect,
         Effect.map((chunk) => Array.from(chunk)),

@@ -21,7 +21,10 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
 
 const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
   McpSessionRegistry.__testing
-    .make({ now })
+    .make({
+      now,
+      livenessWindowMs: 100,
+    })
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
@@ -72,7 +75,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
-it.effect("keeps credentials valid until they are explicitly revoked", () =>
+it.effect("expires credentials once their session stops showing signs of life", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
     const registry = yield* makeRegistry(() => timestamp);
@@ -81,12 +84,7 @@ it.effect("keeps credentials valid until they are explicitly revoked", () =>
       providerInstanceId: ProviderInstanceId.make("claude"),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    const resolved = yield* registry.resolve(token);
-    expect(resolved?.providerSessionId).toBe(issued.config.providerSessionId);
-    timestamp += 365 * 24 * 60 * 60 * 1_000;
-    expect(yield* registry.resolve(token)).toEqual(resolved);
-
-    yield* registry.revokeProviderSession(issued.config.providerSessionId);
+    timestamp += 101;
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );

@@ -26,6 +26,8 @@ import * as DateTime from "effect/DateTime";
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
 
+const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionLabel?: string;
   readonly customAnswer?: string;
@@ -107,6 +109,16 @@ export type ThreadFeedEntry =
       readonly activities: ReadonlyArray<ThreadFeedActivity>;
     }
   | {
+      readonly type: "work-toggle";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly groupId: string;
+      readonly hiddenCount: number;
+      readonly expanded: boolean;
+      readonly onlyToolActivities: boolean;
+    }
+  | {
       readonly type: "run-fold";
       readonly id: string;
       readonly createdAt: string;
@@ -139,6 +151,18 @@ function resolvePendingUserInputAnswer(
 function capitalizePhrase(value: string): string {
   const trimmed = value.trim();
   return trimmed.length === 0 ? value : `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+function memoizeValue<T>(build: () => T): () => T {
+  let value: T;
+  let initialized = false;
+  return () => {
+    if (!initialized) {
+      value = build();
+      initialized = true;
+    }
+    return value;
+  };
 }
 
 function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
@@ -313,15 +337,25 @@ function toFeedActivity(row: OrchestrationV2ProjectedTurnItem): ThreadFeedActivi
   const toolPresentation = itemToolPresentation(item);
   const summary = itemSummary(item, toolPresentation);
   const detail = itemPreview(item);
-  const fullDetail = JSON.stringify(
-    {
-      visibility: row.visibility,
-      sourceThreadId: row.sourceThreadId,
-      sourceItemId: row.sourceItemId,
-      item,
-    },
-    null,
-    2,
+  const getFullDetail = memoizeValue(() =>
+    JSON.stringify(
+      {
+        visibility: row.visibility,
+        sourceThreadId: row.sourceThreadId,
+        sourceItemId: row.sourceItemId,
+        item,
+      },
+      null,
+      2,
+    ),
+  );
+  const getCopyText = memoizeValue(() =>
+    [summary, detail, getFullDetail()]
+      .filter(
+        (value, index, values): value is string =>
+          Boolean(value) && values.indexOf(value) === index,
+      )
+      .join("\n"),
   );
   return {
     id: `${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
@@ -329,15 +363,11 @@ function toFeedActivity(row: OrchestrationV2ProjectedTurnItem): ThreadFeedActivi
     runId: item.runId,
     summary,
     detail,
-    fullDetail,
+    canExpand: true,
+    getFullDetail,
+    getCopyText,
     icon: itemIcon(item),
     logo: toolPresentation?.logo ?? null,
-    copyText: [summary, detail, fullDetail]
-      .filter(
-        (value, index, values): value is string =>
-          Boolean(value) && values.indexOf(value) === index,
-      )
-      .join("\n"),
     toolLike: itemIsToolLike(item),
     prominent: itemIsProminent(item),
     status: itemStatus(item),
@@ -355,6 +385,13 @@ function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
 
 function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): ThreadFeedEntry[] {
   const grouped: ThreadFeedEntry[] = [];
+  // Mutable backing array for the trailing group so appending an activity is
+  // O(1) instead of re-copying the group (which made this loop quadratic on
+  // long tool runs). The array is only mutated while it is the trailing group.
+  let openGroupActivities: ThreadFeedActivity[] | null = null;
+  let openGroupRunId: string | null = null;
+  let openGroupHasProminent = false;
+
   for (const entry of entries) {
     if (isEmptyMessage(entry)) continue;
     if (entry.type !== "activity") {
@@ -362,25 +399,26 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
       openGroupActivities = null;
       continue;
     }
-    const previous = grouped.at(-1);
+
     if (
-      previous?.type === "activity-group" &&
-      previous.runId === entry.runId &&
+      openGroupActivities !== null &&
+      openGroupRunId === entry.runId &&
       !entry.activity.prominent &&
-      !previous.activities.some((activity) => activity.prominent)
+      !openGroupHasProminent
     ) {
-      grouped[grouped.length - 1] = {
-        ...previous,
-        activities: [...previous.activities, entry.activity],
-      };
+      openGroupActivities.push(entry.activity);
       continue;
     }
+
+    openGroupActivities = [entry.activity];
+    openGroupRunId = entry.runId;
+    openGroupHasProminent = entry.activity.prominent === true;
     grouped.push({
       type: "activity-group",
       id: entry.id,
       createdAt: entry.createdAt,
       runId: entry.runId,
-      activities: [entry.activity],
+      activities: openGroupActivities,
     });
   }
   return grouped;
@@ -522,8 +560,13 @@ export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
   expandedRunIds: ReadonlySet<RunId>,
+  expandedWorkGroupIds: ReadonlySet<string> = new Set(),
+  activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
-  const sourceFeed = feed.filter((entry) => entry.type !== "run-fold");
+  const sourceFeed = feed.filter(
+    (entry) =>
+      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "working",
+  );
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
@@ -544,7 +587,9 @@ export function deriveThreadFeedPresentation(
         expanded: expandedRunIds.has(fold.runId),
       });
     }
-    if (!collapsedEntryIds.has(entry.id)) result.push(entry);
+    if (!collapsedEntryIds.has(entry.id)) {
+      appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
+    }
   }
   if (activeWorkStartedAt !== null) {
     result.push({
@@ -556,6 +601,55 @@ export function deriveThreadFeedPresentation(
   return result;
 }
 
+function appendPresentedFeedEntry(
+  result: ThreadFeedEntry[],
+  entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "working" }>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+): void {
+  if (entry.type !== "activity-group") {
+    result.push(entry);
+    return;
+  }
+
+  const activities = entry.activities.filter(
+    (activity) => !(activity.toolLike && activity.status === "neutral"),
+  );
+  if (activities.length === 0) {
+    return;
+  }
+  if (activities.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+    result.push({
+      ...entry,
+      activities,
+    });
+    return;
+  }
+
+  const groupId = entry.id;
+  const expanded = expandedWorkGroupIds.has(groupId);
+  const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+
+  for (const activity of visibleActivities) {
+    result.push({
+      type: "activity-group",
+      id: activity.id,
+      createdAt: activity.createdAt,
+      runId: activity.runId,
+      activities: [activity],
+    });
+  }
+  result.push({
+    type: "work-toggle",
+    id: `work-toggle:${groupId}`,
+    createdAt: entry.createdAt,
+    runId: entry.runId,
+    groupId,
+    hiddenCount,
+    expanded,
+    onlyToolActivities: activities.every((activity) => activity.toolLike),
+  });
+}
 export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,

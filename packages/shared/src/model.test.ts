@@ -10,9 +10,9 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
-  isClaudeUltrathinkPrompt,
-  modelSelectionsEqual,
+  normalizeCustomModelSlug,
   normalizeModelSlug,
+  modelSelectionsEqual,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -33,6 +33,15 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
       type: "boolean",
     },
   ],
+});
+
+describe("model slug normalization", () => {
+  it("preserves exact custom slugs instead of expanding provider aliases", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+
+    expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
+    expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
 });
 
 const claudeCaps: ModelCapabilities = createModelCapabilities({
@@ -168,14 +177,5 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
-  });
-});
-
-describe("model slug normalization", () => {
-  it("preserves exact custom slugs instead of expanding provider aliases", () => {
-    const claude = ProviderDriverKind.make("claudeAgent");
-
-    expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
-    expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
   });
 });

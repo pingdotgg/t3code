@@ -356,6 +356,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: 443,
       });
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
+      assert.equal(resolved.desktopTelemetryFd, 4);
+      assert.equal(resolved.desktopTelemetryControlFd, 5);
     }),
   );
 

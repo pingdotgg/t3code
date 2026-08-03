@@ -94,6 +94,7 @@ export interface GrokAdapterV2Options {
   readonly settings: GrokSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
@@ -104,7 +105,7 @@ export interface GrokAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    Scope.Scope
+    Crypto.Crypto | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -210,6 +211,7 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
   return makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor,
+    crypto: options.crypto,
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
@@ -236,6 +238,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
     function* (input: ProviderAdapterDriverCreateInput<GrokSettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers;
@@ -247,6 +250,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         settings: { ...input.config, enabled: input.enabled },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         childProcessSpawner,
+        crypto,
         fileSystem,
         idAllocator,
         serverConfig,
@@ -288,6 +292,7 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcessEnvironment;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const crypto = yield* Crypto.Crypto;
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocatorV2;
     const providerEventLoggers = yield* ProviderEventLoggers;
@@ -299,6 +304,7 @@ export const layer: Layer.Layer<
       settings: DEFAULT_GROK_SETTINGS,
       environment: hostEnvironment,
       childProcessSpawner,
+      crypto,
       fileSystem,
       idAllocator,
       serverConfig,

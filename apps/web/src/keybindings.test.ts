@@ -552,6 +552,40 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("matches filePicker.toggle shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "filePicker.toggle",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "filePicker.toggle",
+    );
+  });
+
+  it("matches projectSearch.toggle shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "projectSearch.toggle",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "projectSearch.toggle",
+    );
+  });
+
   it("matches diff.toggle shortcut outside terminal focus", () => {
     assert.isTrue(
       isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {

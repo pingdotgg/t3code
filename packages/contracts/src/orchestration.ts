@@ -307,39 +307,8 @@ export const OrchestrationShellStreamItem = Schema.Union([
 ]);
 export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.Type;
 
-export const OrchestrationSubscribeShellInput = Schema.Struct({
-  /**
-   * When provided, the server skips the initial full shell snapshot and instead
-   * replays shell events after this sequence before streaming live events.
-   * Clients that already hold a cached (or HTTP-loaded) shell snapshot pass its
-   * sequence here so the subscription resumes without re-sending the entire
-   * projects/threads list (overlapping events are deduped by sequence on the
-   * client).
-   */
-  afterSequence: Schema.optionalKey(NonNegativeInt),
-  /**
-   * Requests an explicit marker after the subscription has emitted its initial
-   * snapshot or catch-up replay and before it begins emitting live events.
-   */
-  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
-});
-export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
-
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
-  /**
-   * When provided, the server skips the initial snapshot frame and instead
-   * replays events after this sequence before streaming live events. Clients
-   * that load the snapshot over HTTP pass the snapshot's sequence here so the
-   * live subscription resumes without a gap (overlapping events are deduped by
-   * sequence on the client).
-   */
-  afterSequence: Schema.optionalKey(NonNegativeInt),
-  /**
-   * Requests an explicit marker after the subscription has emitted its initial
-   * snapshot or catch-up replay and before it begins emitting live events.
-   */
-  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
@@ -1136,3 +1105,36 @@ export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalSt
 
 export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalDecision);
 export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
+
+export const OrchestrationThreadSearchSource = Schema.Literals(["user", "assistant"]);
+export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSource.Type;
+
+// The server's SQLite client is synchronous and single-connection. Bound both
+// scan input and response size so a search cannot monopolize that connection.
+export const OrchestrationSearchThreadsInput = Schema.Struct({
+  query: TrimmedString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+});
+export type OrchestrationSearchThreadsInput = typeof OrchestrationSearchThreadsInput.Type;
+
+export const OrchestrationThreadSearchMatch = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  source: OrchestrationThreadSearchSource,
+  snippet: Schema.String.check(Schema.isMaxLength(240)),
+  messageCreatedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationThreadSearchMatch = typeof OrchestrationThreadSearchMatch.Type;
+
+export const OrchestrationSearchThreadsResult = Schema.Struct({
+  matches: Schema.Array(OrchestrationThreadSearchMatch),
+});
+export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
+
+export class OrchestrationSearchThreadsError extends Schema.TaggedErrorClass<OrchestrationSearchThreadsError>()(
+  "OrchestrationSearchThreadsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
