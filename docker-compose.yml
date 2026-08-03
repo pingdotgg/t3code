@@ -18,7 +18,7 @@ services:
       HOME: /home/t3
       T3CODE_HOME: /home/t3/.t3
       T3CODE_HOST: 0.0.0.0
-      T3CODE_PORT: 8989
+      T3CODE_PORT: 3773
       T3CODE_NO_BROWSER: "1"
       CODEX_HOME: /home/t3/.codex
       CLAUDE_CONFIG_DIR: /home/t3/.claude
