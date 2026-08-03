@@ -40,14 +40,6 @@ interface Session {
   unsubscribeExit: () => void;
 }
 
-const makeError = (input: {
-  readonly reason: ProviderAuthError["reason"];
-  readonly message: string;
-  readonly instanceId?: ProviderInstanceId;
-  readonly sessionId?: ProviderAuthSessionId;
-  readonly cause?: unknown;
-}) => new ProviderAuthError(input);
-
 export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
   const pty = yield* PtyAdapter.PtyAdapter;
   const instances = yield* ProviderInstanceRegistry;
@@ -187,7 +179,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     if (activeId) {
       const active = sessions.get(activeId);
       if (active?.snapshot.action === input.action) return active.snapshot;
-      return yield* makeError({
+      return yield* new ProviderAuthError({
         reason: "session-conflict",
         message: `A provider authentication action is already running for '${input.instanceId}'.`,
         instanceId: input.instanceId,
@@ -197,7 +189,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
 
     const instance = yield* instances.getInstance(input.instanceId);
     if (!instance) {
-      return yield* makeError({
+      return yield* new ProviderAuthError({
         reason: "instance-not-found",
         message: `Unknown provider instance '${input.instanceId}'.`,
         instanceId: input.instanceId,
@@ -205,7 +197,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     }
     const authentication = instance.authentication;
     if (!authentication) {
-      return yield* makeError({
+      return yield* new ProviderAuthError({
         reason: "unsupported",
         message: `Provider instance '${input.instanceId}' does not support in-app authentication.`,
         instanceId: input.instanceId,
@@ -215,7 +207,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
       (candidate) => candidate.instanceId === input.instanceId,
     );
     if (provider && !provider.installed) {
-      return yield* makeError({
+      return yield* new ProviderAuthError({
         reason: "not-installed",
         message: `The CLI for '${input.instanceId}' is not installed.`,
         instanceId: input.instanceId,
@@ -224,7 +216,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
 
     const launch = yield* authentication.resolveLaunch(input.action).pipe(
       Effect.mapError((cause) =>
-        makeError({
+        new ProviderAuthError({
           reason: "spawn-failed",
           message: `Could not prepare authentication for '${input.instanceId}'.`,
           instanceId: input.instanceId,
@@ -255,7 +247,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
       })
       .pipe(Effect.result);
     if (processResult._tag === "Failure") {
-      return yield* makeError({
+      return yield* new ProviderAuthError({
         reason: "spawn-failed",
         message: `Could not start authentication for '${input.instanceId}'.`,
         instanceId: input.instanceId,
@@ -337,7 +329,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     return session
       ? Effect.succeed(session)
       : Effect.fail(
-          makeError({
+          new ProviderAuthError({
             reason: "session-not-found",
             message: "The provider authentication session no longer exists.",
             sessionId,
@@ -360,7 +352,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
   ) {
     const session = yield* lookup(sessionId);
     if (session.snapshot.status !== "running") {
-      return yield* makeError({
+      return yield* new ProviderAuthError({
         reason: "session-not-running",
         message: "The provider authentication session is no longer running.",
         sessionId,
@@ -376,7 +368,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     yield* Effect.try({
       try: () => session.process.write(input.data),
       catch: (cause) =>
-        makeError({
+        new ProviderAuthError({
           reason: "session-not-running",
           message: "Could not write to the provider authentication session.",
           sessionId: input.sessionId,
@@ -392,7 +384,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     yield* Effect.try({
       try: () => session.process.resize(input.cols, input.rows),
       catch: (cause) =>
-        makeError({
+        new ProviderAuthError({
           reason: "session-not-running",
           message: "Could not resize the provider authentication session.",
           sessionId: input.sessionId,
