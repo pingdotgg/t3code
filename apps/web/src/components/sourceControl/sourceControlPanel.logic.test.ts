@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ServerProvider, ServerSettings } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 
-import { historyCommitRowHeight } from "~/lib/sourceControl/historyRows";
+import { HISTORY_COMMIT_ROW_HEIGHT, historyCommitRowHeight } from "~/lib/sourceControl/historyRows";
 import { LANE_COLOR_COUNT, LANE_COLOR_INDEX_NONE } from "~/lib/sourceControl/laneGraph";
 
 import { LANE_FALLBACK_COLOR, laneCenterX, laneColor } from "./laneGraphPalette";
@@ -18,6 +18,7 @@ import {
   describeWorkingCopyError,
   groupHeaderCountLabel,
   groupIsCollapsible,
+  historyRowDateRank,
   historyRowElements,
   historyWidthBucket,
   isCwdDeniedError,
@@ -25,6 +26,8 @@ import {
   isNothingStagedError,
   isTextGenerationConfigured,
   operationGuidance,
+  sourceControlPrimarySlot,
+  sourceControlPrimaryVariant,
   STAGE_ALL_PATHS,
   splitDisplayPath,
   vcsStatusPushSignature,
@@ -126,8 +129,7 @@ describe("history width buckets", () => {
         Number(elements.twoLine) +
         Number(elements.shortHash) +
         Number(elements.authorName) +
-        Number(elements.diffstat) +
-        elements.refBadges;
+        historyRowDateRank(elements.date);
       expect(score).toBeGreaterThan(previous);
       previous = score;
     }
@@ -135,7 +137,8 @@ describe("history width buckets", () => {
 
   it("agrees with historyCommitRowHeight about when a row is two lines", () => {
     for (const width of ["xs", "sm", "md", "lg", "xl"] as const) {
-      const twoLineHeight = historyCommitRowHeight("comfort", width) === 52;
+      const twoLineHeight =
+        historyCommitRowHeight("comfort", width) === HISTORY_COMMIT_ROW_HEIGHT.comfort.twoLine;
       expect(historyRowElements(width).twoLine).toBe(twoLineHeight);
     }
   });
@@ -145,9 +148,114 @@ describe("history width buckets", () => {
       twoLine: false,
       shortHash: false,
       authorName: false,
-      diffstat: false,
-      refBadges: 0,
+      date: "none",
     });
+  });
+
+  // fork: f4 redesign (M15) — the table used to promise `diffstat` and
+  // `refBadges`, neither of which `WorkingCopyLogEntry` carries, so widening
+  // the panel bought the author name and nothing else while the table claimed
+  // otherwise. Every remaining field is something the row draws.
+  it("only describes elements the commit row can actually render", () => {
+    const fields = Object.keys(historyRowElements("xl")).sort();
+    expect(fields).toEqual(["authorName", "date", "shortHash", "twoLine"]);
+  });
+});
+
+// ─── One primary action per state (audit §8 / live-findings) ────────────────
+
+describe("sourceControlPrimarySlot", () => {
+  const base = {
+    section: "changes",
+    operationInProgress: false,
+    canContinueInPanel: false,
+    commitEnabled: false,
+    syncEmphasis: false,
+  } as const;
+
+  it("gives the slot to nothing when nothing is asking for it", () => {
+    expect(sourceControlPrimarySlot(base)).toBe("none");
+  });
+
+  it("gives the slot to Sync when the remote is ahead/behind and nothing else is", () => {
+    expect(sourceControlPrimarySlot({ ...base, syncEmphasis: true })).toBe("sync");
+  });
+
+  it("gives the slot to Commit over Sync — Publish and Commit were both primary", () => {
+    expect(sourceControlPrimarySlot({ ...base, commitEnabled: true, syncEmphasis: true })).toBe(
+      "commit",
+    );
+  });
+
+  it("gives the slot to Continue over everything while a merge is stopped", () => {
+    expect(
+      sourceControlPrimarySlot({
+        ...base,
+        operationInProgress: true,
+        canContinueInPanel: true,
+        commitEnabled: true,
+        syncEmphasis: true,
+      }),
+    ).toBe("continue");
+  });
+
+  it("does not hand the slot to Commit while an operation is blocking the tree", () => {
+    // A rebase cannot be continued from the panel, so nothing in the panel is
+    // the primary: the user's next move is in the terminal.
+    expect(
+      sourceControlPrimarySlot({
+        ...base,
+        operationInProgress: true,
+        canContinueInPanel: false,
+        commitEnabled: true,
+      }),
+    ).toBe("none");
+  });
+
+  it("never gives the slot to Commit from the History tab", () => {
+    expect(sourceControlPrimarySlot({ ...base, section: "history", commitEnabled: true })).toBe(
+      "none",
+    );
+    expect(
+      sourceControlPrimarySlot({
+        ...base,
+        section: "history",
+        commitEnabled: true,
+        syncEmphasis: true,
+      }),
+    ).toBe("sync");
+  });
+
+  it("resolves EXACTLY ONE full-strength primary in every reachable state", () => {
+    const candidates = ["continue", "commit", "sync"] as const;
+    for (const operationInProgress of [false, true]) {
+      for (const canContinueInPanel of [false, true]) {
+        for (const commitEnabled of [false, true]) {
+          for (const syncEmphasis of [false, true]) {
+            for (const section of ["changes", "history"] as const) {
+              const slot = sourceControlPrimarySlot({
+                section,
+                operationInProgress,
+                canContinueInPanel,
+                commitEnabled,
+                syncEmphasis,
+              });
+              const defaults = candidates.filter(
+                (candidate) => sourceControlPrimaryVariant(slot, candidate) === "default",
+              );
+              expect(defaults.length).toBeLessThanOrEqual(1);
+              if (slot !== "none") expect(defaults).toEqual([slot]);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("steps the others down without hiding them", () => {
+    expect(sourceControlPrimaryVariant("commit", "sync")).toBe("outline");
+    expect(sourceControlPrimaryVariant("sync", "commit")).toBe("secondary");
+    expect(sourceControlPrimaryVariant("none", "continue")).toBe("secondary");
   });
 });
 

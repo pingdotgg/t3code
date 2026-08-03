@@ -134,12 +134,37 @@ export function historyWidthBucket(width: number): HistoryWidth {
   return "xl";
 }
 
+/**
+ * fork: f4 redesign (audit §8 / M15) — every field here is something the commit
+ * row can actually draw.
+ *
+ * The table used to promise `diffstat` and `refBadges`, and `WorkingCopyLogEntry`
+ * carries neither insertions/deletions nor refs, so widening the panel from
+ * 380px to 560px bought the author name and nothing else while the table
+ * claimed otherwise. The date rung replaces them: it is real, it is the thing a
+ * wider row genuinely has room for, and it keeps the ladder monotonic.
+ */
+export type HistoryRowDate = "none" | "relative" | "day" | "dayTime";
+
 export interface HistoryRowElements {
   readonly twoLine: boolean;
   readonly shortHash: boolean;
   readonly authorName: boolean;
-  readonly diffstat: boolean;
-  readonly refBadges: number;
+  readonly date: HistoryRowDate;
+}
+
+/** Rank of a date form, so the width ladder can be asserted as monotonic. */
+export function historyRowDateRank(date: HistoryRowDate): number {
+  switch (date) {
+    case "none":
+      return 0;
+    case "relative":
+      return 1;
+    case "day":
+      return 2;
+    case "dayTime":
+      return 3;
+  }
 }
 
 /**
@@ -151,16 +176,75 @@ export interface HistoryRowElements {
 export function historyRowElements(width: HistoryWidth): HistoryRowElements {
   switch (width) {
     case "xs":
-      return { twoLine: false, shortHash: false, authorName: false, diffstat: false, refBadges: 0 };
+      return { twoLine: false, shortHash: false, authorName: false, date: "none" };
     case "sm":
-      return { twoLine: true, shortHash: true, authorName: false, diffstat: false, refBadges: 1 };
+      return { twoLine: true, shortHash: true, authorName: false, date: "relative" };
     case "md":
-      return { twoLine: true, shortHash: true, authorName: true, diffstat: false, refBadges: 1 };
+      return { twoLine: true, shortHash: true, authorName: true, date: "relative" };
     case "lg":
-      return { twoLine: true, shortHash: true, authorName: true, diffstat: true, refBadges: 1 };
+      return { twoLine: true, shortHash: true, authorName: true, date: "day" };
     case "xl":
-      return { twoLine: true, shortHash: true, authorName: true, diffstat: true, refBadges: 2 };
+      return { twoLine: true, shortHash: true, authorName: true, date: "dayTime" };
   }
+}
+
+// ─── One primary action per state ───────────────────────────────────────────
+
+/**
+ * fork: f4 redesign (audit §8 / live-findings) — which control owns the panel's
+ * single full-strength primary slot.
+ *
+ * The live session found `Publish` (header) and `Commit` (composer) both
+ * rendering `variant="default"` in one 540px panel, with `Continue` in the
+ * conflicts band able to make a third. A panel that shouts three times says
+ * nothing, so exactly one control is `default` at a time and the others step
+ * down — without ever disappearing, because a control that vanishes moves the
+ * next one under the cursor mid-click.
+ *
+ * The order is the order of obligation: finish the blocked merge, then commit
+ * what is staged, then get it to the remote.
+ */
+export type SourceControlPrimarySlot = "continue" | "commit" | "sync" | "none";
+
+export interface SourceControlPrimaryInput {
+  readonly section: "changes" | "history";
+  /** A merge/rebase/cherry-pick/revert is stopped mid-flight. */
+  readonly operationInProgress: boolean;
+  /** Only `merge` can be continued from the panel — see `operationGuidance`. */
+  readonly canContinueInPanel: boolean;
+  /** The composer's own enablement, already decided by `working-copy-logic`. */
+  readonly commitEnabled: boolean;
+  /** `deriveSyncState(...).emphasis` — the remote wants something. */
+  readonly syncEmphasis: boolean;
+}
+
+export function sourceControlPrimarySlot(
+  input: SourceControlPrimaryInput,
+): SourceControlPrimarySlot {
+  if (input.operationInProgress && input.canContinueInPanel) {
+    return "continue";
+  }
+  if (input.section === "changes" && input.commitEnabled && !input.operationInProgress) {
+    return "commit";
+  }
+  return input.syncEmphasis ? "sync" : "none";
+}
+
+/**
+ * The button variant a candidate control should render with.
+ *
+ * `secondary` rather than `outline` for the two in-panel actions so they stay
+ * legible as actions; the header's sync control is `outline` because it sits on
+ * the subheader next to the branch name.
+ */
+export function sourceControlPrimaryVariant(
+  slot: SourceControlPrimarySlot,
+  candidate: Exclude<SourceControlPrimarySlot, "none">,
+): "default" | "secondary" | "outline" {
+  if (slot === candidate) {
+    return "default";
+  }
+  return candidate === "sync" ? "outline" : "secondary";
 }
 
 // ─── Staging selections ─────────────────────────────────────────────────────

@@ -10,8 +10,20 @@
  * fork: f4 source-control panel
  */
 import type { WorkingCopyLogEntry } from "@t3tools/contracts";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { MoreHorizontal } from "lucide-react";
+
+import { Button } from "~/components/ui/button";
 
 import { workingCopyBusyKey } from "./sourceControlPanel.logic";
 
@@ -48,12 +60,21 @@ export function CommitContextMenu(props: CommitContextMenuProps) {
 
   return (
     <Menu>
+      {/* fork: f4 redesign (M25) — the house trigger form, which brings the
+          focus ring, the `pointer-coarse` 44px target and `disabled:opacity-64`
+          that a hand-styled trigger loses. */}
       <MenuTrigger
-        className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-        aria-label={`Actions for ${entry.shortHash}`}
-        onClick={(event) => event.stopPropagation()}
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Actions for ${entry.shortHash}`}
+            tabIndex={-1}
+            onClick={(event) => event.stopPropagation()}
+          />
+        }
       >
-        <MoreHorizontal className="size-3.5" />
+        <MoreHorizontal />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-56">
         <MenuItem onClick={() => props.onCopy(entry.hash, "the commit hash")}>Copy hash</MenuItem>
@@ -77,26 +98,46 @@ export function CommitContextMenu(props: CommitContextMenuProps) {
           {busy.checkout ? "Checking out…" : "Checkout (detached)"}
         </MenuItem>
         <MenuSeparator />
-        <MenuItem
-          disabled={resetDisabledReason !== null || busy.reset}
-          onClick={() => props.onReset(entry, "soft")}
-        >
-          {resetDisabledReason ?? "Reset branch here — soft (keep staged + working)"}
-        </MenuItem>
-        {resetDisabledReason === null ? (
-          <>
-            <MenuItem disabled={busy.reset} onClick={() => props.onReset(entry, "mixed")}>
-              Reset branch here — mixed (keep working, unstage)
+        {/*
+          fork: f4 redesign (M16 / m7) — all three modes always exist, with
+          short labels inside a submenu.
+
+          What this replaces: the soft item rendered `{reason ?? label}`, so a
+          dirty tree turned three reset options into the single sentence
+          "Commit or stash your changes first" and dropped the other two items
+          entirely — the user could not see what had been there. The reason now
+          sits above the group as a `MenuGroupLabel` and the items keep their
+          labels and take `data-disabled:opacity-64`.
+        */}
+        <MenuSub>
+          <MenuSubTrigger disabled={resetDisabledReason !== null || busy.reset}>
+            Reset branch here
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-56">
+            {resetDisabledReason === null ? null : (
+              <MenuGroupLabel>{resetDisabledReason}</MenuGroupLabel>
+            )}
+            <MenuItem
+              disabled={resetDisabledReason !== null || busy.reset}
+              onClick={() => props.onReset(entry, "soft")}
+            >
+              Soft — keep staged + working
+            </MenuItem>
+            <MenuItem
+              disabled={resetDisabledReason !== null || busy.reset}
+              onClick={() => props.onReset(entry, "mixed")}
+            >
+              Mixed — keep working, unstage
             </MenuItem>
             <MenuItem
               className="text-destructive-foreground"
-              disabled={busy.reset}
+              disabled={resetDisabledReason !== null || busy.reset}
               onClick={() => props.onReset(entry, "hard")}
             >
-              Reset branch here — hard (discard all changes)
+              Hard — discard all changes
             </MenuItem>
-          </>
-        ) : null}
+          </MenuSubPopup>
+        </MenuSub>
         {isRootCommit ? null : (
           <>
             <MenuSeparator />

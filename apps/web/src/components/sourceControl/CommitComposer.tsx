@@ -1,13 +1,21 @@
 /**
- * The commit composer: pinned at the TOP of the Changes tab, flex-none.
+ * The commit composer: pinned at the BOTTOM of the Changes tab, flex-none.
+ *
+ * fork: f4 redesign (audit §8 F) — it used to be a fixed ~110px block above the
+ * list, so opening the panel on a clean repo showed a large empty textarea over
+ * an empty list, and the box that acts on the list sat above the list it acts
+ * on. Bottom-pinned and auto-growing (one row → six, `field-sizing-content` is
+ * already the `Textarea` default) it costs ~64px at rest and expands as you
+ * type — the same model the app's own chat composer teaches.
  *
  * Two behaviours are load-bearing rather than cosmetic:
  *
  *  - the primary action **morphs and never disappears** (commit / commit all /
  *    amend / push N). A button that vanishes when the tree goes clean makes the
  *    composer jump under the cursor mid-click.
- *  - while a merge/rebase is stopped on conflicts it steps down to `secondary`,
- *    so the Conflicts section's Continue owns the one solid slot on screen.
+ *  - it owns the panel's single full-strength primary only when
+ *    `sourceControlPrimarySlot` says so; while a merge is stopped on conflicts
+ *    the status band's Continue owns it, and the composer steps to `secondary`.
  *
  * The draft itself is stored per **cwd** by `sourceControlStore`, never per
  * thread — see the note there.
@@ -32,9 +40,18 @@ import {
 } from "@t3tools/client-runtime/state/working-copy-logic";
 
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Textarea } from "~/components/ui/textarea";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+
+/**
+ * The counter is noise at rest — it used to read `0/50` next to Amend in every
+ * idle session. It appears once the subject is within eight characters of the
+ * soft limit, which is where it starts being information.
+ */
+const COUNTER_REVEAL_AT = COMMIT_SUBJECT_SOFT_LIMIT - 8;
 
 export interface CommitComposerProps {
   readonly message: string;
@@ -48,6 +65,13 @@ export interface CommitComposerProps {
   readonly ahead: number;
   readonly operationInProgress: boolean;
   readonly busy: boolean;
+  /**
+   * fork: f4 redesign — `default` only when this composer owns the panel's one
+   * primary slot; `secondary` otherwise. Decided by `sourceControlPrimarySlot`
+   * in the panel, never here, so the header's Sync and the status band's
+   * Continue cannot disagree with it.
+   */
+  readonly primaryVariant: "default" | "secondary";
   readonly onCommit: (options: { readonly stageAllFirst: boolean }) => void;
   readonly onAmend: () => void;
   readonly onPush: () => void;
@@ -166,93 +190,121 @@ export function CommitComposer(props: CommitComposerProps) {
     [commitAndPushEnabled, props, runPrimary],
   );
 
+  const showCounter = subject.length >= COUNTER_REVEAL_AT;
+
   return (
-    <div className="flex flex-none flex-col gap-2 border-border/60 border-b p-2">
-      <Textarea
-        ref={textareaRef}
-        value={props.message}
-        onChange={(event) => props.onMessageChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-        rows={3}
-        placeholder={props.amend ? "Amend the last commit…" : "Commit message"}
-        aria-label="Commit message"
-        className={cn(
-          "min-h-16 resize-none text-sm",
-          lengthState === "hard" && "ring-1 ring-destructive",
-        )}
-      />
+    <div className="flex flex-none flex-col gap-2 border-border/60 border-t px-3 py-2">
+      <div className="relative">
+        <Textarea
+          ref={textareaRef}
+          value={props.message}
+          onChange={(event) => props.onMessageChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={1}
+          placeholder={props.amend ? "Amend the last commit…" : "Commit message"}
+          aria-label="Commit message"
+          size="sm"
+          // fork: f4 redesign — one row at rest, growing to six. The height is
+          // overridden on the INNER textarea (the house form, `DiffPanel.tsx`),
+          // never on the wrapper that draws the border: `Textarea`'s own
+          // `min-h-16.5` lives on the child, and a wrapper height would just
+          // clip it.
+          className={cn(
+            "[&_textarea]:max-h-36 [&_textarea]:min-h-7 [&_textarea]:max-sm:min-h-8",
+            "[&_textarea]:py-[calc(--spacing(1)-1px)] [&_textarea]:text-sm",
+            showCounter && "[&_textarea]:pr-14",
+            lengthState === "hard" && "border-destructive/64",
+          )}
+        />
+        {showCounter ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className={cn(
+                    "pointer-events-auto absolute top-1 right-2 text-[11px] tabular-nums",
+                    lengthState === "hard"
+                      ? "text-destructive-foreground"
+                      : lengthState === "soft"
+                        ? "text-warning-foreground"
+                        : "text-muted-foreground/70",
+                  )}
+                >
+                  {subject.length}/{COMMIT_SUBJECT_SOFT_LIMIT}
+                </span>
+              }
+            />
+            <TooltipPopup>
+              {`Subject length — soft limit ${COMMIT_SUBJECT_SOFT_LIMIT}, hard limit ${COMMIT_SUBJECT_HARD_LIMIT}. Neither blocks the commit.`}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </div>
+
       <div className="flex items-center gap-2">
-        {props.onGenerateMessage === undefined ? null : (
-          <button
-            type="button"
-            // Disabled but present, always: a button that disappears when the
-            // index empties makes the row reflow under the cursor, which is the
-            // same reason the primary action morphs instead of vanishing.
-            disabled={!generation.enabled}
-            onClick={props.onGenerateMessage}
-            aria-label={commitMessageGenerationLabel(generation)}
-            title={commitMessageGenerationLabel(generation)}
-            className={cn(
-              "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground",
-              "hover:bg-accent hover:text-foreground",
-              // NOT `pointer-events-none` while disabled: that suppresses the
-              // native tooltip, and the tooltip IS the disabled reason.
-              "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
-            )}
-          >
-            {props.generating === true ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="size-3.5" />
-            )}
-          </button>
-        )}
-        <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground text-xs">
-          <input
-            type="checkbox"
+        {/* fork: f4 redesign (M19) — the repo's Checkbox, not the OS one. */}
+        <label className="flex cursor-pointer select-none items-center gap-1.5 text-muted-foreground text-xs">
+          <Checkbox
             checked={props.amend}
-            onChange={(event) => props.onAmendChange(event.target.checked)}
+            onCheckedChange={(checked) => props.onAmendChange(checked === true)}
+            aria-label="Amend the last commit"
           />
           Amend
         </label>
-        <span
-          className={cn(
-            "text-xs tabular-nums",
-            lengthState === "hard"
-              ? "text-destructive-foreground"
-              : lengthState === "soft"
-                ? "text-amber-500"
-                : "text-muted-foreground/70",
-          )}
-          title={`Subject: soft limit ${COMMIT_SUBJECT_SOFT_LIMIT}, hard limit ${COMMIT_SUBJECT_HARD_LIMIT}`}
-        >
-          {subject.length}/{COMMIT_SUBJECT_SOFT_LIMIT}
-        </span>
+
+        {props.onGenerateMessage === undefined ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              // A disabled control cannot be a tooltip trigger, so the trigger
+              // is the span around it — which is how the disabled REASON stays
+              // readable. The old code used `title=` for exactly this and lost
+              // it the moment the button went disabled.
+              render={<span className="inline-flex" />}
+            >
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                // Disabled but present, always: a button that disappears when
+                // the index empties makes the row reflow under the cursor.
+                disabled={!generation.enabled}
+                onClick={props.onGenerateMessage}
+                aria-label={commitMessageGenerationLabel(generation)}
+              >
+                {props.generating === true ? <Loader2 className="animate-spin" /> : <Sparkles />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipPopup>{commitMessageGenerationLabel(generation)}</TooltipPopup>
+          </Tooltip>
+        )}
+
+        {/* fork: f4 redesign (C2) — both halves are the SAME Button primitive,
+            with the SAME variant and the SAME disabled state, so the chevron
+            can no longer stay clickable while Commit is impossible. */}
         <div className="ml-auto flex items-center">
           <Button
             size="sm"
-            // Conflicts' Continue owns the single solid slot while an operation
-            // is stopped mid-flight.
-            variant={props.operationInProgress ? "secondary" : "default"}
+            variant={props.primaryVariant}
             disabled={!enabled}
             onClick={runPrimary}
-            className="rounded-r-none"
+            className="rounded-e-none"
           >
             {commitPrimaryActionLabel(action, props.ahead)}
           </Button>
           <Menu>
             <MenuTrigger
-              className={cn(
-                "inline-flex h-8 items-center justify-center rounded-r-[var(--control-radius)] border border-l-0 px-1.5 sm:h-7",
-                props.operationInProgress
-                  ? "border-transparent bg-secondary text-secondary-foreground"
-                  : "border-primary bg-primary text-primary-foreground",
-              )}
-              aria-label="More commit actions"
+              render={
+                <Button
+                  size="sm"
+                  variant={props.primaryVariant}
+                  disabled={!enabled}
+                  aria-label="More commit actions"
+                  className="rounded-s-none border-s-0 px-1.5"
+                />
+              }
             >
               <ChevronDown className="size-3.5" />
             </MenuTrigger>
-            <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
+            <MenuPopup align="end" side="top" sideOffset={6} className="min-w-52">
               <MenuItem
                 disabled={!commitAndPushEnabled}
                 onClick={() => props.onCommitAndPush({ stageAllFirst: props.stagedCount === 0 })}

@@ -47,7 +47,12 @@ export function laneColor(colorIndex: number): string {
 export const LANE_COLUMN_WIDTH = 12;
 export const LANE_NODE_RADIUS = 3;
 export const LANE_LINE_WIDTH = 1.5;
-export const LANE_PAD_LEFT = 8;
+/**
+ * fork: f4 redesign (audit §8 / M1) — was 8, which put the lane dots half a
+ * gutter left of every other row in the panel. `CHANGES_GUTTER` is the one
+ * inset, so lane 0's centre lands exactly on it.
+ */
+export const LANE_PAD_LEFT = 12;
 
 export function laneCenterX(lane: number): number {
   return LANE_PAD_LEFT + lane * LANE_COLUMN_WIDTH;

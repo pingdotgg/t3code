@@ -6,7 +6,12 @@ import {
   changesFolderKeysIn,
   changesGroupOf,
   changesGroupPaths,
+  changesListEmptyState,
   changesRowHeight,
+  changesRowIndent,
+  changesVisibleFileCount,
+  CHANGES_GUTTER,
+  CHANGES_INDENT_PER_LEVEL,
   CHANGES_ROW_HEIGHT,
   CONFLICT_ACTIONS_HEIGHT,
   DISCARD_CONFIRM_HEIGHT,
@@ -396,5 +401,118 @@ describe("changesAllFolderKeys (F-14)", () => {
       true,
     );
     expect(changesAllFolderKeys({ files: [], filter: "all", query: "" }, "staged")).toEqual([]);
+  });
+});
+
+// ─── Geometry (audit §8 / M1, M5) ──────────────────────────────────────────
+//
+// The row pitch and the gutter were both imported from another app's type
+// scale: leaf rows (38) were taller than the folder rows (32) and the group
+// headers (36) above them, so visual weight INCREASED going down the
+// hierarchy, and the indent was 13px per level from an 8px base — a value off
+// the 4px grid the rest of the app uses. These pin the shape of the fix, not
+// the literals.
+
+describe("changes list geometry", () => {
+  it("puts every row kind on one pitch, so no leaf outweighs its own header", () => {
+    const heights = Object.values(CHANGES_ROW_HEIGHT);
+    expect(new Set(heights).size).toBe(1);
+    expect(CHANGES_ROW_HEIGHT.file).toBeLessThanOrEqual(CHANGES_ROW_HEIGHT.header);
+  });
+
+  it("keeps every declared height on the 4px grid", () => {
+    for (const height of [
+      ...Object.values(CHANGES_ROW_HEIGHT),
+      CONFLICT_ACTIONS_HEIGHT,
+      DISCARD_CONFIRM_HEIGHT,
+      CHANGES_GUTTER,
+      CHANGES_INDENT_PER_LEVEL,
+    ]) {
+      expect(height % 4).toBe(0);
+    }
+  });
+
+  it("indents from the panel's one gutter, one grid step per level", () => {
+    expect(changesRowIndent(0)).toBe(CHANGES_GUTTER);
+    expect(changesRowIndent(1)).toBe(CHANGES_GUTTER + CHANGES_INDENT_PER_LEVEL);
+    expect(changesRowIndent(3)).toBe(CHANGES_GUTTER + 3 * CHANGES_INDENT_PER_LEVEL);
+  });
+
+  it("never indents a negative depth back out of the gutter", () => {
+    expect(changesRowIndent(-2)).toBe(CHANGES_GUTTER);
+  });
+});
+
+// ─── Empty-state selection (audit §8 / M7) ─────────────────────────────────
+//
+// The list used to render one 32px "Nothing here." row for both cases, so the
+// user could not tell "your tree is clean" from "your filter excluded
+// everything" — and the second case is the one with an action attached.
+
+describe("changesListEmptyState", () => {
+  it("says CLEAN when the working copy has no files at all", () => {
+    expect(changesListEmptyState({ fileCount: 0, visibleFileCount: 0 })).toBe("clean");
+  });
+
+  it("says FILTERED when files exist but none survived the filter", () => {
+    expect(changesListEmptyState({ fileCount: 12, visibleFileCount: 0 })).toBe("filtered");
+  });
+
+  it("says nothing at all when there are rows to draw", () => {
+    expect(changesListEmptyState({ fileCount: 12, visibleFileCount: 3 })).toBeNull();
+  });
+
+  it("prefers CLEAN over FILTERED — an empty tree is not a filter problem", () => {
+    // Both inputs are zero here; "clear the filter" would be useless advice.
+    expect(changesListEmptyState({ fileCount: 0, visibleFileCount: 0 })).toBe("clean");
+  });
+
+  it("reads its visible count off the SAME rows the virtualizer renders", () => {
+    const files = [file("a.ts"), file("b.ts", "staged"), file("c.ts")];
+    const rows = buildChangesRows({
+      files,
+      viewMode: "flat",
+      collapsedGroups: EMPTY,
+      collapsedFolders: EMPTY,
+      filter: "all",
+      query: "",
+    });
+    expect(changesVisibleFileCount(rows)).toBe(3);
+    expect(
+      changesListEmptyState({
+        fileCount: files.length,
+        visibleFileCount: changesVisibleFileCount(rows),
+      }),
+    ).toBeNull();
+
+    const filtered = buildChangesRows({
+      files,
+      viewMode: "flat",
+      collapsedGroups: EMPTY,
+      collapsedFolders: EMPTY,
+      filter: "all",
+      query: "no-such-path",
+    });
+    expect(changesVisibleFileCount(filtered)).toBe(0);
+    expect(
+      changesListEmptyState({
+        fileCount: files.length,
+        visibleFileCount: changesVisibleFileCount(filtered),
+      }),
+    ).toBe("filtered");
+  });
+
+  it("counts only file rows — headers and placeholders are not content", () => {
+    const rows = buildChangesRows({
+      files: [file("a.ts"), file("b.ts", "staged")],
+      viewMode: "flat",
+      collapsedGroups: EMPTY,
+      collapsedFolders: EMPTY,
+      filter: "untracked",
+      query: "",
+    });
+    // Two group headers and their "no files match" placeholders survive.
+    expect(rows.length).toBeGreaterThan(0);
+    expect(changesVisibleFileCount(rows)).toBe(0);
   });
 });

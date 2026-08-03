@@ -1,11 +1,23 @@
-import { CornerUpRightIcon, WorkflowIcon } from "lucide-react";
+import { WorkflowIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 
 import type { AgentRun } from "../../agentRuns.ts";
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../ui/empty";
+import { Group } from "../ui/group";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Separator } from "../ui/separator";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentRunCard } from "./AgentRunCard.tsx";
 import {
   agentRunIsJumpable,
@@ -13,13 +25,10 @@ import {
   selectAgentRunTrackerState,
   shouldRevealFinishedOnOpen,
 } from "./AgentRunTracker.logic.ts";
+import { agentRunStopAllButtonLabel, agentRunStopAllTooltip } from "./agentRunPresentation.ts";
 // fork: f3 — per-task stop (increment 4)
 import { useAgentRunStop } from "./agentRunStop.ts";
-import {
-  AGENT_RUN_STOP_ALL_DISARM_MS,
-  agentRunStopAllLabel,
-  stoppableAgentRuns,
-} from "./agentRunStop.logic.ts";
+import { AGENT_RUN_STOP_ALL_DISARM_MS, stoppableAgentRuns } from "./agentRunStop.logic.ts";
 
 /**
  * The persistent "what is running" pill.
@@ -39,6 +48,15 @@ export const AgentRunTracker = memo(function AgentRunTracker({
   const state = useMemo(() => selectAgentRunTrackerState(runs), [runs]);
   const [open, setOpen] = useState(false);
   const [showFinished, setShowFinished] = useState(false);
+
+  // The last run can settle *while* the popover is open, so the disclosure is
+  // re-evaluated on state change and not only on open — otherwise the body
+  // collapses to an empty strip under a header that still offers "Show finished".
+  useEffect(() => {
+    if (open && shouldRevealFinishedOnOpen(state)) {
+      setShowFinished(true);
+    }
+  }, [open, state]);
 
   if (!state.visible) {
     return null;
@@ -62,17 +80,17 @@ export const AgentRunTracker = memo(function AgentRunTracker({
         render={
           <Button
             aria-label={state.tooltip}
+            className="gap-1.5 tabular-nums"
             size="xs"
             title={state.tooltip}
             variant="outline"
-            className="gap-1.5 tabular-nums"
           />
         }
       >
         {state.active ? (
           <span
             aria-hidden="true"
-            className="size-1.5 shrink-0 rounded-full bg-primary animate-status-pulse"
+            className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-primary motion-reduce:animate-none"
           />
         ) : (
           <WorkflowIcon aria-hidden="true" className="size-3.5 opacity-70" />
@@ -80,42 +98,92 @@ export const AgentRunTracker = memo(function AgentRunTracker({
         {state.count}
       </PopoverTrigger>
       <PopoverPopup align="end" className="w-[22rem] max-w-[calc(100vw-2rem)] p-0" side="bottom">
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-          <span className="text-xs font-medium text-foreground/80">
+        {/* Three slots that cannot collide: a shrinkable label and one
+            fixed-order action group. */}
+        <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground/80 text-xs">
             {state.active ? `${state.running.length} running` : "Agent runs"}
           </span>
-          {/* fork: f3 — Stop all, two-press with a 3 s disarm. */}
-          <AgentRunStopAllButton runs={state.running} />
-          {finishedCount > 0 ? (
-            <button
-              type="button"
-              className="cursor-pointer rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
-              onClick={() => setShowFinished((previous) => !previous)}
-            >
-              {showFinished ? "Hide finished" : `Show finished (${finishedCount})`}
-            </button>
-          ) : null}
+          <Group className="shrink-0">
+            {finishedCount > 0 ? (
+              <Button
+                className="gap-1 text-muted-foreground"
+                onClick={() => setShowFinished((previous) => !previous)}
+                size="xs"
+                variant="ghost"
+              >
+                {showFinished ? "Hide finished" : "Show finished"}
+                <Badge className="font-normal tabular-nums" size="sm" variant="secondary">
+                  {finishedCount}
+                </Badge>
+              </Button>
+            ) : null}
+            {/* fork: f3 — Stop all, two-press with a 3 s disarm. */}
+            <AgentRunStopAllButton runs={state.running} />
+          </Group>
         </div>
-        <div className="max-h-96 overflow-y-auto overscroll-contain px-2 py-1.5">
-          {rows.map((run, index) => (
-            <div key={run.taskId}>
-              {showFinished && state.running.length > 0 && index === state.running.length ? (
-                <p className="px-1 pb-0.5 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground/60">
-                  Finished
-                </p>
-              ) : null}
-              <AgentRunTrackerRow
-                run={run}
-                {...(onJumpToRun ? { onJump: onJumpToRun } : {})}
-                onJumped={() => setOpen(false)}
-              />
-            </div>
-          ))}
+        <div className="max-h-96 overflow-y-auto overscroll-contain px-1.5 py-1.5">
+          {rows.length === 0 ? (
+            <AgentRunTrackerEmpty
+              finishedCount={finishedCount}
+              onShowFinished={() => setShowFinished(true)}
+            />
+          ) : (
+            rows.map((run, index) => (
+              <div key={run.taskId}>
+                {showFinished && state.running.length > 0 && index === state.running.length ? (
+                  <div className="pt-2 pb-1">
+                    <Separator className="mb-1.5" />
+                    <p className="px-1 font-medium text-[11px] text-muted-foreground/70 uppercase tracking-[0.08em]">
+                      Finished
+                    </p>
+                  </div>
+                ) : null}
+                <AgentRunTrackerRow
+                  run={run}
+                  {...(onJumpToRun ? { onJump: onJumpToRun } : {})}
+                  onJumped={() => setOpen(false)}
+                />
+              </div>
+            ))
+          )}
         </div>
       </PopoverPopup>
     </Popover>
   );
 });
+
+function AgentRunTrackerEmpty({
+  finishedCount,
+  onShowFinished,
+}: {
+  finishedCount: number;
+  onShowFinished: () => void;
+}) {
+  return (
+    <Empty className="gap-3 p-6 md:p-6">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <WorkflowIcon />
+        </EmptyMedia>
+        <EmptyTitle className="text-base">No agent runs</EmptyTitle>
+        <EmptyDescription className="text-xs">
+          Delegated agents and workflows show up here while they work.
+        </EmptyDescription>
+      </EmptyHeader>
+      {finishedCount > 0 ? (
+        <EmptyContent>
+          <Button className="gap-1" onClick={onShowFinished} size="xs" variant="outline">
+            Show finished
+            <Badge className="font-normal tabular-nums" size="sm" variant="secondary">
+              {finishedCount}
+            </Badge>
+          </Button>
+        </EmptyContent>
+      ) : null}
+    </Empty>
+  );
+}
 
 /**
  * fork: f3 — the destructive control the popover header owns.
@@ -150,25 +218,36 @@ function AgentRunStopAllButton({ runs }: { runs: ReadonlyArray<AgentRun> }) {
   }
 
   return (
-    <button
-      type="button"
-      className={cn(
-        "ml-auto cursor-pointer rounded px-1.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
-        armed
-          ? "bg-destructive/12 text-destructive"
-          : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
-      )}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
-          return;
-        }
-        setArmed(false);
-        stop.stopRuns(stoppable.map((run) => run.taskId));
-      }}
-    >
-      {agentRunStopAllLabel(stoppable.length, armed)}
-    </button>
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            // Fixed width: the label swap used to move the destructive target
+            // between the two presses it requires.
+            <Button
+              className={cn("min-w-24", armed ? null : "text-muted-foreground")}
+              onClick={() => {
+                if (!armed) {
+                  setArmed(true);
+                  return;
+                }
+                setArmed(false);
+                stop.stopRuns(stoppable.map((run) => run.taskId));
+              }}
+              size="xs"
+              variant={armed ? "destructive" : "ghost"}
+            >
+              {agentRunStopAllButtonLabel(armed)}
+            </Button>
+          }
+        />
+        <TooltipPopup>{agentRunStopAllTooltip(stoppable.length, armed)}</TooltipPopup>
+      </Tooltip>
+      {/* The confirm step is otherwise silent to assistive tech. */}
+      <span aria-live="polite" className="sr-only">
+        {armed ? agentRunStopAllTooltip(stoppable.length, true) : ""}
+      </span>
+    </>
   );
 }
 
@@ -182,46 +261,20 @@ function AgentRunTrackerRow({
   onJumped: () => void;
 }) {
   const jumpable = onJump !== undefined && agentRunIsJumpable(run);
-  return (
-    <div className="flex items-start gap-1">
-      <div className="min-w-0 flex-1">
-        <AgentRunCard run={run} density="compact" />
-      </div>
-      {run.ambient ? (
-        <span
-          className="mt-1.5 shrink-0 px-1 text-[10px] text-muted-foreground/50"
-          title="Housekeeping task — hidden from the transcript"
-        >
-          background
-        </span>
-      ) : jumpable ? (
-        <button
-          type="button"
-          aria-label={`Jump to ${run.title} in the transcript`}
-          title="Jump to transcript"
-          className={cn(
-            "mt-1 shrink-0 cursor-pointer rounded p-1 text-muted-foreground/70 transition-colors",
-            "hover:bg-accent/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
-          )}
-          // fork: f3 F-21 — a jump that misses (the timeline is not mounted
-          // yet, or the run has no row) used to do literally nothing: the
-          // popover did not even close. Close it either way and say why.
-          onClick={() => {
-            const jumped = onJump?.(run.taskId) === true;
-            onJumped();
-            if (!jumped) {
-              toastManager.add({
-                type: "info",
-                title: "That run is not in the transcript right now",
-                description: "Scroll the conversation or reopen the thread, then try again.",
-                timeout: 5_000,
-              });
-            }
-          }}
-        >
-          <CornerUpRightIcon aria-hidden="true" className="size-3.5" />
-        </button>
-      ) : null}
-    </div>
-  );
+  // fork: f3 F-21 — a jump that misses (the timeline is not mounted yet, or the
+  // run has no row) used to do literally nothing: the popover did not even
+  // close. Close it either way and say why.
+  const jump = () => {
+    const jumped = onJump?.(run.taskId) === true;
+    onJumped();
+    if (!jumped) {
+      toastManager.add({
+        type: "info",
+        title: "That run is not in the transcript right now",
+        description: "Scroll the conversation or reopen the thread, then try again.",
+        timeout: 5_000,
+      });
+    }
+  };
+  return <AgentRunCard run={run} density="compact" {...(jumpable ? { onJump: jump } : {})} />;
 }

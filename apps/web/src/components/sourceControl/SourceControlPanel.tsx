@@ -1,6 +1,20 @@
 /**
  * The source-control right-panel surface.
  *
+ * Layout (audit §8): ONE 12px gutter, top to bottom —
+ *
+ *   A  shell subheader — branch · tracking · [Sync | ⋯]
+ *   B  h-9  — ToggleGroup (Changes / History) + ONE View menu
+ *   C  h-8  — one full-width filter row, shared by both tabs
+ *   D       — ONE status slot (read error OR operation in progress)
+ *   E       — the list, min-h-0 flex-1, all remaining height
+ *   F       — the commit composer, bottom-pinned and auto-growing
+ *
+ * The panel used to stack six different left insets down its own height, put a
+ * fixed ~110px composer *above* the list it acts on, and spread "something is
+ * wrong" across two places. Everything here is one inset, and the composer sits
+ * where the app's own chat composer sits.
+ *
  * Scoping: thread-scoped like every other surface, so the panel automatically
  * follows the thread's worktree (`gitCwd` is already derived per thread). The
  * ONE exception is the commit draft, which `sourceControlStore` keys by cwd —
@@ -13,10 +27,13 @@
  */
 import type { EnvironmentId, WorkingCopyFile, WorkingCopyLogEntry } from "@t3tools/contracts";
 import type { HistoryFilter } from "@t3tools/client-runtime/state/working-copy-logic";
-import { commitMessageGenerationApply } from "@t3tools/client-runtime/state/working-copy-logic";
+import {
+  commitMessageGenerationApply,
+  historyAuthorFacets,
+} from "@t3tools/client-runtime/state/working-copy-logic";
 import { useAtomValue } from "@effect/atom-react";
-import { AlertCircle, X } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { GitBranch, FolderGit2, Search, Settings2, X } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
   confirmReplaceCommitDraft,
@@ -27,14 +44,58 @@ import {
   busyPathsFromKeys,
   changesListActionPaths,
   isTextGenerationConfigured,
+  operationGuidance,
+  sourceControlPrimarySlot,
+  sourceControlPrimaryVariant,
   workingCopyBusyKey,
 } from "./sourceControlPanel.logic";
 import type { ChangesStatusFilter } from "~/lib/sourceControl/changesRows";
-import { DiffPanelShell, type DiffPanelMode } from "~/components/DiffPanelShell";
+import {
+  DiffPanelHeaderSkeleton,
+  DiffPanelLoadingState,
+  DiffPanelShell,
+  type DiffPanelMode,
+} from "~/components/DiffPanelShell";
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -49,11 +110,11 @@ import {
 
 import { ChangesList } from "./ChangesList";
 import { CommitComposer } from "./CommitComposer";
-import { ConflictsSection } from "./ConflictsSection";
 import { HistoryList } from "./HistoryList";
 import { SourceControlConfirmDialog } from "./SourceControlConfirmDialog";
 import { SourceControlHeader } from "./SourceControlHeader";
-import { StashesSection } from "./StashesSection";
+import { SourceControlStatusBand } from "./SourceControlStatusBand";
+import { StashesPanel } from "./StashesSection";
 import { useSourceControlConfirm } from "./useSourceControlConfirm";
 import {
   GENERATE_COMMIT_MESSAGE_BUSY_KEY,
@@ -66,6 +127,15 @@ import {
 import { useWorkingCopyHistory } from "./useWorkingCopyHistory";
 
 const EMPTY_FILTER: HistoryFilter = { query: "", author: "" };
+
+const CHANGES_FILTER_LABEL: Record<ChangesStatusFilter, string> = {
+  all: "All files",
+  modified: "Modified",
+  added: "Added",
+  deleted: "Deleted",
+  renamed: "Renamed",
+  untracked: "Untracked",
+};
 
 export interface SourceControlPanelProps {
   readonly mode: DiffPanelMode;
@@ -114,6 +184,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     busy: actions.busy.size > 0,
   });
 
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
   const [pathQuery, setPathQuery] = useState("");
   const [amend, setAmend] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>(EMPTY_FILTER);
@@ -122,8 +193,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const files = status.status?.files ?? [];
   const stagedCount = files.filter((file) => file.area === "staged").length;
   const dirtyCount = files.length;
-  const conflicted = files.filter((file) => file.area === "conflicted");
+  const conflictedCount = files.filter((file) => file.area === "conflicted").length;
   const operation = status.status?.operationInProgress ?? null;
+  const onChanges = prefs.activeSection === "changes";
 
   // Stashes and backups load on expand and are never polled.
   //
@@ -169,6 +241,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const history = useWorkingCopyHistory(scope, historyFilter, {
     enabled: props.visible && prefs.activeSection === "history",
   });
+  const authors = useMemo(() => historyAuthorFacets(history.page.entries), [history.page.entries]);
   const commitDetailQuery = useEnvironmentQuery(
     scope && expandedHash
       ? workingCopyEnvironment.commitDetail({
@@ -359,12 +432,54 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   // fed a module-level empty set, so a slow stage showed no row feedback at all.
   const busyPaths = useMemo(() => busyPathsFromKeys(actions.busy), [actions.busy]);
 
+  /**
+   * fork: f4 redesign — the panel's ONE primary action. `Publish` and `Commit`
+   * used to be two full-strength primaries side by side; `Continue` could make
+   * a third. Everything else steps down, and nothing disappears.
+   */
+  const primarySlot = sourceControlPrimarySlot({
+    section: prefs.activeSection,
+    operationInProgress: operation !== null,
+    canContinueInPanel: operation !== null && operationGuidance(operation).canContinueInPanel,
+    // The composer owns the same enablement rule; asking it here would need the
+    // whole `commitPrimaryAction` ladder, so the cheap superset — "there is
+    // something to commit and a message to commit it with" — is what decides
+    // emphasis. The button's own `disabled` is still the authority on pressing.
+    commitEnabled: commitDraft.trim().length > 0 && (dirtyCount > 0 || amend),
+    syncEmphasis: (status.status?.ahead ?? 0) > 0 || (status.status?.behind ?? 0) > 0,
+  });
+
+  const showFilterRow = onChanges
+    ? dirtyCount > 0 || pathQuery.trim().length > 0
+    : history.entries.length > 0 || history.filterActive;
+
+  /** `/` focuses the one filter box, from anywhere in the panel body. */
+  const handleBodyKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("input, textarea, [contenteditable='true']")) return;
+    const input = filterInputRef.current;
+    if (input === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    input.focus();
+    input.select();
+  }, []);
+
   if (props.cwd === null) {
     return (
       <DiffPanelShell mode={props.mode} header={<span className="text-sm">Source control</span>}>
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-muted-foreground text-sm">
-          Open a project to use source control.
-        </div>
+        <Empty className="min-h-0 flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FolderGit2 />
+            </EmptyMedia>
+            <EmptyTitle className="text-base">No project open</EmptyTitle>
+            <EmptyDescription className="text-xs">
+              Open a project to stage, commit and browse its history.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </DiffPanelShell>
     );
   }
@@ -372,9 +487,32 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   if (status.status !== null && !status.status.isRepo) {
     return (
       <DiffPanelShell mode={props.mode} header={<span className="text-sm">Source control</span>}>
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-muted-foreground text-sm">
-          This folder is not a git repository.
-        </div>
+        <Empty className="min-h-0 flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <GitBranch />
+            </EmptyMedia>
+            <EmptyTitle className="text-base">Not a git repository</EmptyTitle>
+            <EmptyDescription className="text-xs">
+              This folder is not tracked by git, so there is nothing to show here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </DiffPanelShell>
+    );
+  }
+
+  // fork: f4 redesign (M8) — the shell's own skeletons, which shipped two files
+  // away and were never imported. The header used to read "no branch" over an
+  // empty list until the first status landed, and then everything snapped in.
+  //
+  // The `showErrorBanner` guard matters: a status read that FAILS never
+  // produces a `status`, so a skeleton gated only on `=== null` would spin
+  // forever instead of falling through to the error band below.
+  if (status.status === null && !status.showErrorBanner) {
+    return (
+      <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
+        <DiffPanelLoadingState label="Reading the working copy…" />
       </DiffPanelShell>
     );
   }
@@ -387,6 +525,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           status={status.status}
           repoLabel={props.repoLabel}
           syncBusy={stacked.isPending || pull.isPending || refreshingRemote}
+          syncVariant={
+            sourceControlPrimaryVariant(primarySlot, "sync") === "default" ? "default" : "outline"
+          }
           dirtyCount={dirtyCount}
           undoBusy={actions.isBusy(workingCopyBusyKey.undoCommit())}
           discardAllBusy={actions.isBusy(workingCopyBusyKey.discardAll())}
@@ -397,139 +538,264 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           onUndoLastCommit={() => void actions.undoLastCommit()}
           onDiscardAll={() => void actions.discard(null)}
           onOpenStashDialog={() => setStashDialogOpen(true)}
-          // fork: f4 F-05 — `stashesOpen` is only rendered inside the Changes
-          // branch, so setting it from the History tab used to change a
-          // persisted flag nobody could see. Switch the tab too.
-          onShowBackups={() =>
-            setPrefs(props.scopeKey, { activeSection: "changes", stashesOpen: true })
-          }
+          onOpenStashes={() => setPrefs(props.scopeKey, { stashesOpen: true })}
         />
       }
     >
-      {status.showErrorBanner ? (
-        <div className="flex flex-none items-start gap-2 border-border/60 border-b bg-destructive/8 px-2 py-1.5 text-xs">
-          <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-destructive-foreground" />
-          <span className="min-w-0 flex-1 break-words">
-            {status.errorMessage ?? "The working copy could not be read."}
-          </span>
-          <button
-            type="button"
-            aria-label="Dismiss"
-            className="shrink-0 rounded-sm p-0.5 hover:bg-muted"
-            onClick={status.dismissErrorBanner}
+      <div className="flex min-h-0 flex-1 flex-col" onKeyDown={handleBodyKeyDown}>
+        {/* ── B ── segment + one View menu ───────────────────────────────── */}
+        <div className="flex h-9 flex-none items-center gap-2 border-border/60 border-b px-3">
+          <ToggleGroup
+            // `default` is the borderless segmented look (gap-0.5, pressed =
+            // filled) that matches `RightPanelTabs` directly above this panel;
+            // the old hand-rolled pair copied that colour scheme but at h-6 /
+            // text-xs, one size below the tab strip it sat under.
+            size="sm"
+            variant="default"
+            value={[prefs.activeSection]}
+            onValueChange={(value) => {
+              const next = value[0];
+              if (next === "changes" || next === "history") {
+                setPrefs(props.scopeKey, { activeSection: next });
+              }
+            }}
           >
-            <X className="size-3" />
-          </button>
-        </div>
-      ) : null}
+            <Toggle value="changes" className="gap-1.5 px-2">
+              Changes
+              {dirtyCount > 0 ? (
+                <Badge size="sm" variant="secondary">
+                  {dirtyCount}
+                </Badge>
+              ) : null}
+            </Toggle>
+            <Toggle value="history" className="px-2">
+              History
+            </Toggle>
+          </ToggleGroup>
 
-      <div className="flex flex-none items-center gap-1 border-border/60 border-b px-2 py-1">
-        <TabButton
-          active={prefs.activeSection === "changes"}
-          onClick={() => setPrefs(props.scopeKey, { activeSection: "changes" })}
-        >
-          Changes
-          {dirtyCount > 0 ? (
-            <span className="ml-1 rounded-sm bg-muted px-1 text-[10px]">{dirtyCount}</span>
-          ) : null}
-        </TabButton>
-        <TabButton
-          active={prefs.activeSection === "history"}
-          onClick={() => setPrefs(props.scopeKey, { activeSection: "history" })}
-        >
-          History
-        </TabButton>
-        {prefs.activeSection === "changes" ? (
-          <div className="ml-auto flex items-center gap-1">
-            <Input
-              value={pathQuery}
-              onChange={(event) => setPathQuery(event.target.value)}
-              placeholder="Filter files"
-              aria-label="Filter changed files"
-              className="h-6 w-28 text-xs"
-            />
-            <select
-              aria-label="Status filter"
-              className="h-6 rounded-md border border-input bg-transparent px-1 text-xs"
-              value={prefs.filter}
-              onChange={(event) =>
-                setPrefs(props.scopeKey, {
-                  filter: event.target.value as ChangesStatusFilter,
-                })
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button size="xs" variant="ghost" className="ml-auto" aria-label="View options" />
               }
             >
-              <option value="all">All</option>
-              <option value="modified">Modified</option>
-              <option value="added">Added</option>
-              <option value="deleted">Deleted</option>
-              <option value="renamed">Renamed</option>
-              <option value="untracked">Untracked</option>
-            </select>
-            <button
-              type="button"
-              className="h-6 rounded-md px-1.5 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
-              onClick={() =>
-                setPrefs(props.scopeKey, {
-                  viewMode: prefs.viewMode === "flat" ? "tree" : "flat",
-                })
-              }
-            >
-              {prefs.viewMode === "flat" ? "Tree" : "Flat"}
-            </button>
+              <Settings2 />
+              View
+            </MenuTrigger>
+            <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
+              {onChanges ? (
+                <>
+                  <MenuGroup>
+                    <MenuGroupLabel>Show</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={prefs.filter}
+                      onValueChange={(value) =>
+                        setPrefs(props.scopeKey, { filter: value as ChangesStatusFilter })
+                      }
+                    >
+                      {(
+                        Object.keys(CHANGES_FILTER_LABEL) as ReadonlyArray<ChangesStatusFilter>
+                      ).map((value) => (
+                        <MenuRadioItem key={value} value={value}>
+                          {CHANGES_FILTER_LABEL[value]}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Layout</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={prefs.viewMode}
+                      onValueChange={(value) =>
+                        setPrefs(props.scopeKey, { viewMode: value === "tree" ? "tree" : "flat" })
+                      }
+                    >
+                      <MenuRadioItem value="flat">Flat list</MenuRadioItem>
+                      <MenuRadioItem value="tree">Folder tree</MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                </>
+              ) : (
+                <>
+                  <MenuSub>
+                    <MenuSubTrigger>
+                      <span className="min-w-0 max-w-40 truncate">
+                        {historyFilter.author.length > 0
+                          ? `Author: ${historyFilter.author}`
+                          : "Author: all"}
+                      </span>
+                    </MenuSubTrigger>
+                    <MenuSubPopup className="max-h-64 min-w-48 overflow-auto">
+                      <MenuItem onClick={() => setHistoryFilter({ ...historyFilter, author: "" })}>
+                        All authors
+                      </MenuItem>
+                      {authors.map((author) => (
+                        <MenuItem
+                          key={author.name}
+                          onClick={() =>
+                            setHistoryFilter({ ...historyFilter, author: author.name })
+                          }
+                        >
+                          <span className="min-w-0 max-w-48 truncate">{author.name}</span>
+                          <span className="ml-auto text-muted-foreground">{author.count}</span>
+                        </MenuItem>
+                      ))}
+                    </MenuSubPopup>
+                  </MenuSub>
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Group</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={prefs.historyGrouped ? "day" : "none"}
+                      onValueChange={(value) =>
+                        setPrefs(props.scopeKey, { historyGrouped: value === "day" })
+                      }
+                    >
+                      <MenuRadioItem value="none">No grouping</MenuRadioItem>
+                      <MenuRadioItem value="day">By day</MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Sort</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={prefs.historySort}
+                      onValueChange={(value) =>
+                        setPrefs(props.scopeKey, {
+                          historySort: value === "oldest" ? "oldest" : "newest",
+                        })
+                      }
+                    >
+                      <MenuRadioItem value="newest">Newest first</MenuRadioItem>
+                      <MenuRadioItem value="oldest">Oldest first</MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Density</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={prefs.historyDensity}
+                      onValueChange={(value) =>
+                        setPrefs(props.scopeKey, {
+                          historyDensity: value === "compact" ? "compact" : "comfort",
+                        })
+                      }
+                    >
+                      <MenuRadioItem value="comfort">Comfortable rows</MenuRadioItem>
+                      <MenuRadioItem value="compact">Compact rows</MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                </>
+              )}
+            </MenuPopup>
+          </Menu>
+        </div>
+
+        {/* ── C ── one filter row, full width, shared by both tabs ────────── */}
+        {showFilterRow ? (
+          <div className="flex flex-none items-center gap-2 border-border/60 border-b px-3 py-1.5">
+            <InputGroup>
+              <InputGroupAddon>
+                <Search className="text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                ref={filterInputRef}
+                size="sm"
+                value={onChanges ? pathQuery : historyFilter.query}
+                onChange={(event) =>
+                  onChanges
+                    ? setPathQuery(event.target.value)
+                    : setHistoryFilter({ ...historyFilter, query: event.target.value })
+                }
+                placeholder={onChanges ? "Filter files ( / )" : "Search commits ( / )"}
+                aria-label={onChanges ? "Filter changed files" : "Search commits"}
+              />
+              {(onChanges ? pathQuery : historyFilter.query).length > 0 ? (
+                <InputGroupAddon align="inline-end">
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Clear the filter"
+                    onClick={() =>
+                      onChanges
+                        ? setPathQuery("")
+                        : setHistoryFilter({ ...historyFilter, query: "" })
+                    }
+                  >
+                    <X />
+                  </Button>
+                </InputGroupAddon>
+              ) : null}
+            </InputGroup>
+            {!onChanges && historyFilter.author.length > 0 ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      className="max-w-32 shrink-0"
+                      onClick={() => setHistoryFilter({ ...historyFilter, author: "" })}
+                    />
+                  }
+                >
+                  <span className="min-w-0 truncate">{historyFilter.author}</span>
+                  <X />
+                </TooltipTrigger>
+                <TooltipPopup>Clear the author filter</TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {onChanges && prefs.filter !== "all" ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      className="max-w-32 shrink-0"
+                      onClick={() => setPrefs(props.scopeKey, { filter: "all" })}
+                    />
+                  }
+                >
+                  <span className="min-w-0 truncate">{CHANGES_FILTER_LABEL[prefs.filter]}</span>
+                  <X />
+                </TooltipTrigger>
+                <TooltipPopup>Clear the status filter</TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
         ) : null}
-      </div>
 
-      {prefs.activeSection === "changes" ? (
-        <>
-          <CommitComposer
-            message={commitDraft}
-            onMessageChange={(message) => setCommitDraft(props.cwd ?? "", message)}
-            amend={amend}
-            onAmendChange={setAmend}
-            lastCommitMessage={lastCommitQuery.data?.message ?? null}
-            stagedCount={stagedCount}
-            dirtyCount={dirtyCount}
-            ahead={status.status?.ahead ?? 0}
-            operationInProgress={operation !== null}
-            busy={actions.busy.has("commit")}
-            onCommit={(options) => void handleCommit(options)}
-            onAmend={() => {
-              void (async () => {
-                const ok = await actions.amend(commitDraft);
-                if (ok && props.cwd !== null) {
-                  clearCommitDraft(props.cwd);
-                  setAmend(false);
-                }
-              })();
-            }}
-            onGenerateMessage={handleGenerateMessage}
-            generating={actions.busy.has(GENERATE_COMMIT_MESSAGE_BUSY_KEY)}
-            textGenerationConfigured={textGenerationConfigured}
-            onPush={() => handleSync("push")}
-            onCommitAndPush={(options) => {
-              void (async () => {
-                if (await handleCommit(options)) handleSync("push");
-              })();
-            }}
-          />
-          {operation !== null ? (
-            <ConflictsSection
-              operation={operation}
-              files={conflicted}
-              busy={actions.busy.size > 0}
-              busyPaths={busyPaths}
-              abortBusy={actions.isBusy(workingCopyBusyKey.abort())}
-              hasMessage={commitDraft.trim().length > 0}
-              onResolve={(path, side) => void actions.resolveConflict(path, side)}
-              onOpen={(file) => props.onOpenDiff?.(file)}
-              onAbort={() => void actions.abortOperation(operation)}
-              // "Commit merge" is a plain commit of what git already staged
-              // while resolving; it must never re-stage, or a deliberately
-              // unstaged resolution would be swept in.
-              onContinue={() => void handleCommit({ stageAllFirst: false })}
-            />
-          ) : null}
+        {/* ── D ── one status slot ───────────────────────────────────────── */}
+        <SourceControlStatusBand
+          error={
+            status.showErrorBanner
+              ? (status.errorMessage ?? "The working copy could not be read.")
+              : null
+          }
+          onDismissError={status.dismissErrorBanner}
+          // Shown on BOTH tabs: a blocked merge is a property of the working
+          // copy, not of the tab you happen to be looking at.
+          operation={operation}
+          conflictCount={conflictedCount}
+          busy={actions.busy.size > 0}
+          abortBusy={actions.isBusy(workingCopyBusyKey.abort())}
+          hasMessage={commitDraft.trim().length > 0}
+          primaryVariant={
+            sourceControlPrimaryVariant(primarySlot, "continue") === "default"
+              ? "default"
+              : "secondary"
+          }
+          onAbort={() => operation !== null && void actions.abortOperation(operation)}
+          // "Commit merge" is a plain commit of what git already staged while
+          // resolving; it must never re-stage, or a deliberately unstaged
+          // resolution would be swept in.
+          onContinue={() => void handleCommit({ stageAllFirst: false })}
+        />
+
+        {/* ── E ── the list gets all remaining height ────────────────────── */}
+        {onChanges ? (
           <ChangesList
             files={files}
             viewMode={prefs.viewMode}
@@ -541,6 +807,10 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             onToggleGroup={(group) => toggleCollapsedGroup(props.scopeKey, group)}
             onToggleFolder={(folderKey) => toggleCollapsedFolder(props.scopeKey, folderKey)}
             onSetCollapsedFolders={(keys) => setCollapsedFolders(props.scopeKey, keys)}
+            onClearFilters={() => {
+              setPathQuery("");
+              setPrefs(props.scopeKey, { filter: "all" });
+            }}
             // fork: f4 F-08 — the changes list can only ever act on an explicit
             // path set. `[]` is "nothing", never "everything": the group
             // header's Discard all used to map onto `discard(null)`, which
@@ -569,95 +839,102 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
               )
             }
           />
-          <StashesSection
-            open={prefs.stashesOpen}
-            onToggle={() => setPrefs(props.scopeKey, { stashesOpen: !prefs.stashesOpen })}
-            stashes={stashQuery.data ?? EMPTY_STASHES}
-            backups={backupQuery.data ?? EMPTY_STASHES}
-            // fork: f4 — `isLoading` is now "we have nothing to show yet".
-            // `Atom.swr` reports `waiting` during EVERY revalidation, so the old
-            // predicate flashed "Loading…" over already-rendered rows after
-            // each mutation.
-            isLoading={
-              (stashQuery.isPending && stashQuery.data === null) ||
-              (backupQuery.isPending && backupQuery.data === null)
-            }
-            // fork: f4 F-09 — Pop resolved the latest stash from a list that is
-            // `null` during the first load and during every post-mutation
-            // re-read, then fell through an `if` with no else. Disable it while
-            // the list has not arrived instead.
-            listReady={stashQuery.data !== null}
-            isBusy={actions.isBusy}
+        ) : (
+          <HistoryList
+            history={history}
+            filter={historyFilter}
+            onFilterChange={setHistoryFilter}
+            grouped={prefs.historyGrouped}
+            onGroupedChange={(grouped) => setPrefs(props.scopeKey, { historyGrouped: grouped })}
+            sort={prefs.historySort}
+            onSortChange={(sort) => setPrefs(props.scopeKey, { historySort: sort })}
+            density={prefs.historyDensity}
+            detached={status.status?.detached ?? false}
             dirty={dirtyCount > 0}
-            onStash={() => setStashDialogOpen(true)}
-            onPopLatest={() => {
-              const latest = stashQuery.data?.find((entry) => !entry.isDiscardBackup);
-              if (!latest) {
-                sourceControlInfoToast("There is no stash to pop.");
-                return;
-              }
-              void actions.stashPop(latest.ref);
+            commitDetail={commitDetailQuery.data}
+            commitDetailLoading={commitDetailQuery.isPending}
+            expandedHash={expandedHash}
+            onExpandedHashChange={setExpandedHash}
+            onCopy={copyText}
+            isBusy={actions.isBusy}
+            // fork: f4 F-13 — was `window.prompt`, which the Electron renderer
+            // does not implement, so this menu item did nothing in the desktop
+            // app and reported nothing on cancel in the browser.
+            onTag={(entry) => {
+              void (async () => {
+                const name = await confirm.promptText({
+                  title: `Tag ${entry.shortHash}`,
+                  consequence: `Creates a lightweight tag pointing at ${entry.shortHash} — "${entry.subject}".`,
+                  inputLabel: "Tag name",
+                  placeholder: "v1.2.3",
+                  confirmLabel: "Create tag",
+                });
+                if (name === null) return;
+                const trimmed = name.trim();
+                if (trimmed.length === 0) return;
+                await actions.tagCommit(entry.hash, trimmed);
+              })();
             }}
-            onApply={(ref) => void actions.stashApply(ref)}
-            onDrop={(ref, label) => void actions.stashDrop(ref, label)}
-            onRestoreBackup={(ref) => void actions.restoreBackup(ref)}
-          />
-        </>
-      ) : (
-        <HistoryList
-          history={history}
-          filter={historyFilter}
-          onFilterChange={setHistoryFilter}
-          grouped={prefs.historyGrouped}
-          onGroupedChange={(grouped) => setPrefs(props.scopeKey, { historyGrouped: grouped })}
-          sort={prefs.historySort}
-          onSortChange={(sort) => setPrefs(props.scopeKey, { historySort: sort })}
-          density={prefs.historyDensity}
-          onDensityChange={(density) => setPrefs(props.scopeKey, { historyDensity: density })}
-          detached={status.status?.detached ?? false}
-          dirty={dirtyCount > 0}
-          commitDetail={commitDetailQuery.data}
-          commitDetailLoading={commitDetailQuery.isPending}
-          expandedHash={expandedHash}
-          onExpandedHashChange={setExpandedHash}
-          onCopy={copyText}
-          isBusy={actions.isBusy}
-          // fork: f4 F-13 — was `window.prompt`, which the Electron renderer
-          // does not implement, so this menu item did nothing in the desktop
-          // app and reported nothing on cancel in the browser.
-          onTag={(entry) => {
-            void (async () => {
-              const name = await confirm.promptText({
-                title: `Tag ${entry.shortHash}`,
-                consequence: `Creates a lightweight tag pointing at ${entry.shortHash} — "${entry.subject}".`,
-                inputLabel: "Tag name",
-                placeholder: "v1.2.3",
-                confirmLabel: "Create tag",
+            onCherryPick={(entry) => void actions.cherryPick(entry.hash)}
+            onCheckout={(entry) => void actions.checkoutCommit(entry.hash)}
+            onReset={(entry, resetMode) => void handleReset(entry, resetMode)}
+            onRevert={(entry) => void handleRevert(entry)}
+            onOpenCommitFile={(hash, path, oldPath) => {
+              const detail = commitDetailQuery.data;
+              if (!hash) return;
+              props.onOpenCommitFile?.({
+                hash,
+                shortHash: detail?.hash === hash ? detail.shortHash : hash.slice(0, 7),
+                path,
+                oldPath,
               });
-              if (name === null) return;
-              const trimmed = name.trim();
-              if (trimmed.length === 0) return;
-              await actions.tagCommit(entry.hash, trimmed);
-            })();
-          }}
-          onCherryPick={(entry) => void actions.cherryPick(entry.hash)}
-          onCheckout={(entry) => void actions.checkoutCommit(entry.hash)}
-          onReset={(entry, resetMode) => void handleReset(entry, resetMode)}
-          onRevert={(entry) => void handleRevert(entry)}
-          onOpenCommitFile={(hash, path, oldPath) => {
-            const detail = commitDetailQuery.data;
-            if (!hash) return;
-            props.onOpenCommitFile?.({
-              hash,
-              shortHash: detail?.hash === hash ? detail.shortHash : hash.slice(0, 7),
-              path,
-              oldPath,
-            });
-          }}
-        />
-      )}
+            }}
+          />
+        )}
+
+        {/* ── F ── the composer, bottom-pinned and auto-growing ──────────── */}
+        {onChanges ? (
+          <CommitComposer
+            message={commitDraft}
+            onMessageChange={(message) => setCommitDraft(props.cwd ?? "", message)}
+            amend={amend}
+            onAmendChange={setAmend}
+            lastCommitMessage={lastCommitQuery.data?.message ?? null}
+            stagedCount={stagedCount}
+            dirtyCount={dirtyCount}
+            ahead={status.status?.ahead ?? 0}
+            operationInProgress={operation !== null}
+            busy={actions.busy.has("commit")}
+            primaryVariant={
+              sourceControlPrimaryVariant(primarySlot, "commit") === "default"
+                ? "default"
+                : "secondary"
+            }
+            onCommit={(options) => void handleCommit(options)}
+            onAmend={() => {
+              void (async () => {
+                const ok = await actions.amend(commitDraft);
+                if (ok && props.cwd !== null) {
+                  clearCommitDraft(props.cwd);
+                  setAmend(false);
+                }
+              })();
+            }}
+            onGenerateMessage={handleGenerateMessage}
+            generating={actions.busy.has(GENERATE_COMMIT_MESSAGE_BUSY_KEY)}
+            textGenerationConfigured={textGenerationConfigured}
+            onPush={() => handleSync("push")}
+            onCommitAndPush={(options) => {
+              void (async () => {
+                if (await handleCommit(options)) handleSync("push");
+              })();
+            }}
+          />
+        ) : null}
+      </div>
 
       <SourceControlConfirmDialog pending={confirm.pending} onResolve={confirm.resolve} />
+
       {/* fork: f4 F-17 — mounted only while open, so the previous message and
           the "include untracked" choice cannot leak into the next stash. */}
       {stashDialogOpen ? (
@@ -669,32 +946,74 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           }}
         />
       ) : null}
+
+      {/* fork: f4 redesign — the stash list is a dialog now, not a permanent
+          32px strip stealing the bottom edge from the composer. */}
+      <Dialog
+        open={prefs.stashesOpen}
+        onOpenChange={(open) => setPrefs(props.scopeKey, { stashesOpen: open })}
+      >
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Stashes &amp; backups</DialogTitle>
+            <DialogDescription>
+              Parked work, and the automatic backups the panel takes before a discard.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="max-h-96 min-h-0">
+            <StashesPanel
+              stashes={stashQuery.data ?? EMPTY_STASHES}
+              backups={backupQuery.data ?? EMPTY_STASHES}
+              // fork: f4 — `isLoading` is now "we have nothing to show yet".
+              // `Atom.swr` reports `waiting` during EVERY revalidation, so the
+              // old predicate flashed "Loading…" over already-rendered rows
+              // after each mutation.
+              isLoading={
+                (stashQuery.isPending && stashQuery.data === null) ||
+                (backupQuery.isPending && backupQuery.data === null)
+              }
+              // fork: f4 F-09 — Pop resolved the latest stash from a list that
+              // is `null` during the first load and during every post-mutation
+              // re-read, then fell through an `if` with no else. Disable it
+              // while the list has not arrived instead.
+              listReady={stashQuery.data !== null}
+              isBusy={actions.isBusy}
+              dirty={dirtyCount > 0}
+              onStash={() => {
+                setPrefs(props.scopeKey, { stashesOpen: false });
+                setStashDialogOpen(true);
+              }}
+              onPopLatest={() => {
+                const latest = stashQuery.data?.find((entry) => !entry.isDiscardBackup);
+                if (!latest) {
+                  sourceControlInfoToast("There is no stash to pop.");
+                  return;
+                }
+                void actions.stashPop(latest.ref);
+              }}
+              onApply={(ref) => void actions.stashApply(ref)}
+              onDrop={(ref, label) => void actions.stashDrop(ref, label)}
+              onRestoreBackup={(ref) => void actions.restoreBackup(ref)}
+            />
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
     </DiffPanelShell>
   );
 }
 
 const EMPTY_STASHES: ReadonlyArray<never> = [];
 
-function TabButton(props: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      className={cn(
-        "flex h-6 items-center rounded-md px-2 text-xs",
-        props.active
-          ? "bg-accent text-foreground"
-          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-      )}
-    >
-      {props.children}
-    </button>
-  );
-}
-
 /**
  * "Include untracked" defaults ON, contrary to git: a stash that silently
  * leaves new files behind is the single most surprising thing `git stash` does.
+ *
+ * fork: f4 redesign (audit §8 / C3) — this was a hand-rolled `absolute inset-0`
+ * overlay with no portal, no focus trap, no Escape handler, no restore-focus,
+ * a raw OS checkbox and two sub-Button-sized buttons — inside a panel whose
+ * root is not `relative`, so the overlay resolved against whatever ancestor
+ * happened to be positioned. It is the repo's `Dialog` now, like the confirm
+ * dialog that already shipped in the same feature.
  */
 function StashDialog(props: {
   onClose: () => void;
@@ -703,50 +1022,41 @@ function StashDialog(props: {
   const [message, setMessage] = useState("");
   const [includeUntracked, setIncludeUntracked] = useState(true);
   return (
-    <div
-      className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Stash changes"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") props.onClose();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
       }}
     >
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-3 shadow-lg">
-        <h3 className="mb-2 font-medium text-sm">Stash changes</h3>
-        <Input
-          autoFocus
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder="Optional message"
-          aria-label="Stash message"
-        />
-        <label className="mt-2 flex cursor-pointer items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            checked={includeUntracked}
-            onChange={(event) => setIncludeUntracked(event.target.checked)}
+      <DialogPopup className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Stash changes</DialogTitle>
+          <DialogDescription>
+            Parks every change in the working copy so you can come back to a clean tree.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-3">
+          <Input
+            autoFocus
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder="Optional message"
+            aria-label="Stash message"
           />
-          Include untracked files
-        </label>
-        <div className="mt-3 flex justify-end gap-2">
-          <button
-            type="button"
-            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-            onClick={props.onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="rounded-md bg-primary px-2 py-1 text-primary-foreground text-xs"
-            onClick={() => props.onSubmit(message, includeUntracked)}
-          >
-            Stash
-          </button>
-        </div>
-      </div>
-    </div>
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+            <Checkbox
+              checked={includeUntracked}
+              onCheckedChange={(checked) => setIncludeUntracked(checked === true)}
+            />
+            Include untracked files
+          </label>
+        </DialogPanel>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button onClick={() => props.onSubmit(message, includeUntracked)}>Stash</Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AGENT_RUN_FEED_CAP,
+  agentRunFeedActor,
+  agentRunFeedText,
+  agentRunFeedWith,
   deriveAgentRuns,
   stabilizeAgentRuns,
   withAgentRunEntries,
@@ -131,8 +134,8 @@ describe("deriveAgentRuns", () => {
     const { runs } = deriveAgentRuns(activities, { activeTurnId: TURN });
     const feed = runs[0]?.feed ?? [];
     expect(feed).toHaveLength(AGENT_RUN_FEED_CAP);
-    expect(feed[0]?.label).toBe("step 12");
-    expect(feed.at(-1)?.label).toBe(`step ${AGENT_RUN_FEED_CAP + 11}`);
+    expect(feed[0]?.text).toBe("step 12");
+    expect(feed.at(-1)?.text).toBe(`step ${AGENT_RUN_FEED_CAP + 11}`);
   });
 
   it("runs with no task.started still render", () => {
@@ -197,7 +200,7 @@ describe("deriveAgentRuns", () => {
     expect(runs.map((run) => run.taskId)).toEqual(["t1", "t2"]);
     expect(runs[0]?.phase).toBe("running");
     expect(runs[1]?.phase).toBe("failed");
-    expect(runs[0]?.feed.map((line) => line.label)).toEqual(["one-step"]);
+    expect(runs[0]?.feed.map((line) => line.text)).toEqual(["one-step"]);
   });
 
   it("ignores a malformed payload instead of throwing", () => {
@@ -363,12 +366,13 @@ describe("stabilizeAgentRuns", () => {
     const second = deriveAgentRuns(
       [
         ...activities,
-        // Blank label: no feed line is pushed, so the run itself is unchanged —
-        // but the activity is consumed and must not stay in the transcript.
+        // Blank label and no actor: no feed line is pushed, so the run itself
+        // is unchanged — but the activity is consumed and must not stay in the
+        // transcript.
         activity({
           id: "p2",
           kind: "task.progress",
-          payload: { taskId: "task-1", lastToolName: "Read" },
+          payload: { taskId: "task-1" },
           summary: "   ",
           createdAt: "2026-07-18T00:00:05.000Z",
         }),
@@ -414,5 +418,330 @@ describe("stabilizeAgentRuns consumedActivityIds (F-26)", () => {
     const first = { runs, consumedActivityIds: new Set(["a", "b"]) };
     const second = { runs: [...runs], consumedActivityIds: new Set(["b", "a"]) };
     expect(stabilizeAgentRuns(first, second)).toBe(first);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D1 — the title is frozen at `task.started`.
+// The reported screenshot showed a run named "Idle 20 seconds": a Bash progress
+// description standing in as the run's identity, rewritten on every frame.
+// ---------------------------------------------------------------------------
+
+describe("agent-run title (D1)", () => {
+  function titleOf(started: unknown, ...progress: ReadonlyArray<unknown>): string | undefined {
+    const activities = [
+      activity({ id: "a1", kind: "task.started", payload: started }),
+      ...progress.map((payload, index) =>
+        activity({ id: `p${index}`, kind: "task.progress", payload }),
+      ),
+    ];
+    return deriveAgentRuns(activities, { activeTurnId: TURN }).runs[0]?.title;
+  }
+
+  it("never lets a progress frame rename a started run", () => {
+    expect(
+      titleOf(
+        { taskId: "t", detail: "Review the migration" },
+        { taskId: "t", title: "Idle 30 seconds", lastToolName: "Bash" },
+        { taskId: "t", title: "Idle 20 seconds", lastToolName: "Bash" },
+      ),
+    ).toBe("Review the migration");
+  });
+
+  it("orders workflow → subagent → start detail → task type → prompt", () => {
+    expect(
+      titleOf({ taskId: "t", workflowName: "ship-it", subagentType: "reviewer", detail: "d" }),
+    ).toBe("ship-it");
+    expect(titleOf({ taskId: "t", subagentType: "reviewer", detail: "d", taskType: "local" })).toBe(
+      "reviewer",
+    );
+    expect(titleOf({ taskId: "t", detail: "Review the migration", taskType: "local_agent" })).toBe(
+      "Review the migration",
+    );
+    expect(titleOf({ taskId: "t", taskType: "local_agent", prompt: "Look at the tests" })).toBe(
+      "local_agent",
+    );
+    expect(
+      titleOf({ taskId: "t", prompt: "Please look at the failing snapshot tests today" }),
+    ).toBe("Please look at the failing snapshot…");
+  });
+
+  it("falls back to a generic name rather than a tool name", () => {
+    expect(titleOf({ taskId: "t" }, { taskId: "t", lastToolName: "Bash", title: "Idle" })).toBe(
+      "Agent run",
+    );
+  });
+
+  it("names a restored run from its first progress frame, then freezes that too", () => {
+    const { runs } = deriveAgentRuns(
+      [
+        activity({ id: "p1", kind: "task.progress", payload: { taskId: "t", title: "Restored" } }),
+        activity({ id: "p2", kind: "task.progress", payload: { taskId: "t", title: "Later" } }),
+      ],
+      { activeTurnId: TURN },
+    );
+    expect(runs[0]?.title).toBe("Restored");
+    expect(runs[0]?.detailsUnavailable).toBe(true);
+  });
+
+  it("keeps the title when the run completes", () => {
+    const { runs } = deriveAgentRuns(
+      [
+        activity({ id: "a1", kind: "task.started", payload: { taskId: "t", detail: "Migrate" } }),
+        activity({
+          id: "c1",
+          kind: "task.completed",
+          payload: { taskId: "t", status: "completed", summary: "Rewrote 12 files" },
+        }),
+      ],
+      { activeTurnId: TURN },
+    );
+    expect(runs[0]?.title).toBe("Migrate");
+    expect(runs[0]?.summary).toBe("Rewrote 12 files");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D2/D3/D4 — the feed. Every case below is a line the screenshot actually
+// rendered: duplicated rows, "Bash Running Idle 30 seconds", and three nested
+// agents repeating the parent's prompt.
+// ---------------------------------------------------------------------------
+
+describe("agentRunFeedText (D3)", () => {
+  it("drops the actor and the bare status verb the row already shows", () => {
+    expect(agentRunFeedText("Running Idle 30 seconds", "Bash")).toBe("Idle 30 seconds");
+    expect(agentRunFeedText("Bash Running Idle 30 seconds", "Bash")).toBe("Idle 30 seconds");
+    expect(agentRunFeedText("Bash", "Bash")).toBe("");
+    expect(agentRunFeedText("Reading files", "Read")).toBe("files");
+  });
+
+  it("keeps a sentence that is not repeating its actor", () => {
+    expect(agentRunFeedText("Two-phase smoke test", "synthesize")).toBe("Two-phase smoke test");
+    expect(agentRunFeedText("Searching for TODOs", "Grep")).toBe("Searching for TODOs");
+  });
+
+  it("leaves the text alone when there is no actor", () => {
+    expect(agentRunFeedText("Running Idle 30 seconds", undefined)).toBe("Running Idle 30 seconds");
+    expect(agentRunFeedText(null, "Bash")).toBe("");
+  });
+});
+
+describe("agentRunFeedActor (D4)", () => {
+  it("reads a nested agent out of the tool-name slot and drops its elapsed", () => {
+    expect(agentRunFeedActor("probe:toolchain(65s)")).toEqual({
+      kind: "subagent",
+      tool: "probe:toolchain",
+    });
+    expect(agentRunFeedActor("synthesize(20s)")).toEqual({ kind: "subagent", tool: "synthesize" });
+  });
+
+  it("treats everything else as a tool", () => {
+    expect(agentRunFeedActor("Bash")).toEqual({ kind: "tool", tool: "Bash" });
+    expect(agentRunFeedActor("mcp__x__do(thing)")).toEqual({
+      kind: "tool",
+      tool: "mcp__x__do(thing)",
+    });
+    expect(agentRunFeedActor(null)).toBe(null);
+    expect(agentRunFeedActor("   ")).toBe(null);
+  });
+});
+
+describe("agentRunFeedWith (D2)", () => {
+  const base = { id: "p1", createdAt: "2026-07-18T00:00:01.000Z", kind: "tool" as const };
+
+  it("coalesces a repeated line instead of appending it", () => {
+    let feed = agentRunFeedWith([], { ...base, tool: "Bash", text: "Idle 30 seconds" });
+    feed = agentRunFeedWith(feed, {
+      ...base,
+      id: "p2",
+      createdAt: "2026-07-18T00:00:02.000Z",
+      tool: "Bash",
+      text: "Idle 30 seconds",
+    });
+    expect(feed).toHaveLength(1);
+    expect(feed[0]?.repeat).toBe(2);
+    expect(feed[0]?.id).toBe("p1");
+    expect(feed[0]?.updatedAt).toBe("2026-07-18T00:00:02.000Z");
+  });
+
+  it("replaces the tail in place when the same activity progresses", () => {
+    let feed = agentRunFeedWith([], {
+      ...base,
+      tool: "Bash",
+      text: "Idle 30 seconds",
+      toolUseId: "toolu_1",
+    });
+    feed = agentRunFeedWith(feed, {
+      ...base,
+      id: "p2",
+      tool: "Bash",
+      text: "Idle 20 seconds",
+      toolUseId: "toolu_1",
+    });
+    expect(feed).toHaveLength(1);
+    expect(feed[0]?.text).toBe("Idle 20 seconds");
+    expect(feed[0]?.repeat).toBe(1);
+    expect(feed[0]?.id).toBe("p1");
+  });
+
+  it("appends a genuinely different line and keeps the cap", () => {
+    let feed = agentRunFeedWith([], { ...base, tool: "Bash", text: "one" });
+    feed = agentRunFeedWith(feed, { ...base, id: "p2", tool: "Read", text: "two" });
+    expect(feed.map((line) => line.text)).toEqual(["one", "two"]);
+
+    for (let index = 0; index < AGENT_RUN_FEED_CAP + 5; index += 1) {
+      feed = agentRunFeedWith(feed, { ...base, id: `x${index}`, tool: "Bash", text: `n${index}` });
+    }
+    expect(feed).toHaveLength(AGENT_RUN_FEED_CAP);
+  });
+
+  it("ignores a frame with neither an actor nor text", () => {
+    const feed = agentRunFeedWith([], { ...base, text: "" });
+    expect(feed).toEqual([]);
+  });
+
+  it("keeps a tool-only line: the actor alone is information", () => {
+    const feed = agentRunFeedWith([], { ...base, tool: "Bash", text: "" });
+    expect(feed).toHaveLength(1);
+    expect(feed[0]?.tool).toBe("Bash");
+  });
+});
+
+describe("feed coalescing through deriveAgentRuns (the reported screenshot)", () => {
+  it("collapses repeated Bash status frames into one line with a repeat count", () => {
+    const { runs } = deriveAgentRuns(
+      [
+        activity({ id: "a1", kind: "task.started", payload: { taskId: "t", detail: "general" } }),
+        activity({
+          id: "p1",
+          kind: "task.progress",
+          payload: { taskId: "t", summary: "Running Idle 30 seconds", lastToolName: "Bash" },
+        }),
+        activity({
+          id: "p2",
+          kind: "task.progress",
+          payload: { taskId: "t", summary: "Running Idle 30 seconds", lastToolName: "Bash" },
+        }),
+        activity({
+          id: "p3",
+          kind: "task.progress",
+          payload: {
+            taskId: "t",
+            summary: "Running Show last three commits",
+            lastToolName: "Bash",
+          },
+        }),
+      ],
+      { activeTurnId: TURN },
+    );
+
+    const feed = runs[0]?.feed ?? [];
+    expect(feed.map((line) => [line.tool, line.text, line.repeat])).toEqual([
+      ["Bash", "Idle 30 seconds", 2],
+      ["Bash", "Show last three commits", 1],
+    ]);
+  });
+
+  it("renders nested agents as subagents and drops the echoed parent prompt", () => {
+    const { runs } = deriveAgentRuns(
+      [
+        activity({
+          id: "a1",
+          kind: "task.started",
+          payload: {
+            taskId: "t",
+            detail: "test-workflow",
+            prompt: "Two-phase smoke test with detailed output",
+          },
+        }),
+        activity({
+          id: "p1",
+          kind: "task.progress",
+          payload: {
+            taskId: "t",
+            summary: "Two-phase smoke test with detailed output",
+            lastToolName: "probe:toolchain(65s)",
+          },
+        }),
+        activity({
+          id: "p2",
+          kind: "task.progress",
+          payload: {
+            taskId: "t",
+            summary: "Two-phase smoke test with detailed output",
+            lastToolName: "synthesize(20s)",
+          },
+        }),
+        activity({
+          id: "p3",
+          kind: "task.progress",
+          payload: {
+            taskId: "t",
+            summary: "Two-phase smoke test with detailed output",
+            lastToolName: "synthesize(24s)",
+          },
+        }),
+      ],
+      { activeTurnId: TURN },
+    );
+
+    const feed = runs[0]?.feed ?? [];
+    expect(feed.map((line) => [line.kind, line.tool, line.text, line.repeat])).toEqual([
+      ["subagent", "probe:toolchain", "", 1],
+      ["subagent", "synthesize", "", 2],
+    ]);
+  });
+
+  it("keeps a nested agent's own description when it is not the parent's prompt", () => {
+    const { runs } = deriveAgentRuns(
+      [
+        activity({
+          id: "a1",
+          kind: "task.started",
+          payload: { taskId: "t", prompt: "Parent job" },
+        }),
+        activity({
+          id: "p1",
+          kind: "task.progress",
+          payload: { taskId: "t", summary: "Checking the lockfile", lastToolName: "probe(3s)" },
+        }),
+      ],
+      { activeTurnId: TURN },
+    );
+    expect(runs[0]?.feed[0]?.text).toBe("Checking the lockfile");
+  });
+
+  it("re-derives to an equal-but-updated run so the visible repeat count moves", () => {
+    const frames = [
+      activity({
+        id: "a1",
+        kind: "task.started",
+        payload: { taskId: "t", detail: "general" },
+        createdAt: "2026-07-18T00:00:01.000Z",
+      }),
+      activity({
+        id: "p1",
+        kind: "task.progress",
+        payload: { taskId: "t", summary: "Running Idle 30 seconds", lastToolName: "Bash" },
+        createdAt: "2026-07-18T00:00:02.000Z",
+      }),
+    ];
+    const first = deriveAgentRuns(frames, { activeTurnId: TURN });
+    const second = deriveAgentRuns(
+      [
+        ...frames,
+        activity({
+          id: "p2",
+          kind: "task.progress",
+          payload: { taskId: "t", summary: "Running Idle 30 seconds", lastToolName: "Bash" },
+          createdAt: "2026-07-18T00:00:03.000Z",
+        }),
+      ],
+      { activeTurnId: TURN },
+    );
+
+    const stabilized = stabilizeAgentRuns(first, second);
+    expect(stabilized.runs[0]).not.toBe(first.runs[0]);
+    expect(stabilized.runs[0]?.feed[0]?.repeat).toBe(2);
   });
 });

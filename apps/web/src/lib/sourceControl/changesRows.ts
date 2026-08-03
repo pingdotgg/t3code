@@ -349,18 +349,80 @@ export function partiallyStagedPaths(files: ReadonlyArray<WorkingCopyFile>): Rea
 // ── Geometry ────────────────────────────────────────────────────────────────
 // The virtualizer needs a height per row BEFORE it mounts, so heights are
 // declared data rather than something read back off the DOM.
+//
+// fork: f4 redesign (audit §8 / M5) — these were 36/32/38, imported from 2code's
+// type scale, which made the LEAF row taller than the group header above it and
+// gave a single line of `text-sm` ~10px of slack. t3's list-row rhythm is 28px
+// at `text-sm` on desktop (`ui/menu.tsx` `sm:min-h-7`), so every row kind sits
+// on one pitch and the hierarchy is carried by indent and weight, not by height.
+//
+// The rendered rows apply the SAME constant as an explicit height — that
+// equality is what keeps the virtualizer's assumed pitch and the painted pitch
+// from drifting, and `changesRows.test.ts` pins it.
 
 export const CHANGES_ROW_HEIGHT = {
-  header: 36,
-  folder: 32,
-  file: 38,
-  empty: 32,
+  header: 28,
+  folder: 28,
+  file: 28,
+  empty: 28,
 } as const;
 
 /** Conflicted rows carry a resolve-actions bar underneath the row proper. */
-export const CONFLICT_ACTIONS_HEIGHT = 34;
+export const CONFLICT_ACTIONS_HEIGHT = 28;
 /** The inline "discard <file>?" confirm, when open on a row. */
-export const DISCARD_CONFIRM_HEIGHT = 30;
+export const DISCARD_CONFIRM_HEIGHT = 28;
+
+/**
+ * fork: f4 redesign (audit §8 / M1) — the ONE horizontal inset for the whole
+ * panel. Header, toolbar, filter row, status band, every list row and the
+ * composer all start here; the panel used to stack six different left insets
+ * (16/8/8/8/12/6) so nothing lined up with anything.
+ */
+export const CHANGES_GUTTER = 12;
+
+/**
+ * Tree indent per level, on the app's 4px grid. Was 13 — a value copied from
+ * another app's 16px base inset and then applied to an 8px one.
+ */
+export const CHANGES_INDENT_PER_LEVEL = 12;
+
+/** The left inset of a row at `depth`, gutter included. */
+export function changesRowIndent(depth: number): number {
+  return CHANGES_GUTTER + Math.max(0, depth) * CHANGES_INDENT_PER_LEVEL;
+}
+
+/**
+ * fork: f4 redesign (audit §8 / M7) — which designed empty state the Changes
+ * list owes the user, if any.
+ *
+ * Kept pure and separate from the row builder because the answer decides what
+ * the panel renders INSTEAD of the list (an `Empty`, with a "Clear filter"
+ * action in the filtered case), and "clean tree" and "your filter matched
+ * nothing" are the two cases the old 32px "Nothing here." row could not tell
+ * apart.
+ */
+export type ChangesEmptyState = "clean" | "filtered";
+
+export function changesListEmptyState(input: {
+  /** Files in the working copy, before any filter. */
+  readonly fileCount: number;
+  /** File rows that survived the status filter and the path query. */
+  readonly visibleFileCount: number;
+}): ChangesEmptyState | null {
+  if (input.fileCount === 0) {
+    return "clean";
+  }
+  return input.visibleFileCount === 0 ? "filtered" : null;
+}
+
+/** File rows in a built row list — the input `changesListEmptyState` needs. */
+export function changesVisibleFileCount(rows: ReadonlyArray<ChangesRow>): number {
+  let count = 0;
+  for (const row of rows) {
+    if (row.kind === "file") count += 1;
+  }
+  return count;
+}
 
 export function changesRowHeight(
   row: ChangesRow,

@@ -224,6 +224,24 @@ export function laneGraphWidth(nodes: ReadonlyArray<LaneNode>): number {
   return width;
 }
 
+/**
+ * fork: f4 redesign (audit §8 / M14) — the gutter the panel is willing to spend.
+ *
+ * `laneGraphWidth` is the widest row in the WHOLE loaded page, so one six-lane
+ * stretch 150 commits down used to indent every row by 86px and truncate every
+ * subject that much earlier, for the entire list, in a panel whose minimum
+ * width is 360px. The fold is untouched — nodes keep their true columns and the
+ * cap only bounds the reserved gutter.
+ */
+export const LANE_GRAPH_MAX_WIDTH = 4;
+
+export function cappedLaneGraphWidth(width: number): number {
+  if (!Number.isFinite(width) || width < 1) {
+    return 1;
+  }
+  return Math.min(Math.floor(width), LANE_GRAPH_MAX_WIDTH);
+}
+
 export type LaneGraphSuppressionReason = "filtered" | "sorted oldest-first" | "grouped by day";
 
 export interface LaneGraphViewState {

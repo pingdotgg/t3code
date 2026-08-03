@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildHistoryRows,
+  clampHistoryDrawerHeight,
   historyCommitRowHeight,
   historyDayKey,
   historyRowHeight,
+  HISTORY_COMMIT_ROW_HEIGHT,
+  HISTORY_COMMIT_ROW_MIN_HEIGHT,
   HISTORY_DAY_ROW_HEIGHT,
   HISTORY_DEFAULT_DRAWER_HEIGHT,
   HISTORY_LOAD_MORE_ROW_HEIGHT,
+  HISTORY_MAX_DRAWER_HEIGHT,
+  HISTORY_MIN_DRAWER_HEIGHT,
   isHistoryCommitRow,
 } from "./historyRows";
 import type { WorkingCopyLogEntry } from "./types";
@@ -149,11 +154,73 @@ describe("historyRowHeight", () => {
   });
 
   it("tracks the same density/width formula the commit row uses for its lane graph", () => {
-    expect(historyCommitRowHeight("comfort", "md")).toBe(52);
-    expect(historyCommitRowHeight("compact", "md")).toBe(44);
+    expect(historyCommitRowHeight("comfort", "md")).toBe(HISTORY_COMMIT_ROW_HEIGHT.comfort.twoLine);
+    expect(historyCommitRowHeight("compact", "md")).toBe(HISTORY_COMMIT_ROW_HEIGHT.compact.twoLine);
     // The single-line variants are clamped by the row's min-height.
-    expect(historyCommitRowHeight("compact", "xs")).toBe(32);
-    expect(historyCommitRowHeight("comfort", "xs")).toBe(34);
-    expect(historyRowHeight({ key: "a", kind: "commit" }, options)).toBe(52);
+    expect(historyCommitRowHeight("compact", "xs")).toBe(HISTORY_COMMIT_ROW_HEIGHT.compact.oneLine);
+    expect(historyCommitRowHeight("comfort", "xs")).toBe(HISTORY_COMMIT_ROW_HEIGHT.comfort.oneLine);
+    expect(historyRowHeight({ key: "a", kind: "commit" }, options)).toBe(
+      HISTORY_COMMIT_ROW_HEIGHT.comfort.twoLine,
+    );
+  });
+
+  // fork: f4 redesign (audit §8 / m9) — the pitch ladder was re-derived for
+  // t3's type scale. These pin the two properties that matter, not the
+  // literals: nothing below the house 28px single-line row, and every step on
+  // the 4px grid the rest of the app uses.
+  it("keeps every pitch on the 4px grid and at or above the house row height", () => {
+    const heights = [
+      HISTORY_DAY_ROW_HEIGHT,
+      HISTORY_LOAD_MORE_ROW_HEIGHT,
+      HISTORY_COMMIT_ROW_MIN_HEIGHT,
+      ...Object.values(HISTORY_COMMIT_ROW_HEIGHT).flatMap((pair) => Object.values(pair)),
+    ];
+    for (const height of heights) {
+      expect(height % 4).toBe(0);
+    }
+    for (const density of ["compact", "comfort"] as const) {
+      for (const width of ["xs", "sm", "md", "lg", "xl"] as const) {
+        expect(historyCommitRowHeight(density, width)).toBeGreaterThanOrEqual(
+          HISTORY_COMMIT_ROW_MIN_HEIGHT,
+        );
+      }
+    }
+  });
+
+  it("never makes a two-line row shorter than a one-line row at the same density", () => {
+    for (const density of ["compact", "comfort"] as const) {
+      expect(HISTORY_COMMIT_ROW_HEIGHT[density].twoLine).toBeGreaterThan(
+        HISTORY_COMMIT_ROW_HEIGHT[density].oneLine,
+      );
+    }
+  });
+});
+
+// fork: f4 redesign (audit §8 / M6) — the drawer height is measured now. It was
+// permanently 280px, and its own comment said "used until the open drawer has
+// been measured" while nothing ever measured it.
+describe("clampHistoryDrawerHeight", () => {
+  it("falls back to the default before anything has been measured", () => {
+    expect(clampHistoryDrawerHeight(null)).toBe(HISTORY_DEFAULT_DRAWER_HEIGHT);
+  });
+
+  it("refuses a zero or nonsense measurement rather than collapsing the row", () => {
+    expect(clampHistoryDrawerHeight(0)).toBe(HISTORY_DEFAULT_DRAWER_HEIGHT);
+    expect(clampHistoryDrawerHeight(-40)).toBe(HISTORY_DEFAULT_DRAWER_HEIGHT);
+    expect(clampHistoryDrawerHeight(Number.NaN)).toBe(HISTORY_DEFAULT_DRAWER_HEIGHT);
+  });
+
+  it("lets a one-file commit be short instead of opening 280px of empty panel", () => {
+    expect(clampHistoryDrawerHeight(90)).toBe(HISTORY_MIN_DRAWER_HEIGHT);
+    expect(clampHistoryDrawerHeight(180)).toBe(180);
+  });
+
+  it("caps a sixty-file commit so one drawer cannot eat the list", () => {
+    expect(clampHistoryDrawerHeight(2_400)).toBe(HISTORY_MAX_DRAWER_HEIGHT);
+  });
+
+  it("rounds, so a sub-pixel measurement cannot re-trigger the virtualizer", () => {
+    expect(clampHistoryDrawerHeight(200.4)).toBe(200);
+    expect(clampHistoryDrawerHeight(200.6)).toBe(201);
   });
 });

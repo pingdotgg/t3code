@@ -1,7 +1,11 @@
 import type { WorkingCopyFile } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildChangesRows, type ChangesRow } from "~/lib/sourceControl/changesRows";
+import {
+  buildChangesRows,
+  CHANGES_ROW_HEIGHT,
+  type ChangesRow,
+} from "~/lib/sourceControl/changesRows";
 
 import {
   EMPTY_CHANGES_SELECTION,
@@ -175,27 +179,29 @@ describe("actionTargetRows", () => {
 });
 
 describe("geometry", () => {
+  // fork: f4 redesign — derived from the declared constants, never from
+  // literals: the pitch was re-scaled in the §8 re-layout and a test that
+  // hard-codes 36/38 asserts the old type scale rather than the invariant.
   it("offsets accumulate the declared heights in row order", () => {
     const offsets = changesRowOffsets(THREE, HEIGHTS);
     expect(offsets[0]).toBe(0);
-    // header (36) then file rows at 38 each
-    expect(offsets[1]).toBe(36);
-    expect(offsets[2]).toBe(36 + 38);
+    expect(offsets[1]).toBe(CHANGES_ROW_HEIGHT.header);
+    expect(offsets[2]).toBe(CHANGES_ROW_HEIGHT.header + CHANGES_ROW_HEIGHT.file);
   });
 
   it("pins nothing while the first header is still on screen", () => {
     expect(stickyChangesGroup(THREE, HEIGHTS, 0)).toBeNull();
-    expect(stickyChangesGroup(THREE, HEIGHTS, 35)).toBeNull();
+    expect(stickyChangesGroup(THREE, HEIGHTS, CHANGES_ROW_HEIGHT.header - 1)).toBeNull();
   });
 
   it("pins the group once its own header has scrolled fully out", () => {
-    expect(stickyChangesGroup(THREE, HEIGHTS, 36)).toBe("unstaged");
+    expect(stickyChangesGroup(THREE, HEIGHTS, CHANGES_ROW_HEIGHT.header)).toBe("unstaged");
     expect(stickyChangesGroup(THREE, HEIGHTS, 200)).toBe("unstaged");
   });
 
   it("hands the pin over at the next group header", () => {
     const rows = rowsOf([file("s.ts", "staged"), file("u.ts")]);
-    // staged header at 0, staged file at 36, unstaged header at 74.
+    // staged header at 0, staged file below it, unstaged header below that.
     expect(stickyChangesGroup(rows, HEIGHTS, 40)).toBe("staged");
     expect(stickyChangesGroup(rows, HEIGHTS, 120)).toBe("unstaged");
   });

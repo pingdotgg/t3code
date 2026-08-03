@@ -16,16 +16,29 @@
  * fork: f4 source-control panel
  */
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDown, ChevronRight, Folder, Loader2, Minus, Plus, Undo2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileX2,
+  Folder,
+  Loader2,
+  Minus,
+  Plus,
+  Undo2,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CHANGES_GROUP_TITLE,
+  CHANGES_GUTTER,
   CHANGES_ROW_HEIGHT,
   buildChangesRows,
   changesAllFolderKeys,
   changesGroupPaths,
+  changesListEmptyState,
   changesRowHeight,
+  changesRowIndent,
+  changesVisibleFileCount,
   partiallyStagedPaths,
   type ChangesGroup,
   type ChangesGroupScope,
@@ -34,6 +47,17 @@ import {
   type ChangesViewMode,
 } from "~/lib/sourceControl/changesRows";
 import type { WorkingCopyFile } from "@t3tools/contracts";
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 import { ChangeRow } from "./ChangeRow";
@@ -50,9 +74,6 @@ import {
 } from "./changesSelection.logic";
 import { EMPTY_CHANGES_SELECTION } from "./changesSelection.logic";
 import { anyPathBusy, groupHeaderCountLabel, groupIsCollapsible } from "./sourceControlPanel.logic";
-
-/** Tree indent, matching 2code's 13 px per level from a 16 px base inset. */
-const INDENT_PER_LEVEL = 13;
 
 /**
  * fork: f4 focus model — the keys this listbox consumes. Exported so the
@@ -74,6 +95,10 @@ export const CHANGES_LIST_OWNED_KEYS: ReadonlySet<string> = new Set([
   "Escape",
 ]);
 
+/** fork: f4 redesign — the house eyebrow (`DiagnosticsSettings.tsx:98`). */
+const EYEBROW_CLASS =
+  "font-medium text-[11px] text-muted-foreground/70 uppercase tracking-[0.08em]";
+
 export interface ChangesListProps {
   readonly files: ReadonlyArray<WorkingCopyFile>;
   readonly viewMode: ChangesViewMode;
@@ -90,6 +115,8 @@ export interface ChangesListProps {
   readonly onDiscard: (paths: ReadonlyArray<string>) => void;
   readonly onResolve: (path: string, side?: "ours" | "theirs") => void;
   readonly onOpenDiff: (file: WorkingCopyFile) => void;
+  /** fork: f4 redesign — the "Clear filter" action on the filtered empty state. */
+  readonly onClearFilters: () => void;
   /**
    * fork: f4 — a keyboard action that resolved to no rows. The list itself has
    * nothing useful to draw for that, and silence is the defect being fixed.
@@ -185,6 +212,20 @@ export function ChangesList(props: ChangesListProps) {
   const pinnedGroup = useMemo(
     () => stickyChangesGroup(rows, heightOptions, scrollTop),
     [heightOptions, rows, scrollTop],
+  );
+
+  /**
+   * fork: f4 M13 — the pinned overlay reuses the group's REAL header row, so
+   * the counts it prints ("3 of 12") cannot disagree with the header that just
+   * scrolled off. The overlay used to be handed `total === visible`, so the
+   * label silently changed from "3 of 12" to "3" as you scrolled.
+   */
+  const pinnedRow = useMemo(
+    () =>
+      pinnedGroup === null
+        ? null
+        : (rows.find((row) => row.kind === "header" && row.group === pinnedGroup) ?? null),
+    [pinnedGroup, rows],
   );
 
   /**
@@ -362,7 +403,7 @@ export function ChangesList(props: ChangesListProps) {
         return (
           <FolderRow
             row={row}
-            indentPx={row.depth * INDENT_PER_LEVEL}
+            indentPx={changesRowIndent(row.depth)}
             busy={anyPathBusy(props.busyPaths, folderFiles)}
             onToggle={() => props.onToggleFolder(`${row.group}:${row.path ?? ""}`)}
             onStage={() => props.onStage(folderFiles)}
@@ -374,10 +415,10 @@ export function ChangesList(props: ChangesListProps) {
       if (row.kind === "empty") {
         return (
           <div
-            style={{ height: CHANGES_ROW_HEIGHT.empty }}
-            className="flex items-center px-4 text-muted-foreground text-xs"
+            style={{ height: CHANGES_ROW_HEIGHT.empty, paddingLeft: changesRowIndent(1) }}
+            className="flex items-center pr-3 text-muted-foreground/70 text-xs"
           >
-            {row.detail ?? "Nothing here."}
+            {row.detail ?? "No files match in this group."}
           </div>
         );
       }
@@ -391,7 +432,7 @@ export function ChangesList(props: ChangesListProps) {
           focused={selection.focusedKey === row.key}
           partial={partialPaths.has(file.path)}
           busy={props.busyPaths.has(file.path)}
-          indentPx={row.depth * INDENT_PER_LEVEL}
+          indentPx={changesRowIndent(row.depth)}
           onSelect={handleSelect}
           onOpen={(target) => target.file && props.onOpenDiff(target.file)}
           onStage={(target) => target.file && props.onStage([target.file.path])}
@@ -401,16 +442,65 @@ export function ChangesList(props: ChangesListProps) {
         />
       );
     },
-    [collapsedGroups, groupPathsOf, groupScope, handleSelect, partialPaths, props, selection],
+    [
+      collapsedGroups,
+      groupPathsOf,
+      handleSelect,
+      partialPaths,
+      props,
+      selection,
+      toggleGroupFolders,
+    ],
   );
 
   const activeDescendantId =
     selection.focusedKey === null ? undefined : changesRowDomId(selection.focusedKey);
 
+  /**
+   * fork: f4 redesign (audit §8 / M7) — the two designed empty states. The list
+   * used to render a 32px "Nothing here." row that could not tell "your tree is
+   * clean" from "your filter matched nothing".
+   */
+  const emptyState = changesListEmptyState({
+    fileCount: props.files.length,
+    visibleFileCount: changesVisibleFileCount(rows),
+  });
+
+  if (emptyState !== null) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Empty className="min-h-0 flex-1 justify-center gap-4 p-6">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              {emptyState === "clean" ? <Folder /> : <FileX2 />}
+            </EmptyMedia>
+            <EmptyTitle className="text-base">
+              {emptyState === "clean" ? "No changes" : "Nothing matches"}
+            </EmptyTitle>
+            <EmptyDescription className="text-xs">
+              {emptyState === "clean"
+                ? "Your working tree is clean."
+                : props.query.trim().length > 0
+                  ? `No files match “${props.query.trim()}”.`
+                  : "No files match the current status filter."}
+            </EmptyDescription>
+          </EmptyHeader>
+          {emptyState === "filtered" ? (
+            <EmptyContent>
+              <Button size="sm" variant="outline" onClick={props.onClearFilters}>
+                Clear filter
+              </Button>
+            </EmptyContent>
+          ) : null}
+        </Empty>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
-      className="relative min-h-0 flex-1 outline-none"
+      className="relative min-h-0 flex-1 outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring/60"
       role="listbox"
       aria-multiselectable
       aria-label="Changed files"
@@ -432,26 +522,19 @@ export function ChangesList(props: ChangesListProps) {
         onScroll={(event) => setScrollTop(event.nativeEvent.contentOffset.y)}
         className="size-full overflow-x-hidden"
       />
-      {pinnedGroup ? (
+      {pinnedRow ? (
         <div className="pointer-events-none absolute inset-x-0 top-0">
           <div className="pointer-events-auto">
             <GroupHeader
-              row={{
-                key: `${pinnedGroup}:pinned`,
-                kind: "header",
-                group: pinnedGroup,
-                depth: 0,
-                total: countInGroup(rows, pinnedGroup),
-                visible: countInGroup(rows, pinnedGroup),
-              }}
+              row={pinnedRow}
               pinned
-              collapsed={collapsedGroups.has(pinnedGroup)}
-              busy={anyPathBusy(props.busyPaths, groupPathsOf(pinnedGroup))}
-              onToggle={() => props.onToggleGroup(pinnedGroup)}
-              onStageAll={() => props.onStage(groupPathsOf(pinnedGroup))}
-              onUnstageAll={() => props.onUnstage(groupPathsOf(pinnedGroup))}
-              onDiscardAll={() => props.onDiscard(groupPathsOf(pinnedGroup))}
-              onCollapseAllFolders={() => toggleGroupFolders(pinnedGroup)}
+              collapsed={collapsedGroups.has(pinnedRow.group)}
+              busy={anyPathBusy(props.busyPaths, groupPathsOf(pinnedRow.group))}
+              onToggle={() => props.onToggleGroup(pinnedRow.group)}
+              onStageAll={() => props.onStage(groupPathsOf(pinnedRow.group))}
+              onUnstageAll={() => props.onUnstage(groupPathsOf(pinnedRow.group))}
+              onDiscardAll={() => props.onDiscard(groupPathsOf(pinnedRow.group))}
+              onCollapseAllFolders={() => toggleGroupFolders(pinnedRow.group)}
               showFolderToggle={props.viewMode === "tree"}
             />
           </div>
@@ -459,14 +542,6 @@ export function ChangesList(props: ChangesListProps) {
       ) : null}
     </div>
   );
-}
-
-function countInGroup(rows: ReadonlyArray<ChangesRow>, group: ChangesGroup): number {
-  let count = 0;
-  for (const row of rows) {
-    if (row.kind === "file" && row.group === group) count += 1;
-  }
-  return count;
 }
 
 function GroupHeader(props: {
@@ -486,17 +561,22 @@ function GroupHeader(props: {
   const collapsible = groupIsCollapsible(row.group);
   return (
     <div
-      style={{ height: CHANGES_ROW_HEIGHT.header }}
+      style={{ height: CHANGES_ROW_HEIGHT.header, paddingLeft: CHANGES_GUTTER }}
       className={cn(
-        "group flex items-center gap-1.5 border-border/50 border-b bg-background px-2 text-xs",
-        props.pinned && "shadow-sm",
+        "group flex items-center gap-1.5 border-border/60 border-b bg-background pr-3",
+        row.group === "conflicted" && "bg-warning/8",
       )}
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-1 text-left font-medium text-muted-foreground uppercase tracking-wide"
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          EYEBROW_CLASS,
+          collapsible && "hover:text-foreground/80",
+        )}
         onClick={collapsible ? props.onToggle : undefined}
         disabled={!collapsible}
+        tabIndex={-1}
       >
         {collapsible ? (
           props.collapsed ? (
@@ -508,17 +588,22 @@ function GroupHeader(props: {
           <span className="size-3" />
         )}
         <span className="truncate">{CHANGES_GROUP_TITLE[row.group]}</span>
-        <span className="text-muted-foreground/70">
+        <Badge size="sm" variant="secondary" className="shrink-0 tracking-normal">
           {groupHeaderCountLabel(row.total ?? 0, row.visible ?? row.total ?? 0)}
-        </span>
+        </Badge>
       </button>
       {row.group === "conflicted" ? (
-        <span className="text-muted-foreground/70">stage to resolve</span>
+        <span className={cn(EYEBROW_CLASS, "shrink-0")}>Stage to resolve</span>
       ) : (
-        <span className="hidden items-center gap-0.5 group-hover:flex">
+        <span
+          className={cn(
+            "flex shrink-0 items-center opacity-0 transition-opacity",
+            "group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100",
+          )}
+        >
           {props.showFolderToggle ? (
             <HeaderAction label="Collapse folders" onClick={props.onCollapseAllFolders}>
-              <Folder className="size-3.5" />
+              <Folder />
             </HeaderAction>
           ) : null}
           {row.group === "staged" ? (
@@ -527,7 +612,7 @@ function GroupHeader(props: {
               busy={props.busy}
               onClick={props.onUnstageAll}
             >
-              <Minus className="size-3.5" />
+              <Minus />
             </HeaderAction>
           ) : (
             <>
@@ -536,7 +621,7 @@ function GroupHeader(props: {
                 busy={props.busy}
                 onClick={props.onStageAll}
               >
-                <Plus className="size-3.5" />
+                <Plus />
               </HeaderAction>
               <HeaderAction
                 // The label names the group: this rung discards THIS group, and
@@ -545,7 +630,7 @@ function GroupHeader(props: {
                 busy={props.busy}
                 onClick={props.onDiscardAll}
               >
-                <Undo2 className="size-3.5" />
+                <Undo2 />
               </HeaderAction>
             </>
           )}
@@ -562,20 +647,29 @@ function HeaderAction(props: {
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={props.label}
-      title={props.label}
-      // fork: f4 F-04/F-06 — disabled while its own action is in flight. The
-      // press used to be accepted, dropped by the busy guard and never
-      // reported.
-      disabled={props.busy === true}
-      aria-busy={props.busy === true}
-      className="flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-      onClick={props.onClick}
-    >
-      {props.busy === true ? <Loader2 className="size-3.5 animate-spin" /> : props.children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={props.label}
+            tabIndex={-1}
+            // fork: f4 F-04/F-06 — disabled while its own action is in flight.
+            // The press used to be accepted, dropped by the busy guard and
+            // never reported.
+            disabled={props.busy === true}
+            aria-busy={props.busy === true}
+            onClick={props.onClick}
+          >
+            {props.busy === true ? <Loader2 className="animate-spin" /> : props.children}
+          </Button>
+        }
+      />
+      {/* fork: f4 redesign (M18) — one tooltip system in the list, not a mix of
+          `title=` on headers and `Tooltip` on rows. */}
+      <TooltipPopup>{props.busy === true ? `${props.label} — working…` : props.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -591,31 +685,40 @@ function FolderRow(props: {
   const { row } = props;
   return (
     <div
-      style={{ height: CHANGES_ROW_HEIGHT.folder, paddingLeft: 8 + props.indentPx }}
-      className="group flex items-center gap-1 pr-1.5 text-sm hover:bg-accent/50"
+      style={{ height: CHANGES_ROW_HEIGHT.folder, paddingLeft: props.indentPx }}
+      className="group flex items-center gap-1.5 pr-3 text-sm hover:bg-accent/50"
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-1 text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={props.onToggle}
+        tabIndex={-1}
       >
         {row.collapsed ? (
-          <ChevronRight className="size-3 text-muted-foreground" />
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronDown className="size-3 text-muted-foreground" />
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         )}
         <Folder className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">{row.name}</span>
-        <span className="text-muted-foreground text-xs">{row.folderFiles?.length ?? 0}</span>
+        <span className="shrink-0 text-muted-foreground/70 text-xs tabular-nums">
+          {row.folderFiles?.length ?? 0}
+        </span>
       </button>
-      <span className="hidden items-center gap-0.5 group-hover:flex">
+      <span
+        style={{ width: 24 }}
+        className={cn(
+          "flex shrink-0 items-center justify-end opacity-0 transition-opacity",
+          "group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100",
+        )}
+      >
         {props.staged ? (
           <HeaderAction label="Unstage folder" busy={props.busy} onClick={props.onUnstage}>
-            <Minus className="size-3.5" />
+            <Minus />
           </HeaderAction>
         ) : (
           <HeaderAction label="Stage folder" busy={props.busy} onClick={props.onStage}>
-            <Plus className="size-3.5" />
+            <Plus />
           </HeaderAction>
         )}
       </span>

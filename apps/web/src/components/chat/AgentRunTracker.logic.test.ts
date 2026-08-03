@@ -7,6 +7,7 @@ import {
   agentRunTrackerRows,
   agentRunTrackerTooltip,
   selectAgentRunTrackerState,
+  shouldRevealFinishedOnOpen,
 } from "./AgentRunTracker.logic.ts";
 
 function run(overrides: Partial<AgentRun> & { taskId: string }): AgentRun {
@@ -111,5 +112,28 @@ describe("agentRunTrackerTooltip", () => {
     expect(agentRunTrackerTooltip(2, 0)).toBe("2 agent runs in progress");
     expect(agentRunTrackerTooltip(0, 1)).toBe("1 finished agent run");
     expect(agentRunTrackerTooltip(0, 3)).toBe("3 finished agent runs");
+  });
+});
+
+// The popover used to collapse to a 12px strip when the last run settled while
+// it was open: `agentRunTrackerRows` returns nothing, and the body had no empty
+// state. Both halves of that are pinned here.
+describe("agentRunTrackerRows (empty body)", () => {
+  it("returns no rows when everything settled and finished is still hidden", () => {
+    const state = selectAgentRunTrackerState([
+      run({ taskId: "done", phase: "done", settledAt: "2026-07-18T00:00:05.000Z" }),
+    ]);
+    expect(agentRunTrackerRows(state, false)).toEqual([]);
+    // …which is exactly when the disclosure should reveal itself.
+    expect(shouldRevealFinishedOnOpen(state)).toBe(true);
+  });
+
+  it("keeps the disclosure closed while anything is still running", () => {
+    const state = selectAgentRunTrackerState([
+      run({ taskId: "live" }),
+      run({ taskId: "done", phase: "done", settledAt: "2026-07-18T00:00:05.000Z" }),
+    ]);
+    expect(shouldRevealFinishedOnOpen(state)).toBe(false);
+    expect(agentRunTrackerRows(state, false)).toHaveLength(1);
   });
 });

@@ -850,6 +850,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
           row.kind === "work" ||
+          row.kind === "agent-run" || // fork: f3 — an agent-run row is a work row, so it shares their rhythm
           row.kind === "work-toggle"
           ? "pb-2"
           : "pb-4",

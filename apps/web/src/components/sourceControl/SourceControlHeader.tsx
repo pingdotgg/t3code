@@ -6,6 +6,13 @@
  * branches, and duplicating it would give the app two places that disagree
  * about what the current branch is. The panel shows the branch and links out.
  *
+ * fork: f4 redesign (audit §8 A) — Sync and `⋯` are one `<Group>` so their
+ * borders merge instead of double-stroking, the `⋯` trigger goes through
+ * `Button` (focus ring, coarse-pointer target, `disabled:opacity-64`), and the
+ * sync button's emphasis is decided by the panel's single-primary rule rather
+ * than locally — `Publish` and `Commit` used to render as two full-strength
+ * primaries in one 360px panel.
+ *
  * fork: f4 source-control panel
  */
 import type { WorkingCopyStatusResult } from "@t3tools/contracts";
@@ -22,6 +29,7 @@ import {
 
 import { deriveSyncState, trackingHint } from "~/lib/sourceControl/syncState";
 import { Button } from "~/components/ui/button";
+import { Group, GroupSeparator } from "~/components/ui/group";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -30,6 +38,8 @@ export interface SourceControlHeaderProps {
   readonly status: WorkingCopyStatusResult | null;
   readonly repoLabel: string;
   readonly syncBusy: boolean;
+  /** fork: f4 redesign — `default` only when Sync owns the one primary slot. */
+  readonly syncVariant: "default" | "outline";
   readonly dirtyCount: number;
   /** fork: f4 F-06 — overflow rungs disable while their own action is in flight. */
   readonly undoBusy: boolean;
@@ -40,7 +50,7 @@ export interface SourceControlHeaderProps {
   readonly onUndoLastCommit: () => void;
   readonly onDiscardAll: () => void;
   readonly onOpenStashDialog: () => void;
-  readonly onShowBackups: () => void;
+  readonly onOpenStashes: () => void;
   readonly onRefresh: () => void;
 }
 
@@ -50,11 +60,15 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
   const clean = props.dirtyCount === 0;
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex min-w-0 items-center gap-2">
       <Tooltip>
         <TooltipTrigger
           render={
-            <span className="flex min-w-0 items-center gap-1.5 text-sm">
+            // fork: f4 m4 — focusable, so the repo path is not mouse-only.
+            <span
+              tabIndex={0}
+              className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate font-medium">
                 {props.status?.refName ?? (props.status?.detached ? "detached HEAD" : "no branch")}
@@ -68,13 +82,13 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
         <TooltipPopup>{props.repoLabel}</TooltipPopup>
       </Tooltip>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <Group className="ml-auto shrink-0" aria-label="Source control">
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 size="sm"
-                variant={sync.emphasis ? "default" : "outline"}
+                variant={props.syncVariant}
                 disabled={props.syncBusy}
                 onClick={() => props.onSync(sync.kind)}
               >
@@ -85,13 +99,19 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
           />
           <TooltipPopup>{sync.title}</TooltipPopup>
         </Tooltip>
-
+        <GroupSeparator />
         <Menu>
           <MenuTrigger
-            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Source control actions"
+            render={
+              <Button
+                size="sm"
+                variant={props.syncVariant === "default" ? "default" : "outline"}
+                aria-label="Source control actions"
+                className="px-1.5"
+              />
+            }
           >
-            <MoreHorizontal className="size-4" />
+            <MoreHorizontal />
           </MenuTrigger>
           <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
             <MenuItem onClick={props.onRefresh} disabled={props.refreshBusy}>
@@ -107,9 +127,12 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
               <Archive />
               Stash changes…
             </MenuItem>
-            <MenuItem onClick={props.onShowBackups}>
+            {/* fork: f4 redesign — the stash list left the permanent bottom
+                strip; it is a recovery surface used a few times a month and it
+                was taxing every session with 32px next to the primary list. */}
+            <MenuItem onClick={props.onOpenStashes}>
               <Archive />
-              Recent backups
+              Stashes &amp; backups…
             </MenuItem>
             <MenuSeparator />
             <MenuItem
@@ -122,7 +145,7 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
             </MenuItem>
           </MenuPopup>
         </Menu>
-      </div>
+      </Group>
     </div>
   );
 }

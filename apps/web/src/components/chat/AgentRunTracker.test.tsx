@@ -30,6 +30,8 @@ describe("AgentRunTracker", () => {
     );
     expect(markup).toContain("2 agent runs in progress");
     expect(markup).toContain("animate-status-pulse");
+    // The one repeating animation the pill mounts is motion-guarded.
+    expect(markup).toContain("motion-reduce:animate-none");
   });
 
   it("falls back to the finished count with no pulsing dot once nothing is running", () => {

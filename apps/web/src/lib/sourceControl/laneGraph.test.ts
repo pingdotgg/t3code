@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildLaneGraph,
+  cappedLaneGraphWidth,
   isLaneGraphMeaningful,
+  LANE_GRAPH_MAX_WIDTH,
   laneGraphSuppression,
   laneGraphWidth,
   plainLaneNode,
@@ -431,5 +433,41 @@ describe("plainLaneNode", () => {
 
   it("never collides with a real palette index", () => {
     expect(LANE_COLOR_INDEX_NONE).toBeLessThan(0);
+  });
+});
+
+// ─── Gutter cap (audit §8 / M14) ───────────────────────────────────────────
+//
+// `laneGraphWidth` is the widest row in the WHOLE loaded page, so one six-lane
+// stretch 150 commits down used to indent every row by 86px — a quarter of a
+// 360px panel — and truncate every subject that much earlier, for the whole
+// list. The fold is untouched; only the reserved gutter is bounded.
+
+describe("cappedLaneGraphWidth", () => {
+  it("leaves a narrow graph exactly as wide as it is", () => {
+    expect(cappedLaneGraphWidth(1)).toBe(1);
+    expect(cappedLaneGraphWidth(3)).toBe(3);
+    expect(cappedLaneGraphWidth(LANE_GRAPH_MAX_WIDTH)).toBe(LANE_GRAPH_MAX_WIDTH);
+  });
+
+  it("caps a pathological page at the panel's budget", () => {
+    expect(cappedLaneGraphWidth(9)).toBe(LANE_GRAPH_MAX_WIDTH);
+    expect(cappedLaneGraphWidth(120)).toBe(LANE_GRAPH_MAX_WIDTH);
+  });
+
+  it("never returns less than one lane", () => {
+    expect(cappedLaneGraphWidth(0)).toBe(1);
+    expect(cappedLaneGraphWidth(-4)).toBe(1);
+    expect(cappedLaneGraphWidth(Number.NaN)).toBe(1);
+  });
+
+  it("does not change the fold — nodes keep their true columns", () => {
+    // A wide graph still reports its real width; only the gutter is capped.
+    const nodes = buildLaneGraph([
+      { hash: "a", parents: ["b"] },
+      { hash: "b", parents: ["c"] },
+      { hash: "c", parents: [] },
+    ] as never);
+    expect(laneGraphWidth(nodes)).toBeGreaterThanOrEqual(1);
   });
 });

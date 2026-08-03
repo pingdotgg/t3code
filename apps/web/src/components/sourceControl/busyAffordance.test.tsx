@@ -11,6 +11,12 @@
  * The rule these pin: a control governed by a busy key renders `disabled` while
  * that key is in flight. "Accepted and dropped" is never allowed to look
  * identical to "accepted and running".
+ *
+ * The §8 re-layout moved two of these surfaces — the conflicts band became the
+ * panel's one status slot (`SourceControlStatusBand`) and the stash strip
+ * became dialog content (`StashesPanel`) — so the assertions moved with them.
+ * The per-path Ours/Theirs rungs now live on the conflicted ROW, which is where
+ * `ChangeRow`'s conflict cases below cover them.
  */
 import type { WorkingCopyFile, WorkingCopyStashEntry } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -18,8 +24,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ChangeRow } from "./ChangeRow";
 import { changesRowDomId } from "./ChangesList";
-import { ConflictsSection } from "./ConflictsSection";
-import { StashesSection } from "./StashesSection";
+import { SourceControlStatusBand } from "./SourceControlStatusBand";
+import { StashesPanel } from "./StashesSection";
 import { workingCopyBusyKey } from "./sourceControlPanel.logic";
 
 const noop = () => undefined;
@@ -35,20 +41,14 @@ function stash(index: number, ref: string): WorkingCopyStashEntry {
   };
 }
 
-function conflicted(path: string): WorkingCopyFile {
-  return { path, area: "conflicted", change: "unmerged" };
-}
-
 /** Counts `disabled` attributes, which is what SSR emits for `disabled`. */
 function disabledCount(markup: string): number {
   return markup.split("disabled=").length - 1;
 }
 
-function renderStashes(over: Partial<Parameters<typeof StashesSection>[0]> = {}) {
+function renderStashes(over: Partial<Parameters<typeof StashesPanel>[0]> = {}) {
   return renderToStaticMarkup(
-    <StashesSection
-      open
-      onToggle={noop}
+    <StashesPanel
       stashes={[stash(0, "stash@{0}"), stash(1, "stash@{1}")]}
       backups={[]}
       isLoading={false}
@@ -65,7 +65,7 @@ function renderStashes(over: Partial<Parameters<typeof StashesSection>[0]> = {})
   );
 }
 
-describe("StashesSection busy affordance (F-06/F-09)", () => {
+describe("StashesPanel busy affordance (F-06/F-09)", () => {
   it("leaves every rung live when nothing is in flight", () => {
     const markup = renderStashes();
     expect(markup).toContain("Pop");
@@ -109,19 +109,28 @@ describe("StashesSection busy affordance (F-06/F-09)", () => {
     const markup = renderStashes({ listReady: false });
     expect(disabledCount(markup)).toBeGreaterThan(0);
   });
+
+  it("shows the timestamp AND the actions, never one instead of the other", () => {
+    // C6: the timestamp used to be `group-hover:hidden` and the buttons
+    // `group-hover:flex`, so two different-width blocks traded places under the
+    // pointer. Both are laid out now; only opacity changes.
+    const markup = renderStashes();
+    expect(markup).toContain("Apply");
+    expect(markup).not.toContain("group-hover:hidden");
+  });
 });
 
-function renderConflicts(over: Partial<Parameters<typeof ConflictsSection>[0]> = {}) {
+function renderStatusBand(over: Partial<Parameters<typeof SourceControlStatusBand>[0]> = {}) {
   return renderToStaticMarkup(
-    <ConflictsSection
+    <SourceControlStatusBand
+      error={null}
+      onDismissError={noop}
       operation="merge"
-      files={[conflicted("a.ts"), conflicted("b.ts")]}
+      conflictCount={2}
       busy={false}
-      busyPaths={new Set<string>()}
       abortBusy={false}
       hasMessage
-      onResolve={noop}
-      onOpen={noop}
+      primaryVariant="default"
       onAbort={noop}
       onContinue={noop}
       {...over}
@@ -129,44 +138,52 @@ function renderConflicts(over: Partial<Parameters<typeof ConflictsSection>[0]> =
   );
 }
 
-describe("ConflictsSection busy affordance (F-06/F-11)", () => {
+describe("SourceControlStatusBand busy affordance (F-06/F-11)", () => {
   // Baseline: two unresolved conflicts, so exactly ONE control is disabled —
   // "Commit merge", because the merge cannot be finished yet.
   const BASELINE_DISABLED = 1;
 
-  it("keeps Ours/Theirs live for a path with nothing in flight", () => {
-    const markup = renderConflicts();
-    expect(markup).toContain("Ours");
+  it("names the operation and the remaining conflicts", () => {
+    const markup = renderStatusBand();
+    expect(markup).toContain("Merge in progress");
+    expect(markup).toContain("still conflicted");
     expect(disabledCount(markup)).toBe(BASELINE_DISABLED);
   });
 
-  it("disables Ours/Theirs for exactly the path being resolved", () => {
-    const markup = renderConflicts({ busyPaths: new Set(["a.ts"]) });
-    // Two buttons on one of the two rows; the other row stays live.
-    expect(disabledCount(markup)).toBe(BASELINE_DISABLED + 2);
-  });
-
   it("disables Abort while an abort is running", () => {
-    const markup = renderConflicts({ abortBusy: true });
+    const markup = renderStatusBand({ abortBusy: true });
     expect(markup).toContain("Aborting…");
     expect(disabledCount(markup)).toBe(BASELINE_DISABLED + 1);
   });
 
   it("F-11: Commit merge is blocked, with a reason, when the composer is empty", () => {
-    const markup = renderConflicts({ files: [], hasMessage: false });
+    const markup = renderStatusBand({ conflictCount: 0, hasMessage: false });
     expect(markup).toContain("Write a commit message");
     expect(disabledCount(markup)).toBe(1);
   });
 
   it("F-11: Commit merge enables once conflicts are resolved AND a message exists", () => {
-    const markup = renderConflicts({ files: [], hasMessage: true });
+    const markup = renderStatusBand({ conflictCount: 0, hasMessage: true });
     expect(markup).toContain("Commit merge");
     expect(disabledCount(markup)).toBe(0);
   });
 
-  it("names the remaining conflicts rather than just greying the button out", () => {
-    const markup = renderConflicts({ hasMessage: true });
-    expect(markup).toContain("still conflicted");
+  it("sends the user to the terminal for an operation the panel will not drive", () => {
+    const markup = renderStatusBand({ operation: "rebase", conflictCount: 0 });
+    expect(markup).toContain("Rebase in progress");
+    expect(markup).toContain("--continue");
+    expect(markup).not.toContain("Commit merge");
+  });
+
+  it("§8 D: a read error takes the one slot, ahead of an in-progress operation", () => {
+    const markup = renderStatusBand({ error: "fatal: not a git repository" });
+    expect(markup).toContain("could not be read");
+    expect(markup).toContain("fatal: not a git repository");
+    expect(markup).not.toContain("Merge in progress");
+  });
+
+  it("renders nothing at all when there is neither an error nor an operation", () => {
+    expect(renderStatusBand({ operation: null })).toBe("");
   });
 });
 
@@ -187,7 +204,7 @@ function renderChangeRow(
       focused={false}
       partial={false}
       busy={over.busy ?? false}
-      indentPx={0}
+      indentPx={12}
       onSelect={noop}
       onOpen={noop}
       onStage={noop}
@@ -222,6 +239,15 @@ describe("ChangeRow busy affordance (F-06)", () => {
 
   it("carries the DOM id the listbox points aria-activedescendant at", () => {
     expect(renderChangeRow()).toContain('id="sc-row-test"');
+  });
+
+  it("C5/C6: the row actions are in the markup before anything hovers them", () => {
+    // They used to be `hidden group-hover:flex`, i.e. absent from the DOM and
+    // from the a11y tree until a mouse arrived — so on a touch device Stage,
+    // Unstage and Discard did not exist at all.
+    const staged = renderChangeRow({ group: "staged" });
+    expect(staged).toContain('aria-label="Unstage"');
+    expect(staged).not.toContain("group-hover:flex");
   });
 });
 

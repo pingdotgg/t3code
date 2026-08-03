@@ -103,20 +103,60 @@ export function isHistoryCommitRow(row: HistoryRow): boolean {
 // same formula the commit row uses for its own lane SVG, so lane segments meet
 // across the row boundary.
 
-export const HISTORY_DAY_ROW_HEIGHT = 26;
-export const HISTORY_LOAD_MORE_ROW_HEIGHT = 54;
+// fork: f4 redesign (audit §8 / m9) — re-derived for t3's type scale. The old
+// ladder (26 / 54 / 32 / 44 / 52 / 28 / 34) came from another app's type system
+// and none of it sat on the 4px grid the rest of this app uses. The house
+// single-line list pitch is 28px at `text-sm`; a two-line commit row is that
+// plus one `text-xs` meta line.
+
+export const HISTORY_DAY_ROW_HEIGHT = 24;
+export const HISTORY_LOAD_MORE_ROW_HEIGHT = 48;
 /** Used until the open drawer has been measured. */
-export const HISTORY_DEFAULT_DRAWER_HEIGHT = 280;
-/** `.commit-row`'s min-height floor. */
-export const HISTORY_COMMIT_ROW_MIN_HEIGHT = 32;
+export const HISTORY_DEFAULT_DRAWER_HEIGHT = 240;
+/**
+ * fork: f4 redesign (audit §8 / M6) — the drawer used to be permanently 280px
+ * because nothing ever measured it, so a one-file commit opened 280px of empty
+ * panel and a sixty-file commit opened a nested scroller inside the virtual
+ * list. `HistoryList` measures the mounted drawer and feeds the height back
+ * through here; these bounds keep one pathological commit from eating the list.
+ */
+export const HISTORY_MIN_DRAWER_HEIGHT = 120;
+export const HISTORY_MAX_DRAWER_HEIGHT = 420;
+
+/**
+ * The height a MEASURED drawer contributes to the virtualizer.
+ *
+ * `null` (nothing measured yet) resolves to the default rather than to zero:
+ * a zero-height row would collapse the list under the open drawer for a frame.
+ */
+export function clampHistoryDrawerHeight(measured: number | null): number {
+  if (measured === null || !Number.isFinite(measured) || measured <= 0) {
+    return HISTORY_DEFAULT_DRAWER_HEIGHT;
+  }
+  return Math.min(
+    HISTORY_MAX_DRAWER_HEIGHT,
+    Math.max(HISTORY_MIN_DRAWER_HEIGHT, Math.round(measured)),
+  );
+}
+
+/** `.commit-row`'s min-height floor — the house single-line row pitch. */
+export const HISTORY_COMMIT_ROW_MIN_HEIGHT = 28;
 
 export type HistoryDensity = "compact" | "comfort";
 /** Container-width bucket: xs <300 · sm 300–379 · md 380–459 · lg 460–539 · xl ≥540. */
 export type HistoryWidth = "xs" | "sm" | "md" | "lg" | "xl";
 
+/**
+ * The pitch table, exported so the row component and the element table can
+ * assert against it instead of against a literal.
+ */
+export const HISTORY_COMMIT_ROW_HEIGHT = {
+  compact: { oneLine: 28, twoLine: 36 },
+  comfort: { oneLine: 32, twoLine: 44 },
+} as const;
+
 export function historyCommitRowHeight(density: HistoryDensity, width: HistoryWidth): number {
-  const twoLine = width !== "xs";
-  const height = twoLine ? (density === "compact" ? 44 : 52) : density === "compact" ? 28 : 34;
+  const height = HISTORY_COMMIT_ROW_HEIGHT[density][width === "xs" ? "oneLine" : "twoLine"];
   return Math.max(height, HISTORY_COMMIT_ROW_MIN_HEIGHT);
 }
 
