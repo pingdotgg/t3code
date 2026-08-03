@@ -28,6 +28,13 @@ export const previewAutomationRemainingBudget = (
   now = Date.now(),
 ): number => Math.min(requestedTimeoutMs, operationDeadline - now);
 
+export const previewAutomationRemainingBestEffortBudget = (
+  operationDeadline: number,
+  requestedTimeoutMs: number,
+  now = Date.now(),
+): number =>
+  Math.max(0, previewAutomationRemainingBudget(operationDeadline, requestedTimeoutMs, now));
+
 export const previewAutomationInputWithRemainingTimeout = <Input extends object>(
   input: Input & { readonly timeoutMs?: number | undefined },
   requestTimeoutMs: number,

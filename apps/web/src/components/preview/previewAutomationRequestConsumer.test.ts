@@ -21,6 +21,7 @@ import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
   previewAutomationInputWithRemainingTimeout,
+  previewAutomationRemainingBestEffortBudget,
   previewAutomationRemainingBudget,
   serializePreviewAutomationError,
 } from "./previewAutomationRequestConsumer";
@@ -82,6 +83,11 @@ describe("previewAutomationRequestConsumer", () => {
   it("reports an expired operation budget instead of clamping it to one millisecond", () => {
     expect(previewAutomationRemainingBudget(1_000, 15_000, 999)).toBe(1);
     expect(previewAutomationRemainingBudget(1_000, 15_000, 1_001)).toBe(-1);
+  });
+
+  it("clamps an expired best-effort operation budget to zero", () => {
+    expect(previewAutomationRemainingBestEffortBudget(1_000, 15_000, 999)).toBe(1);
+    expect(previewAutomationRemainingBestEffortBudget(1_000, 15_000, 1_001)).toBe(0);
   });
 
   it("clamps timeout-bearing desktop inputs to the remaining host budget", () => {

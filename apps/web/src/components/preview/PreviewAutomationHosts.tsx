@@ -69,6 +69,7 @@ import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
   previewAutomationInputWithRemainingTimeout,
+  previewAutomationRemainingBestEffortBudget,
   previewAutomationRemainingBudget,
 } from "./previewAutomationRequestConsumer";
 import {
@@ -440,7 +441,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               // briefly so active-thread opens report visible=true, without
               // turning a background thread's offscreen mini player into an
               // operation failure.
-              await waitForPreviewPresentation(activeRuntimeTabId, remainingOperationBudget());
+              await waitForPreviewPresentation(
+                activeRuntimeTabId,
+                previewAutomationRemainingBestEffortBudget(operationDeadline, request.timeoutMs),
+              );
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
