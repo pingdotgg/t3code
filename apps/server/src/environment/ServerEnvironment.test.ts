@@ -90,10 +90,14 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
         yield* serverSettings.updateSettings({ environmentLabel: "Studio Mac" });
         const renamed = yield* serverEnvironment.getDescriptor;
+        const renamedFromSnapshot = serverEnvironment.getDescriptorForSettings({
+          environmentLabel: "Studio Mac",
+        });
         yield* serverSettings.updateSettings({ environmentLabel: "" });
         const reset = yield* serverEnvironment.getDescriptor;
 
         expect(renamed).toEqual({ ...initial, label: "Studio Mac" });
+        expect(renamedFromSnapshot).toEqual(renamed);
         expect(reset).toEqual(initial);
       }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
     }),

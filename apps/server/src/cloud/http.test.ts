@@ -191,6 +191,9 @@ describe("reconcileDesiredCloudLink", () => {
         ServerEnvironment.ServerEnvironment.of({
           getEnvironmentId: unusedSecretStoreOperation(),
           getDescriptor: unusedSecretStoreOperation(),
+          getDescriptorForSettings: () => {
+            throw new Error("unused");
+          },
         }),
       ),
       Effect.provideService(
@@ -266,6 +269,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
             getDescriptor: Effect.die("unused"),
+            getDescriptorForSettings: () => {
+              throw new Error("unused");
+            },
           }),
         ),
         Effect.provideService(

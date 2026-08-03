@@ -34,6 +34,9 @@ export class ServerEnvironment extends Context.Service<
   {
     readonly getEnvironmentId: Effect.Effect<EnvironmentId>;
     readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor>;
+    readonly getDescriptorForSettings: (settings: {
+      readonly environmentLabel: string;
+    }) => ExecutionEnvironmentDescriptor;
   }
 >()("t3/environment/ServerEnvironment") {}
 
@@ -152,16 +155,15 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" ? { serverSelfUpdateProgress: true } : {}),
     },
   };
+  const getDescriptorForSettings = (settings: { readonly environmentLabel: string }) => ({
+    ...defaultDescriptor,
+    label: settings.environmentLabel || defaultLabel,
+  });
 
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     getDescriptor: serverSettings.getSettings.pipe(
-      Effect.map(
-        (settings): ExecutionEnvironmentDescriptor => ({
-          ...defaultDescriptor,
-          label: settings.environmentLabel || defaultLabel,
-        }),
-      ),
+      Effect.map(getDescriptorForSettings),
       Effect.catch((error) =>
         Effect.logWarning("Failed to read the configured environment label.", {
           settingsPath: error.settingsPath,
@@ -170,6 +172,7 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.as(defaultDescriptor)),
       ),
     ),
+    getDescriptorForSettings,
   });
 });
 
