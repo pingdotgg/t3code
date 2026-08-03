@@ -79,6 +79,7 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import {
+  primaryServerConfigAtom,
   primaryServerObservabilityAtom,
   primaryServerProvidersAtom,
   serverEnvironment,
@@ -129,6 +130,7 @@ import {
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
+  resolveTerminalShellOptions,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -1131,6 +1133,11 @@ export function GeneralSettingsPanel() {
   );
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const terminalShellOptions = resolveTerminalShellOptions({
+    installed: serverConfig?.availableTerminalShells ?? [],
+    selected: settings.terminalShell,
+  });
   const diagnosticsDescription = formatDiagnosticsDescription({
     localTracingEnabled: observability?.localTracingEnabled ?? false,
     otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
@@ -1279,16 +1286,27 @@ export function GeneralSettingsPanel() {
               }}
             >
               <SelectTrigger className="w-full sm:w-40" aria-label="Terminal shell">
-                <SelectValue>{TERMINAL_SHELL_LABELS[settings.terminalShell]}</SelectValue>
+                <SelectValue>
+                  {TERMINAL_SHELL_LABELS[settings.terminalShell]}
+                  {terminalShellOptions.some(
+                    (option) => option.value === settings.terminalShell && !option.installed,
+                  )
+                    ? " (not installed)"
+                    : ""}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                {(Object.entries(TERMINAL_SHELL_LABELS) as Array<[TerminalShell, string]>).map(
-                  ([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ),
-                )}
+                {terminalShellOptions.map((option) => (
+                  <SelectItem
+                    disabled={!option.installed}
+                    hideIndicator
+                    key={option.value}
+                    value={option.value}
+                  >
+                    {TERMINAL_SHELL_LABELS[option.value]}
+                    {!option.installed ? " (not installed)" : ""}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }

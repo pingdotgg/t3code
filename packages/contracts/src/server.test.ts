@@ -6,6 +6,9 @@ import { ServerConfig, ServerProvider, ServerUpsertKeybindingResult } from "./se
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
 const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+const decodeAvailableTerminalShells = Schema.decodeUnknownSync(
+  ServerConfig.fields.availableTerminalShells,
+);
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -118,5 +121,10 @@ describe("server config forward compatibility", () => {
     const parsed = decodeAvailableEditors(["zed", "some-future-editor", "vscode"]);
 
     expect(parsed).toEqual(["zed", "vscode"]);
+  });
+
+  it("defaults and forward-filters available terminal shells", () => {
+    expect(decodeAvailableTerminalShells(undefined)).toEqual([]);
+    expect(decodeAvailableTerminalShells(["zsh", "nu", "fish"])).toEqual(["zsh", "fish"]);
   });
 });

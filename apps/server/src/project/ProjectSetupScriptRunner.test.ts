@@ -56,6 +56,7 @@ const makeTerminalManagerLayer = (
     resize: () => Effect.void,
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),
+    resolveAvailableShells: () => Effect.succeed([]),
     close: () => Effect.void,
     subscribe: () => Effect.succeed(() => undefined),
     subscribeMetadata: () => Effect.succeed(() => undefined),

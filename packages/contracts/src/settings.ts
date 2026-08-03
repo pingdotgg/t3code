@@ -141,7 +141,10 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
-export const TerminalShell = Schema.Literals(["system", "zsh", "bash", "fish"]);
+export const INSTALLED_TERMINAL_SHELLS = ["zsh", "bash", "fish"] as const;
+export const InstalledTerminalShell = Schema.Literals(INSTALLED_TERMINAL_SHELLS);
+export type InstalledTerminalShell = typeof InstalledTerminalShell.Type;
+export const TerminalShell = Schema.Literals(["system", ...INSTALLED_TERMINAL_SHELLS]);
 export type TerminalShell = typeof TerminalShell.Type;
 export const DEFAULT_TERMINAL_SHELL: TerminalShell = "system";
 
