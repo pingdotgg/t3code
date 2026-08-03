@@ -679,6 +679,68 @@ describe("setThreadBranch", () => {
 });
 
 describe("incremental orchestration updates", () => {
+  it("keeps sidebar activity aligned with detail-stream session updates", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const environmentState = selectEnvironmentState(state, localEnvironmentId);
+    const stateWithSidebarSummary = withActiveEnvironmentState({
+      ...environmentState,
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarThreadSummary(thread),
+      },
+    });
+    const turnId = TurnId.make("turn-1");
+
+    const working = applyOrchestrationEvent(
+      stateWithSidebarSummary,
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "running",
+          providerName: "copilot",
+          runtimeMode: "full-access",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:02.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(selectThreadByRef(working, scopeThreadRef(localEnvironmentId, thread.id))).toMatchObject(
+      {
+        session: { orchestrationStatus: "running", activeTurnId: turnId },
+        latestTurn: { turnId, state: "running", completedAt: null },
+      },
+    );
+    expect(selectSidebarThreadsAcrossEnvironments(working)[0]).toMatchObject({
+      session: { orchestrationStatus: "running", activeTurnId: turnId },
+      latestTurn: { turnId, state: "running", completedAt: null },
+    });
+
+    const stopped = applyOrchestrationEvent(
+      working,
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "idle",
+          providerName: "copilot",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:03.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+    expect(selectSidebarThreadsAcrossEnvironments(stopped)[0]).toMatchObject({
+      session: { orchestrationStatus: "idle", activeTurnId: undefined },
+      latestTurn: { turnId, state: "interrupted", completedAt: "2026-02-27T00:00:03.000Z" },
+    });
+  });
+
   it("preserves detail-only metadata from thread snapshots", () => {
     const threadId = ThreadId.make("thread-1");
     const resumeCursor = {
