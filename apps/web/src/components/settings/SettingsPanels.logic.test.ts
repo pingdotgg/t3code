@@ -16,7 +16,28 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  resolveTerminalShellOptions,
 } from "./SettingsPanels.logic";
+
+describe("terminal shell options", () => {
+  it("shows only shells installed on the connected environment", () => {
+    expect(
+      resolveTerminalShellOptions({ installed: ["bash", "fish"], selected: "system" }),
+    ).toEqual([
+      { value: "system", installed: true },
+      { value: "bash", installed: true },
+      { value: "fish", installed: true },
+    ]);
+  });
+
+  it("keeps an unavailable current selection visible but disabled", () => {
+    expect(resolveTerminalShellOptions({ installed: ["bash"], selected: "fish" })).toEqual([
+      { value: "system", installed: true },
+      { value: "bash", installed: true },
+      { value: "fish", installed: false },
+    ]);
+  });
+});
 
 describe("background activity settings restore", () => {
   it("detects legacy interval values even when the structured setting is at its default", () => {

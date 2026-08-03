@@ -298,6 +298,7 @@ const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
   Layer.provide(PortScannerLayerLive),
+  Layer.provide(ServerSettingsLayerLive),
 );
 
 const PreviewLayerLive = Layer.empty.pipe(
