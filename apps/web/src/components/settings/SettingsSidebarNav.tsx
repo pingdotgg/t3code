@@ -250,6 +250,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             </p>
           ) : null}
           <SidebarMenu
+            className="ps-px"
             id={isSearching && hasResults ? "settings-search-results" : undefined}
             role={isSearching && hasResults ? "listbox" : undefined}
             aria-label={isSearching && hasResults ? "Settings search results" : undefined}
