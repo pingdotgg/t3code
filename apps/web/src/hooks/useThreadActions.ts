@@ -6,6 +6,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { isThreadInSubtree } from "../sidebarThreadTree";
 import { readEnvironmentApi } from "../environmentApi";
 import { newCommandId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
@@ -65,17 +66,23 @@ export function useThreadActions() {
         throw new Error("Cannot archive a running thread.");
       }
 
+      const threadsBeforeArchive = selectThreadsForEnvironment(
+        useStore.getState(),
+        threadRef.environmentId,
+      );
+
       await api.orchestration.dispatchCommand({
         type: "thread.archive",
         commandId: newCommandId(),
         threadId: threadRef.threadId,
       });
-      const currentRouteThreadRef = getCurrentRouteThreadRef();
 
-      if (
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId
-      ) {
+      const currentRouteThreadRef = getCurrentRouteThreadRef();
+      const currentRouteIsInArchivedSubtree =
+        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
+        isThreadInSubtree(threadsBeforeArchive, threadRef.threadId, currentRouteThreadRef.threadId);
+
+      if (currentRouteIsInArchivedSubtree) {
         await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
       }
     },

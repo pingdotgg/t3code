@@ -128,6 +128,26 @@ export function selectVisibleSidebarThreads(
   return threads.filter(isVisible);
 }
 
+export function isThreadInSubtree(
+  threads: readonly Pick<SidebarThreadSummary, "id" | "parentThreadId">[],
+  rootThreadId: SidebarThreadSummary["id"],
+  threadId: SidebarThreadSummary["id"],
+): boolean {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const visited = new Set<SidebarThreadSummary["id"]>();
+  let candidateId: SidebarThreadSummary["id"] | null = threadId;
+
+  while (candidateId !== null && !visited.has(candidateId)) {
+    if (candidateId === rootThreadId) {
+      return true;
+    }
+    visited.add(candidateId);
+    candidateId = threadById.get(candidateId)?.parentThreadId ?? null;
+  }
+
+  return false;
+}
+
 export interface SidebarThreadRowView {
   thread: SidebarThreadSummary;
   threadKey: string;

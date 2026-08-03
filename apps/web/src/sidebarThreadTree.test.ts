@@ -13,6 +13,7 @@ import {
   buildSidebarThreadRows,
   deriveSidebarThreadsWithAgentRuns,
   expandSidebarThreadsWithAgentRuns,
+  isThreadInSubtree,
   selectVisibleSidebarThreads,
 } from "./sidebarThreadTree";
 import type { AgentRun } from "./session-logic";
@@ -199,6 +200,20 @@ describe("buildSidebarThreadRows", () => {
         (candidate) => candidate.id,
       ),
     ).toEqual([unrelatedOrphan.id]);
+  });
+
+  it("recognizes a nested chat as part of its parent subtree", () => {
+    const parent = thread("thread-1");
+    const child = thread("thread-2", { parentThreadId: parent.id });
+    const grandchild = thread("thread-3", { parentThreadId: child.id });
+    const unrelated = thread("thread-4");
+
+    expect(
+      isThreadInSubtree([parent, child, grandchild, unrelated], parent.id, grandchild.id),
+    ).toBe(true);
+    expect(isThreadInSubtree([parent, child, grandchild, unrelated], parent.id, unrelated.id)).toBe(
+      false,
+    );
   });
 
   it("renders child chats indented directly below expanded parents", () => {
