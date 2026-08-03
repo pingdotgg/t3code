@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("040_OrchestrationV2EffectCancellation", (it) => {
+layer("041_OrchestrationV2EffectCancellation", (it) => {
   it.effect("preserves existing effects and adds the cancelled terminal status", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

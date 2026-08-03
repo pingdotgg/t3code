@@ -261,7 +261,10 @@ export const OpenInPicker = memo(function OpenInPicker({
         {primaryOption?.Icon && (
           <primaryOption.Icon
             aria-hidden="true"
-            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5"}
+            className={cn(
+              isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
+              getOpenInIconClass(primaryOption.kind),
+            )}
           />
         )}
         <span
