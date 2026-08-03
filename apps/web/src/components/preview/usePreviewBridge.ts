@@ -6,14 +6,54 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { useEffect, useRef } from "react";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useEffect, useMemo, useRef } from "react";
 
+import { flushPendingFaviconsForThread, recordFaviconForThread } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
+import { usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
+
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+export interface FaviconRecord {
+  readonly dataUrl: string;
+  readonly key: string;
+  readonly url: string;
+}
+
+export function faviconRecordForDesktopState(input: {
+  readonly navigationPending: boolean;
+  readonly lastRecordedKey: string | null;
+  readonly state: DesktopPreviewTabState;
+}): FaviconRecord | null {
+  const { navigationPending, lastRecordedKey, state } = input;
+  if (
+    !state.favicon ||
+    !state.faviconOrigin ||
+    state.navStatus.kind !== "Success" ||
+    originOf(state.navStatus.url) !== state.faviconOrigin
+  ) {
+    return null;
+  }
+  const key = JSON.stringify([state.faviconOrigin, state.navStatus.url, state.favicon]);
+  if (!navigationPending && key === lastRecordedKey) return null;
+  return {
+    dataUrl: state.favicon,
+    key,
+    url: state.navStatus.url,
+  };
+}
 
 /**
  * Mirrors low-latency desktop state into the store and reflects navigation
@@ -28,26 +68,52 @@ export function usePreviewBridge(input: {
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const bridge = previewBridge;
-
+  const threadKey = scopedThreadKey(threadRef);
+  const stableThreadRef = useMemo(() => {
+    const parsed = parseScopedThreadKey(threadKey);
+    if (!parsed) throw new Error(`Invalid scoped thread key: ${threadKey}`);
+    return parsed;
+  }, [threadKey]);
+  const preparedConnection = usePreparedConnection(stableThreadRef.environmentId);
   // One bridge subscription does both jobs (mirror state + forward to
   // server) so the desktop bridge keeps a single listener entry per tab.
   const lastReportedUrl = useRef<string | null>(null);
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
+  const lastRecordedFaviconKey = useRef<string | null>(null);
+  const faviconNavigationPending = useRef(false);
   useEffect(() => {
     if (!bridge || typeof window === "undefined") return;
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
+    lastRecordedFaviconKey.current = null;
+    faviconNavigationPending.current = false;
     const unsubscribe = bridge.onStateChange((changedTabId, state) => {
       if (changedTabId !== runtimeTabId) return;
-      if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
+      const previousNavStatus = lastDesktopNavStatus.current;
+      if (shouldClearBrowserPointer(previousNavStatus, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }
       lastDesktopNavStatus.current = state.navStatus;
-      applyPreviewDesktopState(threadRef, tabId, projectDesktopState(state));
+      if (state.navStatus.kind === "Loading" && previousNavStatus?.kind !== "Loading") {
+        faviconNavigationPending.current = true;
+      }
+      applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state));
+      const faviconRecord = faviconRecordForDesktopState({
+        navigationPending: faviconNavigationPending.current,
+        lastRecordedKey: lastRecordedFaviconKey.current,
+        state,
+      });
+      if (
+        faviconRecord &&
+        recordFaviconForThread(stableThreadRef, faviconRecord.url, faviconRecord.dataUrl)
+      ) {
+        lastRecordedFaviconKey.current = faviconRecord.key;
+        faviconNavigationPending.current = false;
+      }
       const reported = buildReportInput({
-        threadId: threadRef.threadId,
+        threadId: stableThreadRef.threadId,
         tabId,
         state,
         lastReportedUrl: lastReportedUrl.current,
@@ -57,12 +123,15 @@ export function usePreviewBridge(input: {
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
       void reportStatus({
-        environmentId: threadRef.environmentId,
+        environmentId: stableThreadRef.environmentId,
         input: reported.input,
       });
     });
     return unsubscribe;
-  }, [bridge, clearBrowserPointer, reportStatus, runtimeTabId, tabId, threadRef]);
+  }, [bridge, clearBrowserPointer, reportStatus, runtimeTabId, stableThreadRef, tabId, threadKey]);
+  useEffect(() => {
+    flushPendingFaviconsForThread(stableThreadRef);
+  }, [preparedConnection, stableThreadRef]);
 }
 
 function shouldClearBrowserPointer(
@@ -76,6 +145,7 @@ function shouldClearBrowserPointer(
 }
 
 function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {
+  const navOrigin = state.navStatus.kind === "Idle" ? null : originOf(state.navStatus.url);
   return {
     hasWebContents: state.webContentsId !== null,
     canGoBack: state.canGoBack,
@@ -85,6 +155,7 @@ function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverl
     pictureInPicture: state.pictureInPicture,
     colorScheme: state.colorScheme,
     controller: state.controller,
+    favicon: state.favicon && state.faviconOrigin === navOrigin ? state.favicon : null,
   };
 }
 

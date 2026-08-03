@@ -5,6 +5,8 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+import * as NodeCrypto from "node:crypto";
+
 import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewColorScheme,
@@ -27,6 +29,7 @@ import type {
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import { FAVICON_DATA_URL_MAX_LENGTH } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { BrowserWindow, type Session, clipboard, nativeImage, shell, webContents } from "electron";
@@ -42,6 +45,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -85,6 +89,8 @@ export interface PreviewTabState {
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
+  favicon?: string;
+  faviconOrigin?: string;
   updatedAt: string;
 }
 
@@ -347,6 +353,7 @@ type PreviewInputSignal =
 
 interface ManagedListeners {
   readonly scope: Scope.Closeable;
+  readonly invalidateFavicon: () => void;
 }
 
 type FrameCaptureConsumer = "picture-in-picture" | "recording";
@@ -452,6 +459,252 @@ const inputSignalsMatch = (left: PreviewInputSignal, right: PreviewInputSignal):
   );
 };
 
+const MAX_FAVICON_RESPONSE_BYTES = 100_000;
+const MAX_FAVICON_CANDIDATES = 8;
+const MAX_FAVICON_HTTP_URL_LENGTH = 2_048;
+const MAX_FAVICON_INLINE_URL_LENGTH = Math.ceil((MAX_FAVICON_RESPONSE_BYTES * 4) / 3) + 128;
+const FAVICON_CAPTURE_TIMEOUT_MS = 5_000;
+const FAVICON_RASTER_WORLD_ID = 1001;
+const FAVICON_RASTER_TIMEOUT_MS = 1_000;
+const activeFaviconRasterizations = new WeakMap<Electron.WebContents, Promise<unknown>>();
+
+type FaviconCaptureRequest = {
+  readonly abortController: AbortController;
+  readonly candidates: ReadonlyArray<string>;
+  readonly eventKey: string;
+  readonly generation: number;
+  readonly origin: string;
+};
+
+type PendingFaviconPublication = {
+  readonly dataUrl: string;
+  readonly faviconKey: string;
+  readonly generation: number;
+  readonly origin: string;
+};
+
+type FaviconPublicationResult =
+  | { readonly kind: "deferred" }
+  | { readonly kind: "published"; readonly state: PreviewTabState }
+  | { readonly kind: "stale" };
+
+async function readFaviconResponse(response: Response): Promise<Buffer | null> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_FAVICON_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return buffer.byteLength <= MAX_FAVICON_RESPONSE_BYTES ? buffer : null;
+  }
+  const reader = response.body.getReader();
+  const chunks: Array<Buffer> = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) return Buffer.concat(chunks, byteLength);
+      byteLength += next.value.byteLength;
+      if (byteLength > MAX_FAVICON_RESPONSE_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(Buffer.from(next.value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function safeOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function isSupportedFaviconUrl(url: string): boolean {
+  if (url.length > MAX_FAVICON_INLINE_URL_LENGTH) return false;
+  if (/^data:/i.test(url)) return /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(url);
+  try {
+    const protocol = new URL(url).protocol;
+    if (protocol === "http:" || protocol === "https:") {
+      return url.length <= MAX_FAVICON_HTTP_URL_LENGTH;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function decodeInlineFaviconPayload(payload: string): Buffer | null {
+  const decoded = Buffer.allocUnsafe(Buffer.byteLength(payload));
+  let inputOffset = 0;
+  let outputOffset = 0;
+  while (inputOffset < payload.length) {
+    const escapeOffset = payload.indexOf("%", inputOffset);
+    const literalEnd = escapeOffset === -1 ? payload.length : escapeOffset;
+    outputOffset += decoded.write(payload.slice(inputOffset, literalEnd), outputOffset, "utf8");
+    if (escapeOffset === -1) break;
+    const hex = payload.slice(escapeOffset + 1, escapeOffset + 3);
+    if (!/^[0-9a-f]{2}$/i.test(hex)) return null;
+    decoded[outputOffset] = Number.parseInt(hex, 16);
+    outputOffset += 1;
+    inputOffset = escapeOffset + 3;
+  }
+  return decoded.subarray(0, outputOffset);
+}
+
+function parseInlineFavicon(
+  url: string,
+): { readonly buffer: Buffer; readonly mime: string } | null {
+  if (url.length > MAX_FAVICON_INLINE_URL_LENGTH) return null;
+  const match = /^data:(image\/[a-z0-9.+-]+)((?:;[^,]*)?),(.*)$/is.exec(url);
+  if (!match) return null;
+  const mime = match[1]?.toLowerCase();
+  const parameters = match[2]
+    ?.split(";")
+    .filter(Boolean)
+    .map((parameter) => parameter.toLowerCase());
+  const payload = match[3];
+  if (!mime || !parameters || !payload) return null;
+  const base64 = parameters.at(-1) === "base64";
+  if (parameters.includes("base64") && !base64) return null;
+  let buffer: Buffer;
+  try {
+    if (base64) {
+      if (!/^[a-z0-9+/]*={0,2}$/i.test(payload) || payload.length % 4 === 1) return null;
+      buffer = Buffer.from(payload, "base64");
+      if (buffer.toString("base64").replace(/=+$/, "") !== payload.replace(/=+$/, "")) {
+        return null;
+      }
+    } else {
+      const decoded = decodeInlineFaviconPayload(payload);
+      if (!decoded) return null;
+      buffer = decoded;
+    }
+  } catch {
+    return null;
+  }
+  if (buffer.byteLength === 0 || buffer.byteLength > MAX_FAVICON_RESPONSE_BYTES) {
+    return null;
+  }
+  return { buffer, mime };
+}
+
+function faviconCaptureKey(parts: ReadonlyArray<string>): string {
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(parts)).digest("base64url");
+}
+
+function rasterizeOpaqueFavicon(
+  wc: Electron.WebContents,
+  mime: "image/svg+xml" | "image/x-icon" | "image/vnd.microsoft.icon",
+  buffer: Buffer,
+): Promise<unknown> {
+  const payload = buffer.toString("base64");
+  const code = `
+    (() => {
+      const rasterize = async () => {
+        try {
+          const source = Uint8Array.from(atob("${payload}"), (char) => char.charCodeAt(0));
+          const bitmap = await createImageBitmap(new Blob([source], { type: "${mime}" }));
+          try {
+            const scale = Math.min(1, 32 / Math.max(bitmap.width, bitmap.height));
+            const width = Math.max(1, Math.round(bitmap.width * scale));
+            const height = Math.max(1, Math.round(bitmap.height * scale));
+            const canvas = new OffscreenCanvas(width, height);
+            const context = canvas.getContext("2d");
+            if (!context) return null;
+            context.drawImage(bitmap, 0, 0, width, height);
+            const output = new Uint8Array(await (await canvas.convertToBlob({ type: "image/png" })).arrayBuffer());
+            let binary = "";
+            for (const byte of output) binary += String.fromCharCode(byte);
+            return "data:image/png;base64," + btoa(binary);
+          } finally {
+            bitmap.close();
+          }
+        } catch {
+          return null;
+        }
+      };
+      return rasterize();
+    })()
+  `;
+  if (activeFaviconRasterizations.has(wc)) return Promise.resolve(null);
+  const execution = wc.executeJavaScriptInIsolatedWorld(FAVICON_RASTER_WORLD_ID, [{ code }]);
+  activeFaviconRasterizations.set(wc, execution);
+  void execution
+    .finally(() => {
+      if (activeFaviconRasterizations.get(wc) === execution) {
+        activeFaviconRasterizations.delete(wc);
+      }
+    })
+    .catch(() => undefined);
+  return new Promise((resolve, reject) => {
+    const timeout = AbortSignal.timeout(FAVICON_RASTER_TIMEOUT_MS);
+    const onTimeout = () => resolve(null);
+    timeout.addEventListener("abort", onTimeout, { once: true });
+    void execution.then(
+      (result) => {
+        timeout.removeEventListener("abort", onTimeout);
+        resolve(result);
+      },
+      (cause: unknown) => {
+        timeout.removeEventListener("abort", onTimeout);
+        reject(cause);
+      },
+    );
+  });
+}
+
+async function normalizeFaviconBuffer(
+  wc: Electron.WebContents,
+  mime: string | null,
+  buffer: Buffer,
+): Promise<string | null> {
+  const declaredMime = mime?.trim().toLowerCase() || null;
+  const normalizedMime =
+    declaredMime === "application/x-icon"
+      ? "image/x-icon"
+      : declaredMime === "application/octet-stream" || declaredMime === "binary/octet-stream"
+        ? null
+        : declaredMime;
+  if (
+    (normalizedMime !== null && !/^image\/[a-z0-9.+-]+$/i.test(normalizedMime)) ||
+    buffer.byteLength > MAX_FAVICON_RESPONSE_BYTES
+  ) {
+    return null;
+  }
+  const opaqueMime =
+    normalizedMime === "image/svg+xml" ||
+    normalizedMime === "image/x-icon" ||
+    normalizedMime === "image/vnd.microsoft.icon"
+      ? normalizedMime
+      : null;
+  if (opaqueMime !== null) {
+    const rasterized = await rasterizeOpaqueFavicon(wc, opaqueMime, buffer);
+    if (
+      typeof rasterized === "string" &&
+      rasterized.startsWith("data:image/png;base64,") &&
+      rasterized.length <= FAVICON_DATA_URL_MAX_LENGTH
+    ) {
+      return rasterized;
+    }
+  }
+  const decoded = nativeImage.createFromBuffer(buffer);
+  if (decoded.isEmpty()) return null;
+  const { width, height } = decoded.getSize();
+  if (width < 1 || height < 1) return null;
+  const normalized =
+    Math.max(width, height) <= 32
+      ? decoded.toDataURL()
+      : decoded.resize(width >= height ? { width: 32 } : { height: 32 }).toDataURL();
+  return normalized.length <= FAVICON_DATA_URL_MAX_LENGTH ? normalized : null;
+}
+
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
   pictureInPicturePreloadPath: string,
@@ -489,6 +742,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ReadonlyMap<string, ReadonlyArray<PreviewAutomationActionEvent>>
   >(new Map());
   const actionSequenceRef = yield* Ref.make(0);
+  const invalidateFaviconCapture = Effect.fn("PreviewManager.invalidateFaviconCapture")(function* (
+    webContentsId: number,
+  ) {
+    (yield* Ref.get(attachedRef)).get(webContentsId)?.invalidateFavicon();
+  });
   const pointerSequenceRef = yield* Ref.make(0);
   const frameCaptureSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, FrameCaptureSession>
@@ -504,6 +762,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  const navigationLaunchTokens = new Map<string, symbol>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -613,14 +872,30 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  const update = Effect.fn("PreviewManager.update")(function* (
+  const emitIfCurrent = Effect.fn("PreviewManager.emitIfCurrent")(function* (
+    tabId: string,
+    state: PreviewTabState,
+  ) {
+    const tabs = yield* SynchronizedRef.get(tabsRef);
+    if (tabs.get(tabId) === state) yield* emit(tabId, state);
+  });
+
+  const modifyTab = Effect.fn("PreviewManager.modifyTab")(function* (
     tabId: string,
     patch: Partial<PreviewTabState>,
+    expectedWebContentsId?: number,
+    guard?: (current: PreviewTabState) => boolean,
   ) {
     const updatedAt = yield* currentIso;
     const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
-      if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
+      if (
+        !current ||
+        (expectedWebContentsId != null && current.webContentsId !== expectedWebContentsId) ||
+        (guard !== undefined && !guard(current))
+      ) {
+        return [Option.none<PreviewTabState>(), tabs] as const;
+      }
       const state: PreviewTabState = { ...current, ...patch, updatedAt };
       return [
         Option.some(state),
@@ -629,7 +904,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
+    return next;
+  });
+
+  const update = Effect.fn("PreviewManager.update")(function* (
+    tabId: string,
+    patch: Partial<PreviewTabState>,
+    expectedWebContentsId?: number,
+  ) {
+    const next = yield* modifyTab(tabId, patch, expectedWebContentsId);
     if (Option.isSome(next)) yield* emit(tabId, next.value);
+    return Option.isSome(next);
   });
 
   const requireWebContents = Effect.fn("PreviewManager.requireWebContents")(function* (
@@ -1204,7 +1489,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         copy.delete(webContentsId);
       }),
     ]);
-    if (managed) yield* Scope.close(managed.scope, Exit.void).pipe(Effect.ignore);
+    if (managed) {
+      managed.invalidateFavicon();
+      yield* Scope.close(managed.scope, Exit.void).pipe(Effect.ignore);
+    }
   });
 
   const isAppShortcut = (input: Electron.Input): boolean =>
@@ -1268,8 +1556,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
   ) {
     const scope = yield* Scope.fork(parentScope, "sequential");
+    const faviconMutationSemaphore = yield* Semaphore.make(1);
+    const faviconRequests = yield* Queue.sliding<FaviconCaptureRequest>(1);
+    let faviconGeneration = 0;
+    let activeFaviconEventKey: string | null = null;
+    let activeFaviconAbortController: AbortController | null = null;
+    let capturedFaviconKey: string | null = null;
+    let pendingFaviconPublication: PendingFaviconPublication | null = null;
+    let queuedFaviconAbortController: AbortController | null = null;
+    const invalidateFavicon = () => {
+      faviconGeneration += 1;
+      activeFaviconAbortController?.abort();
+      queuedFaviconAbortController?.abort();
+      activeFaviconAbortController = null;
+      activeFaviconEventKey = null;
+      capturedFaviconKey = null;
+      pendingFaviconPublication = null;
+      queuedFaviconAbortController = null;
+    };
     const syncState = Effect.fn("PreviewManager.syncWebContentsState")(function* (
       preserveLoadFailure: boolean,
+      resetFavicon = false,
+      navStatusOverride?: PreviewNavStatus,
     ) {
       if (wc.isDestroyed()) return;
       const zoomFactor = yield* attempt(
@@ -1282,18 +1590,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const updatedAt = yield* currentIso;
       const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
         const current = tabs.get(tabId);
-        if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
+        if (!current || current.webContentsId !== wc.id) {
+          return [Option.none<PreviewTabState>(), tabs] as const;
+        }
         // Electron emits did-stop-loading after did-fail-load. At that point the
         // failed guest is no longer "loading", but it has not successfully
         // navigated anywhere. Keep the failure until a new load actually starts.
         const navStatus =
-          preserveLoadFailure &&
+          navStatusOverride ??
+          (preserveLoadFailure &&
           current.navStatus.kind === "LoadFailed" &&
           computedNavStatus.kind === "Success"
             ? current.navStatus
-            : computedNavStatus;
+            : computedNavStatus);
+        const preserveFavicon =
+          resetFavicon &&
+          navStatus.kind !== "Idle" &&
+          navStatus.kind !== "LoadFailed" &&
+          current.faviconOrigin === safeOrigin(navStatus.url);
+        const {
+          favicon: _favicon,
+          faviconOrigin: _faviconOrigin,
+          ...currentWithoutFavicon
+        } = current;
         const state: PreviewTabState = {
-          ...current,
+          ...(resetFavicon && !preserveFavicon ? currentWithoutFavicon : current),
           navStatus,
           canGoBack,
           canGoForward,
@@ -1307,10 +1628,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         ] as const;
       });
-      if (Option.isSome(next)) yield* emit(tabId, next.value);
+      if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
     });
-    const sync = () => runFork(syncState(true));
-    const syncNavigation = () => runFork(syncState(false));
+    const sync = () => runFork(faviconMutationSemaphore.withPermit(syncState(true)));
+    const syncNavigation = () =>
+      runFork(faviconMutationSemaphore.withPermit(syncState(false, true)));
+    const navigationStarted = (
+      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+    ) => {
+      if (event.isMainFrame && !event.isSameDocument) {
+        invalidateFavicon();
+      }
+    };
+    const syncInPageNavigation = () =>
+      runFork(faviconMutationSemaphore.withPermit(syncState(false)));
     const failed = (
       _event: Event,
       code: number,
@@ -1319,18 +1650,235 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       isMainFrame: boolean,
     ): void => {
       if (code === -3 || !isMainFrame) return;
+      invalidateFavicon();
       runFork(
-        update(tabId, {
-          navStatus: {
+        faviconMutationSemaphore.withPermit(
+          syncState(false, true, {
             kind: "LoadFailed",
             url: validatedUrl || wc.getURL(),
             title: wc.getTitle(),
             code,
             description,
-          },
-        }),
+          }),
+        ),
       );
     };
+    const captureFaviconData = Effect.fn("PreviewManager.captureFaviconData")(function* (
+      faviconUrl: string,
+      origin: string,
+      signal: AbortSignal,
+    ) {
+      const dataUrl = yield* Effect.tryPromise({
+        try: async () => {
+          const inline = parseInlineFavicon(faviconUrl);
+          if (inline) {
+            const normalized = await normalizeFaviconBuffer(wc, inline.mime, inline.buffer);
+            return signal.aborted ? null : normalized;
+          }
+          const requestOrigin = safeOrigin(faviconUrl);
+          if (!requestOrigin) return null;
+          const response = await wc.session.fetch(faviconUrl, {
+            credentials: requestOrigin === origin ? "include" : "omit",
+            redirect: "error",
+            signal: AbortSignal.any([signal, AbortSignal.timeout(FAVICON_CAPTURE_TIMEOUT_MS)]),
+          });
+          if (!response.ok) return null;
+          const buffer = await readFaviconResponse(response);
+          if (!buffer || signal.aborted) return null;
+          const mime = response.headers.get("content-type")?.split(";")[0] ?? null;
+          const normalized = await normalizeFaviconBuffer(wc, mime, buffer);
+          return signal.aborted ? null : normalized;
+        },
+        catch: (cause) =>
+          new PreviewOperationError({
+            operation: "captureFavicon",
+            tabId,
+            webContentsId: wc.id,
+            cause,
+          }),
+      }).pipe(
+        Effect.tapError((error) =>
+          signal.aborted
+            ? Effect.void
+            : Effect.logDebug("Favicon capture failed; leaving dedupe key untouched.", {
+                webContentsId: wc.id,
+                faviconOrigin: safeOrigin(faviconUrl),
+                error,
+              }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      return dataUrl;
+    });
+    const publishFaviconUnlocked = Effect.fn("PreviewManager.publishFavicon")(function* (
+      publication: PendingFaviconPublication,
+    ) {
+      const updatedAt = yield* currentIso;
+      const currentOrigin =
+        publication.generation === faviconGeneration && !wc.isDestroyed()
+          ? safeOrigin(wc.getURL())
+          : null;
+      const result = yield* SynchronizedRef.modify(
+        tabsRef,
+        (tabs): readonly [FaviconPublicationResult, ReadonlyMap<string, PreviewTabState>] => {
+          const current = tabs.get(tabId);
+          if (
+            !current ||
+            current.webContentsId !== wc.id ||
+            currentOrigin !== publication.origin ||
+            publication.generation !== faviconGeneration
+          ) {
+            return [{ kind: "stale" }, tabs];
+          }
+          if (
+            current.navStatus.kind === "Loading" &&
+            safeOrigin(current.navStatus.url) === publication.origin
+          ) {
+            return [{ kind: "deferred" }, tabs];
+          }
+          if (
+            current.navStatus.kind !== "Success" ||
+            safeOrigin(current.navStatus.url) !== publication.origin
+          ) {
+            return [{ kind: "stale" }, tabs];
+          }
+          const state: PreviewTabState = {
+            ...current,
+            favicon: publication.dataUrl,
+            faviconOrigin: publication.origin,
+            updatedAt,
+          };
+          return [
+            { kind: "published", state },
+            replaceMap(tabs, (copy) => {
+              copy.set(tabId, state);
+            }),
+          ];
+        },
+      );
+      if (result.kind === "deferred") {
+        pendingFaviconPublication = publication;
+        capturedFaviconKey = publication.faviconKey;
+        return true;
+      }
+      if (result.kind === "stale") {
+        if (pendingFaviconPublication === publication) {
+          pendingFaviconPublication = null;
+          if (capturedFaviconKey === publication.faviconKey) capturedFaviconKey = null;
+        }
+        return false;
+      }
+      pendingFaviconPublication = null;
+      capturedFaviconKey = publication.faviconKey;
+      yield* emitIfCurrent(tabId, result.state);
+      return true;
+    });
+    const publishPendingFavicon = Effect.fn("PreviewManager.publishPendingFavicon")(function* () {
+      const pending = pendingFaviconPublication;
+      if (pending) yield* publishFaviconUnlocked(pending);
+    });
+    const processFaviconRequest = Effect.fn("PreviewManager.processFaviconRequest")(function* (
+      request: FaviconCaptureRequest,
+    ) {
+      for (const faviconUrl of request.candidates) {
+        if (request.abortController.signal.aborted || request.generation !== faviconGeneration) {
+          return false;
+        }
+        const faviconKey = faviconCaptureKey([request.origin, faviconUrl]);
+        if (capturedFaviconKey === faviconKey) return true;
+        const dataUrl = yield* captureFaviconData(
+          faviconUrl,
+          request.origin,
+          request.abortController.signal,
+        );
+        if (
+          !dataUrl &&
+          !request.abortController.signal.aborted &&
+          request.generation === faviconGeneration
+        ) {
+          continue;
+        }
+        if (!dataUrl) return false;
+        const accepted = yield* faviconMutationSemaphore.withPermit(
+          publishFaviconUnlocked({
+            dataUrl,
+            faviconKey,
+            generation: request.generation,
+            origin: request.origin,
+          }),
+        );
+        if (accepted) return true;
+        if (request.generation !== faviconGeneration) return false;
+      }
+      return false;
+    });
+    const faviconWorker = Effect.forever(
+      Effect.gen(function* () {
+        const request = yield* Queue.take(faviconRequests);
+        if (queuedFaviconAbortController === request.abortController) {
+          queuedFaviconAbortController = null;
+        }
+        activeFaviconAbortController = request.abortController;
+        let accepted = false;
+        yield* processFaviconRequest(request).pipe(
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              accepted = result;
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (activeFaviconAbortController === request.abortController) {
+                activeFaviconAbortController = null;
+              }
+              if (
+                !accepted &&
+                request.generation === faviconGeneration &&
+                activeFaviconEventKey === request.eventKey
+              ) {
+                activeFaviconEventKey = null;
+              }
+            }),
+          ),
+        );
+      }),
+    );
+    yield* Effect.forkIn(faviconWorker, scope);
+    const faviconUpdated = (_event: Event, favicons: ReadonlyArray<string>): void => {
+      const origin = safeOrigin(wc.getURL());
+      if (!origin) return;
+      const candidates = [
+        ...new Set(favicons.slice(0, MAX_FAVICON_CANDIDATES).filter(isSupportedFaviconUrl)),
+      ];
+      if (candidates.length === 0) return;
+      const eventKey = faviconCaptureKey([origin, ...candidates]);
+      if (activeFaviconEventKey === eventKey) return;
+      const generation = ++faviconGeneration;
+      if (pendingFaviconPublication?.origin === origin) {
+        pendingFaviconPublication = { ...pendingFaviconPublication, generation };
+      }
+      activeFaviconAbortController?.abort();
+      queuedFaviconAbortController?.abort();
+      const request: FaviconCaptureRequest = {
+        abortController: new AbortController(),
+        candidates,
+        eventKey,
+        generation,
+        origin,
+      };
+      activeFaviconEventKey = eventKey;
+      queuedFaviconAbortController = request.abortController;
+      Queue.offerUnsafe(faviconRequests, request);
+    };
+    const syncStopped = () =>
+      runFork(
+        faviconMutationSemaphore.withPermit(
+          Effect.gen(function* () {
+            yield* syncState(true);
+            yield* publishPendingFavicon();
+          }),
+        ),
+      );
     const handleHumanInput = Effect.fn("PreviewManager.handleHumanInput")(function* (
       rawSignal?: unknown,
     ) {
@@ -1376,8 +1924,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
         runFork(
-          attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>
-            wc.reload(),
+          withTabLifecycleLock(
+            tabId,
+            Effect.gen(function* () {
+              const current = yield* requireWebContents(tabId);
+              if (current.id !== wc.id) return;
+              navigationLaunchTokens.delete(tabId);
+              yield* invalidateFaviconCapture(current.id);
+              yield* attempt(
+                { operation: "shortcut.refresh", tabId, webContentsId: current.id },
+                () => current.reload(),
+              );
+            }),
           ).pipe(Effect.ignore),
         );
         return;
@@ -1387,11 +1945,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* Scope.addFinalizer(
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
+        invalidateFavicon();
+        wc.off("did-start-navigation", navigationStarted);
         wc.off("did-navigate", syncNavigation);
-        wc.off("did-navigate-in-page", syncNavigation);
+        wc.off("did-navigate-in-page", syncInPageNavigation);
         wc.off("page-title-updated", sync);
+        wc.off("page-favicon-updated", faviconUpdated as never);
         wc.off("did-start-loading", sync);
-        wc.off("did-stop-loading", sync);
+        wc.off("did-stop-loading", syncStopped);
         wc.off("did-fail-load", failed as never);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
@@ -1399,14 +1960,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
+        wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
-        wc.on("did-navigate-in-page", syncNavigation);
+        wc.on("did-navigate-in-page", syncInPageNavigation);
         wc.on("page-title-updated", sync);
+        wc.on("page-favicon-updated", faviconUpdated as never);
         wc.on("did-start-loading", sync);
-        wc.on("did-stop-loading", sync);
+        wc.on("did-stop-loading", syncStopped);
         wc.on("did-fail-load", failed as never);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.setWindowOpenHandler(({ url }) => {
+          invalidateFavicon();
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
               wc.loadURL(url),
@@ -1418,7 +1982,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
       yield* Ref.update(attachedRef, (attached) =>
         replaceMap(attached, (copy) => {
-          copy.set(wc.id, { scope });
+          copy.set(wc.id, { scope, invalidateFavicon });
         }),
       );
     });
@@ -1480,6 +2044,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
+    navigationLaunchTokens.delete(tabId);
     if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
     yield* Effect.all(
       [
@@ -1579,6 +2144,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
+    navigationLaunchTokens.delete(tabId);
     const replacedWebContentsId =
       tab.webContentsId != null && tab.webContentsId !== webContentsId ? tab.webContentsId : null;
     if (replacedWebContentsId !== null) {
@@ -1627,8 +2193,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ] as const;
         }
         const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+        const {
+          favicon: _favicon,
+          faviconOrigin: _faviconOrigin,
+          ...currentWithoutFavicon
+        } = current;
         const next: PreviewTabState = {
-          ...current,
+          ...(replacedWebContentsId === null ? current : currentWithoutFavicon),
           webContentsId,
           navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
@@ -1667,11 +2238,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       latestNavStatus.url === pendingUrl &&
       wc.getURL() !== pendingUrl
     ) {
-      runFork(
-        attemptPromise({ operation: "registerWebview.loadPendingUrl", tabId, webContentsId }, () =>
-          wc.loadURL(pendingUrl),
-        ).pipe(Effect.ignore),
-      );
+      const launchToken = Symbol();
+      navigationLaunchTokens.set(tabId, launchToken);
+      return { launchToken, url: pendingUrl, wc };
     }
   });
 
@@ -1680,16 +2249,41 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     webContentsId: number,
   ) {
     const expectedGeneration = tabLifecycleGenerations.get(tabId);
-    return yield* withTabLifecycleLock(
+    const action = yield* withTabLifecycleLock(
       tabId,
       registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
     );
+    if (!action) return;
+    const load = yield* attempt(
+      { operation: "registerWebview.loadPendingUrl", tabId, webContentsId },
+      () => {
+        if (navigationLaunchTokens.get(tabId) !== action.launchToken || action.wc.isDestroyed()) {
+          return null;
+        }
+        navigationLaunchTokens.delete(tabId);
+        return action.wc.loadURL(action.url);
+      },
+    );
+    if (!load) return;
+    runFork(
+      attemptPromise(
+        { operation: "registerWebview.loadPendingUrl", tabId, webContentsId },
+        () => load,
+      ).pipe(Effect.ignore),
+    );
   });
 
-  const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
+  const navigateUnlocked = Effect.fn("PreviewManager.navigateUnlocked")(function* (
+    tabId: string,
+    rawUrl: string,
+  ) {
     const url = yield* attempt({ operation: "navigate.normalizeUrl", tabId }, () =>
       normalizePreviewUrl(rawUrl),
     );
+    const launchToken = Symbol();
+    navigationLaunchTokens.set(tabId, launchToken);
+    const currentWebContentsId = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.webContentsId;
+    if (currentWebContentsId != null) yield* invalidateFaviconCapture(currentWebContentsId);
     const updatedAt = yield* currentIso;
     const pending = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -1707,6 +2301,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         pictureInPicture: current?.pictureInPicture ?? false,
         colorScheme: current?.colorScheme ?? "system",
         controller: current?.controller ?? "none",
+        ...(current?.favicon && current.faviconOrigin
+          ? { favicon: current.favicon, faviconOrigin: current.faviconOrigin }
+          : {}),
         updatedAt,
       };
       return [
@@ -1720,7 +2317,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (pending.webContentsId == null) return;
     const wc = webContents.fromId(pending.webContentsId);
     if (!wc) {
-      const detached = { ...pending, webContentsId: null };
+      if (navigationLaunchTokens.get(tabId) === launchToken) {
+        navigationLaunchTokens.delete(tabId);
+      }
+      const {
+        favicon: _favicon,
+        faviconOrigin: _faviconOrigin,
+        ...pendingWithoutFavicon
+      } = pending;
+      const detached = { ...pendingWithoutFavicon, webContentsId: null };
       yield* SynchronizedRef.update(tabsRef, (tabs) =>
         tabs.get(tabId)?.webContentsId !== pending.webContentsId
           ? tabs
@@ -1732,36 +2337,98 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return;
     }
     if (wc.getURL() === url) {
-      yield* attempt({ operation: "navigate.reload", tabId, webContentsId: wc.id }, () =>
-        wc.reload(),
-      );
-      return;
+      return { kind: "reload" as const, launchToken, wc };
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
+    return { kind: "load" as const, launchToken, url, wc };
+  });
+
+  const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
+    const action = yield* withTabLifecycleLock(tabId, navigateUnlocked(tabId, rawUrl));
+    if (!action) return;
+    const load = yield* attempt(
+      {
+        operation: action.kind === "load" ? "navigate.loadURL" : "navigate.reload",
+        tabId,
+        webContentsId: action.wc.id,
+      },
+      () => {
+        if (navigationLaunchTokens.get(tabId) !== action.launchToken || action.wc.isDestroyed()) {
+          return null;
+        }
+        navigationLaunchTokens.delete(tabId);
+        if (action.kind === "reload") {
+          action.wc.reload();
+          return null;
+        }
+        return action.wc.loadURL(action.url);
+      },
+    );
+    if (!load) return;
+    yield* attemptPromise(
+      { operation: "navigate.loadURL", tabId, webContentsId: action.wc.id },
+      () => load,
     );
   });
 
-  const withWebContents = Effect.fn("PreviewManager.withWebContents")(function* (
-    operation: string,
-    tabId: string,
-    use: (wc: Electron.WebContents) => void,
-  ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* attempt({ operation, tabId, webContentsId: wc.id }, () => use(wc));
-  });
-
   const goBack = (tabId: string) =>
-    withWebContents("goBack", tabId, (wc) => {
-      if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
-    });
+    withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const wc = yield* requireWebContents(tabId);
+        navigationLaunchTokens.delete(tabId);
+        yield* invalidateFaviconCapture(wc.id);
+        yield* attempt({ operation: "goBack", tabId, webContentsId: wc.id }, () => {
+          if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+        });
+      }),
+    );
   const goForward = (tabId: string) =>
-    withWebContents("goForward", tabId, (wc) => {
-      if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
-    });
-  const refresh = (tabId: string) => withWebContents("refresh", tabId, (wc) => wc.reload());
-  const hardReload = (tabId: string) =>
-    withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
+    withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const wc = yield* requireWebContents(tabId);
+        navigationLaunchTokens.delete(tabId);
+        yield* invalidateFaviconCapture(wc.id);
+        yield* attempt({ operation: "goForward", tabId, webContentsId: wc.id }, () => {
+          if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+        });
+      }),
+    );
+  const refresh = Effect.fn("PreviewManager.refresh")(function* (tabId: string) {
+    yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const wc = yield* requireWebContents(tabId);
+        navigationLaunchTokens.delete(tabId);
+        const loading = yield* attempt(
+          { operation: "refresh.isLoading", tabId, webContentsId: wc.id },
+          () => wc.isLoading(),
+        );
+        if (loading) {
+          yield* invalidateFaviconCapture(wc.id);
+          yield* attempt({ operation: "refresh.stop", tabId, webContentsId: wc.id }, () =>
+            wc.stop(),
+          );
+          return;
+        }
+        yield* invalidateFaviconCapture(wc.id);
+        yield* attempt({ operation: "refresh", tabId, webContentsId: wc.id }, () => wc.reload());
+      }),
+    );
+  });
+  const hardReload = Effect.fn("PreviewManager.hardReload")(function* (tabId: string) {
+    yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const wc = yield* requireWebContents(tabId);
+        navigationLaunchTokens.delete(tabId);
+        yield* invalidateFaviconCapture(wc.id);
+        yield* attempt({ operation: "hardReload", tabId, webContentsId: wc.id }, () =>
+          wc.reloadIgnoringCache(),
+        );
+      }),
+    );
+  });
 
   const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
