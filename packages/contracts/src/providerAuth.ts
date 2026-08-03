@@ -108,5 +108,6 @@ export class ProviderAuthError extends Schema.TaggedErrorClass<ProviderAuthError
     message: TrimmedNonEmptyString,
     instanceId: Schema.optional(ProviderInstanceId),
     sessionId: Schema.optional(ProviderAuthSessionId),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}

@@ -45,6 +45,7 @@ const makeError = (input: {
   readonly message: string;
   readonly instanceId?: ProviderInstanceId;
   readonly sessionId?: ProviderAuthSessionId;
+  readonly cause?: unknown;
 }) => new ProviderAuthError(input);
 
 export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
@@ -222,11 +223,12 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     }
 
     const launch = yield* authentication.resolveLaunch(input.action).pipe(
-      Effect.mapError(() =>
+      Effect.mapError((cause) =>
         makeError({
           reason: "spawn-failed",
           message: `Could not prepare authentication for '${input.instanceId}'.`,
           instanceId: input.instanceId,
+          cause,
         }),
       ),
     );
@@ -257,6 +259,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
         reason: "spawn-failed",
         message: `Could not start authentication for '${input.instanceId}'.`,
         instanceId: input.instanceId,
+        cause: processResult.failure,
       });
     }
 
@@ -372,11 +375,12 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     const session = yield* requireRunning(input.sessionId);
     yield* Effect.try({
       try: () => session.process.write(input.data),
-      catch: () =>
+      catch: (cause) =>
         makeError({
           reason: "session-not-running",
           message: "Could not write to the provider authentication session.",
           sessionId: input.sessionId,
+          cause,
         }),
     });
   });
@@ -387,11 +391,12 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     const session = yield* requireRunning(input.sessionId);
     yield* Effect.try({
       try: () => session.process.resize(input.cols, input.rows),
-      catch: () =>
+      catch: (cause) =>
         makeError({
           reason: "session-not-running",
           message: "Could not resize the provider authentication session.",
           sessionId: input.sessionId,
+          cause,
         }),
     });
   });

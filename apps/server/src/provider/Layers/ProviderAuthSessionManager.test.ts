@@ -238,16 +238,15 @@ describe("ProviderAuthSessionManager", () => {
   it.effect("fails when a successful command leaves auth state unverifiable", () =>
     Effect.gen(function* () {
       const harness = testHarness({ refreshedAuth: "unknown" });
-      const settled = yield* Deferred.make<ProviderAuthAttachStreamEvent>();
+      const settled = yield* Deferred.make<ProviderAuthSessionSnapshot>();
       const program = Effect.gen(function* () {
         const manager = yield* make();
         const session = yield* manager.start({ instanceId: INSTANCE_ID, action: "signIn" });
         yield* manager.attachStream({ sessionId: session.sessionId }, (event) =>
-          event.type === "settled" ? Deferred.succeed(settled, event) : Effect.void,
+          event.type === "settled" ? Deferred.succeed(settled, event.snapshot) : Effect.void,
         );
         harness.emitExit(0);
-        const settledEvent = yield* Deferred.await(settled);
-        expect(settledEvent.snapshot).toMatchObject({
+        expect(yield* Deferred.await(settled)).toMatchObject({
           status: "failed",
           message: "Authentication command completed, but T3 Code could not verify the new state.",
         });
