@@ -20,7 +20,7 @@ import {
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { ServerSettings } from "./settings.ts";
+import { InstalledTerminalShell, ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -428,6 +428,11 @@ export const ServerConfig = Schema.Struct({
   // Editor ids grow over time; drop ones this build does not know rather than
   // failing the whole config decode.
   availableEditors: ForwardCompatibleArray(EditorId),
+  // Shell ids can also grow over time. Defaulting preserves config decoding
+  // when a newer client connects to a server that predates shell discovery.
+  availableTerminalShells: ForwardCompatibleArray(InstalledTerminalShell).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */

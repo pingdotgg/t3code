@@ -8,6 +8,8 @@
  */
 import {
   DEFAULT_TERMINAL_ID,
+  INSTALLED_TERMINAL_SHELLS,
+  type InstalledTerminalShell,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -35,6 +37,7 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { isCommandAvailable } from "@t3tools/shared/shell";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -162,6 +165,9 @@ export class TerminalManager extends Context.Service<
     readonly restart: (
       input: TerminalRestartInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+
+    /** Discover selectable shells installed on this environment. */
+    readonly resolveAvailableShells: () => Effect.Effect<ReadonlyArray<InstalledTerminalShell>>;
 
     /**
      * Close an active terminal session.
@@ -1275,6 +1281,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
   const registerTerminalProcesses = options.registerTerminalProcesses ?? (() => Effect.void);
   const unregisterTerminal = options.unregisterTerminal ?? (() => Effect.void);
+
+  const resolveAvailableShells = Effect.fn("terminal.resolveAvailableShells")(function* () {
+    const available: InstalledTerminalShell[] = [];
+    for (const shell of INSTALLED_TERMINAL_SHELLS) {
+      const installed = yield* isCommandAvailable(shell, { env: baseEnv }).pipe(
+        Effect.provideService(HostProcessPlatform, platform),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+      if (installed) available.push(shell);
+    }
+    return available;
+  });
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
@@ -2734,6 +2753,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     resize,
     clear,
     restart,
+    resolveAvailableShells,
     close,
     subscribe,
     subscribeMetadata,

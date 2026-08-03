@@ -45,6 +45,7 @@ import {
 
 const CONFIG = {
   availableEditors: [],
+  availableTerminalShells: [],
   issues: [],
   keybindings: {},
   keybindingsConfigPath: null,

@@ -126,15 +126,17 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const SYSTEM_CAPABILITY_DISCOVERY_TIMEOUT = Duration.seconds(5);
 
-export const resolveAvailableEditorsForConfig = <A, E, R>(
+export const resolveAvailableCapabilitiesForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
 ) =>
   discovery.pipe(
-    Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
+    Effect.timeoutOption(SYSTEM_CAPABILITY_DISCOVERY_TIMEOUT),
     Effect.map(Option.getOrElse(() => [])),
   );
+
+export const resolveAvailableEditorsForConfig = resolveAvailableCapabilitiesForConfig;
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -998,6 +1000,13 @@ const makeWsRpcLayer = (
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const [availableEditors, availableTerminalShells] = yield* Effect.all(
+          [
+            resolveAvailableCapabilitiesForConfig(externalLauncher.resolveAvailableEditors()),
+            resolveAvailableCapabilitiesForConfig(terminalManager.resolveAvailableShells()),
+          ],
+          { concurrency: "unbounded" },
+        );
 
         return {
           environment,
@@ -1007,9 +1016,8 @@ const makeWsRpcLayer = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
-          ),
+          availableEditors,
+          availableTerminalShells,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,

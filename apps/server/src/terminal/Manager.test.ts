@@ -1511,6 +1511,23 @@ it.layer(
     }),
   );
 
+  it.effect("discovers only installed selectable shells", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-shells-" });
+      for (const shell of ["bash", "fish"] as const) {
+        const executable = path.join(binDir, shell);
+        yield* writeFileString(executable, "#!/bin/sh\n");
+        yield* chmod(executable, 0o755);
+      }
+      const { manager } = yield* createManager(5, { env: { PATH: binDir } });
+
+      expect(yield* manager.resolveAvailableShells()).toEqual(["bash", "fish"]);
+    }),
+  );
+
   it.effect("bridges PTY callbacks back into Effect-managed event streaming", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, getEvents } = yield* createManager(5, {

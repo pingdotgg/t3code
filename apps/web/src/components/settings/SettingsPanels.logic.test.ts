@@ -17,6 +17,7 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  resolveTerminalShellOptions,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -29,6 +30,26 @@ describe("typography settings restore", () => {
         fontFamilyCode: "Fira Code",
       }),
     ).toEqual(["Interface font", "Code font"]);
+  });
+});
+
+describe("terminal shell options", () => {
+  it("shows only shells installed on the connected environment", () => {
+    expect(
+      resolveTerminalShellOptions({ installed: ["bash", "fish"], selected: "system" }),
+    ).toEqual([
+      { value: "system", installed: true },
+      { value: "bash", installed: true },
+      { value: "fish", installed: true },
+    ]);
+  });
+
+  it("keeps an unavailable current selection visible but disabled", () => {
+    expect(resolveTerminalShellOptions({ installed: ["bash"], selected: "fish" })).toEqual([
+      { value: "system", installed: true },
+      { value: "bash", installed: true },
+      { value: "fish", installed: false },
+    ]);
   });
 });
 

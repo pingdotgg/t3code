@@ -736,6 +736,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(TerminalManager.TerminalManager)({
+          resolveAvailableShells: () => Effect.succeed([]),
           ...options?.layers?.terminalManager,
         }),
       ),
@@ -3989,7 +3990,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("accepts websocket rpc handshake with a bootstrapped browser session cookie", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            resolveAvailableShells: () => Effect.succeed(["zsh", "fish"]),
+          },
+        },
+      });
 
       const { response: bootstrapResponse, cookie } = yield* bootstrapBrowserSession();
 
@@ -4006,6 +4013,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
       assert.equal(response.auth.policy, "desktop-managed-local");
+      assert.deepEqual(response.availableTerminalShells, ["zsh", "fish"]);
       assert.equal(response.shellResumeCompletionMarker, true);
       assert.equal(response.threadResumeCompletionMarker, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
