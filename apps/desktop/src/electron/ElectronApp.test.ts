@@ -14,6 +14,7 @@ const {
   quitMock,
   relaunchMock,
   removeListenerMock,
+  removeSwitchMock,
   setAboutPanelOptionsMock,
   setAppUserModelIdMock,
   setAsDefaultProtocolClientMock,
@@ -34,6 +35,7 @@ const {
   quitMock: vi.fn(),
   relaunchMock: vi.fn(),
   removeListenerMock: vi.fn(),
+  removeSwitchMock: vi.fn(),
   setAboutPanelOptionsMock: vi.fn(),
   setAppUserModelIdMock: vi.fn(),
   setAsDefaultProtocolClientMock: vi.fn(() => true),
@@ -52,6 +54,7 @@ vi.mock("electron", () => ({
   app: {
     commandLine: {
       appendSwitch: appendSwitchMock,
+      removeSwitch: removeSwitchMock,
     },
     dock: {
       setIcon: setDockIconMock,
@@ -89,6 +92,7 @@ describe("ElectronApp", () => {
     quitMock.mockClear();
     relaunchMock.mockClear();
     removeListenerMock.mockClear();
+    removeSwitchMock.mockClear();
     setPathMock.mockClear();
   });
 
@@ -176,6 +180,15 @@ describe("ElectronApp", () => {
       assert.deepEqual(autoUpdaterRemoveListenerMock.mock.calls, [
         ["before-quit-for-update", listener],
       ]);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("removes command-line switches through the service", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp.removeCommandLineSwitch("password-store");
+
+      assert.deepEqual(removeSwitchMock.mock.calls, [["password-store"]]);
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 });
