@@ -73,6 +73,7 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file-exact"),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
+    disposition: Schema.optionalKey(Schema.Literal("attachment")),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -95,7 +96,11 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset = {
+  readonly kind: "file";
+  readonly path: string;
+  readonly disposition?: "attachment";
+};
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -207,7 +212,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               }),
           ),
         );
-      if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
+      if (
+        input.resource.disposition !== "attachment" &&
+        !isWorkspacePreviewEntryPath(resolved.relativePath)
+      ) {
         return yield* new AssetPreviewTypeValidationError({
           resource: input.resource,
         });
@@ -238,21 +246,26 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
-        ? {
-            version: 1,
-            kind: "workspace-file-exact",
-            workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
-            expiresAt,
-          }
-        : {
-            version: 1,
-            kind: "workspace-file",
-            workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
-            expiresAt,
-          };
+      claims =
+        input.resource.disposition === "attachment" ||
+        isWorkspaceImagePreviewPath(resolved.relativePath)
+          ? {
+              version: 1,
+              kind: "workspace-file-exact",
+              workspaceRoot: canonicalWorkspaceRoot,
+              relativePath: resolved.relativePath,
+              ...(input.resource.disposition === "attachment"
+                ? { disposition: "attachment" as const }
+                : {}),
+              expiresAt,
+            }
+          : {
+              version: 1,
+              kind: "workspace-file",
+              workspaceRoot: canonicalWorkspaceRoot,
+              baseRelativePath: path.dirname(resolved.relativePath),
+              expiresAt,
+            };
       fileName = path.basename(resolved.relativePath);
       break;
     }
@@ -442,7 +455,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       relativePath: claims.relativePath,
     });
     return exactWorkspaceFile
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: exactWorkspaceFile,
+          ...(claims.disposition === "attachment" ? { disposition: "attachment" as const } : {}),
+        } satisfies ResolvedAsset)
       : null;
   }
   const segments = decodedPath.split(/[\\/]/);

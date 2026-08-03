@@ -1,7 +1,17 @@
 import { expect, it } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 
-import { isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import { isLoopbackHostname, resolveAssetCacheControl, resolveDevRedirectUrl } from "./http.ts";
+
+describe("asset response caching", () => {
+  it("does not cache attachment downloads", () => {
+    expect(resolveAssetCacheControl("attachment")).toBe("private, no-store");
+  });
+
+  it("keeps preview assets cacheable", () => {
+    expect(resolveAssetCacheControl(undefined)).toBe("private, max-age=3600");
+  });
+});
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {

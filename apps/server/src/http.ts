@@ -27,7 +27,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { ASSET_ROUTE_PREFIX, resolveAsset, type ResolvedAsset } from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
@@ -45,6 +45,10 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const GZIP_MIN_BYTES = 1024;
+
+export function resolveAssetCacheControl(disposition: ResolvedAsset["disposition"]) {
+  return disposition === "attachment" ? "private, no-store" : "private, max-age=3600";
+}
 
 function acceptsGzip(value: string | undefined): boolean {
   if (!value) return false;
@@ -273,7 +277,8 @@ export const assetRouteLayer = HttpRouter.add(
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
       headers: {
-        "Cache-Control": "private, max-age=3600",
+        "Cache-Control": resolveAssetCacheControl(asset.disposition),
+        ...(asset.disposition === "attachment" ? { "Content-Disposition": "attachment" } : {}),
         "X-Content-Type-Options": "nosniff",
       },
     }).pipe(

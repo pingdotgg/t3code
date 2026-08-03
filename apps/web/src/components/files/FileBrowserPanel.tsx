@@ -20,6 +20,7 @@ import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { buildFileBrowserContextMenuItems } from "./fileBrowserContextMenu";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -31,6 +32,7 @@ interface FileBrowserPanelProps {
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  onDownloadFile: (relativePath: string) => void;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -105,6 +107,7 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  onDownloadFile,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
@@ -152,12 +155,13 @@ export default function FileBrowserPanel({
       : { x: anchorRect.left, y: anchorRect.bottom };
     try {
       const clicked = await api.contextMenu.show(
-        [
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
-        ],
+        buildFileBrowserContextMenuItems(entryKindsRef.current.get(relativePath)),
         position,
       );
+      if (clicked === "download") {
+        onDownloadFile(relativePath);
+        return;
+      }
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);

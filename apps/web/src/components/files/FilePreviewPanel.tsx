@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import { downloadWorkspaceFile } from "~/browser/downloadWorkspaceFile";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
@@ -844,6 +845,40 @@ export default function FilePreviewPanel({
     })();
   }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
 
+  const handleDownloadFile = useCallback(
+    (downloadRelativePath: string) => {
+      const downloadPath = resolvePathLinkTarget(downloadRelativePath, cwd);
+      if (!environmentHttpBaseUrl) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to download file",
+          description: "The environment is not connected.",
+        });
+        return;
+      }
+      void (async () => {
+        const result = await downloadWorkspaceFile({
+          threadRef,
+          filePath: downloadPath,
+          httpBaseUrl: environmentHttpBaseUrl,
+          createAssetUrl,
+        });
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to download file",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      })();
+    },
+    [createAssetUrl, cwd, environmentHttpBaseUrl, threadRef],
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
@@ -1056,6 +1091,7 @@ export default function FilePreviewPanel({
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
+              onDownloadFile={handleDownloadFile}
             />
           </aside>
         ) : null}

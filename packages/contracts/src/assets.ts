@@ -8,6 +8,7 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literal("attachment")),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
