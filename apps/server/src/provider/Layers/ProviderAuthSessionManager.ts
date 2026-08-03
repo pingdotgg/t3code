@@ -241,6 +241,8 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     const args = resolved.shell
       ? ["/d", "/s", "/c", [resolved.command, ...resolved.args].join(" ")]
       : [...resolved.args];
+    const sessionId = ProviderAuthSessionId.make(NodeCrypto.randomUUID());
+    const startedAt = DateTime.formatIso(yield* DateTime.now);
     const processResult = yield* pty
       .spawn({
         shell: command,
@@ -259,8 +261,6 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
       });
     }
 
-    const sessionId = ProviderAuthSessionId.make(NodeCrypto.randomUUID());
-    const startedAt = DateTime.formatIso(yield* DateTime.now);
     const session: Session = {
       instance,
       process: processResult.success,
@@ -311,6 +311,12 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
       instanceId: input.instanceId,
       activeSession: { sessionId, action: input.action },
     });
+    if (session.snapshot.status !== "running") {
+      yield* providers.setProviderAuthSessionState({
+        instanceId: input.instanceId,
+        activeSession: null,
+      });
+    }
     yield* Effect.sleep(RUNNING_SESSION_TTL).pipe(
       Effect.tap(() => cancelSession(session)),
       Effect.forkIn(managerScope),

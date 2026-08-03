@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderAuthAttachStreamEvent,
+  type ProviderAuthSessionSnapshot,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -34,7 +35,9 @@ const PROVIDER: ServerProvider = {
   skills: [],
 };
 
-function testHarness(options: { readonly yieldBeforeSpawn?: boolean } = {}) {
+function testHarness(
+  options: { readonly yieldBeforeSpawn?: boolean; readonly exitOnSpawn?: boolean } = {},
+) {
   let onData: ((data: string) => void) | null = null;
   let onExit: ((event: PtyAdapter.PtyExitEvent) => void) | null = null;
   const writes: string[] = [];
@@ -80,6 +83,9 @@ function testHarness(options: { readonly yieldBeforeSpawn?: boolean } = {}) {
         Effect.gen(function* () {
           if (options.yieldBeforeSpawn) yield* Effect.yieldNow;
           spawns.push(input);
+          if (options.exitOnSpawn) {
+            queueMicrotask(() => onExit?.({ exitCode: 0, signal: null }));
+          }
           return process;
         }),
     }),
@@ -185,6 +191,34 @@ describe("ProviderAuthSessionManager", () => {
 
         expect(second.sessionId).toBe(first.sessionId);
         expect(harness.spawns).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      yield* program;
+    }),
+  );
+
+  it.effect("settles a process that exits while startup is completing", () =>
+    Effect.gen(function* () {
+      const harness = testHarness({ exitOnSpawn: true });
+      const program = Effect.gen(function* () {
+        const manager = yield* make();
+        const session = yield* manager.start({ instanceId: INSTANCE_ID, action: "signIn" });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(harness.authStates).toEqual([
+          { sessionId: session.sessionId, action: "signIn" },
+          null,
+        ]);
+        const settled = yield* Deferred.make<ProviderAuthSessionSnapshot>();
+        yield* manager.attachStream({ sessionId: session.sessionId }, (event) =>
+          event.type === "snapshot" && event.snapshot.status !== "running"
+            ? Deferred.succeed(settled, event.snapshot)
+            : event.type === "settled"
+              ? Deferred.succeed(settled, event.snapshot)
+              : Effect.void,
+        );
+        expect(yield* Deferred.await(settled)).toMatchObject({
+          status: "succeeded",
+        });
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
       yield* program;
     }),
