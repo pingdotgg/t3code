@@ -13,6 +13,12 @@ export interface PreviewableServer extends DiscoveredLocalServer {
    * `configured` entry can also be `listening` when the scan enriched it.
    */
   listening: boolean;
+  /**
+   * Pre-resolution loopback url. `url` is the resolved navigation target
+   * (volatile on a remote environment); this is what history and favicon
+   * lookups must key off instead.
+   */
+  requestedUrl: string;
 }
 
 interface UseDiscoveredLocalServersInput {
@@ -36,6 +42,7 @@ export function useDiscoveredLocalServers(
         scanner: scannerSnapshot.map((server) => ({
           ...server,
           url: resolveDiscoveredServerUrl(input.environmentId, server.url),
+          requestedUrl: server.url,
         })),
         configuredUrls: input.configuredUrls ?? [],
         recentlySeenUrls: input.recentlySeenUrls ?? [],
@@ -45,7 +52,7 @@ export function useDiscoveredLocalServers(
 }
 
 export function mergeServers(input: {
-  scanner: ReadonlyArray<DiscoveredLocalServer>;
+  scanner: ReadonlyArray<DiscoveredLocalServer & { requestedUrl: string }>;
   configuredUrls: ReadonlyArray<string>;
   recentlySeenUrls: ReadonlyArray<string>;
 }): ReadonlyArray<PreviewableServer> {
@@ -60,6 +67,7 @@ export function mergeServers(input: {
       host: parsed.host,
       port: parsed.port,
       url: parsed.url,
+      requestedUrl: parsed.url,
       processName: null,
       pid: null,
       terminal: null,
@@ -95,6 +103,7 @@ export function mergeServers(input: {
       host: parsed.host,
       port: parsed.port,
       url: parsed.url,
+      requestedUrl: parsed.url,
       processName: null,
       pid: null,
       terminal: null,
