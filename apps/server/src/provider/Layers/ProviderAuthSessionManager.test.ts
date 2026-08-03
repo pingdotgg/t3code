@@ -36,7 +36,11 @@ const PROVIDER: ServerProvider = {
 };
 
 function testHarness(
-  options: { readonly yieldBeforeSpawn?: boolean; readonly exitOnSpawn?: boolean } = {},
+  options: {
+    readonly yieldBeforeSpawn?: boolean;
+    readonly exitOnSpawn?: boolean;
+    readonly refreshedAuth?: ServerProvider["auth"]["status"];
+  } = {},
 ) {
   let onData: ((data: string) => void) | null = null;
   let onExit: ((event: PtyAdapter.PtyExitEvent) => void) | null = null;
@@ -99,7 +103,14 @@ function testHarness(
     Layer.succeed(ProviderRegistry, {
       ...registry,
       refreshInstance: () =>
-        Effect.sync(() => ((refreshes += 1), [{ ...PROVIDER, auth: { status: "authenticated" } }])),
+        Effect.sync(() =>
+          ((refreshes += 1), [
+            {
+              ...PROVIDER,
+              auth: { status: options.refreshedAuth ?? "authenticated" },
+            },
+          ]),
+        ),
       setProviderAuthSessionState: (state) =>
         Effect.sync(() => (authStates.push(state.activeSession), [PROVIDER])),
     }),
@@ -218,6 +229,27 @@ describe("ProviderAuthSessionManager", () => {
         );
         expect(yield* Deferred.await(settled)).toMatchObject({
           status: "succeeded",
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      yield* program;
+    }),
+  );
+
+  it.effect("fails when a successful command leaves auth state unverifiable", () =>
+    Effect.gen(function* () {
+      const harness = testHarness({ refreshedAuth: "unknown" });
+      const settled = yield* Deferred.make<ProviderAuthAttachStreamEvent>();
+      const program = Effect.gen(function* () {
+        const manager = yield* make();
+        const session = yield* manager.start({ instanceId: INSTANCE_ID, action: "signIn" });
+        yield* manager.attachStream({ sessionId: session.sessionId }, (event) =>
+          event.type === "settled" ? Deferred.succeed(settled, event) : Effect.void,
+        );
+        harness.emitExit(0);
+        const settledEvent = yield* Deferred.await(settled);
+        expect(settledEvent.snapshot).toMatchObject({
+          status: "failed",
+          message: "Authentication command completed, but T3 Code could not verify the new state.",
         });
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
       yield* program;

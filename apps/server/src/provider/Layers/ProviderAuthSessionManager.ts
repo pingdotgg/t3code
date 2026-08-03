@@ -84,10 +84,9 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     const refreshedAuth = refreshedProviders.find(
       (provider) => provider.instanceId === session.snapshot.instanceId,
     )?.auth.status;
+    const expectedAuth = session.snapshot.action === "signIn" ? "authenticated" : "unauthenticated";
     const verificationFailed =
-      commandStatus === "succeeded" &&
-      ((session.snapshot.action === "signIn" && refreshedAuth === "unauthenticated") ||
-        (session.snapshot.action === "signOut" && refreshedAuth === "authenticated"));
+      commandStatus === "succeeded" && refreshedAuth !== expectedAuth;
     const status = verificationFailed ? "failed" : commandStatus;
     const message =
       commandStatus === "cancelled"
@@ -95,14 +94,14 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
         : commandStatus === "failed"
           ? `Authentication command exited with code ${exitCode ?? "unknown"}.`
           : verificationFailed
-            ? session.snapshot.action === "signIn"
-              ? "The command completed, but the provider is still unauthenticated."
-              : "The command completed, but the provider still appears authenticated."
-            : refreshedAuth === "unknown" || refreshedAuth === undefined
+            ? refreshedAuth === "unknown" || refreshedAuth === undefined
               ? "Authentication command completed, but T3 Code could not verify the new state."
               : session.snapshot.action === "signIn"
-                ? "Signed in successfully."
-                : "Signed out successfully.";
+                ? "The command completed, but the provider is still unauthenticated."
+                : "The command completed, but the provider still appears authenticated."
+            : session.snapshot.action === "signIn"
+              ? "Signed in successfully."
+              : "Signed out successfully.";
     session.snapshot = {
       ...session.snapshot,
       status,
