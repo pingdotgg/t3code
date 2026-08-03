@@ -14,11 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import {
-  AcpSessionRuntime,
-  selectAcpAgentAuthMethod,
-  type AcpSessionRequestLogEvent,
-} from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -33,9 +29,9 @@ describe("AcpSessionRuntime", () => {
       { id: "api-key", name: "API key" },
     ];
 
-    expect(selectAcpAgentAuthMethod(methods)?.id).toBe("api-key");
-    expect(selectAcpAgentAuthMethod(methods, "browser")?.id).toBe("browser");
-    expect(selectAcpAgentAuthMethod(methods, "missing")).toBeUndefined();
+    expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods)?.id).toBe("api-key");
+    expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods, "browser")?.id).toBe("browser");
+    expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods, "missing")).toBeUndefined();
   });
 
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
@@ -82,9 +78,9 @@ describe("AcpSessionRuntime", () => {
   });
 
   it.effect("does not authenticate when an advertised method is not required", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       expect(
@@ -113,9 +109,9 @@ describe("AcpSessionRuntime", () => {
   });
 
   it.effect("authenticates and retries once after session creation returns auth_required", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
 
       expect(started.sessionId).toBe("mock-session-1");
@@ -518,8 +514,8 @@ describe("AcpSessionRuntime", () => {
         AcpSessionRuntime.layer({
           authMethodId: "test",
           spawn: {
-            command: bunExe,
-            args: [mockAgentPath],
+            command: mockAgentCommand,
+            args: mockAgentArgs,
           },
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
@@ -535,9 +531,9 @@ describe("AcpSessionRuntime", () => {
   });
 
   it.effect("supports negotiated ACP session list, fork, resume, and close methods", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       expect(started.initializeResult.agentCapabilities?.sessionCapabilities).toMatchObject({
         list: {},
@@ -641,9 +637,9 @@ describe("AcpSessionRuntime", () => {
   );
 
   it.effect("skips no-op session config writes when the requested value is already active", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       yield* runtime.setConfigOption("model", "default");
@@ -926,7 +922,7 @@ describe("AcpSessionRuntime", () => {
         expect(error.message).toContain("composer-2[fast=true]");
       }
 
-      const recordedRequests = readFileSync(requestLogPath, "utf8")
+      const recordedRequests = NodeFS.readFileSync(requestLogPath, "utf8")
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)
@@ -955,7 +951,7 @@ describe("AcpSessionRuntime", () => {
       ),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
     );
   });
 });

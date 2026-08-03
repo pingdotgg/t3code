@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -8,6 +9,7 @@ import {
   ContextHandoffId,
   ContextTransferId,
   EventId,
+  IsoDateTime,
   MessageId,
   NodeId,
   NonNegativeInt,
@@ -36,7 +38,6 @@ import { ModelSelection } from "./modelSelection.ts";
 import {
   ProviderApprovalDecision,
   ProviderInteractionMode,
-  ProviderKind,
   ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
@@ -1260,6 +1261,9 @@ export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.T
 
 export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+  }),
+  Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationV2ShellSnapshot,
     /**
@@ -2112,6 +2116,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
   launchThread: "orchestration.launchThread",
@@ -2206,7 +2211,46 @@ export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
 export type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;
 
+export const OrchestrationV2SubscribeShellInput = Schema.Struct({
+  /**
+   * When provided, the server skips the initial full shell snapshot and instead
+   * replays shell events after this sequence before streaming live events.
+   * Clients that already hold a cached (or HTTP-loaded) shell snapshot pass its
+   * sequence here so the subscription resumes without re-sending the entire
+   * projects/threads list (overlapping events are deduped by sequence on the
+   * client).
+   */
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+  /** Requests a marker between initial catch-up and live delivery. */
+  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
+
+export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  /**
+   * When provided, the server skips the initial snapshot frame and instead
+   * replays events after this sequence before streaming live events. Clients
+   * that load the snapshot over HTTP pass the snapshot's sequence here so the
+   * live subscription resumes without a gap (overlapping events are deduped by
+   * sequence on the client).
+   */
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+  /** Requests a marker between initial catch-up and live delivery. */
+  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
+
+export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  projection: OrchestrationV2ThreadProjection,
+});
+export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
+
 export const OrchestrationV2ThreadStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+  }),
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshotSequence: NonNegativeInt,
@@ -2296,11 +2340,11 @@ export const OrchestrationV2RpcSchemas = {
     output: OrchestrationV2ArchivedShellStreamItem,
   },
   subscribeShell: {
-    input: Schema.Struct({}),
+    input: OrchestrationV2SubscribeShellInput,
     output: OrchestrationV2ShellStreamItem,
   },
   subscribeThread: {
-    input: OrchestrationV2GetThreadProjectionInput,
+    input: OrchestrationV2SubscribeThreadInput,
     output: OrchestrationV2ThreadStreamItem,
   },
 } as const;

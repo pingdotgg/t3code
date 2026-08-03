@@ -11,15 +11,19 @@
 - [Project settings](./user/project-settings.md)
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
-- [SnapShots](./user/snap-shot.md)
-- [Import browser sessions](./user/browser-import.md)
-- [Devices](./user/devices.md)
-- [Usage and limits](./user/usage.md)
-- [Product usage data](./user/telemetry.md)
+- [Organizing threads](./user/thread-sidebar.md)
+- [Review usage](./user/usage.md)
+- [Anonymous usage data](./user/telemetry.md)
+- [Customize a project icon](./user/project-settings.md)
+- [Mobile appearance](./user/mobile-appearance.md)
 - [Remote access](./user/remote-access.md)
-- [Running in the background](./user/background-service.md)
-- [Updating T3 Code](./user/updating.md)
-- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md)
+- [Appearance](./user/appearance.md)
+- [Keeping app and server in sync](./user/updating.md)
+- [Source control integrations](./user/source-control.md)
+- [Background service (Linux)](./user/background-service.md)
+- Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md)
+
+Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 
 ---
 
@@ -48,7 +52,6 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Mobile navigation](./internals/mobile-navigation.md)
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
-- [Devices](./internals/devices.md)
 - [Voice input](./internals/voice-input.md)
 
 ### Runbooks

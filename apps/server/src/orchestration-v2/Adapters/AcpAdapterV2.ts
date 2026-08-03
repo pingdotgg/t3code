@@ -29,6 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -198,7 +199,7 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    Scope.Scope
+    Crypto.Crypto | Scope.Scope
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   readonly registerExtensions?: (
@@ -339,6 +340,7 @@ export interface AcpAdapterV2SubagentUpdate {
 export interface AcpAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly flavor: AcpAdapterV2Flavor;
+  readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
@@ -2851,7 +2853,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
           });
 
-        const offerContinuationRun = Effect.fnUntraced(function* (sessionId: string) {
+        const offerContinuationRun = Effect.fnUntraced(function* (_sessionId: string) {
           if (continuationRequests === undefined) {
             return;
           }
@@ -2883,6 +2885,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             providerThreadId: route.providerThreadId,
             driver,
             detail: null,
+            clearIfCurrent: () =>
+              continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(continuationGeneration)) === generation) {
+                    yield* Ref.set(continuationRequested, false);
+                  }
+                }),
+              ),
             dispatchIfCurrent: (effect) =>
               continuationPermit.withPermit(
                 Effect.gen(function* () {
@@ -2900,11 +2910,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     return Option.none();
                   }
                   if (!(yield* Ref.get(continuationRequested))) return Option.none();
-                  // Clear after success or failure so a dropped dispatch does not
-                  // stick the flag and pin hasPendingBackgroundWork forever.
+                  // A successful durable dispatch owns the sticky flag until its
+                  // continuation turn starts. Clearing here opens a dispatch-to-
+                  // start race where every late ACP frame can enqueue another
+                  // synthetic continuation. Failures clear immediately because
+                  // no turn will arrive to do so.
                   const exit = yield* Effect.exit(effect);
-                  yield* clearIfOwner;
                   if (Exit.isFailure(exit)) {
+                    yield* clearIfOwner;
                     return yield* Effect.failCause(exit.cause);
                   }
                   return Option.some(exit.value);
@@ -4111,8 +4124,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           runtime = yield* flavor
             .makeRuntime(makeRuntimeInput(runtimeGeneration))
             .pipe(
-              Effect.provideService(Crypto.Crypto, options.crypto),
               Effect.provideService(Scope.Scope, runtimeScope),
+              Effect.provideService(Crypto.Crypto, options.crypto),
             );
         });
 
@@ -4463,10 +4476,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             // Minimal quiet for all models (no per-model carveouts). Defer +
             // awaitingBackgroundHydration hold the turn through monitors; this
             // is only a short debounce after the last rearm so a slightly late
-            // first post-hydration assistant chunk is not dropped. Multi-second
-            // floors (4–20s) only prolonged Working on grok-4.5.
+            // post-hydration assistant chunk stays in the same continuation.
+            // Grok commonly sends its final summary just over two seconds after
+            // the hydrated tool frame; two seconds split that tail into a second
+            // synthetic wake. Longer floors (4–20s) only prolonged Working.
             yield* Effect.gen(function* () {
-              yield* Effect.sleep("2000 millis");
+              yield* Effect.sleep("3000 millis");
               if (
                 context.finalized ||
                 context.interrupted ||
@@ -4587,7 +4602,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             const needsSessionActivation =
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
-              const activated = yield* activateSession(requestedSessionId);
+              const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* Ref.set(activeSessionSetup, activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
@@ -4991,7 +5006,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       loadingRole: null,
                       loadingIndex: 0,
                     });
-                    const activated = yield* activateSession(sessionId);
+                    const activated = yield* activateSession(
+                      sessionId,
+                      threadInput.providerThread.appThreadId,
+                    );
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(activeSessionSetup, activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
@@ -5295,6 +5313,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                         Effect.timeoutOption("10 seconds"),
                       );
                       if (Option.isNone(stopped)) {
+                        if (!context.finalized) {
+                          yield* finalizeTurn(context, "interrupted");
+                        }
                         return yield* new ProviderAdapterProtocolError({
                           driver,
                           detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
@@ -5402,7 +5423,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       loadingRole: null,
                       loadingIndex: 0,
                     });
-                    const activated = yield* runtime.loadSession(sessionId);
+                    const activated = yield* runtime.loadSession(sessionId, {
+                      mcpServers: acpMcpServers(snapshotInput.providerThread.appThreadId),
+                    });
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(activeSessionSetup, activated);
                     yield* Ref.set(activeSelection, null);

@@ -27,7 +27,7 @@ import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -659,7 +659,7 @@ export const connectionStorageLayer = Layer.effectContext(
                 Effect.mapError((cause) => persistenceError("load-thread", cause)),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId && stored.threadId === threadId
-                    ? Option.some(stored.thread)
+                    ? Option.some(stored.snapshot)
                     : Option.none(),
                 ),
               ),
@@ -681,13 +681,13 @@ export const connectionStorageLayer = Layer.effectContext(
             schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
 >>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
             environmentId,
-            threadId: thread.thread.id,
-            thread,
+            threadId: snapshot.projection.thread.id,
+            snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
-            threadCacheKey(environmentId, thread.thread.id),
+            threadCacheKey(environmentId, snapshot.projection.thread.id),
             encoded,
           );
         }).pipe(

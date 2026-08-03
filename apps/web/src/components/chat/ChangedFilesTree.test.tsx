@@ -8,7 +8,7 @@ describe("ChangedFilesCard", () => {
   it("keeps its compact header sticky while preserving singular labels", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard
-        turnId={TurnId.make("turn-1")}
+        runId={RunId.make("run-1")}
         files={[{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }]}
         allDirectoriesExpanded
         resolvedTheme="light"
@@ -27,7 +27,7 @@ describe("ChangedFilesCard", () => {
   it("shows collapsed folders and root files together", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard
-        turnId={TurnId.make("turn-1")}
+        runId={RunId.make("run-1")}
         files={[
           { path: "apps/web/src/App.tsx", kind: "modified", additions: 120, deletions: 20 },
           { path: "apps/web/src/App.test.tsx", kind: "modified", additions: 30, deletions: 2 },
@@ -60,7 +60,7 @@ describe("ChangedFilesCard", () => {
   it("keeps the folder tree visible when folders are collapsed", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard
-        turnId={TurnId.make("turn-1")}
+        runId={RunId.make("run-1")}
         files={[{ path: "apps/web/src/App.tsx", kind: "modified", additions: 120, deletions: 20 }]}
         allDirectoriesExpanded={false}
         resolvedTheme="light"

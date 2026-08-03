@@ -10,7 +10,6 @@ import { scopedRequestKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
-  sortThreadActivities,
   type PendingUserInputDraftAnswer,
 } from "../lib/threadActivity";
 import { appAtomRegistry } from "./atom-registry";
