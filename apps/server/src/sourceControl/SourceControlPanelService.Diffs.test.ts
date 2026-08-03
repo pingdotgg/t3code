@@ -251,6 +251,10 @@ describe("SourceControlPanelService", () => {
           ],
         ],
       );
+      assert.strictEqual(
+        calls.find((call) => call.operation === "vcs.panel.pushBranch")?.timeoutMs,
+        300_000,
+      );
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>

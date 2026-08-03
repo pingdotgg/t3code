@@ -212,6 +212,7 @@ describe("SourceControlPanelService", () => {
         "team/upstream",
         "refs/heads/main:refs/heads/main",
       ]);
+      assert.strictEqual(fetchCall?.timeoutMs, 300_000);
     }).pipe(
       Effect.provide(
         makeTestLayer(
@@ -360,6 +361,7 @@ describe("SourceControlPanelService", () => {
         "team/upstream",
         "refs/heads/main:refs/remotes/team/upstream/main",
       ]);
+      assert.strictEqual(fetchCall?.timeoutMs, 300_000);
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>

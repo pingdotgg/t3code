@@ -50,6 +50,7 @@ import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { GitVcsDriver, type ExecuteGitProgress } from "../vcs/GitVcsDriver.ts";
+import { resolveGitCommandTimeoutMs } from "../vcs/GitCommandTimeout.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import { makeSourceControlPanelActions } from "./SourceControlPanelActions.ts";
 import {
@@ -279,7 +280,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         ...(options?.env !== undefined ? { env: options.env } : {}),
         ...(options?.progress !== undefined ? { progress: options.progress } : {}),
         allowNonZeroExit: options?.allowNonZeroExit ?? false,
-        timeoutMs: 30_000,
+        timeoutMs: resolveGitCommandTimeoutMs(args),
         maxOutputBytes: 8 * 1024 * 1024,
         appendTruncationMarker: true,
       })

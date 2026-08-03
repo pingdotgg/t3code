@@ -33,6 +33,7 @@ Primary implementation files:
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/sourceControl/SourceControlPanelReaders.ts` and `SourceControlPanelActions.ts`
 - `apps/server/src/sourceControl/SourceControlPanelParsers.ts` and `SourceControlPanelStatusParsers.ts`
+- `apps/server/src/vcs/GitCommandTimeout.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
 - `apps/server/src/vcs/VcsLocalWatch.ts`
 - `apps/server/src/ws.ts`
@@ -265,6 +266,8 @@ The panel routes all repository mutations through server-side RPC methods and re
 - Commit operations: revert commit, checkout detached HEAD, and create branch from commit.
 - Stash operations: apply, pop, and drop.
 - Remote operations: list, add, remove, fetch one remote, fetch one branch ref, periodic Actionable fetch, and fetch all remotes.
+
+Git command timeout selection is shared by the panel service, core Git driver, and generic VCS adapter. The selector identifies the Git subcommand after supported global options: `fetch`, `pull`, and `push` receive a 300-second default because network transfer and remote-side processing can legitimately exceed the 30-second local-command budget, while all other Git subcommands retain the 30-second default. A caller-supplied timeout remains authoritative, preserving deliberately shorter boundaries such as bounded background status refreshes.
 
 Ref-affecting panel mutations invalidate both layers shared by branch consumers when the command settles. On the server, `apps/server/src/sourceControl/SourceControlPanelActions.ts` wraps commit, pull, push, branch delete/undo/revert/checkout/create/merge/rebase, fetch, and remote add/remove commands in a non-failing finalizer that calls `GitVcsDriver.invalidateRefs`; `apps/server/src/sourceControl/SourceControlPanelService.ts` applies the same finalizer to coordinated fetch-all-remotes operations. That boundary invalidates the shared `listRefs` snapshot in `apps/server/src/vcs/GitVcsDriverCore.ts` after success, failure, interruption, or partial mutation. Matching command atoms in `packages/client-runtime/src/state/vcs.ts` use `onSettled` to invalidate shared client ref state under the same outcomes, so web and mobile branch consumers request the post-mutation snapshot instead of retaining the server cache's freshness window. Working-tree stage, unstage, and discard operations; stash operations; diff, compare, and detail reads; and other display-only operations remain excluded because they do not change the refs represented by `listRefs`. This shared-ref invalidation is additive to the existing VCS-status and authoritative-panel-snapshot reconciliation, and its non-failing finalizer cannot replace or mask the original mutation error.
 
