@@ -1576,7 +1576,6 @@ export default function Sidebar() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -1891,10 +1890,11 @@ export default function Sidebar() {
       // or descriptor not loaded yet) never classify as settled: the user
       // could neither un-settle nor pin them, so auto-settling them would
       // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+      const serverConfig = serverConfigs.get(thread.environmentId);
+      const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+      const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+      const autoSettleAfterDays =
+        serverConfig?.settings.threadSettlement.autoSettleAfterDays ?? null;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       // Snooze outranks everything, including a pin: "hide until Tuesday"
@@ -1947,7 +1947,6 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
-    autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
     scopedProjectKeys,

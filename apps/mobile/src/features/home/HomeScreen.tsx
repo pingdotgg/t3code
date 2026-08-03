@@ -588,6 +588,16 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const autoSettleAfterDaysByEnvironment = useMemo(
+    () =>
+      new Map(
+        [...serverConfigs].map(
+          ([environmentId, config]) =>
+            [environmentId, config.settings.threadSettlement.autoSettleAfterDays] as const,
+        ),
+      ),
+    [serverConfigs],
+  );
   const snoozeEnvironmentIds = useMemo(() => {
     const supported = new Set<EnvironmentId>();
     for (const [environmentId, config] of serverConfigs) {
@@ -650,6 +660,7 @@ export function HomeScreen(props: HomeScreenProps) {
       matchedThreadKeys,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      autoSettleAfterDaysByEnvironment,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
@@ -666,6 +677,7 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     settledVisibleCount,
     settlementEnvironmentIds,
+    autoSettleAfterDaysByEnvironment,
     snoozeEnvironmentIds,
     props.searchQuery,
     props.selectedEnvironmentId,
