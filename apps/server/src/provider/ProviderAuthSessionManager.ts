@@ -3,11 +3,17 @@ import * as NodeCrypto from "node:crypto";
 import {
   ProviderAuthError,
   ProviderAuthSessionId,
+  type ProviderAuthAttachInput,
   type ProviderAuthAttachStreamEvent,
+  type ProviderAuthCancelInput,
+  type ProviderAuthResizeInput,
+  type ProviderAuthStartInput,
   type ProviderAuthSessionSnapshot,
+  type ProviderAuthWriteInput,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -17,16 +23,31 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
-import { ProviderAuthSessionManager } from "../Services/ProviderAuthSessionManager.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import * as PtyAdapter from "../terminal/PtyAdapter.ts";
+import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import type { ProviderInstance } from "./ProviderDriver.ts";
 
 const MAX_HISTORY_LENGTH = 262_144;
 const RUNNING_SESSION_TTL = Duration.minutes(30);
 const SETTLED_SESSION_TTL = Duration.minutes(10);
 const FORCE_KILL_DELAY = Duration.seconds(2);
+
+export class ProviderAuthSessionManager extends Context.Service<
+  ProviderAuthSessionManager,
+  {
+    readonly start: (
+      input: ProviderAuthStartInput,
+    ) => Effect.Effect<ProviderAuthSessionSnapshot, ProviderAuthError>;
+    readonly attachStream: (
+      input: ProviderAuthAttachInput,
+      listener: (event: ProviderAuthAttachStreamEvent) => Effect.Effect<void>,
+    ) => Effect.Effect<() => void, ProviderAuthError>;
+    readonly write: (input: ProviderAuthWriteInput) => Effect.Effect<void, ProviderAuthError>;
+    readonly resize: (input: ProviderAuthResizeInput) => Effect.Effect<void, ProviderAuthError>;
+    readonly cancel: (input: ProviderAuthCancelInput) => Effect.Effect<void, ProviderAuthError>;
+  }
+>()("t3/provider/ProviderAuthSessionManager") {}
 
 type Listener = (event: ProviderAuthAttachStreamEvent) => Effect.Effect<void>;
 
@@ -78,8 +99,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
       (provider) => provider.instanceId === session.snapshot.instanceId,
     )?.auth.status;
     const expectedAuth = session.snapshot.action === "signIn" ? "authenticated" : "unauthenticated";
-    const verificationFailed =
-      commandStatus === "succeeded" && refreshedAuth !== expectedAuth;
+    const verificationFailed = commandStatus === "succeeded" && refreshedAuth !== expectedAuth;
     const status = verificationFailed ? "failed" : commandStatus;
     const message =
       commandStatus === "cancelled"
@@ -215,13 +235,14 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     }
 
     const launch = yield* authentication.resolveLaunch(input.action).pipe(
-      Effect.mapError((cause) =>
-        new ProviderAuthError({
-          reason: "spawn-failed",
-          message: `Could not prepare authentication for '${input.instanceId}'.`,
-          instanceId: input.instanceId,
-          cause,
-        }),
+      Effect.mapError(
+        (cause) =>
+          new ProviderAuthError({
+            reason: "spawn-failed",
+            message: `Could not prepare authentication for '${input.instanceId}'.`,
+            instanceId: input.instanceId,
+            cause,
+          }),
       ),
     );
     const resolved = yield* resolveSpawnCommand(launch.command, launch.args, {

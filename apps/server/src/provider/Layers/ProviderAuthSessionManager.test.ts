@@ -18,7 +18,7 @@ import { makeProviderAuthenticationCapability } from "../providerAuthentication.
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../testUtils/providerRegistryMock.ts";
-import { make } from "./ProviderAuthSessionManager.ts";
+import { make } from "../ProviderAuthSessionManager.ts";
 
 const INSTANCE_ID = ProviderInstanceId.make("codex");
 const PROVIDER: ServerProvider = {
@@ -103,13 +103,16 @@ function testHarness(
     Layer.succeed(ProviderRegistry, {
       ...registry,
       refreshInstance: () =>
-        Effect.sync(() =>
-          ((refreshes += 1), [
-            {
-              ...PROVIDER,
-              auth: { status: options.refreshedAuth ?? "authenticated" },
-            },
-          ]),
+        Effect.sync(
+          () => (
+            (refreshes += 1),
+            [
+              {
+                ...PROVIDER,
+                auth: { status: options.refreshedAuth ?? "authenticated" },
+              },
+            ]
+          ),
         ),
       setProviderAuthSessionState: (state) =>
         Effect.sync(() => (authStates.push(state.activeSession), [PROVIDER])),
