@@ -201,6 +201,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 env: processEnv,
                 signInArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signIn,
                 signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signOut,
+                cwd: serverConfig.cwd,
               }),
             }),
       } satisfies ProviderInstance;
