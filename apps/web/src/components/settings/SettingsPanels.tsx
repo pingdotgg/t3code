@@ -34,6 +34,7 @@ import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_SIDEBAR_META_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_V2_ENABLED,
   DEFAULT_STATUS_LINE_FONT_SIZE,
@@ -738,6 +739,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
         : []),
+      ...(settings.sidebarMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarMetaFontSize
+        ? ["Sidebar metadata font size"]
+        : []),
       ...(settings.toolFontSize !== DEFAULT_UNIFIED_SETTINGS.toolFontSize
         ? ["Tool font size"]
         : []),
@@ -789,6 +793,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableAssistantStreaming,
       settings.agentWorkflows,
       settings.sidebarFontSize,
+      settings.sidebarMetaFontSize,
       settings.sidebarTranslucency,
       settings.threadCompletionNotifications,
       settings.timestampFormat,
@@ -1666,6 +1671,47 @@ export function GeneralSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarFontSize)
                     ?.label ?? `${DEFAULT_SIDEBAR_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Sidebar metadata font size"
+          description="Font size for the project name, worktree, and timestamps on sidebar rows."
+          resetAction={
+            settings.sidebarMetaFontSize !== DEFAULT_SIDEBAR_META_FONT_SIZE ? (
+              <SettingResetButton
+                label="sidebar metadata font size"
+                onClick={() =>
+                  updateSettings({
+                    sidebarMetaFontSize: DEFAULT_SIDEBAR_META_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.sidebarMetaFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ sidebarMetaFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar metadata font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarMetaFontSize)
+                    ?.label ?? `${DEFAULT_SIDEBAR_META_FONT_SIZE}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

@@ -15,6 +15,7 @@ import {
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarThreadGitCwd,
+  resolveFilteredSidebarProjects,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -597,6 +598,29 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("renders purely informational states as a bare dot", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          virtualAgentRun: {
+            parentThreadId: ThreadId.make("parent-thread"),
+            taskId: "agent-1",
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", dotOnly: true });
+  });
+
+  it("keeps a label on states that ask the user to act", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, hasPendingApprovals: true },
+      }),
+    ).toMatchObject({ label: "Pending Approval", dotOnly: false });
+  });
+
   it("shows pending approval before all other statuses", () => {
     expect(
       resolveThreadStatusPill({
@@ -710,6 +734,58 @@ describe("resolveThreadStatusPill", () => {
   });
 });
 
+describe("resolveFilteredSidebarProjects", () => {
+  const web = { memberProjects: [{ physicalProjectKey: "local:/code/web" }] };
+  const api = {
+    memberProjects: [
+      { physicalProjectKey: "local:/code/api" },
+      { physicalProjectKey: "remote:/code/api" },
+    ],
+  };
+  const projects = [web, api];
+
+  it("shows every project when no filter is set", () => {
+    const result = resolveFilteredSidebarProjects({ projects, filterKey: null });
+    expect(result.projects).toEqual(projects);
+    expect(result.activeProject).toBeNull();
+  });
+
+  it("narrows to the filtered project", () => {
+    const result = resolveFilteredSidebarProjects({ projects, filterKey: "local:/code/api" });
+    expect(result.projects).toEqual([api]);
+    expect(result.activeProject).toBe(api);
+  });
+
+  it("matches a grouped project through its remote member", () => {
+    const result = resolveFilteredSidebarProjects({ projects, filterKey: "remote:/code/api" });
+    expect(result.projects).toEqual([api]);
+    expect(result.activeProject).toBe(api);
+  });
+
+  it("keeps same-path projects in different environments separately selectable", () => {
+    // Regression: keying the filter on cwd alone made the second of two
+    // `separate`-mode checkouts sharing a path impossible to select.
+    const localRepo = { memberProjects: [{ physicalProjectKey: "local:/repo" }] };
+    const remoteRepo = { memberProjects: [{ physicalProjectKey: "remote:/repo" }] };
+    const sameCwdProjects = [localRepo, remoteRepo];
+
+    expect(
+      resolveFilteredSidebarProjects({ projects: sameCwdProjects, filterKey: "remote:/repo" })
+        .activeProject,
+    ).toBe(remoteRepo);
+    expect(
+      resolveFilteredSidebarProjects({ projects: sameCwdProjects, filterKey: "local:/repo" })
+        .activeProject,
+    ).toBe(localRepo);
+  });
+
+  it("falls back to all projects when the filtered project is gone", () => {
+    const result = resolveFilteredSidebarProjects({ projects, filterKey: "local:/code/removed" });
+    expect(result.projects).toEqual(projects);
+    expect(result.activeProject).toBeNull();
+  });
+});
+
 describe("resolveThreadRowClassName", () => {
   it("uses the darker selected palette when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
@@ -747,18 +823,21 @@ describe("resolveProjectStatusIndicator", () => {
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
+          dotOnly: true,
         },
         {
           label: "Pending Approval",
           colorClass: "text-amber-600",
           dotClass: "bg-amber-500",
           pulse: false,
+          dotOnly: false,
         },
         {
           label: "Working",
           colorClass: "text-sky-600",
           dotClass: "bg-sky-500",
           pulse: true,
+          dotOnly: true,
         },
       ]),
     ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
@@ -772,12 +851,14 @@ describe("resolveProjectStatusIndicator", () => {
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
+          dotOnly: true,
         },
         {
           label: "Plan Ready",
           colorClass: "text-violet-600",
           dotClass: "bg-violet-500",
           pulse: false,
+          dotOnly: false,
         },
       ]),
     ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });

@@ -95,14 +95,14 @@ export function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
-  if (compact) {
+  if (compact || status.dotOnly) {
     return (
       <span
         title={status.label}
         className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
       >
         <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
+          className={`${compact ? "size-[7px]" : "size-[5px]"} rounded-full ${status.dotClass} ${
             status.pulse ? "animate-status-pulse" : ""
           }`}
         />
@@ -118,7 +118,7 @@ export function ThreadStatusLabel({
       style={{ fontSize: "var(--app-sidebar-font-size)" }}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+        className={`size-[5px] rounded-full ${status.dotClass} ${
           status.pulse ? "animate-status-pulse" : ""
         }`}
       />

@@ -9,6 +9,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_SIDEBAR_META_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
@@ -97,6 +98,22 @@ describe("ClientSettings.sidebarFontSize", () => {
 
   it("rejects invalid sidebar font size patches", () => {
     expect(() => decodeClientSettingsPatch({ sidebarFontSize: 25 })).toThrow();
+  });
+});
+
+describe("ClientSettings.sidebarMetaFontSize", () => {
+  it("defaults below the sidebar title font size so metadata stays secondary", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.sidebarMetaFontSize).toBe(DEFAULT_SIDEBAR_META_FONT_SIZE);
+    expect(decodeClientSettings({}).sidebarMetaFontSize).toBe(DEFAULT_SIDEBAR_META_FONT_SIZE);
+    expect(DEFAULT_SIDEBAR_META_FONT_SIZE).toBeLessThan(DEFAULT_SIDEBAR_FONT_SIZE);
+  });
+
+  it("accepts valid sidebar metadata font size patches", () => {
+    expect(decodeClientSettingsPatch({ sidebarMetaFontSize: 10 }).sidebarMetaFontSize).toBe(10);
+  });
+
+  it("rejects invalid sidebar metadata font size patches", () => {
+    expect(() => decodeClientSettingsPatch({ sidebarMetaFontSize: 25 })).toThrow();
   });
 });
 

@@ -12,6 +12,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderPinnedThreads,
+  sanitizePersistedProjectFilterKey,
   reorderProjects,
   setAgentRunDismissed,
   setChangedFilesDiffScope,
@@ -29,6 +30,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     pinnedThreadKeysByProjectId: {},
+    sidebarProjectFilterKey: null,
     threadLastVisitedAtById: {},
     threadExpandedById: {},
     threadChangedFilesExpandedById: {},
@@ -642,6 +644,38 @@ describe("uiStateStore persistence round-trip", () => {
       [projectA.key]: false,
       [projectB.key]: false,
     });
+  });
+
+  it("persists and restores the sidebar project filter", () => {
+    persistState({ ...makeUiState(), sidebarProjectFilterKey: "local:/code/api" });
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(persisted.sidebarProjectFilterKey).toBe("local:/code/api");
+    expect(sanitizePersistedProjectFilterKey(persisted.sidebarProjectFilterKey)).toBe(
+      "local:/code/api",
+    );
+  });
+
+  it("persists an unset sidebar project filter as null", () => {
+    persistState({ ...makeUiState(), sidebarProjectFilterKey: null });
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(sanitizePersistedProjectFilterKey(persisted.sidebarProjectFilterKey)).toBeNull();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["empty", ""],
+    ["non-string", 42],
+  ])("restores a %s stored project filter as all projects", (_label, stored) => {
+    expect(sanitizePersistedProjectFilterKey(stored)).toBeNull();
   });
 
   it("respects mixed expand state on rehydrate and defaults new projects to expanded", () => {

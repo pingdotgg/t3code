@@ -1,9 +1,11 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   CloudIcon,
   GitPullRequestIcon,
+  FolderIcon,
   FolderPlusIcon,
   Globe2Icon,
   PinIcon,
@@ -19,6 +21,7 @@ import {
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, {
   useCallback,
@@ -154,6 +157,7 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  resolveFilteredSidebarProjects,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -281,6 +285,7 @@ interface SidebarThreadRowProps {
   childCount: number;
   projectCwd: string | null;
   threadProjectCwd: string | null;
+  threadProjectName: string | null;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
   jumpLabel: string | null;
@@ -456,6 +461,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isRemoteThread,
     threadEnvironmentLabel,
     threadProjectCwd,
+    threadProjectName,
     dismissAgentRun,
   } = props;
   const navigate = useNavigate();
@@ -477,6 +483,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     projectCwd: props.projectCwd,
   });
   const isHighlighted = isActive || isSelected;
+  const projectName =
+    threadProjectName ?? (props.projectCwd ? formatWorktreePathForDisplay(props.projectCwd) : null);
+  // The worktree is what distinguishes sibling chats on the same project, so it
+  // wins the metadata line; a chat working in the project root falls back to its
+  // branch rather than leaving the line blank.
+  const worktreeLabel = thread.worktreePath
+    ? formatWorktreePathForDisplay(thread.worktreePath)
+    : thread.branch;
   const handleOpenDiscoveredPort = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       const port = discoveredPorts[0];
@@ -758,64 +772,87 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 text-left leading-tight"
           style={threadIndent > 0 ? { paddingLeft: threadIndent } : undefined}
         >
-          <SidebarThreadPrStatus
-            environmentId={thread.environmentId}
-            branch={thread.branch}
-            gitCwd={gitCwd}
-            openPrLink={openPrLink}
-          />
-          {threadStatus && <ThreadStatusLabel status={threadStatus} />}
-          {renamingThreadKey === threadKey ? (
-            <input
-              ref={handleRenameInputRef}
-              className="min-w-0 flex-1 truncate bg-transparent outline-none border border-ring rounded px-0.5"
-              style={{ fontSize: "var(--app-sidebar-font-size)" }}
-              value={renamingTitle}
-              onChange={handleRenameInputChange}
-              onKeyDown={handleRenameInputKeyDown}
-              onBlur={handleRenameInputBlur}
-              onClick={handleRenameInputClick}
-            />
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className="min-w-0 flex-1 truncate"
-                    style={{ fontSize: "var(--app-sidebar-font-size)" }}
-                    data-testid={`thread-title-${thread.id}`}
-                  >
-                    {thread.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
-                {thread.title}
-              </TooltipPopup>
-            </Tooltip>
-          )}
-          {props.hasChildren ? (
-            <button
-              type="button"
-              data-thread-selection-safe
-              aria-expanded={props.isExpanded}
-              aria-label={`${props.isExpanded ? "Collapse" : "Expand"} ${thread.title}`}
-              title={`${props.isExpanded ? "Collapse" : "Expand"} ${props.childCount} nested chat${
-                props.childCount === 1 ? "" : "s"
-              }`}
-              className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-              onPointerDown={stopPropagationOnPointerDown}
-              onClick={handleToggleThreadExpandedClick}
+          {projectName ? (
+            <div
+              className="flex min-w-0 items-center gap-1.5 text-muted-foreground/75"
+              style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
             >
-              <ChevronRightIcon
-                className={`size-3 transition-transform duration-150 ${
-                  props.isExpanded ? "rotate-90" : ""
-                }`}
+              <ProjectFavicon
+                className="size-3"
+                cwd={threadProjectCwd ?? props.projectCwd ?? ""}
+                environmentId={thread.environmentId}
               />
-            </button>
+              <span className="min-w-0 truncate">{projectName}</span>
+            </div>
+          ) : null}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <SidebarThreadPrStatus
+              environmentId={thread.environmentId}
+              branch={thread.branch}
+              gitCwd={gitCwd}
+              openPrLink={openPrLink}
+            />
+            {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+            {renamingThreadKey === threadKey ? (
+              <input
+                ref={handleRenameInputRef}
+                className="min-w-0 flex-1 truncate bg-transparent outline-none border border-ring rounded px-0.5"
+                style={{ fontSize: "var(--app-sidebar-font-size)" }}
+                value={renamingTitle}
+                onChange={handleRenameInputChange}
+                onKeyDown={handleRenameInputKeyDown}
+                onBlur={handleRenameInputBlur}
+                onClick={handleRenameInputClick}
+              />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="min-w-0 flex-1 truncate font-medium text-foreground/90"
+                      style={{ fontSize: "var(--app-sidebar-font-size)" }}
+                      data-testid={`thread-title-${thread.id}`}
+                    >
+                      {thread.title}
+                    </span>
+                  }
+                />
+                <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
+                  {thread.title}
+                </TooltipPopup>
+              </Tooltip>
+            )}
+            {props.hasChildren ? (
+              <button
+                type="button"
+                data-thread-selection-safe
+                aria-expanded={props.isExpanded}
+                aria-label={`${props.isExpanded ? "Collapse" : "Expand"} ${thread.title}`}
+                title={`${props.isExpanded ? "Collapse" : "Expand"} ${props.childCount} nested chat${
+                  props.childCount === 1 ? "" : "s"
+                }`}
+                className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                onPointerDown={stopPropagationOnPointerDown}
+                onClick={handleToggleThreadExpandedClick}
+              >
+                <ChevronRightIcon
+                  className={`size-3 transition-transform duration-150 ${
+                    props.isExpanded ? "rotate-90" : ""
+                  }`}
+                />
+              </button>
+            ) : null}
+          </div>
+          {worktreeLabel ? (
+            <div
+              className="min-w-0 truncate text-muted-foreground/70"
+              style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
+            >
+              {worktreeLabel}
+            </div>
           ) : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -1163,6 +1200,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         childCount: row.childCount,
         projectCwd,
         threadProjectCwd: threadProject?.cwd ?? null,
+        threadProjectName: threadProject?.name ?? null,
         orderedProjectThreadKeys,
         isActive:
           activeRouteThreadKey === routeThreadKey &&
@@ -2728,6 +2766,72 @@ type SortableProjectHandleProps = Pick<
   "attributes" | "listeners" | "setActivatorNodeRef"
 >;
 
+const ALL_PROJECTS_FILTER_LABEL = "All projects";
+// Radio values are physical project keys; a leading NUL cannot collide with one.
+const ALL_PROJECTS_FILTER_VALUE = "\u0000all-projects";
+
+const ProjectFilterMenu = memo(function ProjectFilterMenu({
+  projects,
+  activeProject,
+  onFilterChange,
+}: {
+  projects: readonly SidebarProjectSnapshot[];
+  activeProject: SidebarProjectSnapshot | null;
+  onFilterChange: (physicalProjectKey: string | null) => void;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger
+        aria-label="Filter threads by project"
+        data-testid="sidebar-project-filter-trigger"
+        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <FolderIcon className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-left">
+          {activeProject?.displayName ?? ALL_PROJECTS_FILTER_LABEL}
+        </span>
+        <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="bottom" className="min-w-56">
+        <MenuRadioGroup
+          value={
+            activeProject ? derivePhysicalProjectKey(activeProject) : ALL_PROJECTS_FILTER_VALUE
+          }
+          onValueChange={(value) => {
+            onFilterChange(value === ALL_PROJECTS_FILTER_VALUE ? null : (value as string));
+          }}
+        >
+          <MenuRadioItem
+            className="min-h-7 py-1 text-[length:var(--app-sidebar-font-size)]"
+            value={ALL_PROJECTS_FILTER_VALUE}
+          >
+            <span className="flex min-w-0 items-center gap-1.5">
+              <FolderIcon className="size-3.5 shrink-0" />
+              <span className="truncate">{ALL_PROJECTS_FILTER_LABEL}</span>
+            </span>
+          </MenuRadioItem>
+          {projects.map((project) => (
+            <MenuRadioItem
+              className="min-h-7 py-1 text-[length:var(--app-sidebar-font-size)]"
+              key={project.projectKey}
+              value={derivePhysicalProjectKey(project)}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <ProjectFavicon
+                  className="size-3.5"
+                  cwd={project.cwd}
+                  environmentId={project.environmentId}
+                />
+                <span className="truncate">{project.displayName}</span>
+              </span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </Menu>
+  );
+});
+
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
@@ -3002,6 +3106,9 @@ interface SidebarProjectsContentProps {
   handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   primaryEnvironmentId: SidebarThreadSummary["environmentId"] | null;
   sortedProjects: readonly SidebarProjectSnapshot[];
+  allProjects: readonly SidebarProjectSnapshot[];
+  activeFilterProject: SidebarProjectSnapshot | null;
+  setProjectFilter: (physicalProjectKey: string | null) => void;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -3044,6 +3151,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleParentThreadSelected,
     primaryEnvironmentId,
     sortedProjects,
+    allProjects,
+    activeFilterProject,
+    setProjectFilter,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -3103,11 +3213,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       ) : null}
       <SidebarGroup className="p-2">
-        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60">
-            Projects
-          </span>
-          <div className="flex items-center gap-1">
+        <div className="mb-1 flex items-center justify-between gap-1 pl-1 pr-1.5">
+          <ProjectFilterMenu
+            activeProject={activeFilterProject}
+            onFilterChange={setProjectFilter}
+            projects={allProjects}
+          />
+          <div className="flex shrink-0 items-center gap-1">
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
@@ -3230,6 +3342,8 @@ export default function Sidebar() {
   const pinnedThreadKeysByProjectId = useUiStateStore((store) => store.pinnedThreadKeysByProjectId);
   const threadExpandedById = useUiStateStore((store) => store.threadExpandedById);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const sidebarProjectFilterKey = useUiStateStore((store) => store.sidebarProjectFilterKey);
+  const setSidebarProjectFilter = useUiStateStore((store) => store.setSidebarProjectFilter);
   const selectedParentThreadKeyRef = useRef<string | null>(null);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
@@ -3518,6 +3632,17 @@ export default function Sidebar() {
     sidebarProjects,
     visibleThreads,
   ]);
+  // Filtering at the source keeps everything derived from the project list —
+  // rendered rows, ⌘-jump labels and thread traversal — in agreement about
+  // which threads are on screen.
+  const { projects: visibleProjects, activeProject: activeFilterProject } = useMemo(
+    () =>
+      resolveFilteredSidebarProjects({
+        projects: sortedProjects,
+        filterKey: sidebarProjectFilterKey,
+      }),
+    [sidebarProjectFilterKey, sortedProjects],
+  );
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const threadExpandedOverrideMap = useMemo(
     () =>
@@ -3528,7 +3653,7 @@ export default function Sidebar() {
   );
   const visibleSidebarThreadKeys = useMemo(
     () =>
-      sortedProjects.flatMap((project) => {
+      visibleProjects.flatMap((project) => {
         const projectExpanded = projectExpandedById[project.projectKey] ?? true;
         const activeThreadKey = routeThreadKey ?? undefined;
         const projectThreads = selectVisibleSidebarThreads(
@@ -3568,7 +3693,7 @@ export default function Sidebar() {
       projectExpandedById,
       routeThreadKey,
       sidebarThreadSortOrder,
-      sortedProjects,
+      visibleProjects,
       threadsByProjectKey,
     ],
   );
@@ -3873,7 +3998,10 @@ export default function Sidebar() {
             deleteThread={deleteThread}
             handleParentThreadSelected={handleParentThreadSelected}
             primaryEnvironmentId={primaryEnvironmentId}
-            sortedProjects={sortedProjects}
+            sortedProjects={visibleProjects}
+            allProjects={sortedProjects}
+            activeFilterProject={activeFilterProject}
+            setProjectFilter={setSidebarProjectFilter}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
             routeThreadKey={routeThreadKey}

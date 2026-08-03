@@ -55,6 +55,7 @@ const workingStatus: ThreadStatusPill = {
   colorClass: "text-sky-600",
   dotClass: "bg-sky-500",
   pulse: true,
+  dotOnly: true,
 };
 
 function activity(
@@ -264,6 +265,7 @@ describe("buildSidebarThreadRows", () => {
       colorClass: "text-emerald-600",
       dotClass: "bg-emerald-500",
       pulse: false,
+      dotOnly: true,
     };
 
     const result = buildSidebarThreadRows({

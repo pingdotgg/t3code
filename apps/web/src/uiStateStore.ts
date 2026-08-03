@@ -36,12 +36,20 @@ export interface PersistedUiState {
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   changedFilesDiffScope?: TurnDiffScope;
   dismissedAgentRunKeys?: string[];
+  sidebarProjectFilterKey?: string | null;
 }
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
   pinnedThreadKeysByProjectId: Record<string, string[]>;
+  /**
+   * Project the sidebar is scoped to, or `null` for all projects. Holds a
+   * physical project key (`environmentId:cwd`): unique across environments, so
+   * a local and remote checkout sharing a path stay separately selectable, and
+   * stable across grouping-mode changes, unlike the logical project key.
+   */
+  sidebarProjectFilterKey: string | null;
 }
 
 export interface UiThreadState {
@@ -111,6 +119,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   pinnedThreadKeysByProjectId: {},
+  sidebarProjectFilterKey: null,
   threadLastVisitedAtById: {},
   threadExpandedById: {},
   threadChangedFilesExpandedById: {},
@@ -161,6 +170,7 @@ function readPersistedState(): UiState {
       ),
       changedFilesDiffScope: sanitizePersistedDiffScope(parsed.changedFilesDiffScope),
       dismissedAgentRunKeys: sanitizePersistedDismissedAgentRunKeys(parsed.dismissedAgentRunKeys),
+      sidebarProjectFilterKey: sanitizePersistedProjectFilterKey(parsed.sidebarProjectFilterKey),
     };
   } catch {
     return initialState;
@@ -208,6 +218,15 @@ function sanitizePersistedPinnedThreadKeysByProjectId(
   }
 
   return nextState;
+}
+
+/**
+ * A filter is only honoured when it is a non-empty string. Anything else
+ * (missing, null, or a malformed stored value) restores to "all projects"
+ * rather than a filter that can never match.
+ */
+export function sanitizePersistedProjectFilterKey(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function sanitizePersistedDiffScope(value: unknown): TurnDiffScope {
@@ -320,6 +339,7 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpandedById,
         changedFilesDiffScope: state.changedFilesDiffScope,
         dismissedAgentRunKeys: Object.keys(state.dismissedAgentRunKeys),
+        sidebarProjectFilterKey: state.sidebarProjectFilterKey,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -965,6 +985,7 @@ interface UiStateStore extends UiState {
   ) => void;
   applySidebarStateSnapshot: (snapshot: SidebarStateSnapshot) => void;
   setAgentRunDismissed: (agentRunKey: string, dismissed: boolean) => void;
+  setSidebarProjectFilter: (physicalProjectKey: string | null) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set, get) => ({
@@ -1004,6 +1025,12 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
   },
   applySidebarStateSnapshot: (snapshot) =>
     set((state) => applySidebarStateSnapshot(state, snapshot)),
+  setSidebarProjectFilter: (physicalProjectKey) =>
+    set((state) =>
+      state.sidebarProjectFilterKey === physicalProjectKey
+        ? state
+        : { ...state, sidebarProjectFilterKey: physicalProjectKey },
+    ),
   setAgentRunDismissed: (agentRunKey, dismissed) => {
     set((state) => setAgentRunDismissed(state, agentRunKey, dismissed));
     // Archiving an agent run is a deliberate, low-frequency action the user
