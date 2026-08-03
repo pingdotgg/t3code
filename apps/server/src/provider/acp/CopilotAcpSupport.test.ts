@@ -104,6 +104,7 @@ describe("buildCopilotAcpSpawnInput", () => {
         buildCopilotMcpServerOptions(
           "/tmp/project",
           "thread-1",
+          ProviderInstanceId.make("copilot-team"),
           "/tmp/t3-dev",
           "approval-required",
           {},
@@ -121,6 +122,7 @@ describe("buildCopilotAcpSpawnInput", () => {
         ]),
         threadId: "thread-1",
         cliCommand: "/usr/bin/node",
+        providerInstanceId: ProviderInstanceId.make("copilot-team"),
         cliArgsPrefix: ["/app/bin.mjs"],
         cliBaseDir: "/tmp/t3-dev",
         runtimeMode: "approval-required",
@@ -149,6 +151,7 @@ describe("buildCopilotAcpSpawnInput", () => {
         buildCopilotMcpServerOptions(
           "/tmp/project",
           "thread-1",
+          ProviderInstanceId.make("copilot-team"),
           "/tmp/t3-dev",
           "auto-accept-edits",
           {
@@ -168,6 +171,7 @@ describe("buildCopilotAcpSpawnInput", () => {
         ]),
         threadId: "thread-1",
         cliCommand: "t3-dev",
+        providerInstanceId: ProviderInstanceId.make("copilot-team"),
         cliBaseDir: "/tmp/t3-dev",
         runtimeMode: "auto-accept-edits",
       });

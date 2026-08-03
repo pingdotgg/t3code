@@ -163,6 +163,7 @@ export const prepareCopilotCustomInstructions = Effect.fn("prepareCopilotCustomI
 export function buildCopilotMcpServerOptions(
   cwd: string,
   threadId: string | undefined,
+  providerInstanceId: ProviderInstanceId | undefined,
   cliBaseDir: string | undefined,
   runtimeMode?: RuntimeMode,
   env: NodeJS.ProcessEnv = process.env,
@@ -194,6 +195,7 @@ export function buildCopilotMcpServerOptions(
     toolsets: toolsetNames,
     threadId,
     cliCommand: command,
+    ...(providerInstanceId ? { providerInstanceId } : {}),
     ...(runtimeMode ? { runtimeMode } : {}),
     ...(commandArgsPrefix.length > 0 ? { cliArgsPrefix: commandArgsPrefix } : {}),
     ...(cliBaseDir ? { cliBaseDir } : {}),
@@ -318,6 +320,7 @@ export const makeCopilotAcpRuntime = (
             buildCopilotMcpServerOptions(
               input.cwd,
               input.threadId,
+              input.providerInstanceId,
               input.baseDir,
               input.runtimeMode,
             ),

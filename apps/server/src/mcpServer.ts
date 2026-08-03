@@ -6,7 +6,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { Effect } from "effect";
-import type { RuntimeMode } from "@t3tools/contracts";
+import type { ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { killProcessTree } from "@t3tools/shared/processTree";
 
@@ -37,6 +37,7 @@ export interface McpServeOptions {
   readonly cliArgsPrefix?: ReadonlyArray<string>;
   readonly cliBaseDir?: string;
   readonly runtimeMode?: RuntimeMode;
+  readonly providerInstanceId?: ProviderInstanceId;
 }
 
 export interface McpHttpServer {
@@ -649,6 +650,9 @@ async function createNestedThreadTool(
   if (!options.runtimeMode) {
     throw new Error("create_nested_thread requires an authenticated parent runtime mode");
   }
+  if (!options.providerInstanceId) {
+    throw new Error("create_nested_thread requires an authenticated parent provider instance");
+  }
   const result = await runCommand(options.cwd, options.cliCommand, [
     ...(options.cliArgsPrefix ?? []),
     "chat",
@@ -658,7 +662,7 @@ async function createNestedThreadTool(
     "--parent",
     options.threadId,
     "--provider",
-    "copilot",
+    options.providerInstanceId,
     "--model",
     model,
     "--reasoning",

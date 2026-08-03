@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { __testing, startMcpHttpServer } from "./mcpServer.ts";
@@ -103,7 +104,7 @@ describe("MCP Streamable HTTP server", () => {
 });
 
 describe("create_nested_thread MCP tool", () => {
-  it("creates a flavor-scoped child of the authenticated current thread", async () => {
+  it("creates a flavor-scoped child on the authenticated parent provider instance", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-nested-thread-"));
     const cliPath = path.join(root, "t3-test");
     const argsPath = path.join(root, "cli-args.txt");
@@ -127,6 +128,7 @@ describe("create_nested_thread MCP tool", () => {
             cliArgsPrefix: ["server.mjs"],
             cliBaseDir: "/tmp/t3-dev",
             runtimeMode: "approval-required",
+            providerInstanceId: ProviderInstanceId.make("copilot-team"),
           },
           {
             project: "project-1",
@@ -147,7 +149,7 @@ describe("create_nested_thread MCP tool", () => {
         "--parent",
         "parent-1",
         "--provider",
-        "copilot",
+        "copilot-team",
         "--model",
         "gpt-5.6-terra",
         "--reasoning",
