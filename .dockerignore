@@ -1,4 +1,5 @@
 .git
+.jj
 .github
 .repos
 Dockerfile
@@ -25,3 +26,5 @@ squashfs-root
 .env
 .env.*
 !.env.example
+Dockerfile
+docker-compose.yml

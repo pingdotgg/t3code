@@ -8,12 +8,17 @@ ARG PNPM_VERSION=11.10.0
 
 WORKDIR /src
 
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+
 RUN npm install --global "pnpm@${PNPM_VERSION}"
 
 COPY . .
 
-RUN pnpm install --frozen-lockfile
-RUN pnpm exec vp run --filter t3 build
+# The server build already declares the web app as a task dependency. Restrict
+# installation to that graph so the image builder does not download desktop,
+# mobile, marketing, and infrastructure dependencies it never builds.
+RUN pnpm install --frozen-lockfile --filter "@t3tools/scripts..." --filter "t3..."
+RUN pnpm --filter t3 exec vp run --filter t3 build
 RUN pnpm --filter t3 --prod deploy --legacy /opt/t3
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
@@ -28,7 +33,7 @@ ENV HOME=/home/t3
 ENV USER=t3
 ENV LOGNAME=t3
 ENV SHELL=/bin/bash
-ENV PATH=/opt/cursor/.local/bin:/opt/grok/.grok/bin:/usr/local/bin:/usr/bin:/bin
+ENV PATH=/opt/cursor/.local/bin:/opt/grok/.grok/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV NODE_ENV=production
 ENV DISABLE_AUTOUPDATER=1
 
@@ -39,7 +44,6 @@ RUN apt-get update \
     curl \
     git \
     gh \
-    gosu \
     jq \
     openssh-client \
     procps \
@@ -77,15 +81,14 @@ COPY --from=builder /opt/t3 /opt/t3
 RUN chmod +x /opt/t3/dist/bin.mjs \
   && ln -s /opt/t3/dist/bin.mjs /usr/local/bin/t3 \
   && userdel node \
-  && groupdel node \
   && groupadd --gid 1000 t3 \
-  && useradd --uid 1000 --gid t3 --create-home --shell /bin/bash t3
+  && useradd --uid 1000 --gid t3 --create-home --shell /bin/bash t3 \
+  && install -d --owner=t3 --group=t3 /home/t3 /workspace
 
-COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/t3-docker-entrypoint
-
+USER t3
 WORKDIR /workspace
 
 EXPOSE 3773
 
-ENTRYPOINT ["/usr/local/bin/t3-docker-entrypoint"]
+ENTRYPOINT ["tini", "--"]
 CMD ["t3", "serve"]
