@@ -87,7 +87,7 @@ Manual CLI authentication remains available as a fallback:
 ```bash
 docker compose run --rm t3code codex login --device-auth
 docker compose run --rm t3code claude
-docker compose run --rm t3code cursor-agent login
+docker compose run --rm t3code cursor-agent agent login
 docker compose run --rm t3code grok login --device-auth
 docker compose run --rm t3code opencode auth login
 ```
