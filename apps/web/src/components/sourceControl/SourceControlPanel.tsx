@@ -542,7 +542,14 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         />
       }
     >
-      <div className="flex min-h-0 flex-1 flex-col" onKeyDown={handleBodyKeyDown}>
+      {/* fork: f4 focus model — the panel owns its keys (`/` here, `j/k/s/u/x`
+          in the lists below), so the chat composer's type-to-focus must not
+          swallow them before they are dispatched. */}
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        onKeyDown={handleBodyKeyDown}
+        data-keys-owned=""
+      >
         {/* ── B ── segment + one View menu ───────────────────────────────── */}
         <div className="flex h-9 flex-none items-center gap-2 border-border/60 border-b px-3">
           <ToggleGroup

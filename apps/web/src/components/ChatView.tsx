@@ -156,6 +156,7 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
+import { COMPOSER_KEY_OWNING_SELECTOR } from "~/lib/composerTypeToFocus"; // fork: f4 focus model
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -452,6 +453,10 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
 
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
+  // fork: f4 focus model — an `aria-activedescendant` composite keeps focus on
+  // its container, so no leaf role above is ever in the path and every bare key
+  // it owns was stolen into the composer.
+  if (eventPathContainsSelector(event, COMPOSER_KEY_OWNING_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
   return true;

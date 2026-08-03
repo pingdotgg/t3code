@@ -7,6 +7,7 @@ import {
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
+  ArrowLeftIcon, // fork: f4 — back to source control
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -26,6 +27,7 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { useRightPanelStore } from "../rightPanelStore"; // fork: f4 — back to source control
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
@@ -53,6 +55,8 @@ import {
   useDiffHunkStaging,
   type DiffHunkStagingSelection,
 } from "./sourceControl/useDiffHunkStaging";
+import { useDraftDiffTarget } from "./sourceControl/useDraftDiffTarget"; // fork: f4
+import { showsSelectThreadEmptyState } from "~/lib/sourceControl/draftDiffTarget"; // fork: f4
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
@@ -216,10 +220,14 @@ export default function DiffPanel({
   }));
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
 
-  const routeThreadRef = useParams({
+  const routeParamsThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
+  // fork: f4 — a draft route carries only `draftId`, so route params resolve no
+  // thread ref while ChatView keys the selection by the draft's reserved one.
+  const draftDiffTarget = useDraftDiffTarget(composerDraftTarget);
+  const routeThreadRef = routeParamsThreadRef ?? draftDiffTarget.threadRef;
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
@@ -231,18 +239,20 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const serverConfig = useAtomValue(
-    serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
-  );
+  // fork: f4 — `?? draftDiffTarget.*` is the draft fallback: a file-scoped diff
+  // needs an environment and a cwd, never a turn.
+  const activeCwd =
+    activeThread?.worktreePath ?? activeProject?.workspaceRoot ?? draftDiffTarget.cwd ?? undefined;
+  const activeEnvironmentId = activeThread?.environmentId ?? draftDiffTarget.environmentId;
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
-    activeThread?.environmentId ?? null,
+    activeEnvironmentId,
     serverConfig?.availableEditors ?? [],
   );
   const gitStatusQuery = useEnvironmentQuery(
-    activeThread !== null && activeThread !== undefined && activeCwd != null
+    activeEnvironmentId !== null && activeCwd != null
       ? vcsEnvironment.status({
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           input: { cwd: activeCwd },
         })
       : null,
@@ -316,7 +326,7 @@ export default function DiffPanel({
     [routeThreadRef, workingCopySelection],
   );
   const hunkStaging = useDiffHunkStaging({
-    environmentId: activeThread?.environmentId ?? null,
+    environmentId: activeEnvironmentId,
     cwd: activeCwd ?? null,
     selection: workingCopySelection,
     onSideExhausted: flipWorkingCopySide,
@@ -624,6 +634,31 @@ export default function DiffPanel({
   const headerRow = (
     <>
       <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+        {/* fork: f4 — a file-scoped diff is only ever opened from the source
+            control panel, and in a narrow right panel opening it hides the very
+            list the user was working from. The way back is a control, not a
+            "find the tab again" exercise. */}
+        {hunkStaging.active && routeThreadRef !== null && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  className="-me-1.5 shrink-0"
+                  aria-label="Back to source control"
+                  onClick={() => {
+                    useRightPanelStore.getState().open(routeThreadRef, "source-control");
+                  }}
+                />
+              }
+            >
+              <ArrowLeftIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Back to source control</TooltipPopup>
+          </Tooltip>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger
             className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-muted/70 px-2 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
@@ -907,7 +942,12 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
-      {!activeThread ? (
+      {/* fork: f4 — a file-scoped diff renders without a thread; only the
+          turn/branch scopes below actually need one. */}
+      {showsSelectThreadEmptyState({
+        hasThread: Boolean(activeThread),
+        fileScopedDiffActive: hunkStaging.active,
+      }) ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
