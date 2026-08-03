@@ -59,6 +59,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       listOpenPullRequests: rpcClient.git.listOpenPullRequests,
       preparePullRequestThread: rpcClient.git.preparePullRequestThread,
       resolveReviewChangesContext: rpcClient.git.resolveReviewChangesContext,
+      prewarmReviewChangesContext: rpcClient.git.prewarmReviewChangesContext,
     },
     workflow: {
       run: rpcClient.workflow.run,

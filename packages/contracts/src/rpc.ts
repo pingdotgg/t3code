@@ -224,6 +224,7 @@ export const WS_METHODS = {
   gitListOpenPullRequests: "git.listOpenPullRequests",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
   gitResolveReviewChangesContext: "git.resolveReviewChangesContext",
+  gitPrewarmReviewChangesContext: "git.prewarmReviewChangesContext",
 
   // Vcs methods (upstream VCS driver foundation)
   vcsPull: "vcs.pull",
@@ -522,6 +523,19 @@ export const WsGitResolveReviewChangesContextRpc = Rpc.make(
   {
     payload: GitResolveReviewChangesContextInput,
     success: GitResolveReviewChangesContextResult,
+    error: GitCommandError,
+  },
+);
+
+/**
+ * Acknowledges only: the captured context can reach several megabytes, and
+ * returning it to a browser that discards it would spend the latency this call
+ * exists to remove on the socket the ensuing run needs.
+ */
+export const WsGitPrewarmReviewChangesContextRpc = Rpc.make(
+  WS_METHODS.gitPrewarmReviewChangesContext,
+  {
+    payload: GitResolveReviewChangesContextInput,
     error: GitCommandError,
   },
 );
@@ -932,6 +946,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitListOpenPullRequestsRpc,
   WsGitPreparePullRequestThreadRpc,
   WsGitResolveReviewChangesContextRpc,
+  WsGitPrewarmReviewChangesContextRpc,
   WsGitListBranchesRpc,
   WsGitCreateWorktreeRpc,
   WsGitRemoveWorktreeRpc,

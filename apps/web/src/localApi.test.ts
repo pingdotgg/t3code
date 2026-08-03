@@ -90,6 +90,7 @@ const rpcClientMock = {
     resolvePullRequest: vi.fn(),
     preparePullRequestThread: vi.fn(),
     resolveReviewChangesContext: vi.fn(),
+    prewarmReviewChangesContext: vi.fn(),
   },
   workflow: {
     run: vi.fn(),

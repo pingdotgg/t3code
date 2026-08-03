@@ -320,6 +320,26 @@ export interface GitCoreShape {
   readonly resolveReviewChangesContext: (
     input: GitResolveReviewChangesContextInput,
   ) => Effect.Effect<GitResolveReviewChangesContextResult, GitCommandError>;
+
+  /**
+   * Captures a pull-request review context ahead of the click that will use it,
+   * so the ~700ms of `gh` calls overlaps the user's intent rather than sitting
+   * on the critical path. Parks the result for exactly one
+   * {@link claimReviewChangesContext}; a no-op for scopes whose diff can change
+   * while the user decides.
+   */
+  readonly prewarmReviewChangesContext: (
+    input: GitResolveReviewChangesContextInput,
+  ) => Effect.Effect<void, GitCommandError>;
+
+  /**
+   * Resolves the review context for a run, consuming a capture parked by
+   * {@link prewarmReviewChangesContext} when one is available and capturing
+   * fresh otherwise.
+   */
+  readonly claimReviewChangesContext: (
+    input: GitResolveReviewChangesContextInput,
+  ) => Effect.Effect<GitResolveReviewChangesContextResult, GitCommandError>;
 }
 
 /**

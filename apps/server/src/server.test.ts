@@ -392,6 +392,24 @@ const buildAppUnderTest = (options?: {
       ...options?.config,
     };
     const layerConfig = Layer.succeed(ServerConfig, config);
+    const stubReviewChangesContext: GitCoreShape["resolveReviewChangesContext"] = (input) =>
+      input.scope === "against-base"
+        ? Effect.succeed({
+            scope: "against-base",
+            branch: null,
+            statusShort: "",
+            untrackedFiles: [],
+            hasReviewableChanges: false,
+            baseBranch: "main",
+            mergeBaseSha: "0".repeat(40),
+          })
+        : Effect.succeed({
+            scope: "uncommitted",
+            branch: null,
+            statusShort: "",
+            untrackedFiles: [],
+            hasReviewableChanges: false,
+          });
     const gitCoreLayer = Layer.mock(GitCore)({
       isInsideWorkTree: () => Effect.succeed(false),
       listWorkspaceFiles: () =>
@@ -400,24 +418,11 @@ const buildAppUnderTest = (options?: {
           truncated: false,
         }),
       filterIgnoredPaths: (_cwd, relativePaths) => Effect.succeed(relativePaths),
-      resolveReviewChangesContext: (input) =>
-        input.scope === "against-base"
-          ? Effect.succeed({
-              scope: "against-base",
-              branch: null,
-              statusShort: "",
-              untrackedFiles: [],
-              hasReviewableChanges: false,
-              baseBranch: "main",
-              mergeBaseSha: "0".repeat(40),
-            })
-          : Effect.succeed({
-              scope: "uncommitted",
-              branch: null,
-              statusShort: "",
-              untrackedFiles: [],
-              hasReviewableChanges: false,
-            }),
+      resolveReviewChangesContext: stubReviewChangesContext,
+      // The workflow run path claims a possibly prewarmed capture; with nothing
+      // parked it must resolve exactly as a fresh capture would.
+      claimReviewChangesContext: stubReviewChangesContext,
+      prewarmReviewChangesContext: () => Effect.void,
       ...options?.layers?.gitCore,
     });
     const gitManagerLayer = Layer.mock(GitManager)({

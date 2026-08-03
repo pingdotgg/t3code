@@ -114,6 +114,14 @@ const readPersistedSnapshot = (baseDir: string) =>
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
 
+const reviewChangesContext = {
+  scope: "uncommitted" as const,
+  branch: null,
+  statusShort: " M file.ts",
+  untrackedFiles: [],
+  hasReviewableChanges: true,
+};
+
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
@@ -137,14 +145,8 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
       Layer.provide(
         Layer.mock(GitCore)({
           createWorktree: () => Effect.die("unexpected createWorktree call in CLI live test"),
-          resolveReviewChangesContext: () =>
-            Effect.succeed({
-              scope: "uncommitted" as const,
-              branch: null,
-              statusShort: " M file.ts",
-              untrackedFiles: [],
-              hasReviewableChanges: true,
-            }),
+          resolveReviewChangesContext: () => Effect.succeed(reviewChangesContext),
+          claimReviewChangesContext: () => Effect.succeed(reviewChangesContext),
         }),
       ),
       Layer.provide(

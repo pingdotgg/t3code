@@ -4326,8 +4326,16 @@ function ChatViewBody(
             return;
           }
 
+          const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
+          // The review prompt lives in thread detail, whose subscription is
+          // otherwise opened only once the route mounts — a round trip
+          // serialized after navigation. Opening it here overlaps it with the
+          // routability wait and the navigation itself.
+          const releaseThreadDetail = retainThreadDetailSubscription(
+            environmentId,
+            result.threadId,
+          );
           try {
-            const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
             await ensureRoutableServerThread(resultThreadRef);
             if (!isServerThread || result.threadId !== activeThread.id) {
               await navigate({
@@ -4349,6 +4357,11 @@ function ChatViewBody(
                     : "Open the workflow thread from the sidebar to continue.",
               }),
             );
+          } finally {
+            // The mounted route holds its own retain by now, so this only drops
+            // the temporary one. Released subscriptions stay warm rather than
+            // closing immediately, so a slow mount still reuses this one.
+            releaseThreadDetail();
           }
         })
         .catch((error: unknown) => {
@@ -4401,6 +4414,29 @@ function ChatViewBody(
     }
     return (await api.git.listOpenPullRequests({ cwd: gitCwd })).pullRequests;
   }, [environmentId, gitCwd]);
+
+  // A pull-request capture spends ~700ms in `gh pr view` + `gh pr diff` before
+  // the review thread can even be created. Firing it on hover lets the server
+  // park that work so the click that follows claims it. The RPC acknowledges
+  // only: the captured diff can be megabytes, and shipping it to a browser that
+  // would discard it costs more socket time than the click saves.
+  const prewarmReviewPullRequest = useCallback(
+    (pullRequestNumber: number) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !gitCwd) {
+        return;
+      }
+      void api.git
+        .prewarmReviewChangesContext({
+          cwd: gitCwd,
+          scope: "pull-request",
+          pullRequestNumber,
+        })
+        // Prewarming is best-effort; the click reports any real failure.
+        .catch(() => {});
+    },
+    [environmentId, gitCwd],
+  );
 
   // Copilot session startup is ~2.2s, and only `session/new` needs the thread.
   // Warming on intent lets the agent be ready by the time the run dispatches.
@@ -4597,6 +4633,7 @@ function ChatViewBody(
           onRunWorkflow={onRunWorkflow}
           onListOpenPullRequests={listOpenPullRequests}
           onPrewarmProviderSession={prewarmProviderSession}
+          onPrewarmReviewPullRequest={prewarmReviewPullRequest}
           onNavigateThread={navigateToThread}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}

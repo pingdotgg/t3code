@@ -131,6 +131,9 @@ export interface WsRpcClient {
     readonly resolveReviewChangesContext: RpcUnaryMethod<
       typeof WS_METHODS.gitResolveReviewChangesContext
     >;
+    readonly prewarmReviewChangesContext: RpcUnaryMethod<
+      typeof WS_METHODS.gitPrewarmReviewChangesContext
+    >;
   };
   readonly workflow: {
     readonly run: RpcUnaryMethod<typeof WS_METHODS.workflowRun>;
@@ -316,6 +319,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
       resolveReviewChangesContext: (input) =>
         transport.request((client) => client[WS_METHODS.gitResolveReviewChangesContext](input)),
+      prewarmReviewChangesContext: (input) =>
+        transport.request((client) => client[WS_METHODS.gitPrewarmReviewChangesContext](input)),
     },
     workflow: {
       run: (input) => transport.request((client) => client[WS_METHODS.workflowRun](input)),

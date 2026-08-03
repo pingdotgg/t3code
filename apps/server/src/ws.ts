@@ -498,7 +498,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 parseReviewChangesScope(override?.defaultInput?.scope) ??
                 reviewSettings.defaultScope ??
                 DEFAULT_REVIEW_CHANGES_SCOPE;
-              const reviewContext = yield* git.resolveReviewChangesContext({
+              const reviewContext = yield* git.claimReviewChangesContext({
                 cwd,
                 scope: requestedScope,
                 ...(requestedScope === "pull-request" &&
@@ -737,7 +737,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             parseReviewChangesScope(override?.defaultInput?.scope) ??
             reviewSettings.defaultScope ??
             DEFAULT_REVIEW_CHANGES_SCOPE;
-          const reviewContext = yield* git.resolveReviewChangesContext({
+          const reviewContext = yield* git.claimReviewChangesContext({
             cwd,
             scope: requestedScope,
             ...(requestedScope === "pull-request" &&
@@ -1693,6 +1693,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             WS_METHODS.gitResolveReviewChangesContext,
             git.resolveReviewChangesContext(input),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.gitPrewarmReviewChangesContext]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitPrewarmReviewChangesContext,
+            git.prewarmReviewChangesContext(input),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitListOpenPullRequests]: (input) =>

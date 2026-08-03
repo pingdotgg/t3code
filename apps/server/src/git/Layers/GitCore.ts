@@ -34,6 +34,10 @@ import {
 } from "../Services/GitCore.ts";
 import { GitHubCli } from "../Services/GitHubCli.ts";
 import {
+  makeReviewContextPrewarmCache,
+  reviewContextPrewarmKey,
+} from "../ReviewContextPrewarmCache.ts";
+import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
   parseRemoteRefWithRemoteNames,
@@ -1560,8 +1564,8 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     };
   });
 
-  const resolveReviewChangesContext: GitCoreShape["resolveReviewChangesContext"] = Effect.fn(
-    "resolveReviewChangesContext",
+  const captureReviewChangesContext: GitCoreShape["resolveReviewChangesContext"] = Effect.fn(
+    "captureReviewChangesContext",
   )(function* (input) {
     const details = yield* readReviewRepoContext(input.cwd);
     if (!details.isRepo) {
@@ -1757,6 +1761,27 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       }),
     };
   });
+
+  const reviewContextPrewarmCache = makeReviewContextPrewarmCache();
+
+  // Callers that need the diff as it is right now — the verifier that anchors a
+  // finished review, and every client request — must never see a parked
+  // capture, so only the prewarm/claim pair below consults the cache.
+  const resolveReviewChangesContext: GitCoreShape["resolveReviewChangesContext"] =
+    captureReviewChangesContext;
+
+  const prewarmReviewChangesContext: GitCoreShape["prewarmReviewChangesContext"] = (input) => {
+    const key = reviewContextPrewarmKey(input);
+    return key === null
+      ? Effect.void
+      : reviewContextPrewarmCache.prewarm(key, captureReviewChangesContext(input));
+  };
+
+  const claimReviewChangesContext: GitCoreShape["claimReviewChangesContext"] = (input) =>
+    reviewContextPrewarmCache.claim(
+      reviewContextPrewarmKey(input),
+      captureReviewChangesContext(input),
+    );
 
   const prepareCommitContext: GitCoreShape["prepareCommitContext"] = Effect.fn(
     "prepareCommitContext",
@@ -2603,6 +2628,8 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     initRepo,
     listLocalBranchNames,
     resolveReviewChangesContext,
+    prewarmReviewChangesContext,
+    claimReviewChangesContext,
   } satisfies GitCoreShape;
 });
 
