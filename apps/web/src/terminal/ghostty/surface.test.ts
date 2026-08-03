@@ -12,6 +12,7 @@ import {
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   shouldReportTerminalMouse,
+  GhosttyTerminalSurface,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
   terminalLinkAtColumn,
@@ -22,6 +23,32 @@ import {
   terminalWheelArrowData,
   terminalWheelDeltaRows,
 } from "./surface";
+
+describe("GhosttyTerminalSurface", () => {
+  it("does not restore stale selection coordinates after resetting the buffer", () => {
+    const setSelectionCalls: unknown[] = [];
+    const core = {
+      resetAndWrite: () => {},
+      selectAll: () => {},
+      selectionText: () => "fresh transcript",
+      setSelection: (...args: unknown[]) => setSelectionCalls.push(args),
+      clearSelection: () => {},
+    };
+    const surface = Object.create(GhosttyTerminalSurface.prototype) as GhosttyTerminalSurface;
+    Object.assign(surface as unknown as Record<string, unknown>, {
+      disposed: false,
+      core,
+      selectionAnchorScreen: { x: 8, y: 80 },
+      selectionEndScreen: { x: 12, y: 80 },
+      requestRender: () => {},
+    });
+
+    surface.resetAndWrite("fresh transcript");
+
+    expect(surface.getTranscript()).toBe("fresh transcript");
+    expect(setSelectionCalls).toEqual([]);
+  });
+});
 
 const cell = (text: string): GhosttyCell => ({
   text,

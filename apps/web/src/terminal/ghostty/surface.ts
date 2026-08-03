@@ -493,6 +493,8 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.selectionAnchorScreen = null;
+    this.selectionEndScreen = null;
     this.core.resetAndWrite(data);
     this.forceFullRender = true;
     this.scrollbarDirty = true;
