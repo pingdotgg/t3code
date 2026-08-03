@@ -1,5 +1,6 @@
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
@@ -91,6 +92,7 @@ import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts"
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -109,6 +111,7 @@ import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import { forkParked, ServerActivation } from "./serverActivation.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -396,8 +399,12 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provide(NetService.layer),
 );
 
-const RuntimeServicesLive = ServerRuntimeStartup.layer.pipe(
-  Layer.provideMerge(RuntimeDependenciesLive),
+const commandReadinessLayer = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.flatMap(ServerRuntimeStartup.ServerRuntimeStartup, (startup) =>
+      startup.awaitCommandReady.pipe(Effect.orDie, Effect.andThen(httpEffect)),
+    ),
+  { global: true },
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
@@ -418,6 +425,7 @@ export const makeRoutesLayer = Layer.mergeAll(
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
+  Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
 );
@@ -425,6 +433,14 @@ export const makeRoutesLayer = Layer.mergeAll(
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const activation = yield* Deferred.make<void>();
+    const awaitActivation = Deferred.await(activation);
+    const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
+    const runtimeStateParked = yield* Deferred.make<void>();
+    const tailscaleParked = yield* Deferred.make<void>();
+    const cloudLinkParked = yield* Deferred.make<void>();
+    const routesReady = yield* Deferred.make<void>();
+    const launcherLayer = ServiceLauncherClient.layer;
 
     yield* fixPath();
 
@@ -438,6 +454,8 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeStateLayer = Layer.effectDiscard(
       Effect.acquireRelease(
         Effect.gen(function* () {
+          yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
+          yield* awaitActivation;
           const server = yield* HttpServer.HttpServer;
           const address = server.address;
           if (typeof address === "string" || !("port" in address)) {
@@ -451,15 +469,26 @@ export const makeServerLayer = Layer.unwrap(
           yield* persistServerRuntimeState({
             path: config.serverRuntimeStatePath,
             state,
-          });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to persist server runtime state", { cause }),
+            ),
+          );
         }),
-        () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
+        () =>
+          clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to clear server runtime state", { cause }),
+            ),
+          ),
       ),
     );
     const tailscaleServeLayer = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
           Effect.acquireRelease(
             Effect.gen(function* () {
+              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
+              yield* awaitActivation;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
               if (typeof address === "string" || !("port" in address)) {
@@ -509,68 +538,80 @@ export const makeServerLayer = Layer.unwrap(
       : Layer.empty;
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
-        if (!hasCloudPublicConfig) return;
-        // Idle Cloudflare tunnels are billed, so a stopping server releases its
-        // tunnel; the persisted desired link brings one back — same hostname,
-        // fresh tunnel — when the environment starts again. Registered even
-        // when no link is desired yet: a client can link a running server, and
-        // that tunnel needs the same disposal on shutdown.
-        yield* Effect.addFinalizer(() =>
-          releaseManagedTunnelOnShutdown().pipe(
-            Effect.timeout("10 seconds"),
-            Effect.tap((released) =>
-              released ? Effect.logInfo("Released the managed tunnel on shutdown") : Effect.void,
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "Failed to release the managed tunnel on shutdown; the next link reuses it",
-                { cause },
-              ),
-            ),
-            Effect.asVoid,
-          ),
-        );
-        if (!(yield* CloudCliState.readCliDesiredCloudLink)) return;
-        const server = yield* HttpServer.HttpServer;
-        const address = server.address;
-        if (typeof address === "string" || !("port" in address)) return;
-        yield* Effect.forkScoped(
-          Effect.sleep("250 millis").pipe(
-            Effect.andThen(reconcileDesiredCloudLink(`http://127.0.0.1:${address.port}`)),
-            // On reboot this races NIC/DNS bring-up, so back off exponentially
-            // (capped at 30s) instead of burning all retries in a second.
-            // Bounded overall so a permanently broken setup still surfaces the
-            // warning below. Bad-request/unauthorized/conflict are
-            // deterministic failures (malformed origin, not linked yet, linked
-            // to a different cloud account) that no amount of retrying
-            // converges.
-            Effect.retry({
-              while: (error) =>
-                error._tag !== "EnvironmentHttpBadRequestError" &&
-                error._tag !== "EnvironmentHttpUnauthorizedError" &&
-                error._tag !== "EnvironmentHttpConflictError",
-              schedule: Schedule.exponential("1 second").pipe(
-                Schedule.modifyDelay(({ duration }) =>
-                  Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+        if (!hasCloudPublicConfig) {
+          yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
+          return;
+        }
+        yield* forkParked(
+          Effect.gen(function* () {
+            // Only an activated runtime owns the tunnel cleanup finalizer.
+            yield* Effect.addFinalizer(() =>
+              releaseManagedTunnelOnShutdown().pipe(
+                Effect.timeout("10 seconds"),
+                Effect.tap((released) =>
+                  released
+                    ? Effect.logInfo("Released the managed tunnel on shutdown")
+                    : Effect.void,
                 ),
-                Schedule.upTo({ duration: "10 minutes" }),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "Failed to release the managed tunnel on shutdown; the next link reuses it",
+                    { cause },
+                  ),
+                ),
+                Effect.asVoid,
               ),
-            }),
-            Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
-            Effect.catch((cause) =>
-              Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
-                cause,
+            );
+            if (!(yield* CloudCliState.readCliDesiredCloudLink)) return;
+            const server = yield* HttpServer.HttpServer;
+            const address = server.address;
+            if (typeof address === "string" || !("port" in address)) return;
+            yield* Effect.sleep("250 millis").pipe(
+              Effect.andThen(reconcileDesiredCloudLink(`http://127.0.0.1:${address.port}`)),
+              Effect.retry({
+                while: (error) =>
+                  error._tag !== "EnvironmentHttpBadRequestError" &&
+                  error._tag !== "EnvironmentHttpUnauthorizedError" &&
+                  error._tag !== "EnvironmentHttpConflictError",
+                schedule: Schedule.exponential("1 second").pipe(
+                  Schedule.modifyDelay(({ duration }) =>
+                    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                  ),
+                  Schedule.upTo({ duration: "10 minutes" }),
+                ),
               }),
-            ),
-          ),
+              Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+                  cause,
+                }),
+              ),
+            );
+          }),
         );
+        yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
       }),
     );
 
+    const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
+      activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
+      abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
+      awaitAuxiliaryParked: Effect.all(
+        [
+          Deferred.await(runtimeStateParked),
+          Deferred.await(cloudLinkParked),
+          Deferred.await(routesReady),
+          ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.asVoid),
+    }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
+
+    const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
+      disableLogger: !config.logWebSocketEvents,
+    }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
     const serverApplicationLayer = Layer.mergeAll(
-      HttpRouter.serve(makeRoutesLayer, {
-        disableLogger: !config.logWebSocketEvents,
-      }),
+      routesLayer,
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
@@ -578,7 +619,8 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
-      Layer.provideMerge(RuntimeServicesLive),
+      Layer.provideMerge(runtimeServicesLive),
+      Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpResponseCompressionLive),
       Layer.provideMerge(HttpServerLive),
@@ -590,5 +632,5 @@ export const makeServerLayer = Layer.unwrap(
   }),
 );
 
-// Important: Only `ServerConfig` should be provided by the CLI layer!!! Don't let other requirements leak into the launch layer.
+// The CLI supplies configuration.
 export const runServer = Layer.launch(makeServerLayer);
