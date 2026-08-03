@@ -131,26 +131,28 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       onCopy: (text) => void navigator.clipboard?.writeText(text),
       beforeKey: () => true,
       onLinkActivate: (text) => window.open(text, "_blank", "noopener,noreferrer"),
-    }).then((created) => {
-      if (disposed) {
-        created.dispose();
-        return;
-      }
-      surface = created;
-      terminalRef.current = created;
-      writtenHistoryRef.current = latestHistoryRef.current;
-      if (writtenHistoryRef.current) created.resetAndWrite(writtenHistoryRef.current);
-      setTranscript(created.getTranscript());
-      if (viewModeRef.current === "terminal") created.focus();
-    }).catch((cause: unknown) => {
-      if (disposed) return;
-      const message =
-        cause instanceof Error && cause.message.trim()
-          ? cause.message
-          : "Could not initialize the authentication terminal.";
-      setTerminalError(message);
-      void cancel({ environmentId: state.environmentId, input: { sessionId } });
-    });
+    })
+      .then((created) => {
+        if (disposed) {
+          created.dispose();
+          return;
+        }
+        surface = created;
+        terminalRef.current = created;
+        writtenHistoryRef.current = latestHistoryRef.current;
+        if (writtenHistoryRef.current) created.resetAndWrite(writtenHistoryRef.current);
+        setTranscript(created.getTranscript());
+        if (viewModeRef.current === "terminal") created.focus();
+      })
+      .catch((cause: unknown) => {
+        if (disposed) return;
+        const message =
+          cause instanceof Error && cause.message.trim()
+            ? cause.message
+            : "Could not initialize the authentication terminal.";
+        setTerminalError(message);
+        void cancel({ environmentId: state.environmentId, input: { sessionId } });
+      });
     return () => {
       disposed = true;
       surface?.dispose();
