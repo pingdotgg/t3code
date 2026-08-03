@@ -3,12 +3,10 @@ import { describe, expect, it } from "vitest";
 
 import { ServerProvider, ServerProviderListCommandsInput } from "./server.ts";
 
-const decodeServerProvider2 = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviderListCommandsInput = Schema.decodeUnknownSync(
   ServerProviderListCommandsInput,
 );
-
-const decodeServerProvider = decodeServerProvider2;
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
