@@ -370,7 +370,8 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         due,
         (waitpoint) =>
-          processWaitpoint(waitpoint, now).pipe(
+          DateTime.now.pipe(
+            Effect.flatMap((itemNow) => processWaitpoint(waitpoint, itemNow)),
             Effect.catchCause((cause) =>
               Effect.logWarning("github.waitpoint.process-failed", {
                 waitpointId: waitpoint.id,

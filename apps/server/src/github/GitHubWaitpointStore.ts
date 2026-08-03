@@ -60,7 +60,7 @@ export class GitHubWaitpointStoreError extends Schema.TaggedErrorClass<GitHubWai
   "GitHubWaitpointStoreError",
   {
     operation: Schema.String,
-    cause: Schema.Defect(),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -291,7 +291,6 @@ export const layer = Layer.effect(
           if (Option.isNone(stored)) {
             return yield* new GitHubWaitpointStoreError({
               operation: "register:reload",
-              cause: new Error("Inserted waitpoint could not be reloaded."),
             });
           }
           return stored.value;

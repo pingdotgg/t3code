@@ -307,6 +307,76 @@ it.effect("retries a failed delivery without rechecking the satisfied condition"
   }),
 );
 
+it.effect("refreshes the current time before processing each due waitpoint", () =>
+  Effect.gen(function* () {
+    const probeCalls = yield* Ref.make(0);
+    const storeLayer = GitHubWaitpointStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+    const probeLayer = Layer.succeed(
+      GitHubPullRequestProbe.GitHubPullRequestProbe,
+      GitHubPullRequestProbe.GitHubPullRequestProbe.of({
+        get: () =>
+          Ref.getAndUpdate(probeCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? TestClock.adjust("2 seconds").pipe(Effect.as(pending))
+                : Effect.succeed(pending),
+            ),
+          ),
+      }),
+    );
+    const threadsLayer = Layer.succeed(
+      ThreadManagementService.ThreadManagementService,
+      ThreadManagementService.ThreadManagementService.of({
+        getThreadProjection: () => Effect.succeed(projection()),
+        sendToThread: () => Effect.die("Neither unsatisfied nor expired waits should deliver."),
+      } as unknown as ThreadManagementService.ThreadManagementService["Service"]),
+    );
+    const cryptoLayer = Layer.succeed(
+      Crypto.Crypto,
+      Crypto.make({
+        randomBytes: (size) => new Uint8Array(size).fill(5),
+        digest: (_algorithm, bytes) => Effect.succeed(bytes),
+      }),
+    );
+    const serviceLayer = GitHubWaitpointService.layer.pipe(
+      Layer.provideMerge(storeLayer),
+      Layer.provideMerge(probeLayer),
+      Layer.provideMerge(threadsLayer),
+      Layer.provideMerge(cryptoLayer),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* GitHubWaitpointService.GitHubWaitpointService;
+      const store = yield* GitHubWaitpointStore.GitHubWaitpointStore;
+      const register = (id: string, deadlineAt: string) =>
+        store.register({
+          id: GitHubWaitpointId.make(id),
+          projectId: ProjectId.make("project-1"),
+          threadId: ThreadId.make("thread-1"),
+          originatingRunId: RunId.make("run-1"),
+          repository: "pingdotgg/t3code",
+          pullRequestNumber: 2829,
+          condition: "checks_settled",
+          baseline: pending,
+          continuationPrompt: "Continue after GitHub settles.",
+          nextPollAt: "1970-01-01T00:00:00.000Z",
+          deadlineAt,
+          createdAt: "1970-01-01T00:00:00.000Z",
+        });
+
+      yield* register("github-waitpoint:batch-a", "1970-01-01T01:00:00.000Z");
+      yield* register("github-waitpoint:batch-b", "1970-01-01T00:00:01.000Z");
+      yield* service.processDue;
+
+      const first = yield* service.get(GitHubWaitpointId.make("github-waitpoint:batch-a"));
+      const second = yield* service.get(GitHubWaitpointId.make("github-waitpoint:batch-b"));
+      assert.equal(first.state, "pending");
+      assert.equal(second.state, "expired");
+      assert.equal(yield* Ref.get(probeCalls), 1);
+    }).pipe(Effect.provide(Layer.mergeAll(serviceLayer, storeLayer, TestClock.layer())));
+  }),
+);
+
 it.effect("expires a wait when its originating run was interrupted", () =>
   Effect.gen(function* () {
     const probeCalls = yield* Ref.make(0);
