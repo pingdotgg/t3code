@@ -101,6 +101,10 @@ import { makeClientCommandDispatcher } from "./orchestration/clientCommandDispat
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { WorkflowCoordinatorReactor } from "./orchestration/Services/WorkflowCoordinatorReactor.ts";
+import {
+  filterActiveShellSnapshot,
+  toShellStreamEvent as projectShellStreamEvent,
+} from "./orchestration/shellStream.ts";
 import { isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
 import { collectActiveThreadSubtree } from "./orchestration/threadHierarchy.ts";
 import {
@@ -293,61 +297,16 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const toShellStreamEvent = (
         event: OrchestrationEvent,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
-        switch (event.type) {
-          case "project.created":
-          case "project.meta-updated":
-            return projectionSnapshotQuery.getProjectShellById(event.payload.projectId).pipe(
-              Effect.map((project) =>
-                Option.map(project, (nextProject) => ({
-                  kind: "project-upserted" as const,
-                  sequence: event.sequence,
-                  project: nextProject,
-                })),
-              ),
-              Effect.catch(() => Effect.succeed(Option.none())),
-            );
-          case "project.deleted":
-            return Effect.succeed(
-              Option.some({
-                kind: "project-removed" as const,
-                sequence: event.sequence,
-                projectId: event.payload.projectId,
-              }),
-            );
-          case "thread.deleted":
-            return Effect.succeed(
-              Option.some({
-                kind: "thread-removed" as const,
-                sequence: event.sequence,
-                threadId: event.payload.threadId,
-              }),
-            );
-          default:
-            if (event.aggregateKind === "workflow") {
-              return Effect.succeed(
-                Option.some({
-                  kind: "workflow-event" as const,
-                  sequence: event.sequence,
-                  event,
-                }),
-              );
-            }
-            if (event.aggregateKind !== "thread") {
-              return Effect.succeed(Option.none());
-            }
-            return projectionSnapshotQuery
-              .getThreadShellById(ThreadId.make(event.aggregateId))
-              .pipe(
-                Effect.map((thread) =>
-                  Option.map(thread, (nextThread) => ({
-                    kind: "thread-upserted" as const,
-                    sequence: event.sequence,
-                    thread: nextThread,
-                  })),
-                ),
-                Effect.catch(() => Effect.succeed(Option.none())),
-              );
+        if (event.aggregateKind === "workflow") {
+          return Effect.succeed(
+            Option.some({
+              kind: "workflow-event" as const,
+              sequence: event.sequence,
+              event,
+            }),
+          );
         }
+        return projectShellStreamEvent(projectionSnapshotQuery, event);
       };
 
       const loadServerConfig = Effect.gen(function* () {
@@ -1128,6 +1087,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
 
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.map(filterActiveShellSnapshot),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationGetSnapshotError({

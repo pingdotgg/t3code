@@ -1995,6 +1995,85 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("removes every archived nested thread from the shell stream", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread-archive-parent");
+      const childThreadId = ThreadId.make("thread-archive-child");
+      const archivedAt = "2026-01-01T00:00:01.000Z";
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const archiveEvent = (threadId: ThreadId, sequence: number) =>
+        ({
+          sequence,
+          eventId: EventId.make(`event-thread-archived-${threadId}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: archivedAt,
+          commandId: CommandId.make("cmd-thread-archive-parent"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-thread-archive-parent"),
+          metadata: {},
+          type: "thread.archived",
+          payload: {
+            threadId,
+            archivedAt,
+            updatedAt: archivedAt,
+          },
+        }) satisfies Extract<OrchestrationEvent, { type: "thread.archived" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("25 millis");
+                yield* PubSub.publish(liveEvents, archiveEvent(parentThreadId, 2));
+                yield* PubSub.publish(liveEvents, archiveEvent(childThreadId, 3));
+                return {
+                  snapshotSequence: 1,
+                  projects: [],
+                  threads: [
+                    makeDefaultOrchestrationThreadShell({
+                      id: parentThreadId,
+                      archivedAt,
+                    }),
+                    makeDefaultOrchestrationThreadShell({
+                      id: childThreadId,
+                      archivedAt,
+                    }),
+                  ],
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                };
+              }),
+            getThreadShellById: () =>
+              Effect.die("Archived threads must not be read from the active shell"),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+            Stream.take(3),
+            Stream.runCollect,
+          ),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "snapshot");
+      if (items[0]?.kind === "snapshot") {
+        assert.deepEqual(items[0].snapshot.threads, []);
+      }
+      assert.deepEqual(
+        items.slice(1).map((item) => (item.kind === "thread-removed" ? item.threadId : null)),
+        [parentThreadId, childThreadId],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("serves versioned mobile descriptor and auth wrappers", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
