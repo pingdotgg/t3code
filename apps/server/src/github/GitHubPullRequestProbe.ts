@@ -193,36 +193,35 @@ export function evaluateGitHubWaitpoint(
   }
 }
 
-export const layer = Layer.effect(
-  GitHubPullRequestProbe,
-  Effect.gen(function* () {
-    const gitHubCli = yield* GitHubCli.GitHubCli;
-    return GitHubPullRequestProbe.of({
-      get: Effect.fn("GitHubPullRequestProbe.get")(function* (input) {
-        const output = yield* gitHubCli.execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "view",
-            String(input.pullRequestNumber),
-            "--repo",
-            input.repository,
-            "--json",
-            WATCH_FIELDS,
-          ],
-        });
-        const raw = yield* decodeRawSnapshot(output.stdout).pipe(
-          Effect.mapError(
-            (cause) =>
-              new GitHubPullRequestProbeDecodeError({
-                repository: input.repository,
-                pullRequestNumber: input.pullRequestNumber,
-                cause,
-              }),
-          ),
-        );
-        return normalizeSnapshot(raw);
-      }),
-    });
-  }),
-);
+export const make = Effect.gen(function* () {
+  const gitHubCli = yield* GitHubCli.GitHubCli;
+  return GitHubPullRequestProbe.of({
+    get: Effect.fn("GitHubPullRequestProbe.get")(function* (input) {
+      const output = yield* gitHubCli.execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          String(input.pullRequestNumber),
+          "--repo",
+          input.repository,
+          "--json",
+          WATCH_FIELDS,
+        ],
+      });
+      const raw = yield* decodeRawSnapshot(output.stdout).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitHubPullRequestProbeDecodeError({
+              repository: input.repository,
+              pullRequestNumber: input.pullRequestNumber,
+              cause,
+            }),
+        ),
+      );
+      return normalizeSnapshot(raw);
+    }),
+  });
+});
+
+export const layer = Layer.effect(GitHubPullRequestProbe, make);

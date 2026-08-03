@@ -105,5 +105,12 @@ it.effect("fences a recovered delivery lease from stale workers", () =>
       assert.equal(stored.value.attemptCount, 2);
       assert.equal(stored.value.completedAt, "2026-07-30T12:01:02.000Z");
     }
+
+    const cancelled = yield* store.cancel({
+      id,
+      threadId: ThreadId.make("thread-1"),
+      completedAt: "2026-07-30T12:01:03.000Z",
+    });
+    assert.isTrue(Option.isNone(cancelled));
   }).pipe(Effect.provide(storeLayer)),
 );

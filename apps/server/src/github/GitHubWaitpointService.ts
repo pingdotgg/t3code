@@ -129,308 +129,298 @@ function continuationIds(waitpointId: GitHubWaitpointId): {
   };
 }
 
-export const layer = Layer.effect(
-  GitHubWaitpointService,
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const probe = yield* GitHubPullRequestProbe.GitHubPullRequestProbe;
-    const store = yield* GitHubWaitpointStore.GitHubWaitpointStore;
-    const threads = yield* ThreadManagementService.ThreadManagementService;
+export const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const probe = yield* GitHubPullRequestProbe.GitHubPullRequestProbe;
+  const store = yield* GitHubWaitpointStore.GitHubWaitpointStore;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
 
-    const get: GitHubWaitpointService["Service"]["get"] = (id) =>
-      store.get(id).pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(new GitHubWaitpointNotFoundError({ waitpointId: id })),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
-
-    const expirePending = (
-      waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
-      now: string,
-      reason: string,
-    ) =>
-      store.expirePending({
-        id: waitpoint.id,
-        completedAt: now,
-        lastError: reason,
-      });
-
-    const reschedulePending = (
-      waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
-      now: DateTime.Utc,
-      seconds: number,
-      lastError: string | null,
-    ) =>
-      store.reschedulePending({
-        id: waitpoint.id,
-        nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds })),
-        updatedAt: DateTime.formatIso(now),
-        lastError,
-      });
-
-    const deliverClaim = Effect.fn("GitHubWaitpointService.deliverClaim")(function* (
-      waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
-      leaseToken: string,
-      now: DateTime.Utc,
-    ) {
-      const nowIso = DateTime.formatIso(now);
-      const prompt = waitpoint.deliveryPrompt;
-      if (prompt === null) {
-        yield* store.expireClaim({
-          id: waitpoint.id,
-          leaseToken,
-          completedAt: nowIso,
-          lastError: "Claimed waitpoint has no durable delivery prompt.",
-        });
-        return;
-      }
-      const ids = continuationIds(waitpoint.id);
-      const delivered = yield* Effect.result(
-        threads.sendToThread({
-          projectId: waitpoint.projectId,
-          commandId: ids.commandId,
-          threadId: waitpoint.threadId,
-          messageId: ids.messageId,
-          text: prompt,
-          attachments: [],
-          mode: "queue",
-          createdBy: "system",
-          creationSource: "server",
+  const get: GitHubWaitpointService["Service"]["get"] = (id) =>
+    store.get(id).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new GitHubWaitpointNotFoundError({ waitpointId: id })),
+          onSome: Effect.succeed,
         }),
-      );
-      if (Result.isFailure(delivered)) {
-        yield* store.rescheduleClaim({
-          id: waitpoint.id,
-          leaseToken,
-          nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds: DELIVERY_RETRY_SECONDS })),
-          updatedAt: nowIso,
-          lastError: errorMessage(delivered.failure),
-        });
-        return;
-      }
-      const marked = yield* store.markDelivered({
+      ),
+    );
+
+  const expirePending = (
+    waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
+    now: string,
+    reason: string,
+  ) =>
+    store.expirePending({
+      id: waitpoint.id,
+      completedAt: now,
+      lastError: reason,
+    });
+
+  const reschedulePending = (
+    waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
+    now: DateTime.Utc,
+    seconds: number,
+    lastError: string | null,
+  ) =>
+    store.reschedulePending({
+      id: waitpoint.id,
+      nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds })),
+      updatedAt: DateTime.formatIso(now),
+      lastError,
+    });
+
+  const deliverClaim = Effect.fn("GitHubWaitpointService.deliverClaim")(function* (
+    waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
+    leaseToken: string,
+    now: DateTime.Utc,
+  ) {
+    const nowIso = DateTime.formatIso(now);
+    const prompt = waitpoint.deliveryPrompt;
+    if (prompt === null) {
+      yield* store.expireClaim({
         id: waitpoint.id,
         leaseToken,
         completedAt: nowIso,
+        lastError: "Claimed waitpoint has no durable delivery prompt.",
       });
-      if (marked) {
-        yield* Effect.logInfo("github.waitpoint.delivered", {
-          waitpointId: waitpoint.id,
-          threadId: waitpoint.threadId,
-          repository: waitpoint.repository,
-          pullRequestNumber: waitpoint.pullRequestNumber,
-          condition: waitpoint.condition,
-        });
-      }
-    });
-
-    const claimAndDeliver = Effect.fn("GitHubWaitpointService.claimAndDeliver")(function* (
-      waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
-      deliveryPrompt: string,
-      now: DateTime.Utc,
-    ) {
-      const leaseToken = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError(
-          (cause) =>
-            new GitHubWaitpointServiceError({
-              operation: "claim:lease-token",
-              cause,
-            }),
-        ),
-      );
-      const claimed = yield* store.claim({
+      return;
+    }
+    const ids = continuationIds(waitpoint.id);
+    const delivered = yield* Effect.result(
+      threads.sendToThread({
+        projectId: waitpoint.projectId,
+        commandId: ids.commandId,
+        threadId: waitpoint.threadId,
+        messageId: ids.messageId,
+        text: prompt,
+        attachments: [],
+        mode: "queue",
+        createdBy: "system",
+        creationSource: "server",
+      }),
+    );
+    if (Result.isFailure(delivered)) {
+      yield* store.rescheduleClaim({
         id: waitpoint.id,
-        now: DateTime.formatIso(now),
         leaseToken,
-        leaseExpiresAt: DateTime.formatIso(DateTime.add(now, { seconds: DELIVERY_LEASE_SECONDS })),
-        deliveryPrompt,
+        nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds: DELIVERY_RETRY_SECONDS })),
+        updatedAt: nowIso,
+        lastError: errorMessage(delivered.failure),
       });
-      if (Option.isNone(claimed)) return;
-      yield* deliverClaim(claimed.value, leaseToken, now);
+      return;
+    }
+    const marked = yield* store.markDelivered({
+      id: waitpoint.id,
+      leaseToken,
+      completedAt: nowIso,
     });
+    if (marked) {
+      yield* Effect.logInfo("github.waitpoint.delivered", {
+        waitpointId: waitpoint.id,
+        threadId: waitpoint.threadId,
+        repository: waitpoint.repository,
+        pullRequestNumber: waitpoint.pullRequestNumber,
+        condition: waitpoint.condition,
+      });
+    }
+  });
 
-    const processPending = Effect.fn("GitHubWaitpointService.processPending")(function* (
-      waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
-      now: DateTime.Utc,
+  const claimAndDeliver = Effect.fn("GitHubWaitpointService.claimAndDeliver")(function* (
+    waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
+    deliveryPrompt: string,
+    now: DateTime.Utc,
+  ) {
+    const leaseToken = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitHubWaitpointServiceError({
+            operation: "claim:lease-token",
+            cause,
+          }),
+      ),
+    );
+    const claimed = yield* store.claim({
+      id: waitpoint.id,
+      now: DateTime.formatIso(now),
+      leaseToken,
+      leaseExpiresAt: DateTime.formatIso(DateTime.add(now, { seconds: DELIVERY_LEASE_SECONDS })),
+      deliveryPrompt,
+    });
+    if (Option.isNone(claimed)) return;
+    yield* deliverClaim(claimed.value, leaseToken, now);
+  });
+
+  const processPending = Effect.fn("GitHubWaitpointService.processPending")(function* (
+    waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
+    now: DateTime.Utc,
+  ) {
+    const nowIso = DateTime.formatIso(now);
+    if (waitpoint.deadlineAt <= nowIso) {
+      yield* expirePending(waitpoint, nowIso, "GitHub waitpoint deadline elapsed.");
+      return;
+    }
+
+    const projectionResult = yield* Effect.result(threads.getThreadProjection(waitpoint.threadId));
+    if (Result.isFailure(projectionResult)) {
+      yield* reschedulePending(
+        waitpoint,
+        now,
+        ACTIVE_RUN_RETRY_SECONDS,
+        errorMessage(projectionResult.failure),
+      );
+      return;
+    }
+    const projection = projectionResult.success;
+    if (
+      projection.thread.projectId !== waitpoint.projectId ||
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null
     ) {
-      const nowIso = DateTime.formatIso(now);
-      if (waitpoint.deadlineAt <= nowIso) {
-        yield* expirePending(waitpoint, nowIso, "GitHub waitpoint deadline elapsed.");
-        return;
-      }
+      yield* expirePending(waitpoint, nowIso, "Thread no longer exists or is archived.");
+      return;
+    }
+    const originatingRun = projection.runs.find((run) => run.id === waitpoint.originatingRunId);
+    if (originatingRun === undefined) {
+      yield* expirePending(waitpoint, nowIso, "Originating run no longer exists.");
+      return;
+    }
+    if (originatingRun.status === "queued" || ThreadManagementService.isActiveRun(originatingRun)) {
+      yield* reschedulePending(waitpoint, now, ACTIVE_RUN_RETRY_SECONDS, null);
+      return;
+    }
+    if (originatingRun.status !== "completed") {
+      yield* expirePending(waitpoint, nowIso, `Originating run ended as ${originatingRun.status}.`);
+      return;
+    }
+    if (projection.runs.some((run) => run.ordinal > originatingRun.ordinal)) {
+      yield* expirePending(
+        waitpoint,
+        nowIso,
+        "Thread advanced after this GitHub waitpoint was registered.",
+      );
+      return;
+    }
 
-      const projectionResult = yield* Effect.result(
-        threads.getThreadProjection(waitpoint.threadId),
+    const observed = yield* Effect.result(
+      probe.get({
+        cwd: process.cwd(),
+        repository: waitpoint.repository,
+        pullRequestNumber: waitpoint.pullRequestNumber,
+      }),
+    );
+    if (Result.isFailure(observed)) {
+      yield* reschedulePending(
+        waitpoint,
+        now,
+        POLL_INTERVAL_SECONDS,
+        errorMessage(observed.failure),
       );
-      if (Result.isFailure(projectionResult)) {
-        yield* reschedulePending(
-          waitpoint,
-          now,
-          ACTIVE_RUN_RETRY_SECONDS,
-          errorMessage(projectionResult.failure),
-        );
-        return;
-      }
-      const projection = projectionResult.success;
-      if (
-        projection.thread.projectId !== waitpoint.projectId ||
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null
-      ) {
-        yield* expirePending(waitpoint, nowIso, "Thread no longer exists or is archived.");
-        return;
-      }
-      const originatingRun = projection.runs.find((run) => run.id === waitpoint.originatingRunId);
-      if (originatingRun === undefined) {
-        yield* expirePending(waitpoint, nowIso, "Originating run no longer exists.");
-        return;
-      }
-      if (
-        originatingRun.status === "queued" ||
-        ThreadManagementService.isActiveRun(originatingRun)
-      ) {
-        yield* reschedulePending(waitpoint, now, ACTIVE_RUN_RETRY_SECONDS, null);
-        return;
-      }
-      if (originatingRun.status !== "completed") {
-        yield* expirePending(
-          waitpoint,
-          nowIso,
-          `Originating run ended as ${originatingRun.status}.`,
-        );
-        return;
-      }
-      if (projection.runs.some((run) => run.ordinal > originatingRun.ordinal)) {
-        yield* expirePending(
-          waitpoint,
-          nowIso,
-          "Thread advanced after this GitHub waitpoint was registered.",
-        );
-        return;
-      }
+      return;
+    }
+    const evaluation = GitHubPullRequestProbe.evaluateGitHubWaitpoint(
+      waitpoint.condition,
+      waitpoint.baseline,
+      observed.success,
+    );
+    if (!evaluation.satisfied) {
+      yield* reschedulePending(waitpoint, now, POLL_INTERVAL_SECONDS, null);
+      return;
+    }
+    yield* claimAndDeliver(
+      waitpoint,
+      `${waitpoint.continuationPrompt} GitHub observation: ${evaluation.summary}`,
+      now,
+    );
+  });
 
-      const observed = yield* Effect.result(
-        probe.get({
-          cwd: process.cwd(),
-          repository: waitpoint.repository,
-          pullRequestNumber: waitpoint.pullRequestNumber,
-        }),
-      );
-      if (Result.isFailure(observed)) {
-        yield* reschedulePending(
-          waitpoint,
-          now,
-          POLL_INTERVAL_SECONDS,
-          errorMessage(observed.failure),
-        );
-        return;
-      }
-      const evaluation = GitHubPullRequestProbe.evaluateGitHubWaitpoint(
-        waitpoint.condition,
-        waitpoint.baseline,
-        observed.success,
-      );
-      if (!evaluation.satisfied) {
-        yield* reschedulePending(waitpoint, now, POLL_INTERVAL_SECONDS, null);
-        return;
-      }
+  const processWaitpoint = Effect.fn("GitHubWaitpointService.processWaitpoint")(function* (
+    waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
+    now: DateTime.Utc,
+  ) {
+    if (waitpoint.state === "delivering") {
       yield* claimAndDeliver(
         waitpoint,
-        `${waitpoint.continuationPrompt} GitHub observation: ${evaluation.summary}`,
+        waitpoint.deliveryPrompt ?? waitpoint.continuationPrompt,
         now,
       );
-    });
+      return;
+    }
+    if (waitpoint.state === "pending") {
+      yield* processPending(waitpoint, now);
+    }
+  });
 
-    const processWaitpoint = Effect.fn("GitHubWaitpointService.processWaitpoint")(function* (
-      waitpoint: GitHubWaitpointStore.GitHubWaitpoint,
-      now: DateTime.Utc,
-    ) {
-      if (waitpoint.state === "delivering") {
-        yield* claimAndDeliver(
-          waitpoint,
-          waitpoint.deliveryPrompt ?? waitpoint.continuationPrompt,
-          now,
-        );
-        return;
-      }
-      if (waitpoint.state === "pending") {
-        yield* processPending(waitpoint, now);
-      }
+  const processDue = Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const due = yield* store.listDue({
+      now: DateTime.formatIso(now),
+      limit: DUE_BATCH_SIZE,
     });
-
-    const processDue = Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const due = yield* store.listDue({
-        now: DateTime.formatIso(now),
-        limit: DUE_BATCH_SIZE,
-      });
-      yield* Effect.forEach(
-        due,
-        (waitpoint) =>
-          DateTime.now.pipe(
-            Effect.flatMap((itemNow) => processWaitpoint(waitpoint, itemNow)),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("github.waitpoint.process-failed", {
-                waitpointId: waitpoint.id,
-                cause,
-              }),
-            ),
+    yield* Effect.forEach(
+      due,
+      (waitpoint) =>
+        DateTime.now.pipe(
+          Effect.flatMap((itemNow) => processWaitpoint(waitpoint, itemNow)),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("github.waitpoint.process-failed", {
+              waitpointId: waitpoint.id,
+              cause,
+            }),
           ),
-        { concurrency: 1, discard: true },
-      );
-    });
+        ),
+      { concurrency: 1, discard: true },
+    );
+  });
 
-    return GitHubWaitpointService.of({
-      register: Effect.fn("GitHubWaitpointService.register")(function* (input) {
-        const existing = yield* store.get(input.id);
-        if (Option.isSome(existing)) return existing.value;
-        const baseline = yield* probe.get({
-          cwd: process.cwd(),
-          repository: input.repository,
-          pullRequestNumber: input.pullRequestNumber,
-        });
-        const now = yield* DateTime.now;
-        const createdAt = DateTime.formatIso(now);
-        const waitpoint = yield* store.register({
-          id: input.id,
-          projectId: input.projectId,
-          threadId: input.threadId,
-          originatingRunId: input.originatingRunId,
-          repository: input.repository,
-          pullRequestNumber: input.pullRequestNumber,
-          condition: input.condition,
-          baseline,
-          continuationPrompt: continuationPrompt(input),
-          nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds: FIRST_POLL_DELAY_SECONDS })),
-          deadlineAt: DateTime.formatIso(DateTime.add(now, { minutes: input.timeoutMinutes })),
-          createdAt,
-        });
-        yield* Effect.logInfo("github.waitpoint.registered", {
-          waitpointId: waitpoint.id,
-          threadId: waitpoint.threadId,
-          repository: waitpoint.repository,
-          pullRequestNumber: waitpoint.pullRequestNumber,
-          condition: waitpoint.condition,
-        });
-        return waitpoint;
-      }),
-      get,
-      listForThread: store.listForThread,
-      cancel: Effect.fn("GitHubWaitpointService.cancel")(function* ({ id, threadId }) {
-        const now = DateTime.formatIso(yield* DateTime.now);
-        const waitpoint = yield* store.cancel({ id, threadId, completedAt: now });
-        if (Option.isNone(waitpoint)) {
-          return yield* new GitHubWaitpointNotFoundError({ waitpointId: id, threadId });
-        }
-        return waitpoint.value;
-      }),
-      processDue,
-    });
-  }),
-);
+  return GitHubWaitpointService.of({
+    register: Effect.fn("GitHubWaitpointService.register")(function* (input) {
+      const existing = yield* store.get(input.id);
+      if (Option.isSome(existing)) return existing.value;
+      const baseline = yield* probe.get({
+        cwd: process.cwd(),
+        repository: input.repository,
+        pullRequestNumber: input.pullRequestNumber,
+      });
+      const now = yield* DateTime.now;
+      const createdAt = DateTime.formatIso(now);
+      const waitpoint = yield* store.register({
+        id: input.id,
+        projectId: input.projectId,
+        threadId: input.threadId,
+        originatingRunId: input.originatingRunId,
+        repository: input.repository,
+        pullRequestNumber: input.pullRequestNumber,
+        condition: input.condition,
+        baseline,
+        continuationPrompt: continuationPrompt(input),
+        nextPollAt: DateTime.formatIso(DateTime.add(now, { seconds: FIRST_POLL_DELAY_SECONDS })),
+        deadlineAt: DateTime.formatIso(DateTime.add(now, { minutes: input.timeoutMinutes })),
+        createdAt,
+      });
+      yield* Effect.logInfo("github.waitpoint.registered", {
+        waitpointId: waitpoint.id,
+        threadId: waitpoint.threadId,
+        repository: waitpoint.repository,
+        pullRequestNumber: waitpoint.pullRequestNumber,
+        condition: waitpoint.condition,
+      });
+      return waitpoint;
+    }),
+    get,
+    listForThread: store.listForThread,
+    cancel: Effect.fn("GitHubWaitpointService.cancel")(function* ({ id, threadId }) {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const waitpoint = yield* store.cancel({ id, threadId, completedAt: now });
+      if (Option.isNone(waitpoint)) {
+        return yield* new GitHubWaitpointNotFoundError({ waitpointId: id, threadId });
+      }
+      return waitpoint.value;
+    }),
+    processDue,
+  });
+});
+
+export const layer = Layer.effect(GitHubWaitpointService, make);
 
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {

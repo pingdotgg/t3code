@@ -212,36 +212,34 @@ export class GitHubWaitpointStore extends Context.Service<
   }
 >()("t3/github/GitHubWaitpointStore") {}
 
-export const layer = Layer.effect(
-  GitHubWaitpointStore,
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+export const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
 
-    const get = Effect.fn("GitHubWaitpointStore.get")(
-      function* (id: GitHubWaitpointId) {
-        const rows = yield* sql<GitHubWaitpointRow>`
+  const get = Effect.fn("GitHubWaitpointStore.get")(
+    function* (id: GitHubWaitpointId) {
+      const rows = yield* sql<GitHubWaitpointRow>`
         SELECT ${sql.unsafe(columns)}
         FROM github_waitpoints
         WHERE waitpoint_id = ${id}
       `;
-        const row = rows[0];
-        return row === undefined
-          ? Option.none<GitHubWaitpoint>()
-          : Option.some(yield* decodeRow(row));
-      },
-      Effect.mapError(storeError("get")),
-    );
+      const row = rows[0];
+      return row === undefined
+        ? Option.none<GitHubWaitpoint>()
+        : Option.some(yield* decodeRow(row));
+    },
+    Effect.mapError(storeError("get")),
+  );
 
-    const decodeRows = (rows: ReadonlyArray<GitHubWaitpointRow>) =>
-      Effect.forEach(rows, decodeRow, { concurrency: 1 });
+  const decodeRows = (rows: ReadonlyArray<GitHubWaitpointRow>) =>
+    Effect.forEach(rows, decodeRow, { concurrency: 1 });
 
-    const changed = (rows: ReadonlyArray<unknown>) => rows.length > 0;
+  const changed = (rows: ReadonlyArray<unknown>) => rows.length > 0;
 
-    return GitHubWaitpointStore.of({
-      register: Effect.fn("GitHubWaitpointStore.register")(
-        function* (input) {
-          const baseline = yield* encodeBaseline(input.baseline);
-          yield* sql`
+  return GitHubWaitpointStore.of({
+    register: Effect.fn("GitHubWaitpointStore.register")(
+      function* (input) {
+        const baseline = yield* encodeBaseline(input.baseline);
+        yield* sql`
             INSERT INTO github_waitpoints (
               waitpoint_id,
               project_id,
@@ -287,32 +285,32 @@ export const layer = Layer.effect(
             )
             ON CONFLICT (waitpoint_id) DO NOTHING
           `;
-          const stored = yield* get(input.id);
-          if (Option.isNone(stored)) {
-            return yield* new GitHubWaitpointStoreError({
-              operation: "register:reload",
-            });
-          }
-          return stored.value;
-        },
-        Effect.mapError(storeError("register")),
-      ),
-      get,
-      listForThread: Effect.fn("GitHubWaitpointStore.listForThread")(
-        function* (threadId) {
-          const rows = yield* sql<GitHubWaitpointRow>`
+        const stored = yield* get(input.id);
+        if (Option.isNone(stored)) {
+          return yield* new GitHubWaitpointStoreError({
+            operation: "register:reload",
+          });
+        }
+        return stored.value;
+      },
+      Effect.mapError(storeError("register")),
+    ),
+    get,
+    listForThread: Effect.fn("GitHubWaitpointStore.listForThread")(
+      function* (threadId) {
+        const rows = yield* sql<GitHubWaitpointRow>`
             SELECT ${sql.unsafe(columns)}
             FROM github_waitpoints
             WHERE thread_id = ${threadId}
             ORDER BY created_at DESC, waitpoint_id ASC
           `;
-          return yield* decodeRows(rows);
-        },
-        Effect.mapError(storeError("listForThread")),
-      ),
-      listDue: Effect.fn("GitHubWaitpointStore.listDue")(
-        function* ({ now, limit }) {
-          const rows = yield* sql<GitHubWaitpointRow>`
+        return yield* decodeRows(rows);
+      },
+      Effect.mapError(storeError("listForThread")),
+    ),
+    listDue: Effect.fn("GitHubWaitpointStore.listDue")(
+      function* ({ now, limit }) {
+        const rows = yield* sql<GitHubWaitpointRow>`
             SELECT ${sql.unsafe(columns)}
             FROM github_waitpoints
             WHERE (state = 'pending' AND next_poll_at <= ${now})
@@ -324,13 +322,13 @@ export const layer = Layer.effect(
             ORDER BY next_poll_at ASC, created_at ASC, waitpoint_id ASC
             LIMIT ${limit}
           `;
-          return yield* decodeRows(rows);
-        },
-        Effect.mapError(storeError("listDue")),
-      ),
-      claim: Effect.fn("GitHubWaitpointStore.claim")(
-        function* ({ id, now, leaseToken, leaseExpiresAt, deliveryPrompt }) {
-          const rows = yield* sql<GitHubWaitpointRow>`
+        return yield* decodeRows(rows);
+      },
+      Effect.mapError(storeError("listDue")),
+    ),
+    claim: Effect.fn("GitHubWaitpointStore.claim")(
+      function* ({ id, now, leaseToken, leaseExpiresAt, deliveryPrompt }) {
+        const rows = yield* sql<GitHubWaitpointRow>`
             UPDATE github_waitpoints
             SET
               state = 'delivering',
@@ -350,16 +348,16 @@ export const layer = Layer.effect(
               )
             RETURNING ${sql.unsafe(columns)}
           `;
-          const row = rows[0];
-          return row === undefined
-            ? Option.none<GitHubWaitpoint>()
-            : Option.some(yield* decodeRow(row));
-        },
-        Effect.mapError(storeError("claim")),
-      ),
-      reschedulePending: Effect.fn("GitHubWaitpointStore.reschedulePending")(
-        function* ({ id, nextPollAt, updatedAt, lastError }) {
-          const rows = yield* sql`
+        const row = rows[0];
+        return row === undefined
+          ? Option.none<GitHubWaitpoint>()
+          : Option.some(yield* decodeRow(row));
+      },
+      Effect.mapError(storeError("claim")),
+    ),
+    reschedulePending: Effect.fn("GitHubWaitpointStore.reschedulePending")(
+      function* ({ id, nextPollAt, updatedAt, lastError }) {
+        const rows = yield* sql`
             UPDATE github_waitpoints
             SET
               next_poll_at = ${nextPollAt},
@@ -368,13 +366,13 @@ export const layer = Layer.effect(
             WHERE waitpoint_id = ${id} AND state = 'pending'
             RETURNING waitpoint_id
           `;
-          return changed(rows);
-        },
-        Effect.mapError(storeError("reschedulePending")),
-      ),
-      expirePending: Effect.fn("GitHubWaitpointStore.expirePending")(
-        function* ({ id, completedAt, lastError }) {
-          const rows = yield* sql`
+        return changed(rows);
+      },
+      Effect.mapError(storeError("reschedulePending")),
+    ),
+    expirePending: Effect.fn("GitHubWaitpointStore.expirePending")(
+      function* ({ id, completedAt, lastError }) {
+        const rows = yield* sql`
             UPDATE github_waitpoints
             SET
               state = 'expired',
@@ -384,13 +382,13 @@ export const layer = Layer.effect(
             WHERE waitpoint_id = ${id} AND state = 'pending'
             RETURNING waitpoint_id
           `;
-          return changed(rows);
-        },
-        Effect.mapError(storeError("expirePending")),
-      ),
-      rescheduleClaim: Effect.fn("GitHubWaitpointStore.rescheduleClaim")(
-        function* ({ id, leaseToken, nextPollAt, updatedAt, lastError }) {
-          const rows = yield* sql`
+        return changed(rows);
+      },
+      Effect.mapError(storeError("expirePending")),
+    ),
+    rescheduleClaim: Effect.fn("GitHubWaitpointStore.rescheduleClaim")(
+      function* ({ id, leaseToken, nextPollAt, updatedAt, lastError }) {
+        const rows = yield* sql`
             UPDATE github_waitpoints
             SET
               next_poll_at = ${nextPollAt},
@@ -402,13 +400,13 @@ export const layer = Layer.effect(
               AND delivery_lease_token = ${leaseToken}
             RETURNING waitpoint_id
           `;
-          return changed(rows);
-        },
-        Effect.mapError(storeError("rescheduleClaim")),
-      ),
-      expireClaim: Effect.fn("GitHubWaitpointStore.expireClaim")(
-        function* ({ id, leaseToken, completedAt, lastError }) {
-          const rows = yield* sql`
+        return changed(rows);
+      },
+      Effect.mapError(storeError("rescheduleClaim")),
+    ),
+    expireClaim: Effect.fn("GitHubWaitpointStore.expireClaim")(
+      function* ({ id, leaseToken, completedAt, lastError }) {
+        const rows = yield* sql`
             UPDATE github_waitpoints
             SET
               state = 'expired',
@@ -422,13 +420,13 @@ export const layer = Layer.effect(
               AND delivery_lease_token = ${leaseToken}
             RETURNING waitpoint_id
           `;
-          return changed(rows);
-        },
-        Effect.mapError(storeError("expireClaim")),
-      ),
-      markDelivered: Effect.fn("GitHubWaitpointStore.markDelivered")(
-        function* ({ id, leaseToken, completedAt }) {
-          const rows = yield* sql`
+        return changed(rows);
+      },
+      Effect.mapError(storeError("expireClaim")),
+    ),
+    markDelivered: Effect.fn("GitHubWaitpointStore.markDelivered")(
+      function* ({ id, leaseToken, completedAt }) {
+        const rows = yield* sql`
             UPDATE github_waitpoints
             SET
               state = 'delivered',
@@ -442,13 +440,13 @@ export const layer = Layer.effect(
               AND delivery_lease_token = ${leaseToken}
             RETURNING waitpoint_id
           `;
-          return changed(rows);
-        },
-        Effect.mapError(storeError("markDelivered")),
-      ),
-      cancel: Effect.fn("GitHubWaitpointStore.cancel")(
-        function* ({ id, threadId, completedAt }) {
-          yield* sql`
+        return changed(rows);
+      },
+      Effect.mapError(storeError("markDelivered")),
+    ),
+    cancel: Effect.fn("GitHubWaitpointStore.cancel")(
+      function* ({ id, threadId, completedAt }) {
+        const rows = yield* sql<GitHubWaitpointRow>`
             UPDATE github_waitpoints
             SET
               state = 'cancelled',
@@ -458,12 +456,16 @@ export const layer = Layer.effect(
             WHERE waitpoint_id = ${id}
               AND thread_id = ${threadId}
               AND state = 'pending'
+            RETURNING ${sql.unsafe(columns)}
           `;
-          const stored = yield* get(id);
-          return Option.filter(stored, (waitpoint) => waitpoint.threadId === threadId);
-        },
-        Effect.mapError(storeError("cancel")),
-      ),
-    });
-  }),
-);
+        const row = rows[0];
+        return row === undefined
+          ? Option.none<GitHubWaitpoint>()
+          : Option.some(yield* decodeRow(row));
+      },
+      Effect.mapError(storeError("cancel")),
+    ),
+  });
+});
+
+export const layer = Layer.effect(GitHubWaitpointStore, make);
