@@ -994,6 +994,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is not archived.`,
       });
     }
+    if (
+      (command.type === "thread.settle" ||
+        command.type === "thread.unsettle" ||
+        command.type === "thread.snooze" ||
+        command.type === "thread.unsnooze") &&
+      thread.archivedAt !== null
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is archived.`,
+      });
+    }
+    if (
+      command.type === "thread.settle" &&
+      (projection.runs.some((run) =>
+        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+      ) ||
+        projection.runtimeRequests.some((request) => request.status === "pending"))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} has active or blocked work and cannot be settled.`,
+      });
+    }
 
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
@@ -2276,7 +2302,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) =>
     Effect.gen(function* () {
-      const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (projection.thread.settledOverride !== null) {
+        const now = yield* DateTime.now;
+        const thread: OrchestrationV2AppThread = {
+          ...projection.thread,
+          settledOverride: null,
+          settledAt: null,
+          updatedAt: now,
+        };
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.unsettled",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      }
+      if (projection.thread.snoozedUntil != null) {
+        const now = yield* DateTime.now;
+        const thread: OrchestrationV2AppThread = {
+          ...projection.thread,
+          snoozedUntil: null,
+          snoozedAt: null,
+          updatedAt: now,
+        };
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.unsnoozed",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
       const dispatchMode = command.dispatchMode;
       const sourcePlanProjection =

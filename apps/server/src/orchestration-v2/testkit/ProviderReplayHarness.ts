@@ -109,6 +109,7 @@ export function makeReplayServerConfig(
       baseDir,
       staticDir: undefined,
       devUrl: undefined,
+      devAllowedOrigins: [],
       noBrowser: false,
       startupPresentation: "browser",
       tailscaleServeEnabled: false,
@@ -245,7 +246,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, idAllocatorLayer)),
   );
-  const gitCoreLayer = GitCoreLive.pipe(
+  const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
+    Layer.provide(VcsProcess.layer),
     Layer.provide(serverConfigLayer),
     Layer.provide(NodeServices.layer),
   );

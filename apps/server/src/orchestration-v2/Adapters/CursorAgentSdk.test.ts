@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
-import { ServerConfig } from "../../config.ts";
+import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import {
   CursorAgentSdkRunner,
   CursorAgentSdkRunnerError,
@@ -68,29 +68,6 @@ const cursorSdkMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../provider/Layers/EventNdjsonLogger.ts", async () => {
-  const Effect = await import("effect/Effect");
-
-  return {
-    makeEventNdjsonLogger: vi.fn(() =>
-      Effect.succeed({
-        filePath: "cursor-agent-sdk-test.log",
-        write: (event: unknown) =>
-          Effect.sync(() => {
-            if (
-              typeof event === "object" &&
-              event !== null &&
-              Reflect.get(Reflect.get(event, "event"), "payload")?.type === "agent.close"
-            ) {
-              cursorSdkMock.closeExecutionOrder.push("protocol:agent.close");
-            }
-          }),
-        close: () => Effect.void,
-      }),
-    ),
-  };
-});
-
 vi.mock("@cursor/sdk", () => ({
   Agent: {
     create: cursorSdkMock.create,
@@ -103,8 +80,22 @@ vi.mock("@cursor/sdk", () => ({
 
 const testLayer = cursorAgentSdkRunnerLiveLayer.pipe(
   Layer.provide(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-cursor-agent-sdk-runner-",
+    Layer.succeed(ProviderEventLoggers, {
+      native: {
+        filePath: "cursor-agent-sdk-test.log",
+        write: (event: unknown) =>
+          Effect.sync(() => {
+            if (
+              typeof event === "object" &&
+              event !== null &&
+              Reflect.get(Reflect.get(event, "event"), "payload")?.type === "agent.close"
+            ) {
+              cursorSdkMock.closeExecutionOrder.push("protocol:agent.close");
+            }
+          }),
+        close: () => Effect.void,
+      },
+      canonical: undefined,
     }),
   ),
   Layer.provide(NodeServices.layer),

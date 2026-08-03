@@ -89,13 +89,6 @@ const providerSwitchServiceProvided = providerSwitchServiceLayer.pipe(
   Layer.provide(providerAdapterRegistryProvided),
 );
 
-const providerAdapterRegistryProvided = providerAdapterRegistryLayerFromEffect(
-  Effect.all([
-    Effect.service(ProviderAdapterV2).pipe(Effect.provide(codexAdapterProvided)),
-    Effect.service(ProviderAdapterV2).pipe(Effect.provide(claudeAdapterProvided)),
-  ]),
-);
-
 const providerSessionManagerProvided = providerSessionManagerLayer.pipe(
   Layer.provide(
     Layer.mergeAll(

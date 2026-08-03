@@ -25,6 +25,8 @@ import * as Scope from "effect/Scope";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -132,6 +134,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
@@ -222,21 +226,29 @@ export const make = Effect.gen(function* () {
         );
     }
 
+    const initialMessage = input.initialMessage;
     let branch =
       input.workspaceStrategy.type === "worktree" &&
       input.workspaceStrategy.branch === undefined &&
-      input.initialMessage !== undefined
-        ? yield* textGeneration
-            .generateBranchName({
-              cwd: project.workspaceRoot,
-              message: input.initialMessage.text,
-              attachments: input.initialMessage.attachments,
-              modelSelection: input.modelSelection,
-            })
-            .pipe(
-              Effect.map((result) => result.branch),
-              Effect.mapError(mapError(input, "generate-metadata", threadId)),
-            )
+      initialMessage !== undefined
+        ? yield* Effect.gen(function* () {
+            const settings = yield* serverSettings.getSettings;
+            const modelSelection =
+              settings.sourceControlWriterModelSelection === null
+                ? settings.textGenerationModelSelection
+                : ServerSettings.resolveSourceControlWriterModelSelection(
+                    settings,
+                    yield* providerRegistry.getProviders,
+                  );
+            return yield* textGeneration
+              .generateBranchName({
+                cwd: project.workspaceRoot,
+                message: initialMessage.text,
+                attachments: initialMessage.attachments,
+                modelSelection,
+              })
+              .pipe(Effect.map((result) => result.branch));
+          }).pipe(Effect.mapError(mapError(input, "generate-metadata", threadId)))
         : (input.workspaceStrategy.branch ??
           (input.workspaceStrategy.type === "worktree" ? fallbackBranchName(threadId) : null));
     let worktreePath =
