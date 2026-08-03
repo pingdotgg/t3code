@@ -27,18 +27,18 @@ export class DesktopZedCommandNotFoundError extends Schema.TaggedErrorClass<Desk
 export class DesktopZedLaunchError extends Schema.TaggedErrorClass<DesktopZedLaunchError>()(
   "DesktopZedLaunchError",
   {
-    command: Schema.String,
-    args: Schema.Array(Schema.String),
+    argumentCount: Schema.Number,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to open remote workspace in Zed with '${[this.command, ...this.args].join(" ")}'.`;
+    return "Failed to open remote workspace in Zed.";
   }
 }
 
 function remoteAuthority(target: DesktopSshEnvironmentTarget): string {
-  const host = target.alias.trim() || target.hostname.trim();
+  const rawHost = target.alias.trim() || target.hostname.trim();
+  const host = rawHost.includes(":") && !rawHost.startsWith("[") ? `[${rawHost}]` : rawHost;
   const username = target.username?.trim();
   const port = target.port === null ? "" : `:${target.port}`;
   return `${username ? `${username}@` : ""}${host}${port}`;
@@ -109,8 +109,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(
         (cause) =>
           new DesktopZedLaunchError({
-            command: resolved.command,
-            args: resolved.args,
+            argumentCount: resolved.args.length,
             cause,
           }),
       ),

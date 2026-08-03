@@ -56,40 +56,111 @@ describe("DesktopZedLauncher", () => {
       }),
       "ssh://devbox.example.com/srv/project",
     );
+    assert.equal(
+      DesktopZedLauncher.remoteZedSshUri({
+        target: {
+          alias: "",
+          hostname: "2001:db8::1",
+          username: "declan",
+          port: 2222,
+        },
+        path: "/srv/project",
+      }),
+      "ssh://declan@[2001:db8::1]:2222/srv/project",
+    );
   });
 
-  it.effect("launches and detaches the local Zed CLI for a remote workspace", () =>
+  it.effect.each<{
+    availableCommands: ReadonlyArray<"zed" | "zeditor">;
+    expectedCommand: "zed" | "zeditor";
+  }>([
+    { availableCommands: ["zed", "zeditor"], expectedCommand: "zed" },
+    { availableCommands: ["zeditor"], expectedCommand: "zeditor" },
+  ])(
+    "launches and detaches $expectedCommand when available",
+    ({ availableCommands, expectedCommand }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-zed-" });
+        for (const command of availableCommands) {
+          const commandPath = path.join(binDir, command);
+          yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+          yield* fileSystem.chmod(commandPath, 0o755);
+        }
+
+        let spawned: ChildProcess.StandardCommand | undefined;
+        let didUnref = false;
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            Effect.sync(() => {
+              assert.equal(ChildProcess.isStandardCommand(command), true);
+              if (!ChildProcess.isStandardCommand(command)) {
+                throw new Error("Expected a standard command");
+              }
+              spawned = command;
+              return makeDetachedHandle(() => {
+                didUnref = true;
+              });
+            }),
+          ),
+        );
+        const previousPath = process.env.PATH;
+        process.env.PATH = binDir;
+
+        yield* Effect.gen(function* () {
+          const launcher = yield* DesktopZedLauncher.DesktopZedLauncher;
+          yield* launcher.openRemoteWorkspace({
+            target: {
+              alias: "devbox",
+              hostname: "devbox.example.com",
+              username: null,
+              port: null,
+            },
+            path: "/srv/project",
+          });
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              process.env.PATH = previousPath;
+            }),
+          ),
+          Effect.provide(
+            DesktopZedLauncher.layer.pipe(
+              Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer)),
+            ),
+          ),
+        );
+
+        assert.ok(spawned);
+        assert.equal(spawned.command, expectedCommand);
+        assert.deepEqual(spawned.args, ["-r", "ssh://devbox/srv/project"]);
+        assert.equal(spawned.options.detached, true);
+        assert.equal(didUnref, true);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it("keeps launch errors free of SSH connection details", () => {
+    const error = new DesktopZedLauncher.DesktopZedLaunchError({
+      argumentCount: 2,
+      cause: new Error("spawn failed"),
+    });
+
+    assert.equal(error.message, "Failed to open remote workspace in Zed.");
+    assert.equal(error.argumentCount, 2);
+  });
+
+  it.effect("fails clearly when no local Zed CLI is available", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-zed-" });
-      const zedPath = path.join(binDir, "zed");
-      yield* fileSystem.writeFileString(zedPath, "#!/bin/sh\n");
-      yield* fileSystem.chmod(zedPath, 0o755);
-
-      let spawned: ChildProcess.StandardCommand | undefined;
-      let didUnref = false;
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) =>
-          Effect.sync(() => {
-            assert.equal(ChildProcess.isStandardCommand(command), true);
-            if (!ChildProcess.isStandardCommand(command)) {
-              throw new Error("Expected a standard command");
-            }
-            spawned = command;
-            return makeDetachedHandle(() => {
-              didUnref = true;
-            });
-          }),
-        ),
-      );
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-no-zed-" });
       const previousPath = process.env.PATH;
       process.env.PATH = binDir;
 
-      yield* Effect.gen(function* () {
+      const error = yield* Effect.gen(function* () {
         const launcher = yield* DesktopZedLauncher.DesktopZedLauncher;
-        yield* launcher.openRemoteWorkspace({
+        return yield* launcher.openRemoteWorkspace({
           target: {
             alias: "devbox",
             hostname: "devbox.example.com",
@@ -99,23 +170,17 @@ describe("DesktopZedLauncher", () => {
           path: "/srv/project",
         });
       }).pipe(
+        Effect.flip,
         Effect.ensuring(
           Effect.sync(() => {
             process.env.PATH = previousPath;
           }),
         ),
-        Effect.provide(
-          DesktopZedLauncher.layer.pipe(
-            Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer)),
-          ),
-        ),
+        Effect.provide(DesktopZedLauncher.layer.pipe(Layer.provide(NodeServices.layer))),
       );
 
-      assert.ok(spawned);
-      assert.equal(spawned.command, "zed");
-      assert.deepEqual(spawned.args, ["-r", "ssh://devbox/srv/project"]);
-      assert.equal(spawned.options.detached, true);
-      assert.equal(didUnref, true);
+      assert.equal(error._tag, "DesktopZedCommandNotFoundError");
+      assert.equal(error.message, "Zed CLI not found.");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
