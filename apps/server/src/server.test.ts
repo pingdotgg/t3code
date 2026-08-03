@@ -3510,6 +3510,238 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("dispatches configured custom workflows", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: OrchestrationCommand[] = [];
+      const readModel = makeDefaultOrchestrationReadModel();
+      const project = readModel.projects[0]!;
+      const thread = makeDefaultOrchestrationThreadShell({ branch: "feature/custom-workflow" });
+      const workflowModelSelection = {
+        instanceId: ProviderInstanceId.make("copilot"),
+        model: "gpt-5.6-sol",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              agentWorkflows: {
+                ...DEFAULT_SERVER_SETTINGS.agentWorkflows,
+                customWorkflows: [
+                  {
+                    id: "custom-release-check",
+                    enabled: true,
+                    name: "Release check",
+                    buttonLabel: "Check release",
+                    promptTemplate: "Verify the release is ready.",
+                    modelSelection: workflowModelSelection,
+                    showInHeader: true,
+                    destinationMode: "child-chat",
+                    automation: {
+                      afterAssistantTurnCompletes: false,
+                      cooldownMs: 300_000,
+                      maxRunsPerThread: 1,
+                    },
+                  },
+                ],
+              },
+            }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const runWorkflow = (
+        idempotencyKey: string,
+        destinationMode?: "same-chat" | "new-chat" | "child-chat",
+      ) =>
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.workflowRun]({
+              workflowId: "custom-release-check",
+              threadId: defaultThreadId,
+              ...(destinationMode === undefined ? {} : { destinationMode }),
+              trigger: "manual",
+              idempotencyKey,
+            }),
+          ),
+        );
+
+      const childResult = yield* runWorkflow("custom-release-check-child");
+      const childRetryResult = yield* runWorkflow("custom-release-check-child");
+      const newResult = yield* runWorkflow("custom-release-check-new", "new-chat");
+      const sameResult = yield* runWorkflow("custom-release-check-same", "same-chat");
+
+      assert.equal(childResult.status, "started");
+      assert.equal(childRetryResult.status, "started");
+      assert.equal(newResult.status, "started");
+      assert.equal(sameResult.status, "started");
+      if (
+        childResult.status !== "started" ||
+        childRetryResult.status !== "started" ||
+        newResult.status !== "started" ||
+        sameResult.status !== "started"
+      ) {
+        return;
+      }
+
+      assert.notEqual(childResult.threadId, defaultThreadId);
+      assert.equal(childRetryResult.threadId, childResult.threadId);
+      assert.equal(childRetryResult.commandId, childResult.commandId);
+      assert.equal(childRetryResult.messageId, childResult.messageId);
+      assert.notEqual(newResult.threadId, defaultThreadId);
+      assert.equal(sameResult.threadId, defaultThreadId);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        [
+          "thread.create",
+          "thread.turn.start",
+          "thread.create",
+          "thread.turn.start",
+          "thread.create",
+          "thread.turn.start",
+          "thread.turn.start",
+        ],
+      );
+
+      const childCreate = dispatchedCommands[0];
+      const childTurn = dispatchedCommands[1];
+      const childRetryCreate = dispatchedCommands[2];
+      const childRetryTurn = dispatchedCommands[3];
+      const newCreate = dispatchedCommands[4];
+      const newTurn = dispatchedCommands[5];
+      const sameTurn = dispatchedCommands[6];
+      assertTrue(childCreate?.type === "thread.create");
+      assertTrue(childTurn?.type === "thread.turn.start");
+      assertTrue(childRetryCreate?.type === "thread.create");
+      assertTrue(childRetryTurn?.type === "thread.turn.start");
+      assertTrue(newCreate?.type === "thread.create");
+      assertTrue(newTurn?.type === "thread.turn.start");
+      assertTrue(sameTurn?.type === "thread.turn.start");
+      if (
+        childCreate?.type !== "thread.create" ||
+        childTurn?.type !== "thread.turn.start" ||
+        childRetryCreate?.type !== "thread.create" ||
+        childRetryTurn?.type !== "thread.turn.start" ||
+        newCreate?.type !== "thread.create" ||
+        newTurn?.type !== "thread.turn.start" ||
+        sameTurn?.type !== "thread.turn.start"
+      ) {
+        return;
+      }
+
+      assert.equal(childCreate.parentThreadId, defaultThreadId);
+      assert.equal(childCreate.threadId, childResult.threadId);
+      assert.equal(childRetryCreate.commandId, childCreate.commandId);
+      assert.equal(childRetryCreate.threadId, childCreate.threadId);
+      assert.equal(childRetryTurn.commandId, childTurn.commandId);
+      assert.equal(childRetryTurn.threadId, childTurn.threadId);
+      assert.equal(newCreate.parentThreadId, null);
+      assert.equal(newCreate.threadId, newResult.threadId);
+      assert.equal(sameTurn.threadId, defaultThreadId);
+      for (const command of [
+        childCreate,
+        childTurn,
+        childRetryCreate,
+        childRetryTurn,
+        newCreate,
+        newTurn,
+        sameTurn,
+      ]) {
+        assert.deepEqual(command.modelSelection, workflowModelSelection);
+        assert.equal(command.runtimeMode, "full-access");
+        assert.equal(command.interactionMode, "default");
+      }
+      for (const command of [childTurn, childRetryTurn, newTurn, sameTurn]) {
+        assert.equal(command.message.text, "Verify the release is ready.");
+        assert.equal(command.titleSeed, "Release check");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps built-in workflow IDs reserved", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: OrchestrationCommand[] = [];
+      const readModel = makeDefaultOrchestrationReadModel();
+      const project = readModel.projects[0]!;
+      const thread = makeDefaultOrchestrationThreadShell();
+
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              agentWorkflows: {
+                ...DEFAULT_SERVER_SETTINGS.agentWorkflows,
+                customWorkflows: [
+                  {
+                    id: "review-changes",
+                    enabled: true,
+                    name: "Shadow review",
+                    buttonLabel: "Shadow",
+                    promptTemplate: "This custom prompt must not run.",
+                    showInHeader: true,
+                    destinationMode: "same-chat",
+                    automation: {
+                      afterAssistantTurnCompletes: false,
+                      cooldownMs: 300_000,
+                      maxRunsPerThread: 1,
+                    },
+                  },
+                ],
+              },
+            }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.workflowRun]({
+            workflowId: "review-changes",
+            threadId: defaultThreadId,
+            destinationMode: "child-chat",
+            trigger: "manual",
+            idempotencyKey: "reserved-review-id",
+          }),
+        ),
+      );
+
+      assert.equal(result.status, "skipped");
+      assert.equal(result.runId, "reserved-review-id");
+      if (result.status !== "skipped") {
+        return;
+      }
+      assert.equal(result.reason, "no-reviewable-changes");
+      assert.equal(result.message, "No uncommitted changes.");
+      assert.deepEqual(dispatchedCommands, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc git methods", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
