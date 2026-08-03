@@ -12,7 +12,7 @@ export function ProviderAuthSetupCoordinator() {
   const navigation = useNavigation();
   const configs = useServerConfigs();
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const presentedEnvironmentRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -26,20 +26,26 @@ export function ProviderAuthSetupCoordinator() {
     if (!candidate || presentedEnvironmentRef.current === candidate[0]) return;
     const environmentId = candidate[0];
     presentedEnvironmentRef.current = environmentId;
-    const finish = () => {
-      savePreferences({
-        providerAuthSetupDismissedEnvironmentIds: [...new Set([...dismissed, environmentId])],
-      });
+    const finish = async () => {
+      try {
+        await savePreferences({
+          providerAuthSetupDismissedEnvironmentIds: [...new Set([...dismissed, environmentId])],
+        });
+      } catch {
+        if (presentedEnvironmentRef.current === environmentId) {
+          presentedEnvironmentRef.current = null;
+        }
+      }
     };
     Alert.alert(
       "Connect your coding agents",
       "Sign in to provider CLIs from T3 Code. Credentials stay in the selected environment.",
       [
-        { text: "Later", style: "cancel", onPress: finish },
+        { text: "Later", style: "cancel", onPress: () => void finish() },
         {
           text: "Set up",
           onPress: () => {
-            finish();
+            void finish();
             navigation.navigate("SettingsSheet", { screen: "SettingsProviders" });
           },
         },
