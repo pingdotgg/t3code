@@ -437,7 +437,7 @@ require_installed_t3_cli() {
   if [ -n "$T3_CLI_PATH" ]; then
     return 0
   fi
-  printf 'Remote host installed @@T3_PACKAGE_SPEC@@ but npm produced no t3 executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' >&2
+  printf 'Remote host installed %s but npm produced no t3 executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
   return 1
 }
 if command -v npx >/dev/null 2>&1; then
