@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+import { ghosttyConsumedMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
@@ -49,5 +49,24 @@ describe("ghosttyUnshiftedCodepoint", () => {
     expect(ghosttyUnshiftedCodepoint({ code: "KeyC", key: "J", shiftKey: true }, layoutMap)).toBe(
       "j".codePointAt(0),
     );
+  });
+});
+
+describe("ghosttyConsumedMods", () => {
+  it("marks Shift consumed when it produces a different printable character", () => {
+    expect(ghosttyConsumedMods({ key: ":", shiftKey: true }, ";".codePointAt(0)!)).toBe(1);
+    expect(ghosttyConsumedMods({ key: "C", shiftKey: true }, "c".codePointAt(0)!)).toBe(1);
+  });
+
+  it("uses the active layout's unshifted character", () => {
+    const event = { code: "Period", key: ":", shiftKey: true };
+    const unshiftedCodepoint = ghosttyUnshiftedCodepoint(event, new Map([["Period", "."]]));
+    expect(ghosttyConsumedMods(event, unshiftedCodepoint)).toBe(1);
+  });
+
+  it("preserves Shift when it did not transform printable text", () => {
+    expect(ghosttyConsumedMods({ key: " ", shiftKey: true }, " ".codePointAt(0)!)).toBe(0);
+    expect(ghosttyConsumedMods({ key: "Tab", shiftKey: true }, 0)).toBe(0);
+    expect(ghosttyConsumedMods({ key: ":", shiftKey: false }, ":".codePointAt(0)!)).toBe(0);
   });
 });

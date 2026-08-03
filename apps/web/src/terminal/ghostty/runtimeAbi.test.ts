@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import wasmDataUrl from "./vendor/ghostty-vt.wasm?inline";
 import writePtyWasmDataUrl from "./vendor/ghostty-write-pty.wasm?inline";
 import pinnedVersion from "../../../../../native/libghostty-vt/VERSION?raw";
-import { ghosttyKeyForCode } from "./keyCodes";
+import { ghosttyConsumedMods, ghosttyKeyForCode } from "./keyCodes";
 
 type WasmFunction = (...args: number[]) => number;
 
@@ -519,8 +519,46 @@ describe("vendored libghostty-vt WebAssembly", () => {
       new TextDecoder().decode(new Uint8Array(memory.buffer, remappedOutput, remappedOutputLength)),
     ).toBe("\u001b[106;5u");
 
+    const unshiftedColon = ";".codePointAt(0)!;
+    const colonText = new TextEncoder().encode(":");
+    const colonTextPointer = alloc(colonText.length);
+    new Uint8Array(memory.buffer, colonTextPointer, colonText.length).set(colonText);
+    call("ghostty_key_event_set_key", keyEvent, ghosttyKeyForCode("Semicolon"));
+    call("ghostty_key_event_set_mods", keyEvent, 1);
+    call(
+      "ghostty_key_event_set_consumed_mods",
+      keyEvent,
+      ghosttyConsumedMods({ key: ":", shiftKey: true }, unshiftedColon),
+    );
+    call("ghostty_key_event_set_unshifted_codepoint", keyEvent, unshiftedColon);
+    call("ghostty_key_event_set_utf8", keyEvent, colonTextPointer, colonText.length);
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
+    const colonOutputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    const colonOutput = alloc(colonOutputSize);
+    expect(
+      call(
+        "ghostty_key_encoder_encode",
+        keyEncoder,
+        keyEvent,
+        colonOutput,
+        colonOutputSize,
+        written,
+      ),
+    ).toBe(0);
+    const colonOutputLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    expect(
+      new TextDecoder().decode(new Uint8Array(memory.buffer, colonOutput, colonOutputLength)),
+    ).toBe(":");
+    free(colonOutput, colonOutputSize);
+    free(colonTextPointer, colonText.length);
+
     // Without the Kitty report-event-types flag a release encodes nothing, so
     // the surface's keyup handler stays silent for legacy sessions.
+    call("ghostty_key_event_set_key", keyEvent, ghosttyKeyForCode("KeyC"));
+    call("ghostty_key_event_set_mods", keyEvent, 1 << 1);
+    call("ghostty_key_event_set_consumed_mods", keyEvent, 0);
+    call("ghostty_key_event_set_unshifted_codepoint", keyEvent, "j".codePointAt(0)!);
+    call("ghostty_key_event_set_utf8", keyEvent, remappedTextPointer, remappedText.length);
     call("ghostty_key_event_set_action", keyEvent, 0);
     expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(0);
     expect(new DataView(memory.buffer, written, 4).getUint32(0, true)).toBe(0);

@@ -184,6 +184,8 @@ const codeToGhosttyKey = new Map<string, number>(
   ghosttyKeyboardCodes.map((code, index) => [code, index]),
 );
 
+const GHOSTTY_MOD_SHIFT = 1 << 0;
+
 export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
@@ -255,4 +257,12 @@ export function ghosttyUnshiftedCodepoint(
     return 0;
   }
   return event.key.codePointAt(0) ?? 0;
+}
+
+export function ghosttyConsumedMods(
+  event: Pick<KeyboardEvent, "key" | "shiftKey">,
+  unshiftedCodepoint: number,
+): number {
+  if (!event.shiftKey || unshiftedCodepoint === 0 || [...event.key].length !== 1) return 0;
+  return event.key.codePointAt(0) !== unshiftedCodepoint ? GHOSTTY_MOD_SHIFT : 0;
 }
