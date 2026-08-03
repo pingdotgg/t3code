@@ -83,6 +83,10 @@ export function PreviewView({
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
+  // Kept in sync so the title effect can depend on the stable thread key
+  // instead of the thread object, which is recreated on every update.
+  const threadRefRef = useRef(threadRef);
+  threadRefRef.current = threadRef;
   const previewState = useThreadPreviewState(threadRef);
   const miniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
@@ -127,6 +131,17 @@ export function PreviewView({
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
+
+  const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
+  const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
+  const latestHistoryUrl = recentHistoryEntries[0]?.url;
+  const threadKey = scopedThreadKey(threadRef);
+  useEffect(() => {
+    if (!navUrl || !navTitle || !latestHistoryUrl) return;
+    // Agent-driven pages only enrich an existing requested URL.
+    setTitleForThreadUrl(threadRefRef.current, navUrl, navTitle, environmentHostname);
+    // threadKey stands in for threadRef, whose identity churns on every thread update.
+  }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadKey]);
 
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
