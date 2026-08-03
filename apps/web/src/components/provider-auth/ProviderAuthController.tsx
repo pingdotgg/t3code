@@ -268,7 +268,6 @@ function ProviderAuthSetupPrompt() {
   const { isProviderAuthOpen, openProviderAuth } = useProviderAuthController();
   const storageKey = environment ? `t3:provider-auth-setup:${environment.environmentId}` : null;
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
-  const promptedKeyRef = useRef<string | null>(null);
   const candidates = selectProviderAuthSetupCandidates(providers);
   const dismissed =
     storageKey === null ||
@@ -280,17 +279,6 @@ function ProviderAuthSetupPrompt() {
     window.localStorage.setItem(storageKey, "dismissed");
     setDismissedKey(storageKey);
   };
-
-  useEffect(() => {
-    if (!dismissed && candidates.length > 0 && storageKey !== null) {
-      promptedKeyRef.current = storageKey;
-      return;
-    }
-    if (storageKey !== null && promptedKeyRef.current === storageKey && candidates.length === 0) {
-      window.localStorage.setItem(storageKey, "dismissed");
-      setDismissedKey(storageKey);
-    }
-  }, [candidates.length, dismissed, storageKey]);
 
   return (
     <Dialog
