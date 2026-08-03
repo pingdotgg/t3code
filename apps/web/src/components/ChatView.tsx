@@ -4325,16 +4325,29 @@ function ChatViewBody(
             return;
           }
 
-          const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
-          await ensureRoutableServerThread(resultThreadRef);
-          if (!isServerThread || result.threadId !== activeThread.id) {
-            await navigate({
-              to: "/$environmentId/$threadId",
-              params: {
-                environmentId,
-                threadId: result.threadId,
-              },
-            });
+          try {
+            const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
+            await ensureRoutableServerThread(resultThreadRef);
+            if (!isServerThread || result.threadId !== activeThread.id) {
+              await navigate({
+                to: "/$environmentId/$threadId",
+                params: {
+                  environmentId,
+                  threadId: result.threadId,
+                },
+              });
+            }
+          } catch (error) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Workflow started but could not be opened",
+                description:
+                  error instanceof Error
+                    ? error.message
+                    : "Open the workflow thread from the sidebar to continue.",
+              }),
+            );
           }
         })
         .catch((error: unknown) => {

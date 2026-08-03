@@ -130,10 +130,7 @@ export const orchestrationThreadSnapshotRouteLayer = HttpRouter.add(
     const params = yield* HttpRouter.params;
     const threadId = ThreadId.make(params.threadId ?? "");
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const [threadDetail, snapshotSequence] = yield* Effect.all([
-      projectionSnapshotQuery.getThreadDetailById(threadId),
-      projectionSnapshotQuery.getSnapshotSequence(),
-    ]).pipe(
+    const snapshot = yield* projectionSnapshotQuery.getThreadDetailSnapshotById(threadId).pipe(
       Effect.mapError(
         (cause) =>
           new OrchestrationGetSnapshotError({
@@ -142,16 +139,13 @@ export const orchestrationThreadSnapshotRouteLayer = HttpRouter.add(
           }),
       ),
     );
-    if (threadDetail._tag === "None") {
+    if (snapshot._tag === "None") {
       return yield* new OrchestrationGetSnapshotError({
         message: `Thread ${threadId} was not found`,
       });
     }
     return HttpServerResponse.jsonUnsafe(
-      projectThreadDetailSnapshot({
-        snapshotSequence,
-        thread: threadDetail.value,
-      } satisfies OrchestrationThreadDetailSnapshot),
+      projectThreadDetailSnapshot(snapshot.value satisfies OrchestrationThreadDetailSnapshot),
       { status: 200 },
     );
   }).pipe(

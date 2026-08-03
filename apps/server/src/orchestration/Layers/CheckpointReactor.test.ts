@@ -27,6 +27,7 @@ import { Deferred, Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.ts";
+import { CheckpointInvariantError } from "../../checkpointing/Errors.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitStatusBroadcaster } from "../../git/Services/GitStatusBroadcaster.ts";
@@ -285,6 +286,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly failCheckpointCapture?: boolean;
     readonly awaitRuntimeEventProcessed?: (eventId: EventId) => Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
@@ -325,6 +327,24 @@ describe("CheckpointReactor", () => {
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
       streamStatus: () => Stream.empty,
     });
+    const checkpointStoreLayer = options?.failCheckpointCapture
+      ? Layer.effect(
+          CheckpointStore,
+          Effect.gen(function* () {
+            const checkpointStore = yield* CheckpointStore;
+            return {
+              ...checkpointStore,
+              captureCheckpoint: () =>
+                Effect.fail(
+                  new CheckpointInvariantError({
+                    operation: "CheckpointStore.captureCheckpoint",
+                    detail: "Injected capture failure.",
+                  }),
+                ),
+            };
+          }).pipe(Effect.provide(CheckpointStoreLive)),
+        )
+      : CheckpointStoreLive;
 
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
@@ -338,7 +358,7 @@ describe("CheckpointReactor", () => {
       ),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(gitStatusBroadcasterLayer),
-      Layer.provideMerge(CheckpointStoreLive),
+      Layer.provideMerge(checkpointStoreLayer),
       Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
       Layer.provideMerge(WorkspacePathsLive),
       Layer.provideMerge(GitCoreLive),
@@ -493,6 +513,131 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+  });
+
+  it("settles turn completion when checkpoints are unavailable outside a git repository", async () => {
+    const nonGitCwd = fs.mkdtempSync(path.join(os.tmpdir(), "t3-non-git-workspace-"));
+    tempDirs.push(nonGitCwd);
+    const harness = await createHarness({
+      projectWorkspaceRoot: nonGitCwd,
+      providerSessionCwd: nonGitCwd,
+      seedFilesystemCheckpoints: false,
+      threadWorktreePath: nonGitCwd,
+    });
+    const createdAt = new Date().toISOString();
+    const turnId = asTurnId("turn-without-checkpoint");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-without-checkpoint"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-without-checkpoint"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    const events = await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed",
+      1_000,
+    );
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.latestTurn?.turnId === turnId &&
+        entry.latestTurn.state === "interrupted" &&
+        entry.latestTurn.completedAt === createdAt,
+      1_000,
+    );
+    const turnDiffEvent = events.find(
+      (event): event is Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }> =>
+        event.type === "thread.turn-diff-completed",
+    );
+
+    expect(turnDiffEvent?.payload.status).toBe("missing");
+    expect(thread.checkpoints.find((checkpoint) => checkpoint.turnId === turnId)?.status).toBe(
+      "missing",
+    );
+  });
+
+  it("settles turn completion when capturing a checkpoint fails", async () => {
+    const harness = await createHarness({
+      failCheckpointCapture: true,
+      seedFilesystemCheckpoints: false,
+    });
+    const createdAt = new Date().toISOString();
+    const turnId = asTurnId("turn-with-failed-checkpoint");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-failed-checkpoint"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-with-failed-checkpoint"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    const events = await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed",
+      1_000,
+    );
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.latestTurn?.turnId === turnId &&
+        entry.latestTurn.state === "error" &&
+        entry.latestTurn.completedAt === createdAt &&
+        entry.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+      1_000,
+    );
+    const turnDiffEvent = events.find(
+      (event): event is Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }> =>
+        event.type === "thread.turn-diff-completed",
+    );
+
+    expect(turnDiffEvent?.payload.status).toBe("error");
+    expect(thread.checkpoints.find((checkpoint) => checkpoint.turnId === turnId)?.status).toBe(
+      "error",
+    );
   });
 
   it("waits for runtime ingestion before deriving turn-scoped files", async () => {

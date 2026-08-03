@@ -44,6 +44,11 @@ export interface ProjectionThreadShellProjectContext {
   readonly project: Pick<OrchestrationProjectShell, "title"> | null;
 }
 
+export interface ProjectionThreadDetailSnapshot {
+  readonly snapshotSequence: number;
+  readonly thread: OrchestrationThread;
+}
+
 /**
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
@@ -126,6 +131,9 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+  readonly getThreadDetailSnapshotById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadDetailSnapshot>, ProjectionRepositoryError>;
   readonly getThreadActivitiesPage: (
     input: OrchestrationGetThreadActivitiesInput,
   ) => Effect.Effect<OrchestrationGetThreadActivitiesResult, ProjectionRepositoryError>;

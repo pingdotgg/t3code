@@ -1013,21 +1013,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [ORCHESTRATION_WS_METHODS.getThreadSnapshot]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getThreadSnapshot,
-            Effect.all([
-              projectionSnapshotQuery.getThreadDetailById(input.threadId),
-              projectionSnapshotQuery.getShellSnapshot(),
-            ]).pipe(
-              Effect.flatMap(([threadDetail, shellSnapshot]) => {
-                if (Option.isNone(threadDetail)) {
+            projectionSnapshotQuery.getThreadDetailSnapshotById(input.threadId).pipe(
+              Effect.flatMap((snapshot) => {
+                if (Option.isNone(snapshot)) {
                   return new OrchestrationGetSnapshotError({
                     message: `Thread ${input.threadId} was not found`,
                     cause: input.threadId,
                   });
                 }
-                return Effect.succeed({
-                  snapshotSequence: shellSnapshot.snapshotSequence,
-                  thread: threadDetail.value,
-                }).pipe(Effect.map(projectThreadDetailSnapshot));
+                return Effect.succeed(snapshot.value).pipe(Effect.map(projectThreadDetailSnapshot));
               }),
               Effect.mapError((cause) =>
                 cause instanceof OrchestrationGetSnapshotError
@@ -1104,33 +1098,32 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
               );
 
-              const [snapshotSequence, threadDetail] = yield* Effect.gen(function* () {
-                const sequence = yield* projectionSnapshotQuery.getSnapshotSequence();
-                const detail = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId);
-                return [sequence, detail] as const;
-              }).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationGetSnapshotError({
-                      message: `Failed to load thread ${input.threadId}`,
-                      cause,
-                    }),
-                ),
-              );
+              const threadSnapshot = yield* projectionSnapshotQuery
+                .getThreadDetailSnapshotById(input.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Failed to load thread ${input.threadId}`,
+                        cause,
+                      }),
+                  ),
+                );
 
-              if (Option.isNone(threadDetail)) {
+              if (Option.isNone(threadSnapshot)) {
                 return yield* new OrchestrationGetSnapshotError({
                   message: `Thread ${input.threadId} was not found`,
                   cause: input.threadId,
                 });
               }
+              const { snapshotSequence, thread } = threadSnapshot.value;
 
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
                   snapshot: projectThreadDetailSnapshot({
                     snapshotSequence,
-                    thread: threadDetail.value,
+                    thread,
                   }),
                 }),
                 Stream.fromQueue(liveBuffer).pipe(

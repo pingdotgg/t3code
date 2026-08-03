@@ -2200,6 +2200,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getThreadDetailSnapshotById: ProjectionSnapshotQueryShape["getThreadDetailSnapshotById"] = (
+    threadId,
+  ) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const snapshotSequence = yield* getSnapshotSequence();
+          const thread = yield* getThreadDetailById(threadId);
+          return Option.map(thread, (value) => ({
+            snapshotSequence,
+            thread: value,
+          }));
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) => {
+          if (isPersistenceError(error)) {
+            return error;
+          }
+          return toPersistenceSqlError("ProjectionSnapshotQuery.getThreadDetailSnapshotById:query")(
+            error,
+          );
+        }),
+      );
+
   const getThreadActivitiesPage: ProjectionSnapshotQueryShape["getThreadActivitiesPage"] = (
     input,
   ) =>
@@ -2312,6 +2337,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadShellProjectContextById,
     getThreadDetailById,
+    getThreadDetailSnapshotById,
     getThreadActivitiesPage,
     searchTranscript,
   } satisfies ProjectionSnapshotQueryShape;

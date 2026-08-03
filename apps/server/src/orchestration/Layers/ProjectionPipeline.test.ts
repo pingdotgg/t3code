@@ -2277,7 +2277,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-session-stop-")))(
   "OrchestrationProjectionPipeline latest turn session state",
   (it) => {
-    it.effect("keeps a turn running when an assistant segment completes", () =>
+    it.effect("distinguishes active assistant segments from copied history", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -2376,6 +2376,72 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-ses
             AND turn_id = ${turnId}
         `;
         assert.deepEqual(rows, [{ state: "running", completedAt: null }]);
+
+        const copiedThreadId = ThreadId.make("thread-copied-history");
+        const copiedTurnId = TurnId.make("turn-copied-history");
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.make("evt-copied-history-created"),
+          aggregateKind: "thread",
+          aggregateId: copiedThreadId,
+          occurredAt: "2026-02-26T16:01:00.000Z",
+          commandId: CommandId.make("cmd-copied-history-created"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-copied-history-created"),
+          metadata: {},
+          payload: {
+            threadId: copiedThreadId,
+            projectId: ProjectId.make("project-session-resume"),
+            title: "Copied history",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("copilot"),
+              model: "auto",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            pendingRuntimeMode: null,
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-02-26T16:01:00.000Z",
+            updatedAt: "2026-02-26T16:01:00.000Z",
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-copied-history-message"),
+          aggregateKind: "thread",
+          aggregateId: copiedThreadId,
+          occurredAt: "2026-02-26T16:01:01.000Z",
+          commandId: CommandId.make("cmd-copied-history-message"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-copied-history-message"),
+          metadata: {},
+          payload: {
+            threadId: copiedThreadId,
+            messageId: MessageId.make("message-copied-history"),
+            role: "assistant",
+            text: "Copied response",
+            turnId: copiedTurnId,
+            streaming: false,
+            createdAt: "2026-02-26T16:01:01.000Z",
+            updatedAt: "2026-02-26T16:01:02.000Z",
+          },
+        });
+
+        const copiedRows = yield* sql<{
+          readonly state: string;
+          readonly completedAt: string | null;
+        }>`
+          SELECT
+            state,
+            completed_at AS "completedAt"
+          FROM projection_turns
+          WHERE thread_id = ${copiedThreadId}
+            AND turn_id = ${copiedTurnId}
+        `;
+        assert.deepEqual(copiedRows, [
+          { state: "completed", completedAt: "2026-02-26T16:01:02.000Z" },
+        ]);
       }),
     );
 

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import {
+  CheckpointRef,
   CommandId,
   EventId,
   MessageId,
@@ -387,6 +388,50 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const completeTurnWithoutCheckpoint = Effect.fn("completeTurnWithoutCheckpoint")(
+    function* (input: {
+      readonly eventId: EventId;
+      readonly thread: {
+        readonly id: ThreadId;
+        readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+      };
+      readonly turnId: TurnId;
+      readonly status: "missing" | "error";
+      readonly createdAt: string;
+    }) {
+      const existingNonAuthoritative = input.thread.checkpoints.find(
+        (checkpoint) =>
+          checkpoint.turnId === input.turnId && isNonAuthoritativeCheckpoint(checkpoint.status),
+      );
+      const currentTurnCount = latestCapturedCheckpointTurnCount(input.thread.checkpoints);
+      const checkpointTurnCount = existingNonAuthoritative
+        ? existingNonAuthoritative.checkpointTurnCount
+        : currentTurnCount + 1;
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: serverCommandId("checkpoint-unavailable-turn-diff-complete"),
+        threadId: input.thread.id,
+        turnId: input.turnId,
+        completedAt: input.createdAt,
+        checkpointRef: CheckpointRef.make(`checkpoint-unavailable:${input.eventId}`),
+        status: input.status,
+        files: [],
+        agentTouchedPaths: [],
+        turnFiles: [],
+        checkpointTurnCount,
+        createdAt: input.createdAt,
+      });
+      yield* receiptBus.publish({
+        type: "turn.processing.quiesced",
+        threadId: input.thread.id,
+        turnId: input.turnId,
+        checkpointTurnCount,
+        createdAt: input.createdAt,
+      });
+    },
+  );
+
   // Captures a real git checkpoint when a turn completes via a runtime event.
   const captureCheckpointFromTurnCompletion = Effect.fn("captureCheckpointFromTurnCompletion")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
@@ -426,6 +471,13 @@ const make = Effect.gen(function* () {
         preferSessionRuntime: true,
       });
       if (!checkpointCwd) {
+        yield* completeTurnWithoutCheckpoint({
+          eventId: event.eventId,
+          thread,
+          turnId,
+          status: "missing",
+          createdAt: event.createdAt,
+        });
         return;
       }
 
@@ -449,7 +501,26 @@ const make = Effect.gen(function* () {
         status: checkpointStatusFromRuntime(event.payload.state),
         assistantMessageId: undefined,
         createdAt: event.createdAt,
-      });
+      }).pipe(
+        Effect.catch((error) =>
+          completeTurnWithoutCheckpoint({
+            eventId: event.eventId,
+            thread,
+            turnId,
+            status: "error",
+            createdAt: event.createdAt,
+          }).pipe(
+            Effect.tap(() =>
+              appendCaptureFailureActivity({
+                threadId: thread.id,
+                turnId,
+                detail: error.message,
+                createdAt: event.createdAt,
+              }),
+            ),
+          ),
+        ),
+      );
     },
   );
 

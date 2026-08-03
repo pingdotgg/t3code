@@ -464,6 +464,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasMoreActivities: false,
         });
       }
+
+      const threadSnapshot = yield* snapshotQuery.getThreadDetailSnapshotById(
+        ThreadId.make("thread-1"),
+      );
+      assert.equal(threadSnapshot._tag, "Some");
+      if (threadDetail._tag === "Some" && threadSnapshot._tag === "Some") {
+        assert.equal(threadSnapshot.value.snapshotSequence, 5);
+        assert.deepEqual(threadSnapshot.value.thread, threadDetail.value);
+      }
     }),
   );
 

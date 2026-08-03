@@ -2431,6 +2431,92 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("reports routing failure without claiming a started workflow failed to start", async () => {
+    const workerThreadId = ThreadId.make("review-worker-delayed");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-review-delayed-parent" as MessageId,
+        targetText: "Review this pull request",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListOpenPullRequests) {
+          return {
+            pullRequests: [
+              {
+                number: 1360,
+                title: "Delay review worker projection",
+                url: "https://github.com/pingdotgg/t3code/pull/1360",
+                baseBranch: "main",
+                headBranch: "delayed-review-worker",
+                state: "open",
+              },
+            ],
+          };
+        }
+        if (body._tag === WS_METHODS.workflowRun) {
+          return {
+            status: "started",
+            runId: "review-run-delayed",
+            threadId: workerThreadId,
+            commandId: "review-command-delayed",
+            messageId: "review-message-delayed",
+            sequence: 2,
+            createdAt: NOW_ISO,
+          };
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.getShellSnapshot) {
+          return toShellSnapshot(fixture.snapshot);
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const optionsButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Review Code options"]'),
+        "Unable to find review options.",
+      );
+      optionsButton.click();
+
+      const openPullRequests = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((element) =>
+            element.textContent?.includes("Open pull requests"),
+          ) ?? null,
+        "Unable to find open pull requests.",
+      );
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some((request) => request._tag === WS_METHODS.gitListOpenPullRequests),
+        ).toBe(true);
+      });
+      openPullRequests.focus();
+      openPullRequests.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+      );
+
+      const pullRequest = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((element) =>
+            element.textContent?.includes("#1360 Delay review worker projection"),
+          ) ?? null,
+        "Unable to find pull request.",
+      );
+      pullRequest.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Workflow started but could not be opened");
+          expect(document.body.textContent).not.toContain("Could not start workflow");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("runs project scripts from worktree draft threads at the worktree cwd", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadKey: {

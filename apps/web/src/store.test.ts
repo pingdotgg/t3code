@@ -1427,6 +1427,31 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
   });
 
+  it("infers a completed turn from a standalone non-streaming assistant message", () => {
+    const thread = makeThread({ latestTurn: null });
+    const next = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.message-sent", {
+        threadId: thread.id,
+        messageId: MessageId.make("assistant-copied"),
+        role: "assistant",
+        text: "Copied fork history",
+        turnId: TurnId.make("turn-copied"),
+        streaming: false,
+        createdAt: "2026-02-27T00:00:03.000Z",
+        updatedAt: "2026-02-27T00:00:04.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-copied"),
+      state: "completed",
+      completedAt: "2026-02-27T00:00:04.000Z",
+      assistantMessageId: MessageId.make("assistant-copied"),
+    });
+  });
+
   it("settles an unfinished latest turn when a session-set event leaves running", () => {
     const thread = makeThread({
       session: {
