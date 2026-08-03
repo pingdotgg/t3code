@@ -352,10 +352,12 @@ function ProviderAuthSetupPrompt() {
 export function ProviderAuthController({ children }: { readonly children: ReactNode }) {
   const [state, setState] = useState<ProviderAuthDialogState | null>(null);
   const [signOutConfirmation, setSignOutConfirmation] = useState<ProviderAuthTarget | null>(null);
+  const startInvocationRef = useRef(0);
   const start = useAtomCommand(providerAuthEnvironment.start, { reportFailure: false });
 
   const beginProviderAuth = useCallback(
     (target: ProviderAuthTarget) => {
+      const invocation = ++startInvocationRef.current;
       setState({
         ...target,
         sessionId: target.activeSessionId ?? null,
@@ -368,6 +370,7 @@ export function ProviderAuthController({ children }: { readonly children: ReactN
       }).then((result) => {
         setState((current) => {
           if (
+            invocation !== startInvocationRef.current ||
             current === null ||
             current.environmentId !== target.environmentId ||
             current.instanceId !== target.instanceId ||
