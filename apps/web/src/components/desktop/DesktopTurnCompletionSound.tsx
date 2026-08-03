@@ -13,7 +13,7 @@ export interface TurnCompletionSnapshot {
 
 interface ObservedTurn {
   readonly turnId: string | null;
-  readonly completedAt: string | null;
+  readonly state: OrchestrationLatestTurnState | null;
 }
 
 export interface TurnCompletionTracker {
@@ -32,7 +32,7 @@ export function createTurnCompletionTracker(): TurnCompletionTracker {
       for (const snapshot of snapshots) {
         const currentTurn = {
           turnId: snapshot.turnId,
-          completedAt: snapshot.completedAt,
+          state: snapshot.state,
         };
         nextObservedTurns.set(snapshot.threadKey, currentTurn);
 
@@ -42,8 +42,7 @@ export function createTurnCompletionTracker(): TurnCompletionTracker {
           previousTurn !== undefined &&
           snapshot.state === "completed" &&
           snapshot.completedAt !== null &&
-          (previousTurn.turnId !== snapshot.turnId ||
-            previousTurn.completedAt !== snapshot.completedAt)
+          (previousTurn.turnId !== snapshot.turnId || previousTurn.state !== "completed")
         ) {
           completedTurnCount += 1;
         }

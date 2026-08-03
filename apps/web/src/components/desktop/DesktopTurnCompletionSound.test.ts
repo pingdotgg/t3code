@@ -36,6 +36,18 @@ describe("createTurnCompletionTracker", () => {
     expect(tracker.sync([completed])).toBe(0);
   });
 
+  it("does not repeat a completed turn when its completion timestamp changes", () => {
+    const tracker = createTurnCompletionTracker();
+
+    expect(tracker.sync([snapshot()])).toBe(0);
+    expect(
+      tracker.sync([snapshot({ state: "completed", completedAt: "2026-08-03T08:00:00.000Z" })]),
+    ).toBe(1);
+    expect(
+      tracker.sync([snapshot({ state: "completed", completedAt: "2026-08-03T08:00:01.000Z" })]),
+    ).toBe(0);
+  });
+
   it("reports a newer completed turn for an already observed thread", () => {
     const tracker = createTurnCompletionTracker();
 
