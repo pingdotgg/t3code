@@ -1,10 +1,12 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -20,6 +22,8 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -61,6 +65,9 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+  readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
+  readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
+  readonly providers?: ReadonlyArray<ServerProvider>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -83,6 +90,9 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   const runSetup = vi.fn(
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
+  );
+  const generateBranchName = vi.fn(
+    options.generateBranchName ?? (() => Effect.succeed({ branch: "generated-branch" })),
   );
   const externalServices = Layer.mergeAll(
     Layer.succeed(ProjectService.ProjectService, {
@@ -107,8 +117,10 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(TextGeneration.TextGeneration)({
       generateThreadTitle:
         options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
-      generateBranchName: () => Effect.succeed({ branch: "generated-branch" }),
+      generateBranchName,
     }),
+    ServerSettings.layerTest(options.serverSettings),
+    makeProviderRegistryLayer(options.providers),
   );
   const launch = ThreadLaunch.layer.pipe(
     Layer.provide(Layer.mergeAll(externalServices, threadManagement, receipts, IdAllocator.layer)),
@@ -116,6 +128,7 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(launch, threadManagement, outbox, database),
     createWorktree,
+    generateBranchName,
     runSetup,
   };
 }
@@ -438,6 +451,98 @@ it.effect("does not put optional title generation on the provisioning critical p
         threads
           .getThreadProjection(launched.threadId)
           .pipe(Effect.map((projection) => projection.thread.title === "Generated later")),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("uses the available source control writer for generated worktree branches", () =>
+  Effect.gen(function* () {
+    const writerInstanceId = ProviderInstanceId.make("source-control-writer");
+    const writerModelSelection = {
+      instanceId: writerInstanceId,
+      model: "branch-writer-model",
+    } as const;
+    const harness = makeHarness({
+      serverSettings: {
+        providerInstances: {
+          [writerInstanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: {},
+          },
+        },
+        sourceControlWriterModelSelection: writerModelSelection,
+      },
+      providers: [
+        {
+          instanceId: writerInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-07-28T00:00:00.000Z",
+          availability: "available",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:source-control-writer",
+          thread: "thread:launch:source-control-writer",
+          message: "Generate a branch with the configured writer",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.generateBranchName.mock.calls.length === 1));
+      assert.deepEqual(
+        harness.generateBranchName.mock.calls[0]?.[0].modelSelection,
+        writerModelSelection,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("falls back when the source control writer is unavailable", () =>
+  Effect.gen(function* () {
+    const writerInstanceId = ProviderInstanceId.make("missing-source-control-writer");
+    const harness = makeHarness({
+      serverSettings: {
+        providerInstances: {
+          [writerInstanceId]: {
+            driver: ProviderDriverKind.make("missing-driver"),
+            config: {},
+          },
+        },
+        sourceControlWriterModelSelection: {
+          instanceId: writerInstanceId,
+          model: "missing-branch-writer-model",
+        },
+      },
+      providers: [],
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:source-control-writer-fallback",
+          thread: "thread:launch:source-control-writer-fallback",
+          message: "Generate a branch with the available writer",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.generateBranchName.mock.calls.length === 1));
+      assert.deepEqual(
+        harness.generateBranchName.mock.calls[0]?.[0].modelSelection,
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       );
     }).pipe(Effect.provide(harness.layer));
   }),

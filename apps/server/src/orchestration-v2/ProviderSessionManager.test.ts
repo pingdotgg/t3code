@@ -103,7 +103,7 @@ const emptyState: TestProviderRuntimeState = {
 };
 
 const modelSelection = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
 } satisfies ModelSelection;
 const CODEX_DRIVER = ProviderDriverKind.make("codex");

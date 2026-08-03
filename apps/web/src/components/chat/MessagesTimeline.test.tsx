@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -219,13 +219,13 @@ describe("MessagesTimeline", () => {
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
-    const turnId = TurnId.make("turn-with-files");
+    const runId = RunId.make("run-with-files");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        latestTurn={{
-          turnId,
-          state: "completed",
+        latestRun={{
+          runId,
+          status: "completed",
           startedAt: MESSAGE_CREATED_AT,
           completedAt: MESSAGE_CREATED_AT,
         }}
@@ -238,7 +238,7 @@ describe("MessagesTimeline", () => {
               id: assistantMessageId,
               role: "assistant",
               text: "Updated the fixture.",
-              turnId,
+              runId,
               createdAt: MESSAGE_CREATED_AT,
               updatedAt: MESSAGE_CREATED_AT,
               streaming: false,
@@ -250,7 +250,7 @@ describe("MessagesTimeline", () => {
             [
               assistantMessageId,
               {
-                turnId,
+                runId,
                 checkpointTurnCount: 1,
                 checkpointRef: CheckpointRef.make("checkpoint-with-files"),
                 status: "ready",

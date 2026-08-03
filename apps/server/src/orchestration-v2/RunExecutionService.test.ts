@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
   CommandId,
@@ -32,6 +32,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -304,6 +305,77 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
 
     assert.equal(yield* Ref.get(guardCalls), 2);
     assert.equal(yield* Ref.get(providerStarts), 0);
+  }).pipe(Effect.provide(RunExecutionTestLayer)),
+);
+
+it.effect("refreshes MCP credential liveness before calling the provider", () =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionServiceV2;
+    const order = yield* Ref.make<ReadonlyArray<string>>([]);
+    const threadId = ThreadId.make("thread:run-execution-mcp-liveness");
+    const touchActiveMcpThread = vi
+      .spyOn(McpSessionRegistry, "touchActiveMcpThread")
+      .mockImplementation((touchedThreadId) =>
+        Ref.update(order, (entries) => [...entries, `touch:${touchedThreadId}`]),
+      );
+
+    yield* runExecution
+      .startRootRun({
+        commandId: CommandId.make("command:run-execution-mcp-liveness"),
+        appThread: { id: threadId } as OrchestrationV2AppThread,
+        providerSessionId: ProviderSessionId.make("session:run-execution-mcp-liveness"),
+        session: {
+          events: Stream.never,
+          startTurn: () => Ref.update(order, (entries) => [...entries, "start-turn"]),
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: RunId.make("run:run-execution-mcp-liveness"),
+          threadId,
+          ordinal: 1,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        } as OrchestrationV2Run,
+        rootNode: {
+          id: NodeId.make("node:run-execution-mcp-liveness"),
+        } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make("checkpoint-scope:run-execution-mcp-liveness"),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ProviderThreadId.make("provider-thread:run-execution-mcp-liveness"),
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: RunAttemptId.make("attempt:run-execution-mcp-liveness"),
+          providerTurnId: null,
+        } as OrchestrationV2RunAttempt,
+        attemptId: RunAttemptId.make("attempt:run-execution-mcp-liveness"),
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make("message:run-execution-mcp-liveness"),
+          text: "Keep the MCP credential alive.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      })
+      .pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
+
+    assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
   }).pipe(Effect.provide(RunExecutionTestLayer)),
 );
 

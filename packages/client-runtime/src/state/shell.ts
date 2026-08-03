@@ -213,13 +213,56 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     yield* Queue.offer(persistence, nextSnapshot);
   });
 
-  yield* subscribe(
-    ORCHESTRATION_V2_WS_METHODS.subscribeShell,
-    {},
-    {
-      onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
-    },
-  ).pipe(Stream.runForEach(applyItem), Effect.forkScoped);
+  const foregroundResubscriptions = Option.match(wakeups, {
+    onNone: () => Stream.never,
+    onSome: (service) =>
+      service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
+  });
+
+  yield* setSynchronizing;
+  yield* Effect.forkScoped(
+    subscribeDynamic(
+      ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+      Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
+        const supportsCompletionMarker = yield* session.initialConfig.pipe(
+          Effect.map((config) => config.shellResumeCompletionMarker === true),
+          Effect.orElseSucceed(() => false),
+        );
+        yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
+        yield* setSynchronizing;
+
+        const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
+          Effect.flatMap(
+            Option.match({
+              onSome: Effect.succeed,
+              onNone: () =>
+                SubscriptionRef.changes(supervisor.prepared).pipe(
+                  Stream.filter(Option.isSome),
+                  Stream.map((value) => value.value),
+                  Stream.runHead,
+                  Effect.map(Option.getOrThrow),
+                ),
+            }),
+          ),
+        );
+        const httpSnapshot = yield* snapshotLoader.load(prepared);
+        if (Option.isSome(httpSnapshot)) {
+          yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+          return {
+            afterSequence: httpSnapshot.value.snapshotSequence,
+            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          };
+        }
+
+        return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
+      }),
+      {
+        onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
+        retryExpectedFailureAfter: "250 millis",
+        resubscribe: foregroundResubscriptions,
+      },
+    ).pipe(Stream.runForEach(applyItem)),
+  );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
       switch (connectionProjectionPhase(connectionState)) {

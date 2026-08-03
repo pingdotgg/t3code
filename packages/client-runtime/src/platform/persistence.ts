@@ -1,7 +1,8 @@
 import {
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
-  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadDetailSnapshot,
+  type ServerConfig,
   type ThreadId,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
@@ -67,10 +68,13 @@ export class EnvironmentCacheStore extends Context.Service<
     readonly loadThread: (
       environmentId: EnvironmentId,
       threadId: ThreadId,
-    ) => Effect.Effect<Option.Option<OrchestrationV2ThreadProjection>, ConnectionPersistenceError>;
+    ) => Effect.Effect<
+      Option.Option<OrchestrationV2ThreadDetailSnapshot>,
+      ConnectionPersistenceError
+    >;
     readonly saveThread: (
       environmentId: EnvironmentId,
-      thread: OrchestrationV2ThreadProjection,
+      snapshot: OrchestrationV2ThreadDetailSnapshot,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly removeThread: (
       environmentId: EnvironmentId,

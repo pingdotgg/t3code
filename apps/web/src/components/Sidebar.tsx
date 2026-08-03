@@ -202,6 +202,8 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { openCommandPalette } from "../commandPaletteBus";
 import {
+  archiveSelectedThreadEntries,
+  buildMultiSelectThreadContextMenuItems,
   getSidebarForkParentThreadId,
   getSidebarThreadIdsToPrewarm,
   isSidebarSubagentThread,
@@ -2631,6 +2633,7 @@ export default function Sidebar() {
     [navigateToThread, rangeSelectTo, toggleThreadSelection],
   );
 
+<<<<<<< HEAD
   // A settle per thread at a time: double clicks and repeated menu picks
   // must not dispatch a second settle that fails and toasts a false error.
   const settlingThreadKeysRef = useRef(new Set<string>());
@@ -2663,6 +2666,23 @@ export default function Sidebar() {
     },
     [navigateToThread, router],
   );
+=======
+  const handleMultiSelectContextMenu = useCallback(
+    async (position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
+      if (threadKeys.length === 0) return;
+      const count = threadKeys.length;
+      const selectedThreadEntries = threadKeys.flatMap((threadKey) => {
+        const threadRef = parseScopedThreadKey(threadKey);
+        const thread = threadRef ? readThreadShell(threadRef) : null;
+        return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
+      });
+      const hasRunningThread = selectedThreadEntries.some(
+        ({ thread }) => thread.runtime?.status === "running" && thread.runtime.activeRunId !== null,
+      );
+>>>>>>> 290392fac9 (fix: reconcile rebase with latest main)
 
       const clicked = await api.contextMenu.show(
         buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),

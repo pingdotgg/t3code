@@ -197,15 +197,6 @@ export type MessagesTimelineRow =
       groupedEntries: WorkLogEntry[];
     }
   | {
-      kind: "work-toggle";
-      id: string;
-      createdAt: string;
-      groupId: string;
-      hiddenCount: number;
-      expanded: boolean;
-      onlyToolEntries: boolean;
-    }
-  | {
       kind: "turn-fold";
       id: string;
       createdAt: string;
@@ -383,12 +374,11 @@ function deriveSupersededAttemptFolds(
 }
 
 /**
- * The session's running turn is authoritative when latestTurn briefly lags or
- * regresses behind it. Otherwise, the latest turn counts as unsettled while it
- * is still running (or has not recorded a completion). This is deliberately
- * keyed on turn lifecycle rather than transient working state: right after the
- * user sends a message, the previous turn is still the "active" one until the
- * server creates the new turn, and folding must not flicker through that window.
+ * The latest turn counts as unsettled while it is still running (or has not
+ * recorded a completion). This is deliberately keyed on the turn's own
+ * lifecycle rather than transient working state: right after the user sends
+ * a message, the previous turn is still the "active" one until the server
+ * creates the new turn, and folding must not flicker through that window.
  */
 function deriveUnsettledRunId(latestRun: TimelineLatestRun | null): RunId | null {
   if (!latestRun) {
@@ -660,6 +650,7 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
+<<<<<<< HEAD
       const visibleGroupedEntries = groupedEntries.filter(
         (entry) => !workEntryIndicatesToolNeutralStatus(entry),
       );
@@ -714,6 +705,14 @@ export function deriveMessagesTimelineRows(input: {
           }
         }
       }
+=======
+      nextRows.push({
+        kind: "work",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        groupedEntries,
+      });
+>>>>>>> 0c15987295 (fix: reconcile rebase with latest main)
       index = cursor - 1;
       continue;
     }
@@ -887,17 +886,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
-
-    case "work-toggle": {
-      const bw = b as typeof a;
-      return (
-        a.createdAt === bw.createdAt &&
-        a.groupId === bw.groupId &&
-        a.hiddenCount === bw.hiddenCount &&
-        a.expanded === bw.expanded &&
-        a.onlyToolEntries === bw.onlyToolEntries
-      );
-    }
 
     case "message": {
       const bm = b as typeof a;

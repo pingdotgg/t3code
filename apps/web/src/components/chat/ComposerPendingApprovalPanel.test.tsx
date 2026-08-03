@@ -1,4 +1,4 @@
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { RuntimeRequestId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -10,10 +10,11 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: ApprovalRequestId.make("approval-1"),
+          requestId: RuntimeRequestId.make("approval-1"),
           requestKind: "command",
           createdAt: "2026-07-18T00:00:00.000Z",
           detail,
+          responseCapability: "live",
         }}
         pendingCount={1}
       />,

@@ -12,6 +12,7 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderInstanceId,
   ProviderReplayTranscript,
   ProviderThreadId,
   RunId,

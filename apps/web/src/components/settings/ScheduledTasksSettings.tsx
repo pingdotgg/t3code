@@ -196,6 +196,7 @@ export function relativeLabel(value: string | null): string {
   const diffMs = new Date(value).getTime() - Date.now();
   if (diffMs <= 0) {
     const relative = formatRelativeTime(value);
+    if (!relative) return "Not scheduled";
     return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
   }
   const minutes = Math.ceil(diffMs / 60_000);

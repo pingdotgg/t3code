@@ -31,6 +31,10 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import {
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadDetailSnapshot,
+} from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
@@ -88,6 +92,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "client_session_revoke_failed",
   "project_snapshot_failed",
   "project_mutation_failed",
+  "orchestration_snapshot_failed",
+  "orchestration_thread_snapshot_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -320,6 +326,15 @@ const EnvironmentProjectSnapshotErrors = [
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
 ] as const;
+const EnvironmentOrchestrationSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentOrchestrationThreadSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
 const EnvironmentProjectMutationErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
@@ -475,6 +490,27 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
       error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
+  threadId: ThreadId,
+});
+
+export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
+  .add(
+    HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
+      headers: OptionalBearerHeaders,
+      success: OrchestrationV2ShellSnapshot,
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationV2ThreadDetailSnapshot,
+      error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

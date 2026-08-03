@@ -6,7 +6,11 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeThreadGroups } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  buildHomeThreadGroups,
+  sortHomeProjectScopes,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 
 function makeProject(

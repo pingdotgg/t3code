@@ -218,7 +218,11 @@ export default function ProjectScriptsControl({
           ) : (
             <GroupSeparator className="hidden @3xl/header-actions:block" />
           )}
-          <Menu highlightItemOnHover={false}>
+          <Menu
+            highlightItemOnHover={false}
+            open={actionsMenuOpen.scripts}
+            onOpenChange={(open) => setActionsMenuOpen({ scripts: open, imports: false })}
+          >
             <MenuTrigger
               render={
                 <Button
@@ -289,6 +293,27 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </ActionGroup>
+      ) : importableScripts.length > 0 ? (
+        <Menu
+          highlightItemOnHover={false}
+          open={actionsMenuOpen.imports}
+          onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
+        >
+          <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
+            <PlusIcon className="size-3.5" />
+            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              Add action
+            </span>
+            <ChevronDownIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            {importMenuItems}
+            <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+              <PlusIcon className="size-4" />
+              Add action
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       ) : (
         <Tooltip>
           <TooltipTrigger

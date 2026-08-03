@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   threadRuntimeIsActive,
+  type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";

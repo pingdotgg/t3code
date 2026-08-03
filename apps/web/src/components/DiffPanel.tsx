@@ -557,7 +557,7 @@ export default function DiffPanel({
           <DropdownMenuContent align="start" className="w-60">
             <DropdownMenuItem
               className={
-                selectedTurnId === null && selectedGitScope === "unstaged"
+                selectedRunId === null && selectedGitScope === "unstaged"
                   ? "bg-foreground/[0.08]"
                   : undefined
               }
@@ -568,7 +568,14 @@ export default function DiffPanel({
                 <CheckIcon className="ml-auto" />
               )}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => selectGitScope("branch")}>
+            <DropdownMenuItem
+              className={
+                selectedRunId === null && selectedGitScope === "branch"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("branch")}
+            >
               <span>Branch changes</span>
               {selectedRunId === null && selectedGitScope === "branch" && (
                 <CheckIcon className="ml-auto" />
@@ -576,17 +583,7 @@ export default function DiffPanel({
             </DropdownMenuItem>
             <DropdownMenuItem
               className={
-                selectedTurnId === null && selectedGitScope === "branch"
-                  ? "bg-foreground/[0.08]"
-                  : undefined
-              }
-              onClick={() => selectGitScope("branch")}
-            >
-              <span>Branch changes</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className={
-                selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId
+                selectedRunId !== null && selectedTurn?.runId === latestTurn?.runId
                   ? "bg-foreground/[0.08]"
                   : undefined
               }
@@ -608,7 +605,13 @@ export default function DiffPanel({
                     inferredCheckpointTurnCountByRunId[summary.runId] ??
                     "?";
                   return (
-                    <DropdownMenuItem key={summary.runId} onClick={() => selectTurn(summary.runId)}>
+                    <DropdownMenuItem
+                      key={summary.runId}
+                      className={
+                        summary.runId === selectedTurn?.runId ? "bg-foreground/[0.08]" : undefined
+                      }
+                      onClick={() => selectTurn(summary.runId)}
+                    >
                       <span>Turn {turnCount}</span>
                       <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                         {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}

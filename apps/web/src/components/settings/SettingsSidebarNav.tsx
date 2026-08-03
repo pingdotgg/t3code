@@ -12,9 +12,10 @@ import {
 } from "react";
 import {
   ArchiveIcon,
-  BlocksIcon,
+  ArrowLeftIcon,
   BotIcon,
   CalendarClockIcon,
+  FlaskConicalIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -23,7 +24,7 @@ import {
   Settings2Icon,
   XIcon,
 } from "lucide-react";
-import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
@@ -39,7 +40,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "../ui/sidebar";
-import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
+import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   getVisibleSettingsSectionIds,
@@ -72,10 +73,16 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
-  "/settings/integrations": BlocksIcon,
+<<<<<<< HEAD
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/scheduled-tasks": CalendarClockIcon,
+=======
+  "/settings/scheduled-tasks": CalendarClockIcon,
+  "/settings/source-control": GitBranchIcon,
+  "/settings/connections": Link2Icon,
+  "/settings/beta": FlaskConicalIcon,
+>>>>>>> 290392fac9 (fix: reconcile rebase with latest main)
   "/settings/archived": ArchiveIcon,
 };
 
@@ -83,15 +90,16 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
-}> = [
-  { label: "General", to: "/settings/general", icon: Settings2Icon },
-  { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
-  { label: "Providers", to: "/settings/providers", icon: BotIcon },
-  { label: "Schedule Tasks", to: "/settings/scheduled-tasks", icon: CalendarClockIcon },
-  { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
-  { label: "Connections", to: "/settings/connections", icon: Link2Icon },
-  { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
-];
+}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
+  to,
+  label: SETTINGS_SECTION_LABELS[to],
+  icon: SETTINGS_SECTION_ICONS[to],
+}));
+
+function SettingsSectionIcon({ to }: { to: SettingsPath }) {
+  const Icon = SETTINGS_SECTION_ICONS[to];
+  return <Icon className="mt-0.5 size-3.5 shrink-0 text-sidebar-muted-foreground/60" />;
+}
 
 function SettingsSubmenuCollapse({
   open,
@@ -112,9 +120,7 @@ function SettingsSubmenuCollapse({
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
-  const resolvedPathname = useRouterState({
-    select: (state) => state.resolvedLocation?.pathname,
-  });
+  const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -256,6 +262,17 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     },
     [activeResultIndex, clearSearch, handleSearchResultClick, isSearching, results],
   );
+  const handleBackClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  }, [canGoBack, isMobile, navigate, setOpenMobile]);
+
   return (
     <>
       <SidebarContent className="overflow-x-hidden">
@@ -367,12 +384,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           <T3ConnectSidebarSignIn />
         </Suspense>
         <div className="flex items-center gap-1">
-          <div className="min-w-0 flex-1">
-            <SidebarUtilityMenu />
-          </div>
-          <Suspense fallback={null}>
-            <T3ConnectSidebarAvatar />
-          </Suspense>
+          <SidebarMenu className="min-w-0 flex-1">
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={handleBackClick}>
+                <ArrowLeftIcon />
+                <span>Back</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <T3ConnectSidebarAvatar />
         </div>
       </SidebarFooter>
     </>

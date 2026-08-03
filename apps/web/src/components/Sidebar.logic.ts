@@ -5,10 +5,8 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import {
   activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
-  resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
-  type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
@@ -111,6 +109,53 @@ type LogicalSidebarProject = SidebarProject & {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
+export async function archiveSelectedThreadEntries<
+  TEntry extends { readonly threadKey: string },
+  TResult extends { readonly _tag: "Success" | "Failure" },
+>(input: {
+  entries: readonly TEntry[];
+  archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
+}): Promise<{
+  archivedThreadKeys: readonly string[];
+  mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
+  followupFailures: readonly Extract<TResult, { readonly _tag: "Failure" }>[];
+}> {
+  const archivedThreadKeys: string[] = [];
+  const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
+
+  for (const entry of input.entries) {
+    let didArchive = false;
+    const result = await input.archive(entry, () => {
+      didArchive = true;
+    });
+    if (didArchive || result._tag === "Success") archivedThreadKeys.push(entry.threadKey);
+    if (result._tag === "Success") continue;
+    const failure = result as Extract<TResult, { readonly _tag: "Failure" }>;
+    if (didArchive) {
+      followupFailures.push(failure);
+      continue;
+    }
+    return { archivedThreadKeys, mutationFailure: failure, followupFailures };
+  }
+
+  return { archivedThreadKeys, mutationFailure: null, followupFailures };
+}
+
+export function buildMultiSelectThreadContextMenuItems(input: {
+  count: number;
+  hasRunningThread: boolean;
+}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
+  return [
+    { id: "mark-unread", label: `Mark unread (${input.count})` },
+    {
+      id: "archive",
+      label: `Archive (${input.count})`,
+      disabled: input.hasRunningThread,
+    },
+    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+  ];
+}
+
 export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return thread.lineage.relationshipToParent === "subagent";
 }
@@ -141,16 +186,22 @@ export function getSidebarForkParentThreadId(
     : thread.lineage.parentThreadId;
 }
 
-/**
- * Bulk unpin follows the same "count only what the action will touch" rule
- * as title regeneration: on a mixed selection the label counts the pinned
- * rows alone, and the item disappears when nothing selected is pinned.
- */
-export function buildBulkUnpinContextMenuItem(input: {
-  pinnedCount: number;
-}): ContextMenuItem<"unpin"> | null {
-  if (input.pinnedCount === 0) return null;
-  return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
+export function buildBulkTitleRegenerationContextMenuItem(input: {
+  supportedCount: number;
+  actionableCount: number;
+}): ContextMenuItem<"regenerate-title"> | null {
+  if (input.supportedCount === 0) return null;
+  if (input.actionableCount === 0) {
+    return {
+      id: "regenerate-title",
+      label: `Regenerating… (${input.supportedCount})`,
+      disabled: true,
+    };
+  }
+  return {
+    id: "regenerate-title",
+    label: `Regenerate titles (${input.actionableCount})`,
+  };
 }
 
 export interface ThreadStatusPill {
@@ -186,14 +237,8 @@ type ThreadStatusInput = Pick<
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "interactionMode"
-<<<<<<< HEAD
-  | "latestTurn"
-  | "session"
-  | "backgroundLiveness"
-=======
   | "latestRun"
   | "runtime"
->>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 > & {
   lastVisitedAt?: string | null | undefined;
 };
@@ -543,7 +588,7 @@ export function shouldRecedeSidebarThread(input: {
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+  "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -553,12 +598,13 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.hasPendingUserInput) {
     return "input";
   }
-  if (thread.session?.status === "running" || thread.session?.status === "starting") {
+  if (
+    thread.runtime !== null &&
+    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
+  ) {
     return "working";
   }
-  // A failed session outranks lingering background liveness: the user must
-  // see the failure, not a stale Working (review finding).
-  if (thread.session?.status === "error") {
+  if (thread.runtime?.status === "failed") {
     return "failed";
   }
   // Background work outlives the turn: fleets read as working; monitoring
@@ -687,13 +733,44 @@ export function reduceSidebarProjectScopeMenuState(
   }
 }
 
+type SettledTimestampInput = Pick<
+  SidebarThreadSummary,
+  "settledAt" | "latestUserMessageAt" | "latestRun" | "updatedAt"
+>;
+
+/** The timestamp a settled row sorts and labels by: settledAt when stamped
+    (explicit settles), otherwise last activity — the same candidates
+    threadLastActivityAt feeds the auto-settle window (user message plus all
+    latestRun stamps), so a thread whose last activity was a run completion
+    doesn't sort by an older message time. updatedAt is the final net. */
+export function resolveSettledTimestamp(thread: SettledTimestampInput): string | null {
+  const settledAt = firstValidTimestamp(thread.settledAt);
+  if (settledAt !== null) return settledAt;
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestRun?.requestedAt,
+    thread.latestRun?.startedAt,
+    thread.latestRun?.completedAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  return latest ?? firstValidTimestamp(thread.updatedAt);
+}
+
 // Settled rows are history, so they order by when the work ENDED, not when
 // the thread was created or last touched.
 export function sortSettledThreadsForSidebar<
-  T extends SettledThreadTimestampInput & { readonly id: string },
+  T extends SettledTimestampInput & { readonly id: string },
 >(threads: readonly T[]): T[] {
   const timestampMs = (thread: T) => {
-    const timestamp = resolveSettledThreadTimestamp(thread);
+    const timestamp = resolveSettledTimestamp(thread);
     return timestamp === null ? 0 : Date.parse(timestamp);
   };
   return [...threads].toSorted(
@@ -706,13 +783,13 @@ export function sortSettledThreadsForSidebar<
     last transition when the turn projection lags behind. Malformed
     timestamps fall through to the next candidate, not just missing ones. */
 export function resolveWorkingStartedAt(
-  thread: Pick<SidebarThreadSummary, "latestTurn" | "session">,
+  thread: Pick<SidebarThreadSummary, "latestRun" | "runtime">,
 ): string | null {
-  const turn = thread.latestTurn;
-  if (turn && turn.completedAt === null) {
-    return firstValidTimestamp(turn.startedAt, turn.requestedAt, thread.session?.updatedAt);
+  const run = thread.latestRun;
+  if (run && run.completedAt === null) {
+    return firstValidTimestamp(run.startedAt, run.requestedAt, thread.runtime?.updatedAt);
   }
-  return firstValidTimestamp(thread.session?.updatedAt);
+  return firstValidTimestamp(thread.runtime?.updatedAt);
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {

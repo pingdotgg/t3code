@@ -42,12 +42,11 @@ import {
   resolveThreadLastVisitedAt,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
-  sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -826,15 +825,14 @@ describe("resolveSidebarThreadStatus", () => {
   const session = {
     threadId: ThreadId.make("thread-1"),
     status: "running" as const,
-    providerName: "Codex",
+    activeRunId: null,
     providerInstanceId: ProviderInstanceId.make("codex"),
-    runtimeMode: DEFAULT_RUNTIME_MODE,
-    activeTurnId: "turn-1" as never,
+    providerName: "Codex",
     lastError: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
 
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, session })).toBe(
@@ -851,7 +849,7 @@ describe("resolveSidebarThreadStatus", () => {
         ...idle,
         hasPendingApprovals: true,
         hasPendingUserInput: true,
-        session,
+        runtime,
       }),
     ).toBe("approval");
   });
@@ -861,28 +859,28 @@ describe("resolveSidebarThreadStatus", () => {
     expect(
       resolveSidebarThreadStatus({
         ...idle,
-        session: { ...session, status: "starting" as const },
+        runtime: { ...runtime, status: "starting" as const },
       }),
     ).toBe("working");
   });
 
-  it("reports failed only while the session status is error", () => {
+  it("reports failed only while the latest run failed", () => {
     expect(
       resolveSidebarThreadStatus({
         ...idle,
-        session: { ...session, status: "error" as const, lastError: "boom" },
+        runtime: { ...runtime, status: "failed" as const, lastError: "boom" },
       }),
     ).toBe("failed");
     expect(
       resolveSidebarThreadStatus({
         ...idle,
-        session: { ...session, status: "stopped" as const, lastError: "persisted" },
+        runtime: { ...runtime, status: "completed" as const, lastError: "persisted" },
       }),
     ).toBe("ready");
     expect(
       resolveSidebarThreadStatus({
         ...idle,
-        session: { ...session, status: "ready" as const, lastError: "persisted" },
+        runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("ready");
   });
@@ -1163,13 +1161,13 @@ describe("sortSettledThreadsForSidebar", () => {
     id: string;
     settledAt?: string | null;
     latestUserMessageAt?: string | null;
-    latestTurn?: OrchestrationLatestTurn | null;
+    latestRun?: Thread["latestRun"];
     updatedAt?: string;
   }) => ({
     id: input.id,
     settledAt: input.settledAt ?? null,
     latestUserMessageAt: input.latestUserMessageAt ?? null,
-    latestTurn: input.latestTurn ?? null,
+    latestRun: input.latestRun ?? null,
     updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
   });
 
@@ -1209,7 +1207,7 @@ describe("sortSettledThreadsForSidebar", () => {
       settled({
         id: "completed-later",
         latestUserMessageAt: "2026-03-09T10:00:00.000Z",
-        latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
+        latestRun: makeLatestRun({ completedAt: "2026-03-09T10:30:00.000Z" }),
       }),
     ]);
 
@@ -1227,40 +1225,38 @@ describe("sortSettledThreadsForSidebar", () => {
 });
 
 describe("resolveWorkingStartedAt", () => {
-  const session = {
-    threadId: ThreadId.make("thread-1"),
+  const runtime = {
     status: "running" as const,
     providerName: "Codex",
     providerInstanceId: ProviderInstanceId.make("codex"),
-    runtimeMode: DEFAULT_RUNTIME_MODE,
-    activeTurnId: "turn-1" as never,
+    activeRunId: RunId.make("run-1"),
     lastError: null,
     updatedAt: "2026-03-09T10:02:00.000Z",
   };
 
-  it("uses the running turn's start time", () => {
+  it("uses the running run's start time", () => {
     expect(
       resolveWorkingStartedAt({
-        latestTurn: makeLatestTurn({ completedAt: null }),
-        session,
+        latestRun: makeLatestRun({ completedAt: null }),
+        runtime,
       }),
     ).toBe("2026-03-09T10:00:00.000Z");
   });
 
-  it("uses the request time while a turn awaits adoption", () => {
+  it("uses the request time while a run awaits adoption", () => {
     expect(
       resolveWorkingStartedAt({
-        latestTurn: makeLatestTurn({ startedAt: null, completedAt: null }),
-        session,
+        latestRun: makeLatestRun({ startedAt: null, completedAt: null }),
+        runtime,
       }),
     ).toBe("2026-03-09T10:00:00.000Z");
   });
 
-  it("falls back to the session transition when the latest turn already completed", () => {
+  it("falls back to the runtime transition when the latest run already completed", () => {
     expect(
       resolveWorkingStartedAt({
-        latestTurn: makeLatestTurn(),
-        session,
+        latestRun: makeLatestRun(),
+        runtime,
       }),
     ).toBe("2026-03-09T10:02:00.000Z");
   });
@@ -1268,14 +1264,14 @@ describe("resolveWorkingStartedAt", () => {
   it("skips a malformed startedAt instead of returning it", () => {
     expect(
       resolveWorkingStartedAt({
-        latestTurn: makeLatestTurn({ startedAt: "not-a-date", completedAt: null }),
-        session,
+        latestRun: makeLatestRun({ startedAt: "not-a-date", completedAt: null }),
+        runtime,
       }),
     ).toBe("2026-03-09T10:00:00.000Z");
   });
 
-  it("returns null with neither a running turn nor a session", () => {
-    expect(resolveWorkingStartedAt({ latestTurn: null, session: null })).toBeNull();
+  it("returns null with neither a running run nor a runtime", () => {
+    expect(resolveWorkingStartedAt({ latestRun: null, runtime: null })).toBeNull();
   });
 });
 

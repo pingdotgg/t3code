@@ -76,7 +76,7 @@ describe("orchestration cache envelopes", () => {
         schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
         environmentId,
         threadId: v2ThreadId,
-        thread: v2Projection,
+        snapshot: { snapshotSequence: 4, projection: v2Projection },
       });
       const thread = decodeStoredThreadSnapshotJson(encodedThread);
       const [threadShell] = shell.snapshot.threads;

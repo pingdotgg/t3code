@@ -15,6 +15,7 @@ const showContextMenuFallbackMock =
   >();
 const dismissContextMenuMock = vi.fn<() => void>();
 
+<<<<<<< HEAD
 const requestConfirmDialogMock =
   vi.fn<(message: string, options?: ConfirmDialogOptions) => Promise<boolean> | undefined>();
 function registerListener<T>(listeners: Set<(event: T) => void>, listener: (event: T) => void) {
@@ -117,6 +118,8 @@ vi.mock("./environments/runtime", () => ({
   resetSavedEnvironmentRuntimeStoreForTests: vi.fn(),
 }));
 
+=======
+>>>>>>> 290392fac9 (fix: reconcile rebase with latest main)
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
   dismissContextMenu: dismissContextMenuMock,

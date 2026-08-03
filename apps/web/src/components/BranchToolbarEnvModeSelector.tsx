@@ -35,6 +35,8 @@ interface BranchToolbarEnvModeSelectorProps {
   workspaceRoot?: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
   displayMode?: "toolbar" | "panel";
+  previousWorktreeLabel?: string | null;
+  onUsePreviousWorktree?: () => void;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -44,10 +46,13 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   workspaceRoot = null,
   onEnvModeChange,
   displayMode = "toolbar",
+  previousWorktreeLabel,
+  onUsePreviousWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
   const workspacePath = displayMode === "panel" ? (activeWorktreePath ?? workspaceRoot) : null;
   const workspaceDisplayName = resolveWorkspaceDisplayName(workspacePath);
   const workspaceKind = activeWorktreePath ? "Worktree" : "Project folder";
+  const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const envModeItems = useMemo(
     () => [
       {
@@ -59,7 +64,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
         : []),
     ],
-    [activeWorktreePath, workspaceDisplayName],
+    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree, workspaceDisplayName],
   );
 
   if (envLocked) {
@@ -80,7 +85,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     const lockedRow = (
       <span
         className={cn(
-          "inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
+          "inline-flex shrink-0 items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
           displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
 >>>>>>> abd5cc5ff8 (Map thread panel into title bar and sidebar)
         )}

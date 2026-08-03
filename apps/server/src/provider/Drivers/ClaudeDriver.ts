@@ -30,6 +30,7 @@ import {
   ClaudeAdapterV2Driver,
   type ClaudeAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import {
   checkClaudeProviderStatus,
@@ -84,6 +85,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 
 export type ClaudeDriverEnv =
   | ClaudeAdapterV2DriverEnv
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
