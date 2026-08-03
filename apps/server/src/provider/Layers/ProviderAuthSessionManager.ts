@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
@@ -57,6 +58,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
   const instanceChanges = yield* instances.subscribeChanges;
   const sessions = new Map<ProviderAuthSessionId, Session>();
   const activeByInstance = new Map<ProviderInstanceId, ProviderAuthSessionId>();
+  const startSemaphores = new Map<ProviderInstanceId, Semaphore.Semaphore>();
 
   const publish = (session: Session, event: ProviderAuthAttachStreamEvent) =>
     Effect.forEach(session.listeners, (listener) => listener(event), {
@@ -178,7 +180,7 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     cancelInvalidatedSessions(),
   ).pipe(Effect.forkIn(managerScope));
 
-  const start: ProviderAuthSessionManager["Service"]["start"] = Effect.fn(
+  const startUnlocked: ProviderAuthSessionManager["Service"]["start"] = Effect.fn(
     "ProviderAuthSessionManager.start",
   )(function* (input) {
     const activeId = activeByInstance.get(input.instanceId);
@@ -315,6 +317,12 @@ export const make = Effect.fn("ProviderAuthSessionManager.make")(function* () {
     );
     return session.snapshot;
   });
+  const start: ProviderAuthSessionManager["Service"]["start"] = (input) => {
+    const existing = startSemaphores.get(input.instanceId);
+    const semaphore = existing ?? Semaphore.makeUnsafe(1);
+    if (!existing) startSemaphores.set(input.instanceId, semaphore);
+    return semaphore.withPermit(startUnlocked(input));
+  };
 
   const lookup = (sessionId: ProviderAuthSessionId) => {
     const session = sessions.get(sessionId);

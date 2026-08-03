@@ -34,7 +34,7 @@ const PROVIDER: ServerProvider = {
   skills: [],
 };
 
-function testHarness() {
+function testHarness(options: { readonly yieldBeforeSpawn?: boolean } = {}) {
   let onData: ((data: string) => void) | null = null;
   let onExit: ((event: PtyAdapter.PtyExitEvent) => void) | null = null;
   const writes: string[] = [];
@@ -76,7 +76,12 @@ function testHarness() {
   const registry = makeProviderRegistryMock([PROVIDER]);
   const layer = Layer.mergeAll(
     Layer.succeed(PtyAdapter.PtyAdapter, {
-      spawn: (input) => Effect.sync(() => (spawns.push(input), process)),
+      spawn: (input) =>
+        Effect.gen(function* () {
+          if (options.yieldBeforeSpawn) yield* Effect.yieldNow;
+          spawns.push(input);
+          return process;
+        }),
     }),
     Layer.succeed(ProviderInstanceRegistry, {
       getInstance: () => Effect.succeed(instance),
@@ -160,6 +165,26 @@ describe("ProviderAuthSessionManager", () => {
           { sessionId: first.sessionId, action: "signIn" },
           null,
         ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      yield* program;
+    }),
+  );
+
+  it.effect("serializes concurrent starts for the same provider instance", () =>
+    Effect.gen(function* () {
+      const harness = testHarness({ yieldBeforeSpawn: true });
+      const program = Effect.gen(function* () {
+        const manager = yield* make();
+        const [first, second] = yield* Effect.all(
+          [
+            manager.start({ instanceId: INSTANCE_ID, action: "signIn" }),
+            manager.start({ instanceId: INSTANCE_ID, action: "signIn" }),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        expect(second.sessionId).toBe(first.sessionId);
+        expect(harness.spawns).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
       yield* program;
     }),
