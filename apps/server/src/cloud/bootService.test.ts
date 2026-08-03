@@ -33,6 +33,7 @@ it("keeps systemd pinned to the stable launcher rather than a versioned server",
 
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
+  usePinnedLauncher = false,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -44,6 +45,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3");
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
   yield* fs.writeFileString(runtime.entryPath, "export {};\n");
+  yield* fs.writeFileString(
+    path.join(path.dirname(runtime.entryPath), "service-launcher.mjs"),
+    "export const source = 'pinned runtime';\n",
+  );
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
   const commands: string[] = [];
@@ -69,8 +74,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     cliVersion: "1.2.3",
     host: {
       execPath: "/usr/bin/node",
-      cliEntryPath: path.join(home, "bin.mjs"),
-      launcherSourcePath: sourceLauncher,
+      ...(usePinnedLauncher ? {} : { launcherSourcePath: sourceLauncher }),
     },
   }).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -106,6 +110,17 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* service.uninstall).toBe(true);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("npm "))).toBe(false);
+    }),
+  );
+
+  it.effect("copies the launcher from the prepared pinned runtime", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", true);
+      const plan = yield* service.install;
+
+      expect(yield* fs.readFileString(plan.launcherPath)).toBe(
+        "export const source = 'pinned runtime';\n",
+      );
     }),
   );
 
