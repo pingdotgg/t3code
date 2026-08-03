@@ -1,6 +1,6 @@
 import {
   ORCHESTRATION_WS_METHODS,
-  OrchestrationGetSnapshotError,
+  OrchestrationThreadNotFoundError,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
@@ -45,14 +46,11 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : "Could not synchronize the thread.";
 }
 
-const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
+const isOrchestrationThreadNotFoundError = Schema.is(OrchestrationThreadNotFoundError);
 
-function isThreadNotFoundSnapshotCause(cause: Cause.Cause<unknown>): boolean {
+function isThreadNotFoundCause(cause: Cause.Cause<unknown>): boolean {
   return cause.reasons.some(
-    (reason) =>
-      Cause.isFailReason(reason) &&
-      isOrchestrationGetSnapshotError(reason.error) &&
-      reason.error.reason === "thread_not_found",
+    (reason) => Cause.isFailReason(reason) && isOrchestrationThreadNotFoundError(reason.error),
   );
 }
 
@@ -94,20 +92,29 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const awaitingCompletion = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
+  const persistenceLock = yield* Semaphore.make(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationThreadDetailSnapshot,
   ) {
-    yield* cache.saveThread(environmentId, snapshot).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not persist the thread cache.").pipe(
-          Effect.annotateLogs({
-            environmentId,
-            threadId,
-            error: error.message,
-          }),
-        ),
-      ),
+    yield* persistenceLock.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* SubscriptionRef.get(state);
+        if (current.status === "deleted") {
+          return;
+        }
+        yield* cache.saveThread(environmentId, snapshot).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not persist the thread cache.").pipe(
+              Effect.annotateLogs({
+                environmentId,
+                threadId,
+                error: error.message,
+              }),
+            ),
+          ),
+        );
+      }),
     );
   });
 
@@ -178,20 +185,22 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       status: "deleted",
       error: Option.none(),
     });
-    yield* cache.removeThread(environmentId, threadId).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not remove the cached thread.").pipe(
-          Effect.annotateLogs({
-            environmentId,
-            threadId,
-            error: error.message,
-          }),
+    yield* persistenceLock.withPermits(1)(
+      cache.removeThread(environmentId, threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove the cached thread.").pipe(
+            Effect.annotateLogs({
+              environmentId,
+              threadId,
+              error: error.message,
+            }),
+          ),
         ),
       ),
     );
   });
   const handleStreamError = (cause: Cause.Cause<unknown>) =>
-    isThreadNotFoundSnapshotCause(cause) ? setDeleted() : setStreamError(cause);
+    isThreadNotFoundCause(cause) ? setDeleted() : setStreamError(cause);
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
