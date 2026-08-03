@@ -193,12 +193,16 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         snapshot,
         adapter,
         textGeneration,
-        authentication: makeProviderAuthenticationCapability({
-          command: effectiveConfig.binaryPath,
-          env: processEnv,
-          signInArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signIn,
-          signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signOut,
-        }),
+        ...(effectiveConfig.serverUrl
+          ? {}
+          : {
+              authentication: makeProviderAuthenticationCapability({
+                command: effectiveConfig.binaryPath,
+                env: processEnv,
+                signInArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signIn,
+                signOutArgs: PROVIDER_AUTH_COMMAND_ARGS.opencode.signOut,
+              }),
+            }),
       } satisfies ProviderInstance;
     }),
 };

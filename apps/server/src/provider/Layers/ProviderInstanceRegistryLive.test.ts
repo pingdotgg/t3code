@@ -372,6 +372,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(openCode?.authentication).toBeDefined();
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -442,6 +443,27 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("does not advertise local authentication for an external OpenCode server", () =>
+    Effect.gen(function* () {
+      const openCodeId = ProviderInstanceId.make("opencode_external");
+      const configMap: ProviderInstanceConfigMap = {
+        [openCodeId]: {
+          driver: ProviderDriverKind.make("opencode"),
+          enabled: false,
+          config: makeOpenCodeConfig({ serverUrl: "https://opencode.example.test" }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [OpenCodeDriver],
+        configMap,
+      });
+      const openCode = yield* registry.getInstance(openCodeId);
+
+      expect(openCode?.authentication).toBeUndefined();
     }).pipe(Effect.provide(testLayer)),
   );
 });
