@@ -93,6 +93,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
   const latestHistoryRef = useRef("");
   const [viewMode, setViewMode] = useState<"transcript" | "terminal">("transcript");
   const [transcript, setTranscript] = useState("");
+  const [terminalError, setTerminalError] = useState<string | null>(null);
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
   const { resolvedTheme } = useTheme();
@@ -117,6 +118,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
     let disposed = false;
     let surface: GhosttyTerminalSurface | null = null;
     setTranscript("");
+    setTerminalError(null);
     void GhosttyTerminalSurface.create(mount, {
       theme: authTerminalTheme(resolvedTheme),
       onData: (data) => {
@@ -140,6 +142,14 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       if (writtenHistoryRef.current) created.resetAndWrite(writtenHistoryRef.current);
       setTranscript(created.getTranscript());
       if (viewModeRef.current === "terminal") created.focus();
+    }).catch((cause: unknown) => {
+      if (disposed) return;
+      const message =
+        cause instanceof Error && cause.message.trim()
+          ? cause.message
+          : "Could not initialize the authentication terminal.";
+      setTerminalError(message);
+      void cancel({ environmentId: state.environmentId, input: { sessionId } });
     });
     return () => {
       disposed = true;
@@ -147,7 +157,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       if (terminalRef.current === surface) terminalRef.current = null;
       writtenHistoryRef.current = "";
     };
-  }, [resize, state.environmentId, state.sessionId, write]);
+  }, [cancel, resize, state.environmentId, state.sessionId, write]);
 
   useEffect(() => {
     terminalRef.current?.setTheme(authTerminalTheme(resolvedTheme));
@@ -177,7 +187,7 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
   }, [snapshot?.history]);
 
   const status = snapshot?.status;
-  const message = state.error ?? attach.error ?? snapshot?.message ?? null;
+  const message = state.error ?? terminalError ?? attach.error ?? snapshot?.message ?? null;
 
   return (
     <div className="space-y-3 px-6 pb-4">
@@ -235,9 +245,12 @@ function ProviderAuthTerminal({ state }: { readonly state: ProviderAuthDialogSta
       {message ? (
         <p
           className={
-            status === "succeeded"
+            status === "succeeded" && terminalError === null
               ? "text-sm text-success"
-              : status === "failed" || state.error !== null || attach.error !== null
+              : status === "failed" ||
+                  state.error !== null ||
+                  terminalError !== null ||
+                  attach.error !== null
                 ? "text-sm text-destructive"
                 : "text-sm text-muted-foreground"
           }
