@@ -128,6 +128,7 @@ import { PreviewPanel } from "./preview/PreviewPanel";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useBrowserPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
@@ -2077,6 +2078,26 @@ function ChatViewBody(
     );
   }, [activeThreadKey]);
   const previewState = useThreadPreviewState(activeThreadRef);
+  const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
+    activeThreadRef ? selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef) : null,
+  );
+  const [composerInsetElement, setComposerInsetElement] = useState<HTMLDivElement | null>(null);
+  const [composerBottomInset, setComposerBottomInset] = useState(0);
+  useLayoutEffect(() => {
+    if (!composerInsetElement) return;
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(composerInsetElement.getBoundingClientRect().height);
+      if (nextHeight <= 0) return;
+      setComposerBottomInset((currentHeight) =>
+        currentHeight === nextHeight ? currentHeight : nextHeight,
+      );
+    };
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(composerInsetElement);
+    return () => observer.disconnect();
+  }, [composerInsetElement]);
   const openPreview = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close);
   const activeBrowserSurface = browserPanel.surfaces.find(
@@ -4670,7 +4691,10 @@ function ChatViewBody(
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
         <div
-          className={cn("flex min-h-0 min-w-0 flex-1 flex-col", rightPanelMaximized && "hidden")}
+          className={cn(
+            "relative flex min-h-0 min-w-0 flex-1 flex-col",
+            rightPanelMaximized && "hidden",
+          )}
         >
           {/* Messages Wrapper */}
           <div ref={messagesViewportRef} className="relative flex min-h-0 flex-1 flex-col">
@@ -4741,6 +4765,7 @@ function ChatViewBody(
 
           {/* Input bar */}
           <div
+            ref={setComposerInsetElement}
             className={cn(
               "pt-1.5 ps-[calc(env(safe-area-inset-left)+--spacing(3))] pe-[calc(env(safe-area-inset-right)+--spacing(3))] sm:pt-2 sm:ps-[calc(env(safe-area-inset-left)+--spacing(5))] sm:pe-[calc(env(safe-area-inset-right)+--spacing(5))]",
               isGitRepo
@@ -4857,6 +4882,15 @@ function ChatViewBody(
                 }
               }}
               onPrepared={handlePreparedPullRequestThread}
+            />
+          ) : null}
+
+          {activeThreadRef && activePreviewMiniPlayer ? (
+            <ThreadPreviewMiniPlayer
+              key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
+              threadRef={activeThreadRef}
+              tabId={activePreviewMiniPlayer.tabId}
+              bottomInset={composerBottomInset}
             />
           ) : null}
         </div>
@@ -5067,7 +5101,6 @@ function ChatViewBody(
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
       )}
-      {activeThreadRef ? <ThreadPreviewMiniPlayer threadRef={activeThreadRef} /> : null}
     </div>
   );
 }

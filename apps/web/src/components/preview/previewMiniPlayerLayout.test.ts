@@ -19,4 +19,15 @@ describe("previewMiniPlayerLayout", () => {
       ),
     ).toEqual({ x: 168, y: 12 });
   });
+
+  it("keeps the player above a reserved bottom inset", () => {
+    expect(
+      clampPreviewMiniPlayerPosition(
+        { x: 20, y: 1_000 },
+        { width: 800, height: 600 },
+        { width: 320, height: 200 },
+        120,
+      ),
+    ).toEqual({ x: 20, y: 268 });
+  });
 });

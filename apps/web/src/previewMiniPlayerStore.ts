@@ -52,6 +52,7 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStore>()((set) 
       const key = scopedThreadKey(ref);
       const current = state.byThreadKey[key];
       if (!current || current.tabId !== tabId) return state;
+      if (current.position?.x === position.x && current.position.y === position.y) return state;
       return { byThreadKey: { ...state.byThreadKey, [key]: { ...current, position } } };
     }),
   resize: (ref, tabId, size) =>
@@ -59,6 +60,7 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStore>()((set) 
       const key = scopedThreadKey(ref);
       const current = state.byThreadKey[key];
       if (!current || current.tabId !== tabId) return state;
+      if (current.size?.width === size.width && current.size.height === size.height) return state;
       return { byThreadKey: { ...state.byThreadKey, [key]: { ...current, size } } };
     }),
 }));

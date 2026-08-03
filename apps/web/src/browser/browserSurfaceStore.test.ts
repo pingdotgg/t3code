@@ -36,8 +36,26 @@ describe("browserSurfaceStore", () => {
     expect(
       resolveBrowserSurfacePanelRect(
         {
-          hidden: { rect: staleRect, visible: false, content: null, updatedAt: 1, owner: null },
-          active: { rect: liveRect, visible: true, content: null, updatedAt: 2, owner: null },
+          hidden: {
+            rect: staleRect,
+            visible: false,
+            content: null,
+            fittedSourceContent: null,
+            fitSourceContent: false,
+            cornerRadius: 0,
+            updatedAt: 1,
+            owner: null,
+          },
+          active: {
+            rect: liveRect,
+            visible: true,
+            content: null,
+            fittedSourceContent: null,
+            fitSourceContent: false,
+            cornerRadius: 0,
+            updatedAt: 2,
+            owner: null,
+          },
         },
         "hidden",
       ),
@@ -73,6 +91,55 @@ describe("browserSurfaceStore", () => {
     expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toMatchObject({
       visible: false,
       owner: null,
+    });
+  });
+
+  it("retains source content while a mini-player fits it into its own surface", () => {
+    const tabId = "fitted-browser-surface";
+    useBrowserSurfaceStore.getState().presentContent(tabId, {
+      x: 0,
+      y: 0,
+      width: 1280,
+      height: 800,
+      scale: 1,
+      scrollLeft: 0,
+      scrollTop: 0,
+    });
+
+    const lease = acquireBrowserSurface(tabId, true);
+    expect(lease.present({ x: 10, y: 20, width: 320, height: 200 }, true, 12)).toBe(true);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toMatchObject({
+      fitSourceContent: true,
+      fittedSourceContent: { width: 1280, height: 800 },
+      cornerRadius: 12,
+    });
+  });
+
+  it("rejects a displaced surface lease", () => {
+    const tabId = "displaced-browser-surface";
+    const staleLease = acquireBrowserSurface(tabId);
+    const liveLease = acquireBrowserSurface(tabId);
+
+    expect(staleLease.present({ x: 0, y: 0, width: 300, height: 200 }, true)).toBe(false);
+    expect(liveLease.present({ x: 10, y: 20, width: 320, height: 240 }, true)).toBe(true);
+  });
+
+  it("allows a reclaimed lease to present after displacement", () => {
+    const tabId = "reclaimed-browser-surface";
+    const first = acquireBrowserSurface(tabId, true);
+    expect(first.present({ x: 0, y: 0, width: 320, height: 200 }, true, 12)).toBe(true);
+
+    const second = acquireBrowserSurface(tabId);
+    expect(first.present({ x: 0, y: 0, width: 320, height: 200 }, true, 12)).toBe(false);
+    expect(second.present({ x: 10, y: 20, width: 400, height: 300 }, false)).toBe(true);
+
+    first.release();
+    const reclaimed = acquireBrowserSurface(tabId, true);
+    expect(reclaimed.present({ x: 5, y: 5, width: 300, height: 180 }, true, 12)).toBe(true);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toMatchObject({
+      visible: true,
+      fitSourceContent: true,
+      cornerRadius: 12,
     });
   });
 });

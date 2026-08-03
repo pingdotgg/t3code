@@ -39,4 +39,17 @@ describe("previewMiniPlayerStore", () => {
       { tabId: "tab-current", position: null, size: null },
     ]);
   });
+
+  it("no-ops equal move and resize values", () => {
+    const store = usePreviewMiniPlayerStore.getState();
+    store.open(first, "tab-a");
+    store.move(first, "tab-a", { x: 20, y: 30 });
+    store.resize(first, "tab-a", { width: 360, height: 220 });
+    const before = usePreviewMiniPlayerStore.getState().byThreadKey;
+
+    store.move(first, "tab-a", { x: 20, y: 30 });
+    store.resize(first, "tab-a", { width: 360, height: 220 });
+
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toBe(before);
+  });
 });
