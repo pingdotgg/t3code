@@ -1,4 +1,4 @@
-import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
+import { StackActions, type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { EnvironmentId, ProviderAuthSessionId, ProviderInstanceId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, View } from "react-native";
@@ -11,17 +11,30 @@ import { providerAuthEnvironment } from "../../state/provider-auth";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { TerminalSurface } from "../terminal/NativeTerminalSurface";
-import type { ProviderAuthRouteParams } from "./SettingsProvidersRouteScreen";
+import { parseProviderAuthRouteParams, type ProviderAuthRouteParams } from "./providerAuthRoute";
 
 type Props = StaticScreenProps<ProviderAuthRouteParams>;
 
 export function SettingsProviderAuthRouteScreen({ route }: Props) {
+  const params = parseProviderAuthRouteParams(route.params);
+  return params === null ? <InvalidProviderAuthRouteScreen /> : <ProviderAuthScreen {...params} />;
+}
+
+function InvalidProviderAuthRouteScreen() {
+  const navigation = useNavigation();
+  useEffect(() => {
+    navigation.dispatch(StackActions.replace("SettingsProviders"));
+  }, [navigation]);
+  return null;
+}
+
+function ProviderAuthScreen(params: ProviderAuthRouteParams) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const environmentId = EnvironmentId.make(route.params.environmentId);
-  const instanceId = ProviderInstanceId.make(route.params.instanceId);
+  const environmentId = EnvironmentId.make(params.environmentId);
+  const instanceId = ProviderInstanceId.make(params.instanceId);
   const [sessionId, setSessionId] = useState<ProviderAuthSessionId | null>(() =>
-    route.params.sessionId ? ProviderAuthSessionId.make(route.params.sessionId) : null,
+    params.sessionId ? ProviderAuthSessionId.make(params.sessionId) : null,
   );
   const [startError, setStartError] = useState<string | null>(null);
   const start = useAtomCommand(providerAuthEnvironment.start, { reportFailure: false });
@@ -36,11 +49,11 @@ export function SettingsProviderAuthRouteScreen({ route }: Props) {
   const snapshot = attach.data;
 
   useEffect(() => {
-    if (sessionId !== null || route.params.sessionId) return;
+    if (sessionId !== null || params.sessionId) return;
     let active = true;
     void start({
       environmentId,
-      input: { instanceId, action: route.params.action, cols: 60, rows: 20 },
+      input: { instanceId, action: params.action, cols: 60, rows: 20 },
     }).then((result) => {
       if (!active) return;
       if (result._tag === "Success") {
@@ -52,7 +65,7 @@ export function SettingsProviderAuthRouteScreen({ route }: Props) {
     return () => {
       active = false;
     };
-  }, [environmentId, instanceId, route.params.action, route.params.sessionId, sessionId, start]);
+  }, [environmentId, instanceId, params.action, params.sessionId, sessionId, start]);
 
   const running = snapshot?.status === "running" || (sessionId === null && startError === null);
   const message = startError ?? attach.error ?? snapshot?.message ?? null;
@@ -62,13 +75,10 @@ export function SettingsProviderAuthRouteScreen({ route }: Props) {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader
-            title={route.params.displayName}
-            onBack={() => navigation.goBack()}
-          />
+          <AndroidScreenHeader title={params.displayName} onBack={() => navigation.goBack()} />
         </>
       ) : (
-        <NativeStackScreenOptions options={{ title: route.params.displayName }} />
+        <NativeStackScreenOptions options={{ title: params.displayName }} />
       )}
       <View
         className="flex-1 gap-3 px-4 pt-3"

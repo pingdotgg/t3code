@@ -14,14 +14,7 @@ import { useEnvironments } from "../../state/environments";
 import { useServerConfigs } from "../../state/entities";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
-
-export type ProviderAuthRouteParams = {
-  readonly environmentId: string;
-  readonly instanceId: string;
-  readonly displayName: string;
-  readonly action: ProviderAuthAction;
-  readonly sessionId?: string;
-};
+import type { ProviderAuthRouteParams } from "./providerAuthRoute";
 
 function authPresentation(provider: {
   readonly auth: { readonly status: string; readonly email?: string };
