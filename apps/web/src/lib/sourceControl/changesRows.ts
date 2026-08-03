@@ -13,6 +13,7 @@
 
 import {
   buildSourceControlTree,
+  collectAllFolderPaths,
   flattenSourceControlTree,
   type SourceControlTreeRow,
 } from "./fileTree";
@@ -248,6 +249,71 @@ export function buildChangesRows(input: BuildChangesRowsInput): ReadonlyArray<Ch
 /** Rows the keyboard can land on. Headers, folders and placeholders are skipped. */
 export function isChangesFileRow(row: ChangesRow): boolean {
   return row.kind === "file";
+}
+
+/**
+ * The scope a group header's bulk action applies to.
+ *
+ * Deliberately the same filter/query the rows were built from: a header that
+ * reads "3 of 12" sits above three visible rows, and a bulk action that touched
+ * the other nine would be acting on files the user cannot see.
+ */
+export interface ChangesGroupScope {
+  readonly files: ReadonlyArray<WorkingCopyFile>;
+  readonly filter: ChangesStatusFilter;
+  readonly query: string;
+}
+
+/**
+ * fork: f4 — the files ONE group's header acts on.
+ *
+ * Computed from the full file list rather than from the rendered rows, because
+ * a collapsed folder removes its children from `rows` and "Stage all" must not
+ * quietly mean "stage all the ones that happen to be expanded".
+ */
+export function changesGroupFiles(
+  scope: ChangesGroupScope,
+  group: ChangesGroup,
+): ReadonlyArray<WorkingCopyFile> {
+  const normalizedQuery = scope.query.trim().toLowerCase();
+  return scope.files.filter(
+    (file) => changesGroupOf(file) === group && passesFilters(file, scope.filter, normalizedQuery),
+  );
+}
+
+/**
+ * Deduped paths for a group header's bulk action.
+ *
+ * The reason this exists at all: the group header's "Discard all" used to call
+ * the changes list with an empty path array, which the panel expanded into the
+ * whole-working-copy discard rung. A group-scoped affordance must carry its own
+ * group's paths and nothing else.
+ */
+export function changesGroupPaths(
+  scope: ChangesGroupScope,
+  group: ChangesGroup,
+): ReadonlyArray<string> {
+  return [...new Set(changesGroupFiles(scope, group).map((file) => file.path))];
+}
+
+/**
+ * fork: f4 — EVERY folder collapse key in one group, including folders that are
+ * currently hidden inside a collapsed parent.
+ *
+ * `changesFolderKeysIn(rows)` only sees what is rendered, so "Collapse folders"
+ * built from it collapsed exactly one more level per press instead of all of
+ * them. This builds the group's tree with nothing collapsed, so one press is
+ * one answer.
+ */
+export function changesAllFolderKeys(
+  scope: ChangesGroupScope,
+  group: ChangesGroup,
+): ReadonlyArray<string> {
+  const files = changesGroupFiles(scope, group);
+  if (files.length === 0) {
+    return [];
+  }
+  return collectAllFolderPaths(buildSourceControlTree(files)).map((path) => `${group}:${path}`);
 }
 
 /** Every folder collapse key currently in the list, for expand/collapse-all. */

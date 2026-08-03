@@ -20,6 +20,8 @@
  *
  * fork: f4 hunk staging
  */
+import { useAtomValue } from "@effect/atom-react";
+import { workingCopyRevisionAtom } from "@t3tools/client-runtime/state/working-copy";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -75,6 +77,16 @@ export interface DiffHunkStagingView {
   readonly label: string;
   readonly sectionId: string;
   readonly clusters: ReadonlyArray<HunkCluster>;
+  /**
+   * fork: f4 F-19 — the in-flight state, as a string the caller can feed into
+   * the annotation entry so the viewer's `version` hash actually changes.
+   *
+   * The clusters ride the annotation channel, whose items are memoised on a
+   * hash of `id:rangeLabel:text`. For a hunk entry all three were constant by
+   * construction, so the pending spinner and the disabled state could never
+   * reach the DOM: the buttons looked completely dead for the whole action.
+   */
+  readonly pendingKey: string;
   /** Rendered into the diff view's annotation slot for one hunk. */
   readonly renderCluster: (fileKey: string, hunkIndex: number) => ReactNode;
   /** The safety ladder's dialog for `Discard hunk` — the one rung left here. */
@@ -140,7 +152,37 @@ export function useDiffHunkStaging(target: {
   const [pending, setPending] = useState<{
     readonly index: number;
     readonly action: HunkAction;
+    /** Held while the safety-ladder dialog is open, before the RPC starts. */
+    readonly confirming: boolean;
   } | null>(null);
+
+  /**
+   * fork: f4 invalidation Gap A — the per-file diff is read straight from an
+   * atom here, so staging done ANYWHERE else (a row's ⊕ in the changes list, a
+   * terminal, an agent) left this surface rendering the old patch, with hunk
+   * clusters that would now fail to apply. The revision atom exists for exactly
+   * this; it is bumped by every `workingCopy.*` mutation's `onSettled`.
+   */
+  const revision = useAtomValue(
+    resolved === null
+      ? EMPTY_WORKING_COPY_REVISION_ATOM
+      : workingCopyRevisionAtom({ environmentId: resolved.environmentId, cwd: resolved.cwd }),
+  );
+  const seenRevisionRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (resolved === null) {
+      seenRevisionRef.current = null;
+      return;
+    }
+    if (seenRevisionRef.current === null) {
+      seenRevisionRef.current = revision;
+      return;
+    }
+    if (seenRevisionRef.current === revision) return;
+    seenRevisionRef.current = revision;
+    refresh();
+  }, [refresh, resolved, revision]);
 
   const patch = diffQuery.data?.patch;
   // A truncated patch can end mid-hunk, and `buildHunkPatch` recomputes the
@@ -187,15 +229,20 @@ export function useDiffHunkStaging(target: {
   const runAction = useCallback(
     (action: HunkAction, cluster: HunkCluster) => {
       if (pending !== null) return;
+      // fork: f4 F-20 — claim the cluster BEFORE the confirm. `setPending` used
+      // to happen after the await, so every button stayed live for the whole
+      // dialog and a second Discard press opened a second confirm that
+      // cancelled the first — the first action then returned silently.
+      setPending({ index: cluster.index, action, confirming: action === "discard" });
       void (async () => {
-        // Discard is the only hunk rung below file granularity, so it cannot be
-        // backed by the pathspec stash and is the only one that still asks.
-        if (action === "discard") {
-          const outcome = await confirm.confirm(confirmDiscardHunk(filePath));
-          if (outcome !== "confirmed") return;
-        }
-        setPending({ index: cluster.index, action });
         try {
+          // Discard is the only hunk rung below file granularity, so it cannot
+          // be backed by the pathspec stash and is the only one that still asks.
+          if (action === "discard") {
+            const outcome = await confirm.confirm(confirmDiscardHunk(filePath));
+            if (outcome !== "confirmed") return;
+            setPending({ index: cluster.index, action, confirming: false });
+          }
           const applied = await actions.applyPatch(cluster.patch, hunkApplyFlags(action));
           if (applied) actedRef.current = true;
           // `applyPatch` invalidates status and bumps the working-copy revision,
@@ -203,7 +250,6 @@ export function useDiffHunkStaging(target: {
           // explicitly. Refreshing on failure too keeps a rejected patch from
           // leaving a stale view behind.
           refresh();
-          if (!applied) return;
         } finally {
           setPending(null);
         }
@@ -257,10 +303,22 @@ export function useDiffHunkStaging(target: {
         ? `commit:${resolvedSelection.hash}:${filePath}`
         : `working-copy:${side}:${filePath}`,
     clusters,
+    // fork: f4 F-19 — feeds the annotation entry so the viewer's item version
+    // changes when an action starts and again when it settles.
+    pendingKey: pending === null ? "" : `${pending.index}:${pending.action}:${pending.confirming}`,
     renderCluster,
     confirmDialog,
   };
 }
+
+/**
+ * A stable placeholder so the revision hook can be called unconditionally.
+ * Never read for a real repository.
+ */
+const EMPTY_WORKING_COPY_REVISION_ATOM = workingCopyRevisionAtom({
+  environmentId: "__none__" as never,
+  cwd: "",
+});
 
 function fileName(path: string): string {
   const index = path.lastIndexOf("/");

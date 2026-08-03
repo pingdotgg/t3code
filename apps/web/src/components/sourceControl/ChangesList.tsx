@@ -16,17 +16,19 @@
  * fork: f4 source-control panel
  */
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDown, ChevronRight, Folder, Minus, Plus, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Loader2, Minus, Plus, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CHANGES_GROUP_TITLE,
   CHANGES_ROW_HEIGHT,
   buildChangesRows,
-  changesFolderKeysIn,
+  changesAllFolderKeys,
+  changesGroupPaths,
   changesRowHeight,
   partiallyStagedPaths,
   type ChangesGroup,
+  type ChangesGroupScope,
   type ChangesRow,
   type ChangesStatusFilter,
   type ChangesViewMode,
@@ -47,10 +49,30 @@ import {
   type ChangesSelection,
 } from "./changesSelection.logic";
 import { EMPTY_CHANGES_SELECTION } from "./changesSelection.logic";
-import { groupHeaderCountLabel, groupIsCollapsible } from "./sourceControlPanel.logic";
+import { anyPathBusy, groupHeaderCountLabel, groupIsCollapsible } from "./sourceControlPanel.logic";
 
 /** Tree indent, matching 2code's 13 px per level from a 16 px base inset. */
 const INDENT_PER_LEVEL = 13;
+
+/**
+ * fork: f4 focus model — the keys this listbox consumes. Exported so the
+ * scoping rule is testable without a DOM.
+ */
+export const CHANGES_LIST_OWNED_KEYS: ReadonlySet<string> = new Set([
+  "j",
+  "k",
+  "s",
+  "u",
+  "x",
+  "ArrowDown",
+  "ArrowUp",
+  "Home",
+  "End",
+  "Enter",
+  "Backspace",
+  "Delete",
+  "Escape",
+]);
 
 export interface ChangesListProps {
   readonly files: ReadonlyArray<WorkingCopyFile>;
@@ -68,6 +90,25 @@ export interface ChangesListProps {
   readonly onDiscard: (paths: ReadonlyArray<string>) => void;
   readonly onResolve: (path: string, side?: "ours" | "theirs") => void;
   readonly onOpenDiff: (file: WorkingCopyFile) => void;
+  /**
+   * fork: f4 — a keyboard action that resolved to no rows. The list itself has
+   * nothing useful to draw for that, and silence is the defect being fixed.
+   */
+  readonly onEmptyKeyboardTarget?: (action: "stage" | "unstage" | "discard") => void;
+}
+
+/** `aria-activedescendant` needs a DOM id, and row keys carry `/` and spaces. */
+export function changesRowDomId(rowKey: string): string {
+  return `sc-row-${fnv1a32Hex(rowKey)}`;
+}
+
+function fnv1a32Hex(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
 
 export function ChangesList(props: ChangesListProps) {
@@ -95,6 +136,41 @@ export function ChangesList(props: ChangesListProps) {
   // Computed once per status, not per row.
   const partialPaths = useMemo(() => partiallyStagedPaths(props.files), [props.files]);
 
+  // fork: f4 — the scope every group-header bulk action is cut from. Built from
+  // the full file list (not `rows`), so a collapsed folder cannot shrink what
+  // "Stage all" means, and scoped to one group, so "Discard all" on a group
+  // header cannot reach past that group. See F-08.
+  const groupScope = useMemo<ChangesGroupScope>(
+    () => ({ files: props.files, filter: props.filter, query: props.query }),
+    [props.files, props.filter, props.query],
+  );
+  const groupPathsOf = useCallback(
+    (group: ChangesGroup) => changesGroupPaths(groupScope, group),
+    [groupScope],
+  );
+
+  /**
+   * fork: f4 F-14 — collapse/expand every folder in THIS group, in one press.
+   *
+   * The old version built its key list from the visible rows, so it collapsed
+   * exactly one more level per press, and its "expand" branch cleared the
+   * collapse list for every group at once from a single group's header.
+   */
+  const toggleGroupFolders = useCallback(
+    (group: ChangesGroup) => {
+      const groupKeys = changesAllFolderKeys(groupScope, group);
+      const current = new Set(props.collapsedFolders);
+      const allCollapsed = groupKeys.length > 0 && groupKeys.every((key) => current.has(key));
+      if (allCollapsed) {
+        for (const key of groupKeys) current.delete(key);
+      } else {
+        for (const key of groupKeys) current.add(key);
+      }
+      props.onSetCollapsedFolders([...current]);
+    },
+    [groupScope, props],
+  );
+
   // Drop keys whose rows are gone; identity is preserved when nothing moved so
   // an idle refresh does not re-render the list.
   useEffect(() => {
@@ -111,26 +187,65 @@ export function ChangesList(props: ChangesListProps) {
     [heightOptions, rows, scrollTop],
   );
 
+  /**
+   * fork: f4 focus model — DOM focus must actually be inside the listbox, or
+   * `s`/`j`/`u`/`x` land in whatever had focus before (the chat composer) and
+   * type themselves into it. Selecting a row is therefore always accompanied by
+   * a real `focus()` on the container, and the container carries
+   * `aria-activedescendant` so the focused row is announced.
+   */
+  const takeFocus = useCallback(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    if (container.contains(container.ownerDocument.activeElement)) return;
+    container.focus({ preventScroll: true });
+  }, []);
+
   const focusRow = useCallback(
     (key: string | null) => {
       if (key === null) return;
       setSelection(selectSingleRow(key));
+      takeFocus();
       const index = rows.findIndex((row) => row.key === key);
       if (index >= 0) {
         listRef.current?.scrollToIndex({ index, viewPosition: 0.5 });
       }
     },
-    [rows],
+    [rows, takeFocus],
+  );
+
+  /**
+   * Focusing the listbox with nothing selected seeds the first file row, so the
+   * documented `s` / `u` / `x` keys act on something rather than returning
+   * early with no feedback (F-15).
+   */
+  const handleContainerFocus = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      if (selection.focusedKey !== null) return;
+      const first = moveChangesFocus(rows, null, "first");
+      if (first !== null) setSelection(selectSingleRow(first));
+    },
+    [rows, selection.focusedKey],
   );
 
   const runOnTargets = useCallback(
-    (action: (paths: ReadonlyArray<string>) => void, predicate: (row: ChangesRow) => boolean) => {
+    (
+      kind: "stage" | "unstage" | "discard",
+      action: (paths: ReadonlyArray<string>) => void,
+      predicate: (row: ChangesRow) => boolean,
+    ) => {
       const targets = actionTargetRows(rows, selection).filter(predicate);
-      if (targets.length === 0) return;
+      if (targets.length === 0) {
+        // A keypress that resolves to nothing used to be indistinguishable from
+        // a broken panel. Say so instead.
+        props.onEmptyKeyboardTarget?.(kind);
+        return;
+      }
       // ONE call for a multi-file action, so a single undo toast covers it all.
       action(targetPaths(targets));
     },
-    [rows, selection],
+    [props, rows, selection],
   );
 
   const handleKeyDown = useCallback(
@@ -144,6 +259,11 @@ export function ChangesList(props: ChangesListProps) {
         event.altKey
       ) {
         return;
+      }
+      // fork: f4 focus model — a key this list owns stops here. Without it a
+      // bare `s`/`x` keeps bubbling to the surfaces above the panel.
+      if (CHANGES_LIST_OWNED_KEYS.has(event.key)) {
+        event.stopPropagation();
       }
       switch (event.key) {
         case "j":
@@ -174,17 +294,17 @@ export function ChangesList(props: ChangesListProps) {
         }
         case "s":
           event.preventDefault();
-          runOnTargets(props.onStage, (row) => row.group !== "staged");
+          runOnTargets("stage", props.onStage, (row) => row.group !== "staged");
           return;
         case "u":
           event.preventDefault();
-          runOnTargets(props.onUnstage, (row) => row.group === "staged");
+          runOnTargets("unstage", props.onUnstage, (row) => row.group === "staged");
           return;
         case "x":
         case "Backspace":
         case "Delete":
           event.preventDefault();
-          runOnTargets(props.onDiscard, (row) => row.group === "unstaged");
+          runOnTargets("discard", props.onDiscard, (row) => row.group === "unstaged");
           return;
         case "Escape":
           event.preventDefault();
@@ -199,6 +319,10 @@ export function ChangesList(props: ChangesListProps) {
 
   const handleSelect = useCallback(
     (row: ChangesRow, event: React.MouseEvent) => {
+      // Every click path moves real focus into the list. Clicking a plain div
+      // leaves `document.activeElement` where it was, which is how the panel's
+      // keys ended up typing into the chat composer.
+      takeFocus();
       if (event.shiftKey) {
         setSelection((current) => selectRowRange(rows, current, row.key));
         return;
@@ -210,37 +334,39 @@ export function ChangesList(props: ChangesListProps) {
       setSelection(selectSingleRow(row.key));
       if (row.file) props.onOpenDiff(row.file);
     },
-    [props, rows],
+    [props, rows, takeFocus],
   );
 
   const renderRow = useCallback(
     (row: ChangesRow) => {
       if (row.kind === "header") {
+        const paths = groupPathsOf(row.group);
         return (
           <GroupHeader
             row={row}
             collapsed={collapsedGroups.has(row.group)}
+            busy={anyPathBusy(props.busyPaths, paths)}
             onToggle={() => props.onToggleGroup(row.group)}
-            onStageAll={() => props.onStage([])}
-            onUnstageAll={() => props.onUnstage([])}
-            onDiscardAll={() => props.onDiscard([])}
-            onCollapseAllFolders={() =>
-              props.onSetCollapsedFolders(
-                props.collapsedFolders.length > 0 ? [] : changesFolderKeysIn(rows),
-              )
-            }
+            // fork: f4 F-08 — the group's OWN paths. `[]` used to travel up to
+            // the panel and be re-expanded into the whole working copy.
+            onStageAll={() => props.onStage(paths)}
+            onUnstageAll={() => props.onUnstage(paths)}
+            onDiscardAll={() => props.onDiscard(paths)}
+            onCollapseAllFolders={() => toggleGroupFolders(row.group)}
             showFolderToggle={props.viewMode === "tree"}
           />
         );
       }
       if (row.kind === "folder") {
+        const folderFiles = row.folderFiles ?? [];
         return (
           <FolderRow
             row={row}
             indentPx={row.depth * INDENT_PER_LEVEL}
+            busy={anyPathBusy(props.busyPaths, folderFiles)}
             onToggle={() => props.onToggleFolder(`${row.group}:${row.path ?? ""}`)}
-            onStage={() => props.onStage(row.folderFiles ?? [])}
-            onUnstage={() => props.onUnstage(row.folderFiles ?? [])}
+            onStage={() => props.onStage(folderFiles)}
+            onUnstage={() => props.onUnstage(folderFiles)}
             staged={row.group === "staged"}
           />
         );
@@ -260,6 +386,7 @@ export function ChangesList(props: ChangesListProps) {
       return (
         <ChangeRow
           row={row}
+          domId={changesRowDomId(row.key)}
           selected={selection.selectedKeys.has(row.key)}
           focused={selection.focusedKey === row.key}
           partial={partialPaths.has(file.path)}
@@ -274,17 +401,22 @@ export function ChangesList(props: ChangesListProps) {
         />
       );
     },
-    [collapsedGroups, handleSelect, partialPaths, props, rows, selection],
+    [collapsedGroups, groupPathsOf, groupScope, handleSelect, partialPaths, props, selection],
   );
+
+  const activeDescendantId =
+    selection.focusedKey === null ? undefined : changesRowDomId(selection.focusedKey);
 
   return (
     <div
       ref={containerRef}
-      className="relative min-h-0 flex-1"
+      className="relative min-h-0 flex-1 outline-none"
       role="listbox"
       aria-multiselectable
       aria-label="Changed files"
+      aria-activedescendant={activeDescendantId}
       tabIndex={0}
+      onFocus={handleContainerFocus}
       onKeyDown={handleKeyDown}
     >
       <LegendList<ChangesRow>
@@ -314,15 +446,12 @@ export function ChangesList(props: ChangesListProps) {
               }}
               pinned
               collapsed={collapsedGroups.has(pinnedGroup)}
+              busy={anyPathBusy(props.busyPaths, groupPathsOf(pinnedGroup))}
               onToggle={() => props.onToggleGroup(pinnedGroup)}
-              onStageAll={() => props.onStage([])}
-              onUnstageAll={() => props.onUnstage([])}
-              onDiscardAll={() => props.onDiscard([])}
-              onCollapseAllFolders={() =>
-                props.onSetCollapsedFolders(
-                  props.collapsedFolders.length > 0 ? [] : changesFolderKeysIn(rows),
-                )
-              }
+              onStageAll={() => props.onStage(groupPathsOf(pinnedGroup))}
+              onUnstageAll={() => props.onUnstage(groupPathsOf(pinnedGroup))}
+              onDiscardAll={() => props.onDiscard(groupPathsOf(pinnedGroup))}
+              onCollapseAllFolders={() => toggleGroupFolders(pinnedGroup)}
               showFolderToggle={props.viewMode === "tree"}
             />
           </div>
@@ -345,6 +474,8 @@ function GroupHeader(props: {
   collapsed: boolean;
   pinned?: boolean;
   showFolderToggle: boolean;
+  /** One of this group's files has an action in flight. */
+  busy: boolean;
   onToggle: () => void;
   onStageAll: () => void;
   onUnstageAll: () => void;
@@ -391,15 +522,29 @@ function GroupHeader(props: {
             </HeaderAction>
           ) : null}
           {row.group === "staged" ? (
-            <HeaderAction label="Unstage all" onClick={props.onUnstageAll}>
+            <HeaderAction
+              label={`Unstage all ${CHANGES_GROUP_TITLE[row.group]}`}
+              busy={props.busy}
+              onClick={props.onUnstageAll}
+            >
               <Minus className="size-3.5" />
             </HeaderAction>
           ) : (
             <>
-              <HeaderAction label="Stage all" onClick={props.onStageAll}>
+              <HeaderAction
+                label={`Stage all ${CHANGES_GROUP_TITLE[row.group]}`}
+                busy={props.busy}
+                onClick={props.onStageAll}
+              >
                 <Plus className="size-3.5" />
               </HeaderAction>
-              <HeaderAction label="Discard all" onClick={props.onDiscardAll}>
+              <HeaderAction
+                // The label names the group: this rung discards THIS group, and
+                // the whole-working-copy discard lives in the overflow menu.
+                label={`Discard all ${CHANGES_GROUP_TITLE[row.group]}`}
+                busy={props.busy}
+                onClick={props.onDiscardAll}
+              >
                 <Undo2 className="size-3.5" />
               </HeaderAction>
             </>
@@ -410,16 +555,26 @@ function GroupHeader(props: {
   );
 }
 
-function HeaderAction(props: { label: string; onClick: () => void; children: React.ReactNode }) {
+function HeaderAction(props: {
+  label: string;
+  busy?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
       aria-label={props.label}
       title={props.label}
-      className="flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+      // fork: f4 F-04/F-06 — disabled while its own action is in flight. The
+      // press used to be accepted, dropped by the busy guard and never
+      // reported.
+      disabled={props.busy === true}
+      aria-busy={props.busy === true}
+      className="flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
       onClick={props.onClick}
     >
-      {props.children}
+      {props.busy === true ? <Loader2 className="size-3.5 animate-spin" /> : props.children}
     </button>
   );
 }
@@ -428,6 +583,7 @@ function FolderRow(props: {
   row: ChangesRow;
   indentPx: number;
   staged: boolean;
+  busy: boolean;
   onToggle: () => void;
   onStage: () => void;
   onUnstage: () => void;
@@ -454,11 +610,11 @@ function FolderRow(props: {
       </button>
       <span className="hidden items-center gap-0.5 group-hover:flex">
         {props.staged ? (
-          <HeaderAction label="Unstage folder" onClick={props.onUnstage}>
+          <HeaderAction label="Unstage folder" busy={props.busy} onClick={props.onUnstage}>
             <Minus className="size-3.5" />
           </HeaderAction>
         ) : (
-          <HeaderAction label="Stage folder" onClick={props.onStage}>
+          <HeaderAction label="Stage folder" busy={props.busy} onClick={props.onStage}>
             <Plus className="size-3.5" />
           </HeaderAction>
         )}

@@ -15,6 +15,9 @@ import type { WorkingCopyStashEntry } from "@t3tools/contracts";
 import { Archive, ChevronDown, ChevronRight } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
+
+import { workingCopyBusyKey } from "./sourceControlPanel.logic";
 
 export function StashesSection(props: {
   readonly open: boolean;
@@ -22,6 +25,10 @@ export function StashesSection(props: {
   readonly stashes: ReadonlyArray<WorkingCopyStashEntry>;
   readonly backups: ReadonlyArray<WorkingCopyStashEntry>;
   readonly isLoading: boolean;
+  /** The stash list has resolved at least once — Pop is inert before that. */
+  readonly listReady: boolean;
+  /** fork: f4 F-06 — per-ref in-flight state, so a re-press cannot vanish. */
+  readonly isBusy: (key: string) => boolean;
   readonly dirty: boolean;
   readonly onStash: () => void;
   readonly onPopLatest: () => void;
@@ -30,6 +37,8 @@ export function StashesSection(props: {
   readonly onRestoreBackup: (ref: string) => void;
 }) {
   const plainStashes = props.stashes.filter((entry) => !entry.isDiscardBackup);
+  const latestRef = plainStashes[0]?.ref;
+  const popBusy = latestRef !== undefined && props.isBusy(workingCopyBusyKey.stashPop(latestRef));
 
   return (
     <section className="flex-none border-border/60 border-t" aria-label="Stashes">
@@ -47,16 +56,21 @@ export function StashesSection(props: {
         </button>
         {props.open ? (
           <span className="flex shrink-0 items-center gap-1">
-            <Button size="xs" variant="ghost" disabled={!props.dirty} onClick={props.onStash}>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={!props.dirty || props.isBusy(workingCopyBusyKey.stashPush())}
+              onClick={props.onStash}
+            >
               Stash…
             </Button>
             <Button
               size="xs"
               variant="ghost"
-              disabled={plainStashes.length === 0}
+              disabled={!props.listReady || plainStashes.length === 0 || popBusy}
               onClick={props.onPopLatest}
             >
-              Pop
+              {popBusy ? "Popping…" : "Pop"}
             </Button>
           </span>
         ) : null}
@@ -73,8 +87,17 @@ export function StashesSection(props: {
               createdAt={stash.createdAt}
               actions={
                 <>
-                  <RowButton onClick={() => props.onApply(stash.ref)}>Apply</RowButton>
-                  <RowButton onClick={() => props.onDrop(stash.ref, stash.label)} danger>
+                  <RowButton
+                    busy={props.isBusy(workingCopyBusyKey.stashApply(stash.ref))}
+                    onClick={() => props.onApply(stash.ref)}
+                  >
+                    Apply
+                  </RowButton>
+                  <RowButton
+                    busy={props.isBusy(workingCopyBusyKey.stashDrop(stash.ref))}
+                    onClick={() => props.onDrop(stash.ref, stash.label)}
+                    danger
+                  >
                     Drop
                   </RowButton>
                 </>
@@ -92,7 +115,12 @@ export function StashesSection(props: {
                   label={backup.label}
                   createdAt={backup.createdAt}
                   actions={
-                    <RowButton onClick={() => props.onRestoreBackup(backup.ref)}>Restore</RowButton>
+                    <RowButton
+                      busy={props.isBusy(workingCopyBusyKey.restoreBackup(backup.ref))}
+                      onClick={() => props.onRestoreBackup(backup.ref)}
+                    >
+                      Restore
+                    </RowButton>
                   }
                 />
               ))}
@@ -121,15 +149,22 @@ function StashRow(props: { label: string; createdAt: string; actions: React.Reac
   );
 }
 
-function RowButton(props: { onClick: () => void; danger?: boolean; children: React.ReactNode }) {
+function RowButton(props: {
+  onClick: () => void;
+  busy?: boolean;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
-      className={
-        props.danger
-          ? "rounded-sm border border-border px-1.5 py-0.5 text-destructive-foreground hover:bg-destructive/10"
-          : "rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent"
-      }
+      disabled={props.busy === true}
+      aria-busy={props.busy === true}
+      className={cn(
+        "rounded-sm border border-border px-1.5 py-0.5",
+        props.danger ? "text-destructive-foreground hover:bg-destructive/10" : "hover:bg-accent",
+        "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+      )}
       onClick={props.onClick}
     >
       {props.children}

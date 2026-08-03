@@ -27,6 +27,8 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   type AtomCommandConcurrency,
 } from "./runtime.ts";
+import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
+import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import type { EnvironmentUnaryRpcTag } from "../rpc/client.ts";
 
@@ -88,7 +90,9 @@ export function bumpWorkingCopyRevision(
 }
 
 export function createWorkingCopyEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  // `EnvironmentCacheStore` is required by `invalidateCachedVcsRefs` (Gap B);
+  // the same runtime already backs `createVcsEnvironmentAtoms`.
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
 ) {
   // Status is deliberately short-lived in cache but never auto-refreshed: the
   // panel drives every re-read (push, post-mutation, visible-only poll). A
@@ -183,7 +187,21 @@ export function createWorkingCopyEnvironmentAtoms<R, E>(
   // it through one narrow local assertion instead of widening the helper.
   const cwdOf = (input: unknown): string => (input as { readonly cwd: string }).cwd;
 
-  const mutation = <TTag extends EnvironmentUnaryRpcTag>(label: string, tag: TTag) =>
+  /**
+   * fork: f4 invalidation Gap B — the mutations that MOVE OR CREATE A REF also
+   * invalidate the cached ref list, exactly like every upstream `vcs.*` command
+   * does (`vcs.ts` passes `invalidateRefs` on all of them).
+   *
+   * Without it, a tag created from the History context menu, a commit, an amend
+   * or a checkout landed on disk but the branch/tag pickers elsewhere in the
+   * app kept showing the pre-mutation list until something else happened to
+   * refresh it.
+   */
+  const mutation = <TTag extends EnvironmentUnaryRpcTag>(
+    label: string,
+    tag: TTag,
+    options?: { readonly movesRefs?: boolean },
+  ) =>
     createEnvironmentRpcCommand(runtime, {
       label,
       tag,
@@ -192,11 +210,20 @@ export function createWorkingCopyEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, cwdOf(input)]),
       },
-      onSettled: (target, registry) =>
-        invalidate(
-          { environmentId: target.environmentId, input: { cwd: cwdOf(target.input) } },
-          registry,
-        ),
+      onSettled: (target, registry) => {
+        const scoped = {
+          environmentId: target.environmentId,
+          input: { cwd: cwdOf(target.input) },
+        };
+        return options?.movesRefs === true
+          ? Effect.andThen(invalidate(scoped, registry), () =>
+              invalidateCachedVcsRefs(registry, {
+                environmentId: scoped.environmentId,
+                cwd: scoped.input.cwd,
+              }),
+            )
+          : invalidate(scoped, registry);
+      },
     });
 
   /**
@@ -248,17 +275,21 @@ export function createWorkingCopyEnvironmentAtoms<R, E>(
       "environment-data:working-copy:restore-discard-backup",
       WS_METHODS.workingCopyRestoreDiscardBackup,
     ),
+    // fork: f4 Gap B — every mutation below moves or creates a ref.
     commitStaged: mutation(
       "environment-data:working-copy:commit-staged",
       WS_METHODS.workingCopyCommitStaged,
+      { movesRefs: true },
     ),
     amendCommit: mutation(
       "environment-data:working-copy:amend-commit",
       WS_METHODS.workingCopyAmendCommit,
+      { movesRefs: true },
     ),
     undoLastCommit: mutation(
       "environment-data:working-copy:undo-last-commit",
       WS_METHODS.workingCopyUndoLastCommit,
+      { movesRefs: true },
     ),
     stashPush: mutation(
       "environment-data:working-copy:stash-push",
@@ -284,22 +315,27 @@ export function createWorkingCopyEnvironmentAtoms<R, E>(
     cherryPick: mutation(
       "environment-data:working-copy:cherry-pick",
       WS_METHODS.workingCopyCherryPick,
+      { movesRefs: true },
     ),
     revertCommit: mutation(
       "environment-data:working-copy:revert-commit",
       WS_METHODS.workingCopyRevertCommit,
+      { movesRefs: true },
     ),
     checkoutCommit: mutation(
       "environment-data:working-copy:checkout-commit",
       WS_METHODS.workingCopyCheckoutCommit,
+      { movesRefs: true },
     ),
     resetToCommit: mutation(
       "environment-data:working-copy:reset-to-commit",
       WS_METHODS.workingCopyResetToCommit,
+      { movesRefs: true },
     ),
     tagCommit: mutation(
       "environment-data:working-copy:tag-commit",
       WS_METHODS.workingCopyTagCommit,
+      { movesRefs: true },
     ),
   };
 }

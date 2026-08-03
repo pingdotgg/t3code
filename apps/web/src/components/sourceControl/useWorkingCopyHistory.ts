@@ -47,7 +47,14 @@ export interface WorkingCopyHistoryView {
   /** What the list renders: the page, or the merged search result. */
   readonly entries: ReadonlyArray<WorkingCopyLogEntry>;
   readonly filterActive: boolean;
+  /** Anything is in flight — the dimming the toolbar uses. */
   readonly isLoading: boolean;
+  /**
+   * fork: f4 F-16 — the NEXT page specifically. The load-more row used to read
+   * the shared flag, which every mutation flips through the head reload, so the
+   * button was enabled at the instant of a press it would then drop.
+   */
+  readonly isLoadingMore: boolean;
   readonly isSearching: boolean;
   readonly error: string | null;
   readonly canLoadMore: boolean;
@@ -63,7 +70,9 @@ export function useWorkingCopyHistory(
   const runLog = useAtomQueryRunner(workingCopyEnvironment.log);
   const [page, setPage] = useState<LogPageState>(EMPTY_LOG_PAGE_STATE);
   const [searchResults, setSearchResults] = useState<ReadonlyArray<WorkingCopyLogEntry>>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  // fork: f4 F-16 — one flag per intent. They used to be one shared flag.
+  const [headLoading, setHeadLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,14 +90,24 @@ export function useWorkingCopyHistory(
   const environmentId = scope?.environmentId ?? null;
   const cwd = scope?.cwd ?? null;
 
+  /**
+   * fork: f4 — generation guard. Two rapid mutations issue two head reloads;
+   * without this the older answer could resolve last and write the page that
+   * does NOT contain the commit you just made.
+   */
+  const headGenerationRef = useRef(0);
+
   const loadHead = useCallback(async () => {
     if (environmentId === null || cwd === null) return;
-    setIsLoading(true);
+    headGenerationRef.current += 1;
+    const generation = headGenerationRef.current;
+    setHeadLoading(true);
     try {
       const result = await runLog({
         environmentId,
         input: { cwd, limit: HISTORY_PAGE_SIZE },
       });
+      if (headGenerationRef.current !== generation) return;
       if (result._tag === "Failure") {
         setError("The commit history could not be read.");
         return;
@@ -96,7 +115,7 @@ export function useWorkingCopyHistory(
       setError(null);
       setPage((current) => applyLogPage(current, result.value, "head"));
     } finally {
-      setIsLoading(false);
+      if (headGenerationRef.current === generation) setHeadLoading(false);
     }
   }, [cwd, environmentId, runLog]);
 
@@ -112,13 +131,16 @@ export function useWorkingCopyHistory(
   useEffect(() => {
     setPage(EMPTY_LOG_PAGE_STATE);
     setSearchResults([]);
+    // fork: f4 F-28 — the previous repo's failure banner used to survive the
+    // switch and sit over a repository that reads perfectly well.
+    setError(null);
   }, [cwd, environmentId]);
 
   const loadMore = useCallback(() => {
-    if (environmentId === null || cwd === null || isLoading) return;
+    if (environmentId === null || cwd === null || pageLoading) return;
     const cursor = nextLogCursor(page);
     if (cursor === null || !page.hasMore) return;
-    setIsLoading(true);
+    setPageLoading(true);
     void (async () => {
       try {
         const result = await runLog({
@@ -132,10 +154,10 @@ export function useWorkingCopyHistory(
         setError(null);
         setPage((current) => applyLogPage(current, result.value, "append"));
       } finally {
-        setIsLoading(false);
+        setPageLoading(false);
       }
     })();
-  }, [cwd, environmentId, isLoading, page, runLog]);
+  }, [cwd, environmentId, page, pageLoading, runLog]);
 
   // Debounced server search. The response is discarded unless the filter it was
   // issued for is still the live one.
@@ -162,18 +184,29 @@ export function useWorkingCopyHistory(
         if (isHashIshQuery(query)) {
           requests.push(runLog({ environmentId, input: { cwd, limit: 1, rev: query } }));
         }
-        const results = await Promise.all(requests);
-        if (liveFilterKeyRef.current !== issuedFor) return;
-        const entries: WorkingCopyLogEntry[] = [];
-        for (const result of results) {
-          if (result._tag === "Success") entries.push(...result.value.entries);
+        try {
+          const results = await Promise.all(requests);
+          if (liveFilterKeyRef.current !== issuedFor) return;
+          const entries: WorkingCopyLogEntry[] = [];
+          let anyFailed = false;
+          for (const result of results) {
+            if (result._tag === "Success") entries.push(...result.value.entries);
+            else anyFailed = true;
+          }
+          // fork: f4 F-27 — a failed search used to render as "no matching
+          // commits", which is a different and much worse answer.
+          setError(anyFailed ? "The commit search could not be run." : null);
+          setSearchResults(entries);
+        } finally {
+          // Cleared on EVERY path, including the stale-key early return: the
+          // "searching" dimming used to stick until the next successful search.
+          if (liveFilterKeyRef.current === issuedFor) setIsSearching(false);
         }
-        setSearchResults(entries);
-        setIsSearching(false);
       })();
     }, HISTORY_SEARCH_DEBOUNCE_MS);
     return () => {
       window.clearTimeout(timer);
+      setIsSearching(false);
     };
   }, [
     cwd,
@@ -191,20 +224,23 @@ export function useWorkingCopyHistory(
     return mergeHistorySearchResults(page.entries, searchResults, filter);
   }, [filter, filterActive, page.entries, searchResults]);
 
+  const reload = useCallback(() => {
+    void loadHead();
+  }, [loadHead]);
+
   return {
     page,
     entries,
     filterActive,
-    isLoading,
+    isLoading: headLoading || pageLoading,
+    isLoadingMore: pageLoading,
     isSearching,
     error,
     // Paging is only offered on the unfiltered list: "load more" under a filter
     // pages the underlying log, not the filtered view, and reads as broken.
-    canLoadMore: !filterActive && page.hasMore,
+    canLoadMore: !filterActive && page.hasMore && nextLogCursor(page) !== null,
     loadMore,
-    reload: () => {
-      void loadHead();
-    },
+    reload,
   };
 }
 

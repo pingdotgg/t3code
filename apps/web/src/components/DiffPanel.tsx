@@ -537,8 +537,12 @@ export default function DiffPanel({
       hunkIndex: cluster.index,
       side: cluster.anchor.side,
       lineNumber: cluster.anchor.lineNumber,
+      // fork: f4 F-19 — the pending action participates in the annotation
+      // entry, and therefore in the viewer's item version hash. Without it the
+      // cluster's spinner and disabled state never repainted.
+      state: hunkStaging.pendingKey,
     }));
-  }, [codeViewFiles, hunkStaging.active, hunkStaging.clusters]);
+  }, [codeViewFiles, hunkStaging.active, hunkStaging.clusters, hunkStaging.pendingKey]);
   const diffFileKeys = useMemo(() => codeViewFiles.map((file) => file.fileKey), [codeViewFiles]);
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat = useMemo(() => getDiffLineStat(renderableFiles), [renderableFiles]);

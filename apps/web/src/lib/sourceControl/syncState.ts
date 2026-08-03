@@ -36,8 +36,12 @@ export function deriveSyncState(status: WorkingCopyStatus | null | undefined): S
   if (!status || status.detached) {
     return {
       kind: "fetch",
-      label: "Fetch",
-      title: "Fetch from remote",
+      // fork: f4 F-02 — this rung does NOT run `git fetch`. It re-reads status
+      // and asks the server to refresh its upstream view, which is rate-limited
+      // by a server-side TTL. Labelling it "Fetch" made a no-op look broken;
+      // "Refresh" is what it actually does.
+      label: "Refresh",
+      title: "Re-read this repository's status and upstream counts",
       emphasis: false,
       ahead,
       behind,
@@ -88,10 +92,12 @@ export function deriveSyncState(status: WorkingCopyStatus | null | undefined): S
     };
   }
 
+  // fork: f4 F-02 — see the note on the detached branch above: this is a
+  // status/upstream re-read, not `git fetch`.
   return {
     kind: "fetch",
-    label: "Fetch",
-    title: "Fetch from remote",
+    label: "Refresh",
+    title: "Re-read this repository's status and upstream counts",
     emphasis: false,
     ahead,
     behind,

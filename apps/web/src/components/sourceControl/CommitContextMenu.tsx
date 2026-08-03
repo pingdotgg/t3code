@@ -13,11 +13,15 @@ import type { WorkingCopyLogEntry } from "@t3tools/contracts";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { MoreHorizontal } from "lucide-react";
 
+import { workingCopyBusyKey } from "./sourceControlPanel.logic";
+
 export interface CommitContextMenuProps {
   readonly entry: WorkingCopyLogEntry;
   readonly detached: boolean;
   readonly dirty: boolean;
-  readonly onCopy: (text: string) => void;
+  /** fork: f4 F-06 — per-commit in-flight state, so a re-press cannot vanish. */
+  readonly isBusy: (key: string) => boolean;
+  readonly onCopy: (text: string, label?: string) => void;
   readonly onFilterAuthor: (author: string) => void;
   readonly onTag: (entry: WorkingCopyLogEntry) => void;
   readonly onCherryPick: (entry: WorkingCopyLogEntry) => void;
@@ -34,6 +38,13 @@ export function CommitContextMenu(props: CommitContextMenuProps) {
       ? "Commit or stash your changes first"
       : null;
   const isRootCommit = entry.parents.length === 0;
+  const busy = {
+    tag: props.isBusy(workingCopyBusyKey.tag(entry.hash)),
+    cherryPick: props.isBusy(workingCopyBusyKey.cherryPick(entry.hash)),
+    checkout: props.isBusy(workingCopyBusyKey.checkout(entry.hash)),
+    reset: props.isBusy(workingCopyBusyKey.reset(entry.hash)),
+    revert: props.isBusy(workingCopyBusyKey.revert(entry.hash)),
+  };
 
   return (
     <Menu>
@@ -45,30 +56,41 @@ export function CommitContextMenu(props: CommitContextMenuProps) {
         <MoreHorizontal className="size-3.5" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-56">
-        <MenuItem onClick={() => props.onCopy(entry.hash)}>Copy hash</MenuItem>
-        <MenuItem onClick={() => props.onCopy(entry.shortHash)}>Copy short hash</MenuItem>
-        <MenuItem onClick={() => props.onCopy(entry.subject)}>Copy subject</MenuItem>
+        <MenuItem onClick={() => props.onCopy(entry.hash, "the commit hash")}>Copy hash</MenuItem>
+        <MenuItem onClick={() => props.onCopy(entry.shortHash, "the short hash")}>
+          Copy short hash
+        </MenuItem>
+        <MenuItem onClick={() => props.onCopy(entry.subject, "the commit subject")}>
+          Copy subject
+        </MenuItem>
         <MenuSeparator />
         <MenuItem onClick={() => props.onFilterAuthor(entry.authorName)}>
           Filter by this author
         </MenuItem>
-        <MenuItem onClick={() => props.onTag(entry)}>Create tag here…</MenuItem>
-        <MenuItem onClick={() => props.onCherryPick(entry)}>Cherry-pick onto current</MenuItem>
-        <MenuItem onClick={() => props.onCheckout(entry)}>Checkout (detached)</MenuItem>
+        <MenuItem disabled={busy.tag} onClick={() => props.onTag(entry)}>
+          {busy.tag ? "Creating tag…" : "Create tag here…"}
+        </MenuItem>
+        <MenuItem disabled={busy.cherryPick} onClick={() => props.onCherryPick(entry)}>
+          {busy.cherryPick ? "Cherry-picking…" : "Cherry-pick onto current"}
+        </MenuItem>
+        <MenuItem disabled={busy.checkout} onClick={() => props.onCheckout(entry)}>
+          {busy.checkout ? "Checking out…" : "Checkout (detached)"}
+        </MenuItem>
         <MenuSeparator />
         <MenuItem
-          disabled={resetDisabledReason !== null}
+          disabled={resetDisabledReason !== null || busy.reset}
           onClick={() => props.onReset(entry, "soft")}
         >
           {resetDisabledReason ?? "Reset branch here — soft (keep staged + working)"}
         </MenuItem>
         {resetDisabledReason === null ? (
           <>
-            <MenuItem onClick={() => props.onReset(entry, "mixed")}>
+            <MenuItem disabled={busy.reset} onClick={() => props.onReset(entry, "mixed")}>
               Reset branch here — mixed (keep working, unstage)
             </MenuItem>
             <MenuItem
               className="text-destructive-foreground"
+              disabled={busy.reset}
               onClick={() => props.onReset(entry, "hard")}
             >
               Reset branch here — hard (discard all changes)
@@ -78,8 +100,12 @@ export function CommitContextMenu(props: CommitContextMenuProps) {
         {isRootCommit ? null : (
           <>
             <MenuSeparator />
-            <MenuItem className="text-destructive-foreground" onClick={() => props.onRevert(entry)}>
-              Revert commit
+            <MenuItem
+              className="text-destructive-foreground"
+              disabled={busy.revert}
+              onClick={() => props.onRevert(entry)}
+            >
+              {busy.revert ? "Reverting…" : "Revert commit"}
             </MenuItem>
           </>
         )}

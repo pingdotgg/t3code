@@ -62,7 +62,9 @@ export interface HistoryListProps {
   readonly commitDetailLoading: boolean;
   readonly expandedHash: string | null;
   readonly onExpandedHashChange: (hash: string | null) => void;
-  readonly onCopy: (text: string) => void;
+  readonly onCopy: (text: string, label?: string) => void;
+  /** fork: f4 F-06 — per-commit in-flight state for the row context menu. */
+  readonly isBusy: (key: string) => boolean;
   readonly onTag: (entry: WorkingCopyLogEntry) => void;
   readonly onCherryPick: (entry: WorkingCopyLogEntry) => void;
   readonly onCheckout: (entry: WorkingCopyLogEntry) => void;
@@ -171,13 +173,15 @@ export function HistoryList(props: HistoryListProps) {
             style={{ height: HISTORY_LOAD_MORE_ROW_HEIGHT }}
             className="flex items-center justify-center"
           >
+            {/* fork: f4 F-16 — disabled while ANY read is in flight, but the
+                label only says "Loading…" for the page read this row owns. */}
             <Button
               size="sm"
               variant="outline"
               disabled={history.isLoading}
               onClick={history.loadMore}
             >
-              {history.isLoading ? "Loading…" : "Load more"}
+              {history.isLoadingMore ? "Loading…" : "Load more"}
             </Button>
           </div>
         );
@@ -208,6 +212,7 @@ export function HistoryList(props: HistoryListProps) {
           selected={props.expandedHash === entry.hash}
           detached={props.detached}
           dirty={props.dirty}
+          isBusy={props.isBusy}
           onToggleDrawer={(hash) =>
             props.onExpandedHashChange(props.expandedHash === hash ? null : hash)
           }

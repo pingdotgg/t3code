@@ -40,6 +40,13 @@ export interface HunkActionAnchor {
   readonly hunkIndex: number;
   readonly side: AnnotationSide;
   readonly lineNumber: number;
+  /**
+   * fork: f4 F-19 — opaque render state for this cluster (which action is in
+   * flight). It exists only so it can enter the item `version` hash below: the
+   * viewer memoises annotations on that hash, and a hunk entry whose id, label
+   * and text are all constant by construction can never repaint.
+   */
+  readonly state?: string | undefined;
 }
 
 interface DiffCommentAnnotationGroup {
@@ -160,8 +167,9 @@ export function AnnotatableCodeView({
             });
           }, []);
         // fork: f4 hunk staging — one entry per hunk, with an id derived from
-        // the file key and the hunk index so the version hash below stays
-        // constant while an action runs.
+        // the file key and the hunk index so the cluster keeps its identity
+        // across re-renders. Its `text` carries the anchor's render state, so a
+        // pending action DOES change the version hash (F-19).
         const withHunks = (hunkActionAnchors ?? [])
           .filter((anchor) => anchor.fileKey === fileKey)
           .reduce<DiffCommentLineAnnotation[]>((annotations, anchor) => {
@@ -176,7 +184,7 @@ export function AnnotatableCodeView({
               kind: "hunk",
               range,
               rangeLabel: "",
-              text: "",
+              text: anchor.state ?? "",
               hunk: { fileKey, index: anchor.hunkIndex },
             });
           }, persisted);

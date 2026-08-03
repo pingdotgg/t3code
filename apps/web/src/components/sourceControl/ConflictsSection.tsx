@@ -19,6 +19,15 @@ export function ConflictsSection(props: {
   readonly operation: WorkingCopyOperation;
   readonly files: ReadonlyArray<WorkingCopyFile>;
   readonly busy: boolean;
+  /** fork: f4 F-06 — per-path resolve in flight. */
+  readonly busyPaths: ReadonlySet<string>;
+  readonly abortBusy: boolean;
+  /**
+   * fork: f4 F-11 — "Commit merge" commits the composer's draft, which is
+   * usually empty at this point. It used to fire anyway and hand the user a red
+   * git stderr toast with no clue that the box above was the input.
+   */
+  readonly hasMessage: boolean;
   readonly onResolve: (path: string, side?: "ours" | "theirs") => void;
   readonly onOpen: (file: WorkingCopyFile) => void;
   readonly onAbort: () => void;
@@ -26,6 +35,14 @@ export function ConflictsSection(props: {
 }) {
   const guidance = operationGuidance(props.operation);
   const remaining = props.files.length;
+  const continueBlockedReason =
+    remaining > 0
+      ? `${remaining} file${remaining === 1 ? " is" : "s are"} still conflicted`
+      : !props.hasMessage
+        ? "Write a commit message in the box above"
+        : props.busy
+          ? "Another action is still running"
+          : null;
 
   return (
     <section
@@ -58,38 +75,46 @@ export function ConflictsSection(props: {
                 {dir ? <span className="ml-1.5 text-muted-foreground text-xs">{dir}</span> : null}
               </button>
               <span className="hidden shrink-0 items-center gap-1 text-xs group-hover:flex">
-                <button
-                  type="button"
-                  className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent"
+                <ResolveButton
+                  busy={props.busyPaths.has(file.path)}
                   onClick={() => props.onResolve(file.path, "ours")}
                 >
                   Ours
-                </button>
-                <button
-                  type="button"
-                  className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent"
+                </ResolveButton>
+                <ResolveButton
+                  busy={props.busyPaths.has(file.path)}
                   onClick={() => props.onResolve(file.path, "theirs")}
                 >
                   Theirs
-                </button>
+                </ResolveButton>
               </span>
             </li>
           );
         })}
       </ul>
       <div className="flex items-center gap-2 px-2 py-1.5">
-        <Button size="xs" variant="destructive-outline" onClick={props.onAbort}>
-          Abort {props.operation}
+        <Button
+          size="xs"
+          variant="destructive-outline"
+          disabled={props.abortBusy}
+          onClick={props.onAbort}
+        >
+          {props.abortBusy ? "Aborting…" : `Abort ${props.operation}`}
         </Button>
         {guidance.canContinueInPanel ? (
-          <Button
-            size="xs"
-            className="ml-auto"
-            disabled={remaining > 0 || props.busy}
-            onClick={props.onContinue}
-          >
-            {guidance.continueLabel}
-          </Button>
+          <span className="ml-auto flex items-center gap-2">
+            {continueBlockedReason ? (
+              <span className="text-[11px] text-muted-foreground">{continueBlockedReason}</span>
+            ) : null}
+            <Button
+              size="xs"
+              disabled={continueBlockedReason !== null}
+              title={continueBlockedReason ?? guidance.continueLabel}
+              onClick={props.onContinue}
+            >
+              {guidance.continueLabel}
+            </Button>
+          </span>
         ) : (
           <p className="ml-auto max-w-64 text-right text-[11px] text-muted-foreground leading-snug">
             {guidance.terminalHint}
@@ -97,5 +122,18 @@ export function ConflictsSection(props: {
         )}
       </div>
     </section>
+  );
+}
+
+function ResolveButton(props: { busy: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+      disabled={props.busy}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
   );
 }

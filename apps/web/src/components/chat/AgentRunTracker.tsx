@@ -5,6 +5,7 @@ import type { AgentRun } from "../../agentRuns.ts";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { toastManager } from "../ui/toast";
 import { AgentRunCard } from "./AgentRunCard.tsx";
 import {
   agentRunIsJumpable,
@@ -202,9 +203,19 @@ function AgentRunTrackerRow({
             "mt-1 shrink-0 cursor-pointer rounded p-1 text-muted-foreground/70 transition-colors",
             "hover:bg-accent/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
           )}
+          // fork: f3 F-21 — a jump that misses (the timeline is not mounted
+          // yet, or the run has no row) used to do literally nothing: the
+          // popover did not even close. Close it either way and say why.
           onClick={() => {
-            if (onJump?.(run.taskId)) {
-              onJumped();
+            const jumped = onJump?.(run.taskId) === true;
+            onJumped();
+            if (!jumped) {
+              toastManager.add({
+                type: "info",
+                title: "That run is not in the transcript right now",
+                description: "Scroll the conversation or reopen the thread, then try again.",
+                timeout: 5_000,
+              });
             }
           }}
         >

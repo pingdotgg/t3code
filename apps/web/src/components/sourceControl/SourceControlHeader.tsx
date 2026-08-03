@@ -31,6 +31,11 @@ export interface SourceControlHeaderProps {
   readonly repoLabel: string;
   readonly syncBusy: boolean;
   readonly dirtyCount: number;
+  /** fork: f4 F-06 — overflow rungs disable while their own action is in flight. */
+  readonly undoBusy: boolean;
+  readonly discardAllBusy: boolean;
+  readonly stashBusy: boolean;
+  readonly refreshBusy: boolean;
   readonly onSync: (kind: "publish" | "push" | "pull" | "sync" | "fetch") => void;
   readonly onUndoLastCommit: () => void;
   readonly onDiscardAll: () => void;
@@ -89,16 +94,16 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
             <MoreHorizontal className="size-4" />
           </MenuTrigger>
           <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
-            <MenuItem onClick={props.onRefresh}>
+            <MenuItem onClick={props.onRefresh} disabled={props.refreshBusy}>
               <RefreshCw />
-              Refresh
+              {props.refreshBusy ? "Refreshing…" : "Refresh"}
             </MenuItem>
             <MenuSeparator />
-            <MenuItem onClick={props.onUndoLastCommit}>
+            <MenuItem onClick={props.onUndoLastCommit} disabled={props.undoBusy}>
               <History />
-              Undo last commit
+              {props.undoBusy ? "Undoing…" : "Undo last commit"}
             </MenuItem>
-            <MenuItem onClick={props.onOpenStashDialog} disabled={clean}>
+            <MenuItem onClick={props.onOpenStashDialog} disabled={clean || props.stashBusy}>
               <Archive />
               Stash changes…
             </MenuItem>
@@ -109,11 +114,11 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
             <MenuSeparator />
             <MenuItem
               onClick={props.onDiscardAll}
-              disabled={clean}
-              className={cn(!clean && "text-destructive-foreground")}
+              disabled={clean || props.discardAllBusy}
+              className={cn(!clean && !props.discardAllBusy && "text-destructive-foreground")}
             >
               <Undo2 />
-              Discard all changes
+              {props.discardAllBusy ? "Discarding…" : "Discard all changes in the working copy"}
             </MenuItem>
           </MenuPopup>
         </Menu>

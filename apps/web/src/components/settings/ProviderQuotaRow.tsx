@@ -10,7 +10,7 @@
  * provider cards costs no requests.
  */
 import type { ServerProvider } from "@t3tools/contracts";
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import {
@@ -21,6 +21,9 @@ import {
   providerUsageSummary,
   type ProviderQuotaTone,
 } from "./providerQuotaPresentation.ts";
+
+/** The countdown copy is minute-resolution, so this is its natural tick. */
+const QUOTA_CLOCK_INTERVAL_MS = 60_000;
 
 const TONE_BAR: Readonly<Record<ProviderQuotaTone, string>> = {
   normal: "bg-foreground/45",
@@ -36,9 +39,21 @@ export const ProviderQuotaRow = memo(function ProviderQuotaRow({
   className?: string;
 }) {
   const auth = provider?.auth;
-  // Evaluated once per render, never on a timer: the countdown refreshes when
-  // the next snapshot lands, which is also when the number stops being a lie.
-  const now = Date.now();
+  /**
+   * fork: f1 F-33 — the "resets in …" countdown used to be `Date.now()` read
+   * once per render with nothing to re-render it, so it sat frozen at whatever
+   * the last provider snapshot happened to make it. It now ticks once a minute
+   * (the resolution the copy is written at), and ONLY while a countdown is
+   * actually on screen.
+   */
+  const hasReset = auth?.rateLimits !== undefined;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!hasReset) return;
+    const timer = setInterval(() => setNow(Date.now()), QUOTA_CLOCK_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [hasReset]);
+
   if (!auth || !hasProviderQuota(auth, now)) {
     return null;
   }

@@ -24,7 +24,10 @@ import {
   commitPrimaryAction,
   commitPrimaryActionLabel,
   commitSubjectLengthState,
+  isAmendCommitEnabled,
+  isCommitAndPushEnabled,
   isCommitPrimaryActionEnabled,
+  shouldPrefillAmendMessage,
   splitCommitMessage,
 } from "@t3tools/client-runtime/state/working-copy-logic";
 
@@ -75,12 +78,20 @@ export function CommitComposer(props: CommitComposerProps) {
     [props.ahead, props.amend, props.dirtyCount, props.stagedCount],
   );
   const action = commitPrimaryAction(actionInput);
+  const hasMessage = props.message.trim().length > 0;
   const enabled =
-    !props.busy &&
-    isCommitPrimaryActionEnabled(action, {
-      ...actionInput,
-      hasMessage: props.message.trim().length > 0,
-    });
+    !props.busy && isCommitPrimaryActionEnabled(action, { ...actionInput, hasMessage });
+  // fork: f4 F-07 — one predicate per entry point, applied to the button, the
+  // two keyboard paths and both menu items.
+  const commitAndPushEnabled = isCommitAndPushEnabled({
+    ...actionInput,
+    hasMessage,
+    busy: props.busy,
+  });
+  const amendEnabled = isAmendCommitEnabled({
+    busy: props.busy,
+    hasLastCommit: props.lastCommitMessage !== null,
+  });
 
   // fork: f4 AI commit message — enablement and its reason are one pure
   // decision, so the tooltip can never disagree with the disabled state.
@@ -95,12 +106,32 @@ export function CommitComposer(props: CommitComposerProps) {
 
   // Turning amend on with an empty draft prefills the last commit message —
   // amending and retyping the message from memory is how subjects drift.
+  //
+  // fork: f4 F-03 — this is a prefill on the off→on TRANSITION, not a render
+  // invariant. With `message` in the dependency list and no edge guard the
+  // effect refilled the box the instant it went empty, so the draft could never
+  // be cleared or edited down while Amend was ticked.
   const { amend, message, onMessageChange, lastCommitMessage } = props;
+  const messageRef = useRef(message);
+  messageRef.current = message;
+  const prefilledForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (amend && message.trim().length === 0 && lastCommitMessage) {
-      onMessageChange(lastCommitMessage);
+    if (!amend) {
+      // Re-arm, so toggling amend off and on again prefills once more.
+      prefilledForRef.current = null;
+      return;
     }
-  }, [amend, lastCommitMessage, message, onMessageChange]);
+    const fill = shouldPrefillAmendMessage({
+      amend,
+      message: messageRef.current,
+      lastCommitMessage,
+      prefilledFor: prefilledForRef.current,
+    });
+    // Mark the session as prefilled either way: the user having typed something
+    // is exactly as final an answer as having filled the box for them.
+    prefilledForRef.current = lastCommitMessage;
+    if (fill && lastCommitMessage !== null) onMessageChange(lastCommitMessage);
+  }, [amend, lastCommitMessage, onMessageChange]);
 
   const runPrimary = useCallback(() => {
     if (!enabled) return;
@@ -125,12 +156,14 @@ export function CommitComposer(props: CommitComposerProps) {
       if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();
       if (event.shiftKey) {
+        // fork: f4 F-07 — this branch used to bypass every gate.
+        if (!commitAndPushEnabled) return;
         props.onCommitAndPush({ stageAllFirst: props.stagedCount === 0 });
         return;
       }
       runPrimary();
     },
-    [props, runPrimary],
+    [commitAndPushEnabled, props, runPrimary],
   );
 
   return (
@@ -221,11 +254,14 @@ export function CommitComposer(props: CommitComposerProps) {
             </MenuTrigger>
             <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
               <MenuItem
+                disabled={!commitAndPushEnabled}
                 onClick={() => props.onCommitAndPush({ stageAllFirst: props.stagedCount === 0 })}
               >
                 Commit &amp; push
               </MenuItem>
-              <MenuItem onClick={props.onAmend}>Amend last commit</MenuItem>
+              <MenuItem disabled={!amendEnabled} onClick={props.onAmend}>
+                Amend last commit
+              </MenuItem>
             </MenuPopup>
           </Menu>
         </div>

@@ -12,6 +12,7 @@ import {
   pruneAgentRunStopRequests,
   stoppableAgentRuns,
   withAgentRunStopRequested,
+  withoutAgentRunStopRequested,
 } from "./agentRunStop.logic.ts";
 
 const T0 = 1_000_000;
@@ -145,5 +146,29 @@ describe("copy", () => {
       "The server refused the stop request.",
     );
     expect(agentRunStopFailureMessage(undefined)).toBe("The server refused the stop request.");
+  });
+});
+
+// F-32 — the "Stopping…" mark is written optimistically before the RPC. It
+// used to survive a refusal for the whole re-enable window, so the card said
+// "Stopping…" with a disabled button while the failure toast was on screen.
+describe("withoutAgentRunStopRequested (F-32)", () => {
+  it("drops the pending mark for a refused stop", () => {
+    const requests = withAgentRunStopRequested(EMPTY_AGENT_RUN_STOP_REQUESTS, ["a", "b"], 1_000);
+    const cleared = withoutAgentRunStopRequested(requests, ["a"]);
+    expect(isAgentRunStopPending(cleared, "a", 1_100)).toBe(false);
+    expect(isAgentRunStopPending(cleared, "b", 1_100)).toBe(true);
+  });
+
+  it("keeps identity when nothing was marked, so the store skips a notify", () => {
+    const requests = withAgentRunStopRequested(EMPTY_AGENT_RUN_STOP_REQUESTS, ["a"], 1_000);
+    expect(withoutAgentRunStopRequested(requests, ["zzz"])).toBe(requests);
+    expect(withoutAgentRunStopRequested(requests, [])).toBe(requests);
+  });
+
+  it("does not mutate the set it was handed", () => {
+    const requests = withAgentRunStopRequested(EMPTY_AGENT_RUN_STOP_REQUESTS, ["a"], 1_000);
+    withoutAgentRunStopRequested(requests, ["a"]);
+    expect(isAgentRunStopPending(requests, "a", 1_100)).toBe(true);
   });
 });

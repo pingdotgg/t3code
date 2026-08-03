@@ -157,9 +157,12 @@ export function stabilizeAgentRuns(
   if (previous === null) {
     return next;
   }
+  // fork: f3 F-26 — compare the id SET, not its size. Two derivations with the
+  // same count but different ids (one activity replaced by another in the same
+  // fold) returned `previous`, so the timeline kept hiding the wrong work rows.
   let changed =
     previous.runs.length !== next.runs.length ||
-    previous.consumedActivityIds.size !== next.consumedActivityIds.size;
+    !sameIdSet(previous.consumedActivityIds, next.consumedActivityIds);
 
   const previousByTaskId = new Map(previous.runs.map((run) => [run.taskId, run]));
   const runs = next.runs.map((run, index) => {
@@ -175,6 +178,15 @@ export function stabilizeAgentRuns(
   });
 
   return changed ? { runs, consumedActivityIds: next.consumedActivityIds } : previous;
+}
+
+function sameIdSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const id of a) {
+    if (!b.has(id)) return false;
+  }
+  return true;
 }
 
 export function agentRunEquals(a: AgentRun, b: AgentRun): boolean {

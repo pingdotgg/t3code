@@ -23,10 +23,17 @@ import {
   confirmResetHard,
   confirmRevertMerge,
 } from "~/lib/sourceControl/safetyLadder";
-import { busyPathsFromKeys, isTextGenerationConfigured } from "./sourceControlPanel.logic";
+import {
+  busyPathsFromKeys,
+  changesListActionPaths,
+  isTextGenerationConfigured,
+  workingCopyBusyKey,
+} from "./sourceControlPanel.logic";
 import type { ChangesStatusFilter } from "~/lib/sourceControl/changesRows";
 import { DiffPanelShell, type DiffPanelMode } from "~/components/DiffPanelShell";
 import { Input } from "~/components/ui/input";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -50,6 +57,8 @@ import { StashesSection } from "./StashesSection";
 import { useSourceControlConfirm } from "./useSourceControlConfirm";
 import {
   GENERATE_COMMIT_MESSAGE_BUSY_KEY,
+  reportSourceControlFailure,
+  sourceControlInfoToast,
   useWorkingCopyActions,
   useWorkingCopyStatus,
   type SourceControlScope,
@@ -117,8 +126,14 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const operation = status.status?.operationInProgress ?? null;
 
   // Stashes and backups load on expand and are never polled.
+  //
+  // fork: f4 F-10 — the stash list is mounted whenever the panel is, not only
+  // while the section is open: the collapsed header renders the count, and a
+  // collapsed section that permanently reads "STASHES 0" is a lying state. One
+  // `git stash list` with a 5 s stale time and a 60 s idle TTL is cheap. The
+  // *backup* list stays load-on-expand — nothing outside the section reads it.
   const stashQuery = useEnvironmentQuery(
-    scope && prefs.stashesOpen
+    scope
       ? workingCopyEnvironment.stashList({
           environmentId: scope.environmentId,
           input: { cwd: scope.cwd },
@@ -169,42 +184,110 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const pull = useVcsPullAction({ environmentId: props.environmentId, cwd: props.cwd });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus);
 
+  // fork: f4 F-02 — "Fetch" is a status/upstream re-read behind a server-side
+  // TTL, not a `git fetch`. It gets its own pending flag so the press is at
+  // least visibly acknowledged; the label is corrected in `syncState`.
+  const [refreshingRemote, setRefreshingRemote] = useState(false);
+
   const handleSync = useCallback(
     (kind: "publish" | "push" | "pull" | "sync" | "fetch") => {
       if (props.cwd === null) return;
       switch (kind) {
         case "pull":
-          void pull.run();
+          // fork: f4 F-01 — the result used to be dropped on the floor, so a
+          // rejected pull produced no toast, no banner and no console line.
+          void (async () => {
+            const pulled = await pull.run();
+            if (pulled._tag === "Failure") reportSourceControlFailure("Could not pull", pulled);
+          })();
           return;
         case "push":
         case "publish":
-          void stacked.run({ actionId: `source-control-${kind}`, action: "push" });
+          void (async () => {
+            const pushed = await stacked.run({
+              actionId: `source-control-${kind}`,
+              action: "push",
+            });
+            if (pushed._tag === "Failure") {
+              reportSourceControlFailure(
+                kind === "publish" ? "Could not publish the branch" : "Could not push",
+                pushed,
+              );
+            }
+          })();
           return;
         case "sync":
           // Pull first, and push only if the pull landed — pushing over a
           // behind branch is what produces the "rejected, fetch first" wall.
           void (async () => {
             const pulled = await pull.run();
-            if (pulled._tag !== "Failure") {
-              await stacked.run({ actionId: "source-control-sync", action: "push" });
+            if (pulled._tag === "Failure") {
+              // Saying only "could not pull" here would leave the user waiting
+              // for a push that was deliberately skipped.
+              reportSourceControlFailure(
+                "Sync stopped — the pull failed, so nothing was pushed",
+                pulled,
+              );
+              return;
+            }
+            const pushed = await stacked.run({ actionId: "source-control-sync", action: "push" });
+            if (pushed._tag === "Failure") {
+              reportSourceControlFailure("Sync pulled, but the push failed", pushed);
             }
           })();
           return;
         case "fetch":
-          void refreshVcsStatus({
-            environmentId: props.environmentId,
-            input: { cwd: props.cwd },
-          });
-          status.refresh();
+          setRefreshingRemote(true);
+          void (async () => {
+            try {
+              const refreshed = await refreshVcsStatus({
+                environmentId: props.environmentId,
+                input: { cwd: props.cwd ?? "" },
+              });
+              if (refreshed._tag === "Failure") {
+                reportSourceControlFailure("Could not refresh from the remote", refreshed);
+              }
+              status.refresh();
+            } finally {
+              setRefreshingRemote(false);
+            }
+          })();
           return;
       }
     },
     [props.cwd, props.environmentId, pull, refreshVcsStatus, stacked, status],
   );
 
-  const copyText = useCallback((text: string) => {
-    void navigator.clipboard?.writeText(text);
-  }, []);
+  /**
+   * fork: f4 F-12 — `navigator.clipboard` is undefined outside a secure context
+   * (plain http on a LAN IP), so the old `void navigator.clipboard?.writeText`
+   * was a no-op that reported nothing. The repo's hook handles the failure; the
+   * toasts here are what makes it visible either way.
+   */
+  const { copyToClipboard } = useCopyToClipboard<string>({
+    target: "commit details",
+    onCopy: (label) => sourceControlInfoToast(`Copied ${label}`),
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy to the clipboard",
+          description:
+            error instanceof Error && error.message.length > 0
+              ? error.message
+              : "The clipboard is unavailable in this window.",
+          timeout: 8_000,
+        }),
+      );
+    },
+  });
+  const copyText = useCallback(
+    (text: string, label = "to the clipboard") => {
+      if (text.length === 0) return;
+      copyToClipboard(text, label);
+    },
+    [copyToClipboard],
+  );
 
   const handleCommit = useCallback(
     async (options: { stageAllFirst: boolean }) => {
@@ -303,14 +386,23 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         <SourceControlHeader
           status={status.status}
           repoLabel={props.repoLabel}
-          syncBusy={stacked.isPending || pull.isPending}
+          syncBusy={stacked.isPending || pull.isPending || refreshingRemote}
           dirtyCount={dirtyCount}
+          undoBusy={actions.isBusy(workingCopyBusyKey.undoCommit())}
+          discardAllBusy={actions.isBusy(workingCopyBusyKey.discardAll())}
+          stashBusy={actions.isBusy(workingCopyBusyKey.stashPush())}
+          refreshBusy={status.isPending}
           onSync={handleSync}
           onRefresh={status.refresh}
           onUndoLastCommit={() => void actions.undoLastCommit()}
           onDiscardAll={() => void actions.discard(null)}
           onOpenStashDialog={() => setStashDialogOpen(true)}
-          onShowBackups={() => setPrefs(props.scopeKey, { stashesOpen: true })}
+          // fork: f4 F-05 — `stashesOpen` is only rendered inside the Changes
+          // branch, so setting it from the History tab used to change a
+          // persisted flag nobody could see. Switch the tab too.
+          onShowBackups={() =>
+            setPrefs(props.scopeKey, { activeSection: "changes", stashesOpen: true })
+          }
         />
       }
     >
@@ -426,6 +518,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
               operation={operation}
               files={conflicted}
               busy={actions.busy.size > 0}
+              busyPaths={busyPaths}
+              abortBusy={actions.isBusy(workingCopyBusyKey.abort())}
+              hasMessage={commitDraft.trim().length > 0}
               onResolve={(path, side) => void actions.resolveConflict(path, side)}
               onOpen={(file) => props.onOpenDiff?.(file)}
               onAbort={() => void actions.abortOperation(operation)}
@@ -446,25 +541,62 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             onToggleGroup={(group) => toggleCollapsedGroup(props.scopeKey, group)}
             onToggleFolder={(folderKey) => toggleCollapsedFolder(props.scopeKey, folderKey)}
             onSetCollapsedFolders={(keys) => setCollapsedFolders(props.scopeKey, keys)}
-            onStage={(paths) => void actions.stage(paths.length > 0 ? paths : allPaths(files))}
-            onUnstage={(paths) =>
-              void actions.unstage(paths.length > 0 ? paths : stagedPaths(files))
-            }
-            onDiscard={(paths) => void actions.discard(paths.length > 0 ? paths : null)}
+            // fork: f4 F-08 — the changes list can only ever act on an explicit
+            // path set. `[]` is "nothing", never "everything": the group
+            // header's Discard all used to map onto `discard(null)`, which
+            // discards the whole working copy.
+            onStage={(paths) => {
+              const target = changesListActionPaths(paths);
+              if (target !== null) void actions.stage(target);
+            }}
+            onUnstage={(paths) => {
+              const target = changesListActionPaths(paths);
+              if (target !== null) void actions.unstage(target);
+            }}
+            onDiscard={(paths) => {
+              const target = changesListActionPaths(paths);
+              if (target !== null) void actions.discard(target);
+            }}
             onResolve={(path, side) => void actions.resolveConflict(path, side)}
             onOpenDiff={(file) => props.onOpenDiff?.(file)}
+            onEmptyKeyboardTarget={(action) =>
+              sourceControlInfoToast(
+                action === "stage"
+                  ? "Select a file to stage — click a row, or press j / k."
+                  : action === "unstage"
+                    ? "Select a staged file to unstage."
+                    : "Select an unstaged file to discard.",
+              )
+            }
           />
           <StashesSection
             open={prefs.stashesOpen}
             onToggle={() => setPrefs(props.scopeKey, { stashesOpen: !prefs.stashesOpen })}
             stashes={stashQuery.data ?? EMPTY_STASHES}
             backups={backupQuery.data ?? EMPTY_STASHES}
-            isLoading={stashQuery.isPending || backupQuery.isPending}
+            // fork: f4 — `isLoading` is now "we have nothing to show yet".
+            // `Atom.swr` reports `waiting` during EVERY revalidation, so the old
+            // predicate flashed "Loading…" over already-rendered rows after
+            // each mutation.
+            isLoading={
+              (stashQuery.isPending && stashQuery.data === null) ||
+              (backupQuery.isPending && backupQuery.data === null)
+            }
+            // fork: f4 F-09 — Pop resolved the latest stash from a list that is
+            // `null` during the first load and during every post-mutation
+            // re-read, then fell through an `if` with no else. Disable it while
+            // the list has not arrived instead.
+            listReady={stashQuery.data !== null}
+            isBusy={actions.isBusy}
             dirty={dirtyCount > 0}
             onStash={() => setStashDialogOpen(true)}
             onPopLatest={() => {
               const latest = stashQuery.data?.find((entry) => !entry.isDiscardBackup);
-              if (latest) void actions.stashPop(latest.ref);
+              if (!latest) {
+                sourceControlInfoToast("There is no stash to pop.");
+                return;
+              }
+              void actions.stashPop(latest.ref);
             }}
             onApply={(ref) => void actions.stashApply(ref)}
             onDrop={(ref, label) => void actions.stashDrop(ref, label)}
@@ -489,9 +621,24 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           expandedHash={expandedHash}
           onExpandedHashChange={setExpandedHash}
           onCopy={copyText}
+          isBusy={actions.isBusy}
+          // fork: f4 F-13 — was `window.prompt`, which the Electron renderer
+          // does not implement, so this menu item did nothing in the desktop
+          // app and reported nothing on cancel in the browser.
           onTag={(entry) => {
-            const name = window.prompt(`Tag name for ${entry.shortHash}`);
-            if (name && name.trim().length > 0) void actions.tagCommit(entry.hash, name.trim());
+            void (async () => {
+              const name = await confirm.promptText({
+                title: `Tag ${entry.shortHash}`,
+                consequence: `Creates a lightweight tag pointing at ${entry.shortHash} — "${entry.subject}".`,
+                inputLabel: "Tag name",
+                placeholder: "v1.2.3",
+                confirmLabel: "Create tag",
+              });
+              if (name === null) return;
+              const trimmed = name.trim();
+              if (trimmed.length === 0) return;
+              await actions.tagCommit(entry.hash, trimmed);
+            })();
           }}
           onCherryPick={(entry) => void actions.cherryPick(entry.hash)}
           onCheckout={(entry) => void actions.checkoutCommit(entry.hash)}
@@ -511,27 +658,22 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       )}
 
       <SourceControlConfirmDialog pending={confirm.pending} onResolve={confirm.resolve} />
-      <StashDialog
-        open={stashDialogOpen}
-        onClose={() => setStashDialogOpen(false)}
-        onSubmit={(message, includeUntracked) => {
-          setStashDialogOpen(false);
-          void actions.stashPush(message, includeUntracked);
-        }}
-      />
+      {/* fork: f4 F-17 — mounted only while open, so the previous message and
+          the "include untracked" choice cannot leak into the next stash. */}
+      {stashDialogOpen ? (
+        <StashDialog
+          onClose={() => setStashDialogOpen(false)}
+          onSubmit={(message, includeUntracked) => {
+            setStashDialogOpen(false);
+            void actions.stashPush(message, includeUntracked);
+          }}
+        />
+      ) : null}
     </DiffPanelShell>
   );
 }
 
 const EMPTY_STASHES: ReadonlyArray<never> = [];
-
-function allPaths(files: ReadonlyArray<WorkingCopyFile>): ReadonlyArray<string> {
-  return [...new Set(files.filter((file) => file.area !== "staged").map((file) => file.path))];
-}
-
-function stagedPaths(files: ReadonlyArray<WorkingCopyFile>): ReadonlyArray<string> {
-  return [...new Set(files.filter((file) => file.area === "staged").map((file) => file.path))];
-}
 
 function TabButton(props: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -555,15 +697,21 @@ function TabButton(props: { active: boolean; onClick: () => void; children: Reac
  * leaves new files behind is the single most surprising thing `git stash` does.
  */
 function StashDialog(props: {
-  open: boolean;
   onClose: () => void;
   onSubmit: (message: string, includeUntracked: boolean) => void;
 }) {
   const [message, setMessage] = useState("");
   const [includeUntracked, setIncludeUntracked] = useState(true);
-  if (!props.open) return null;
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 p-4">
+    <div
+      className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Stash changes"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") props.onClose();
+      }}
+    >
       <div className="w-full max-w-sm rounded-lg border border-border bg-card p-3 shadow-lg">
         <h3 className="mb-2 font-medium text-sm">Stash changes</h3>
         <Input

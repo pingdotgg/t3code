@@ -183,6 +183,26 @@ export function isEmptyPathSelection(paths: ReadonlyArray<string>): boolean {
   return paths.length === 0;
 }
 
+/**
+ * fork: f4 — the ONE gate between the changes list and a mutation.
+ *
+ * Every path set the changes list produces (row, folder, group header, keyboard
+ * selection) comes through here, and an empty set resolves to `null` = "do
+ * nothing". It can never resolve to "everything".
+ *
+ * This is the fix for the group header's "Discard all", which used to hand the
+ * panel `[]` and have it expanded onto `discard(null)` — the whole-working-copy
+ * rung. The whole-worktree discard has exactly one entry point now: the
+ * header overflow menu's "Discard all changes", which calls the action directly.
+ */
+export function changesListActionPaths(paths: ReadonlyArray<string>): ReadonlyArray<string> | null {
+  if (paths.length === 0) {
+    return null;
+  }
+  const deduped = [...new Set(paths)];
+  return deduped.length === 0 ? null : deduped;
+}
+
 // ─── Busy keys ──────────────────────────────────────────────────────────────
 
 /**
@@ -200,6 +220,32 @@ export function actionBusyKey(action: string, scope?: string): string {
  * escape rather than the raw byte so the source stays text.
  */
 export const BUSY_KEY_SEPARATOR = "\0";
+
+/**
+ * fork: f4 F-06 — the busy keys the CONTROLS need to read.
+ *
+ * `useWorkingCopyActions` builds the same keys when it runs an action; naming
+ * them once is what keeps a button's disabled state and the guard that would
+ * otherwise drop its press from drifting apart. Every entry here has at least
+ * one call site — that was the whole failure of the previous round.
+ */
+export const workingCopyBusyKey = {
+  commit: () => actionBusyKey("commit"),
+  undoCommit: () => actionBusyKey("undo-commit"),
+  abort: () => actionBusyKey("abort"),
+  stashPush: () => actionBusyKey("stash-push"),
+  stashApply: (ref: string) => actionBusyKey("stash-apply", ref),
+  stashPop: (ref: string) => actionBusyKey("stash-pop", ref),
+  stashDrop: (ref: string) => actionBusyKey("stash-drop", ref),
+  restoreBackup: (ref: string) => actionBusyKey("restore-backup", ref),
+  cherryPick: (hash: string) => actionBusyKey("cherry-pick", hash),
+  revert: (hash: string) => actionBusyKey("revert", hash),
+  checkout: (hash: string) => actionBusyKey("checkout", hash),
+  reset: (hash: string) => actionBusyKey("reset", hash),
+  tag: (hash: string) => actionBusyKey("tag", hash),
+  discardAll: () => actionBusyKey("discard", "*"),
+  resolve: (path: string) => actionBusyKey("resolve", path),
+} as const;
 
 /** Busy actions whose scope is a path list the changes list can highlight. */
 const PATH_SCOPED_BUSY_ACTIONS: ReadonlySet<string> = new Set([
@@ -233,6 +279,60 @@ export function busyPathsFromKeys(busy: ReadonlySet<string>): ReadonlySet<string
   }
   return paths.size === 0 ? EMPTY_BUSY_PATHS : paths;
 }
+
+/**
+ * fork: f4 — true when ANY of these paths has an action in flight.
+ *
+ * Group headers and folder rows act on a path set, so their disabled state is
+ * "one of mine is working", not "all of mine are working": leaving the button
+ * live while half the set is mid-flight is what made the re-press vanish.
+ */
+export function anyPathBusy(busyPaths: ReadonlySet<string>, paths: ReadonlyArray<string>): boolean {
+  if (busyPaths.size === 0) return false;
+  return paths.some((path) => busyPaths.has(path));
+}
+
+/**
+ * fork: f4 F-30 — the fields a `subscribeVcsStatus` push must actually change
+ * before the panel pays for a `workingCopy.status` read.
+ *
+ * The subscription atom yields a fresh `AsyncResult` per stream frame, so
+ * keying the re-read off object identity turned a chatty status stream into one
+ * RPC per frame. Anything else on that payload (PR metadata, provider info,
+ * per-file line counts) does not move a single control in this panel.
+ */
+export function vcsStatusPushSignature(
+  status: {
+    readonly refName?: string | null;
+    readonly aheadCount?: number;
+    readonly behindCount?: number;
+    readonly hasWorkingTreeChanges?: boolean;
+    readonly hasUpstream?: boolean;
+    readonly workingTree?: { readonly files: ReadonlyArray<unknown> };
+  } | null,
+): string {
+  if (status === null) {
+    return "";
+  }
+  return [
+    status.refName ?? "",
+    status.aheadCount ?? 0,
+    status.behindCount ?? 0,
+    status.hasUpstream === true ? "1" : "0",
+    status.hasWorkingTreeChanges === true ? "1" : "0",
+    status.workingTree?.files.length ?? 0,
+  ].join("|");
+}
+
+/**
+ * fork: f4 — the toast a genuinely dropped press raises.
+ *
+ * Every control that maps to a busy key renders disabled while that key is in
+ * flight, so this should be unreachable from the mouse. It stays reachable from
+ * the keyboard (a key press cannot be greyed out), and "silent and enabled" is
+ * the one outcome the panel must never have.
+ */
+export const BUSY_DROPPED_PRESS_TITLE = "Still finishing the last action";
 
 export function withBusyKey(
   busy: ReadonlySet<string>,

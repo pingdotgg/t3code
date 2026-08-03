@@ -28,6 +28,7 @@ import {
   EMPTY_AGENT_RUN_STOP_REQUESTS,
   pruneAgentRunStopRequests,
   withAgentRunStopRequested,
+  withoutAgentRunStopRequested,
   type AgentRunStopRequests,
 } from "./agentRunStop.logic.ts";
 
@@ -89,6 +90,14 @@ export function markAgentRunStopRequested(taskIds: ReadonlyArray<string>): void 
   schedulePrune();
 }
 
+/**
+ * fork: f3 F-32 — clears the optimistic mark when the stop was refused, so the
+ * card stops saying "Stopping…" the moment the failure toast appears.
+ */
+export function clearAgentRunStopRequested(taskIds: ReadonlyArray<string>): void {
+  publish(withoutAgentRunStopRequested(requests, taskIds));
+}
+
 export function useAgentRunStopRequests(): AgentRunStopRequests {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
@@ -130,6 +139,9 @@ export function useAgentRunStop(): AgentRunStopController {
           // A refusal is the only case worth interrupting for: the happy path's
           // receipt is the run settling in the transcript.
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            // fork: f3 F-32 — the optimistic "Stopping…" mark must not outlive
+            // the refusal it was written for.
+            clearAgentRunStopRequested([taskId]);
             toastManager.add({
               type: "error",
               title: "Could not stop the agent run",

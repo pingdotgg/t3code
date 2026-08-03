@@ -20,10 +20,13 @@ const status = (over: Partial<WorkingCopyStatus> = {}): WorkingCopyStatus => ({
 });
 
 describe("deriveSyncState", () => {
-  it("clean and tracking → Fetch, unemphasized", () => {
+  it("clean and tracking → Refresh, unemphasized", () => {
     const state = deriveSyncState(status());
     expect(state.kind).toBe("fetch");
-    expect(state.label).toBe("Fetch");
+    // fork: f4 F-02 — the rung re-reads status behind a server-side TTL; it
+    // does not run `git fetch`, so it must not claim to.
+    expect(state.label).toBe("Refresh");
+    expect(state.title).not.toContain("Fetch from remote");
     expect(state.emphasis).toBe(false);
   });
 

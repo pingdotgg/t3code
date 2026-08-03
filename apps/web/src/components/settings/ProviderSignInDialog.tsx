@@ -45,6 +45,7 @@ import { providerAuthEnvironment } from "../../state/providerAuth";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import {
+  SIGN_IN_START_TIMEOUT_MS,
   SIGN_OUT_CONFIRM_TIMEOUT_MS,
   defaultSignInMode,
   describeSignInEvent,
@@ -148,13 +149,38 @@ function ProviderSignInDialogBody(props: {
 
   const mode = request?.mode ?? initialMode;
   const presentation = describeSignInEvent(latestEvent, { providerName, mode });
-  const phase = request === null ? "idle" : presentation.phase;
+  const rawPhase = request === null ? "idle" : presentation.phase;
 
-  const start = useCallback(
-    (nextMode: ProviderSignInMode) =>
-      setRequest((current) => ({ mode: nextMode, attempt: (current?.attempt ?? 0) + 1 })),
-    [],
-  );
+  /**
+   * fork: f1 F-22 — time-box "Contacting…".
+   *
+   * An unreachable environment produces an empty event stream rather than an
+   * error, so `starting` had no exit at all and the retry button is not
+   * rendered in that phase. Now it becomes a real failure with a retry.
+   */
+  const [startTimedOut, setStartTimedOut] = useState(false);
+  useEffect(() => {
+    setStartTimedOut(false);
+  }, [request]);
+  useEffect(() => {
+    if (rawPhase !== "starting") return;
+    const timer = setTimeout(() => setStartTimedOut(true), SIGN_IN_START_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [rawPhase, request]);
+
+  const timedOut = startTimedOut && rawPhase === "starting";
+  const phase = timedOut ? "failed" : rawPhase;
+
+  const start = useCallback((nextMode: ProviderSignInMode) => {
+    setStartTimedOut(false);
+    setRequest((current) => ({ mode: nextMode, attempt: (current?.attempt ?? 0) + 1 }));
+  }, []);
+
+  // Unmounting the events atom is the cancel — see the header note.
+  const cancel = useCallback(() => {
+    setStartTimedOut(false);
+    setRequest(null);
+  }, []);
 
   // Attempt the native handoff once per URL. Harmless when it is blocked: the
   // anchor below is the real affordance.
@@ -249,7 +275,9 @@ function ProviderSignInDialogBody(props: {
 
         {phase === "failed" || events.error !== null ? (
           <p className="whitespace-pre-wrap text-sm text-destructive">
-            {events.error ?? presentation.body}
+            {timedOut
+              ? `${providerName} did not respond. The environment may be unreachable, or the provider CLI could not start.`
+              : (events.error ?? presentation.body)}
           </p>
         ) : null}
 
@@ -261,6 +289,13 @@ function ProviderSignInDialogBody(props: {
                   ? "Sign in with a browser"
                   : "Sign in with a device code"
                 : "Try again"}
+            </Button>
+          ) : null}
+          {/* fork: f1 F-22 — a cancel is always available while a request is
+              live, so a stuck login is not a dead dialog. */}
+          {request !== null && phase !== "completed" ? (
+            <Button type="button" size="sm" variant="ghost" onClick={cancel}>
+              Cancel
             </Button>
           ) : null}
           {phase !== "completed" && canSwitchMode ? (
@@ -289,7 +324,17 @@ function SignOutButton(props: {
   const primary = usePrimaryEnvironment();
   const environmentId = props.environmentId ?? primary?.environmentId ?? null;
   const [armed, setArmed] = useState(false);
+  // fork: f1 F-34 — a slow sign-out had no in-flight state at all: the label
+  // went straight back to "Sign out" and a second press fired a second RPC.
+  const [pending, setPending] = useState(false);
   const signOut = useAtomCommand(providerAuthEnvironment.signOut);
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!armed) return;
@@ -304,19 +349,23 @@ function SignOutButton(props: {
       type="button"
       size="sm"
       variant="ghost"
+      disabled={pending}
       className={armed ? "text-destructive hover:text-destructive" : "text-muted-foreground"}
       onClick={() => {
+        if (pending) return;
         if (!armed) {
           setArmed(true);
           return;
         }
         setArmed(false);
+        setPending(true);
         // fork: f1 — a dropped failure made "Confirm sign-out" look like a
         // no-op when the codex child could not spawn.
         void signOut({
           environmentId,
           input: { instanceId: props.provider.instanceId },
         }).then((result) => {
+          if (mountedRef.current) setPending(false);
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             toastManager.add({
               type: "error",
@@ -327,7 +376,7 @@ function SignOutButton(props: {
         });
       }}
     >
-      {signOutButtonLabel(armed)}
+      {signOutButtonLabel(armed, pending)}
     </Button>
   );
 }

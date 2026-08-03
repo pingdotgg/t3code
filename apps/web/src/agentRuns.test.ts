@@ -381,3 +381,38 @@ describe("stabilizeAgentRuns", () => {
     expect(stabilized.runs[0]).toBe(first.runs[0]);
   });
 });
+
+// F-26 — change detection compared `consumedActivityIds.size`, not contents.
+// Two derivations with the same count but different ids returned `previous`,
+// so the timeline kept hiding the wrong work rows.
+describe("stabilizeAgentRuns consumedActivityIds (F-26)", () => {
+  const runs = [
+    {
+      taskId: "task-1",
+      rowId: "row-1",
+      createdAt: "2026-07-18T00:00:00.000Z",
+      settledAt: null,
+      turnId: null,
+      title: "Agent run",
+      phase: "running" as const,
+      ambient: false,
+      detailsUnavailable: false,
+      feed: [],
+    },
+  ];
+
+  it("takes the new result when the id SET changed but its size did not", () => {
+    const first = { runs, consumedActivityIds: new Set(["a"]) };
+    const second = { runs: [...runs], consumedActivityIds: new Set(["b"]) };
+    const stabilized = stabilizeAgentRuns(first, second);
+    expect(stabilized).not.toBe(first);
+    expect(stabilized.consumedActivityIds.has("b")).toBe(true);
+    expect(stabilized.consumedActivityIds.has("a")).toBe(false);
+  });
+
+  it("still returns the previous result when both the runs and the id set match", () => {
+    const first = { runs, consumedActivityIds: new Set(["a", "b"]) };
+    const second = { runs: [...runs], consumedActivityIds: new Set(["b", "a"]) };
+    expect(stabilizeAgentRuns(first, second)).toBe(first);
+  });
+});

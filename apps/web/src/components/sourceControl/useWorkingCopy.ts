@@ -13,7 +13,6 @@
  *
  * fork: f4 source-control panel
  */
-import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -30,7 +29,6 @@ import {
   type WorkingCopyOperation,
   type WorkingCopyStatusResult,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -53,11 +51,13 @@ import { workingCopyEnvironment } from "~/state/workingCopy";
 
 import {
   actionBusyKey,
+  BUSY_DROPPED_PRESS_TITLE,
   BUSY_KEY_SEPARATOR,
   describeWorkingCopyError,
   isCwdDeniedError,
   isNothingStagedError,
   STAGE_ALL_PATHS,
+  vcsStatusPushSignature,
   withBusyKey,
 } from "./sourceControlPanel.logic";
 import type { ConfirmOutcome } from "./useSourceControlConfirm";
@@ -86,6 +86,28 @@ function errorToast(title: string, detail: string): void {
       timeout: 0,
     }),
   );
+}
+
+/**
+ * fork: f4 F-01 — the panel's ONE failure surface, shared with the remote
+ * actions (push / pull / publish / sync) which used to swallow their errors
+ * entirely because nothing read `stacked.error` / `pull.error`.
+ */
+export function reportSourceControlFailure(
+  title: string,
+  result: { readonly _tag: string; readonly cause: import("effect/Cause").Cause<unknown> },
+): void {
+  if (isAtomCommandInterrupted(result as never)) return;
+  const error = squashAtomCommandFailure(result as never);
+  errorToast(
+    isCwdDeniedError(error) ? "This folder is outside your open projects" : title,
+    describeWorkingCopyError(error),
+  );
+}
+
+/** fork: f4 — plain, non-alarming guidance (no stderr, short timeout). */
+export function sourceControlInfoToast(title: string): void {
+  toastManager.add(stackedThreadToast({ type: "info", title, timeout: 5_000 }));
 }
 
 function undoToast(title: string, undoLabel: string, onUndo: () => void): void {
@@ -125,10 +147,21 @@ export function useWorkingCopyStatus(
   // The existing per-thread VCS status subscription is the push channel. Its
   // value changes whenever the server broadcasts a local update, which every
   // upstream vcs mutation and every `workingCopy.*` mutation already triggers.
-  const vcsStatus = useAtomValue(
+  const vcsStatusQuery = useEnvironmentQuery(
     scope === null
-      ? EMPTY_VCS_STATUS_ATOM
+      ? null
       : vcsEnvironment.status({ environmentId: scope.environmentId, input: { cwd: scope.cwd } }),
+  );
+  /**
+   * fork: f4 F-30 — compare the PAYLOAD, not the `AsyncResult` identity.
+   *
+   * `vcsEnvironment.status` is a subscription atom, so `useAtomValue` yields a
+   * fresh object per stream frame. Keying the re-read off identity turned a
+   * chatty status stream into one `workingCopy.status` RPC per frame.
+   */
+  const vcsStatusSignature = useMemo(
+    () => vcsStatusPushSignature(vcsStatusQuery.data),
+    [vcsStatusQuery.data],
   );
 
   const [failureStreak, setFailureStreak] = useState(0);
@@ -141,38 +174,53 @@ export function useWorkingCopyStatus(
     if (query.error === null) setDismissed(false);
   }, [query.error, query.isPending]);
 
-  // Re-read on every push. `vcsStatus` is a fresh object per event, so the
-  // dependency fires exactly once per broadcast rather than continuously.
-  const pushSeenRef = useRef<unknown>(null);
+  // Re-read once per MEANINGFUL push, not once per stream frame.
+  const pushSeenRef = useRef<string | null>(null);
   useEffect(() => {
     if (scope === null) return;
     if (pushSeenRef.current === null) {
-      pushSeenRef.current = vcsStatus;
+      pushSeenRef.current = vcsStatusSignature;
       return;
     }
-    if (pushSeenRef.current === vcsStatus) return;
-    pushSeenRef.current = vcsStatus;
+    if (pushSeenRef.current === vcsStatusSignature) return;
+    pushSeenRef.current = vcsStatusSignature;
     refresh();
-  }, [refresh, scope, vcsStatus]);
+  }, [refresh, scope, vcsStatusSignature]);
 
+  /**
+   * fork: f4 F-29 — the poll interval is NOT re-created on every busy
+   * transition. `options.busy` used to be a dependency of the effect, so a
+   * burst of activity restarted the 15 s timer continuously and it could never
+   * fire. Busy is read through a ref inside the tick instead.
+   */
+  const pollBusyRef = useRef(options.busy);
+  pollBusyRef.current = options.busy;
+  const isRepo = query.data?.isRepo ?? null;
   useEffect(() => {
     if (
       !shouldPollWorkingCopy({
         visible: options.visible,
         hasCwd: scope !== null,
-        busy: options.busy,
-        // A non-repository cwd answers `isRepo: false`; polling it forever
-        // would re-ask a question whose answer cannot change.
-        isRepo: query.data?.isRepo ?? null,
+        busy: false,
+        isRepo,
       })
     ) {
       return;
     }
-    const timer = window.setInterval(refresh, WORKING_COPY_POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      // Skip a tick while a mutation is in flight rather than tearing the timer
+      // down and building a new one.
+      if (pollBusyRef.current) return;
+      // fork: f4 F-29 — the `visible` prop is hard-coded `true` by the only
+      // call site, so the document's own visibility is the real gate on
+      // "no work while nobody is looking".
+      if (typeof document !== "undefined" && document.hidden) return;
+      refresh();
+    }, WORKING_COPY_POLL_INTERVAL_MS);
     return () => {
       window.clearInterval(timer);
     };
-  }, [options.busy, options.visible, query.data?.isRepo, refresh, scope]);
+  }, [isRepo, options.visible, refresh, scope]);
 
   const dismissErrorBanner = useCallback(() => {
     setDismissed(true);
@@ -190,16 +238,6 @@ export function useWorkingCopyStatus(
     refresh,
   };
 }
-
-/**
- * A stable placeholder so the hook can be called unconditionally with no scope.
- * Deliberately a plain atom rather than a `vcsEnvironment.status` entry for a
- * sentinel cwd: that would open a real subscription against an environment that
- * does not exist.
- */
-const EMPTY_VCS_STATUS_ATOM = Atom.make<unknown>(null).pipe(
-  Atom.withLabel("web:source-control:no-vcs-status"),
-);
 
 // ─── Actions ────────────────────────────────────────────────────────────────
 
@@ -279,6 +317,12 @@ export function useWorkingCopyActions(
    * Re-entrant press on a key already in flight is a no-op. Doubling `discard`
    * would leave two backup stashes and two undo toasts pointing at different
    * states.
+   *
+   * fork: f4 F-04/F-06 — the drop is no longer SILENT. Every control that maps
+   * to a busy key now renders disabled + pending while that key is in flight
+   * (`isBusy`, `busyPaths`), so a dropped press should only be reachable from
+   * the keyboard, where nothing can be greyed out. When it does happen it says
+   * so, because "accepted and discarded with no feedback" is the defect.
    */
   const run = useCallback(
     async <A>(
@@ -286,7 +330,10 @@ export function useWorkingCopyActions(
       title: string,
       execute: () => Promise<AtomCommandResult<A, unknown>>,
     ): Promise<A | null> => {
-      if (busyRef.current.has(key)) return null;
+      if (busyRef.current.has(key)) {
+        sourceControlInfoToast(BUSY_DROPPED_PRESS_TITLE);
+        return null;
+      }
       setBusy((current) => withBusyKey(current, key, true));
       try {
         const result = await execute();
@@ -574,7 +621,10 @@ export function useWorkingCopyActions(
        */
       generateCommitMessage: async ({ amend }) => {
         const key = GENERATE_COMMIT_MESSAGE_BUSY_KEY;
-        if (busyRef.current.has(key)) return null;
+        if (busyRef.current.has(key)) {
+          sourceControlInfoToast(BUSY_DROPPED_PRESS_TITLE);
+          return null;
+        }
         setBusy((current) => withBusyKey(current, key, true));
         try {
           const result = await generateCommitMessageCommand(target(amend ? { amend } : {}));

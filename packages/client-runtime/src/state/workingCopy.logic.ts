@@ -135,6 +135,62 @@ export function isCommitPrimaryActionEnabled(
   }
 }
 
+/**
+ * fork: f4 F-03 — the amend prefill is a TRANSITION, not an invariant.
+ *
+ * The composer's effect listed `message` as a dependency and had no edge guard,
+ * so "amend is on and the draft is empty" was re-asserted on every render: the
+ * box refilled itself the instant it went empty and could not be edited down or
+ * cleared while Amend was ticked.
+ *
+ * `prefilledFor` is the last message this composer already filled in for the
+ * current amend session; `null` means the prefill has not fired since amend was
+ * last switched on.
+ */
+export function shouldPrefillAmendMessage(input: {
+  readonly amend: boolean;
+  readonly message: string;
+  readonly lastCommitMessage: string | null;
+  readonly prefilledFor: string | null;
+}): boolean {
+  if (!input.amend) return false;
+  if (input.lastCommitMessage === null || input.lastCommitMessage.length === 0) return false;
+  // Fill once per amend session — a second pass would undo the user's edits.
+  if (input.prefilledFor === input.lastCommitMessage) return false;
+  // Never overwrite text the user already has in the box.
+  return input.message.trim().length === 0;
+}
+
+/**
+ * fork: f4 F-07 — "Commit & push" has its OWN predicate.
+ *
+ * The overflow menu item and ⌘⇧↩ both reach `onCommitAndPush` without ever
+ * consulting the primary button's `enabled`, so with an empty message and
+ * nothing staged they used to stage the entire working tree and *then* have the
+ * server reject the empty message: a disabled-looking action with a real,
+ * unwanted side effect.
+ */
+export function isCommitAndPushEnabled(
+  input: CommitPrimaryActionInput & { readonly hasMessage: boolean; readonly busy: boolean },
+): boolean {
+  if (input.busy || !input.hasMessage) {
+    return false;
+  }
+  return input.stagedCount > 0 || input.dirtyCount > 0;
+}
+
+/**
+ * fork: f4 F-07 — "Amend last commit" only needs a commit to amend and a free
+ * `commit` busy key. It deliberately does NOT require a message: `git commit
+ * --amend` with an empty message keeps the existing one.
+ */
+export function isAmendCommitEnabled(input: {
+  readonly busy: boolean;
+  readonly hasLastCommit: boolean;
+}): boolean {
+  return !input.busy && input.hasLastCommit;
+}
+
 // ─── AI commit message (the ✨ button) ──────────────────────────────────────
 
 export interface CommitMessageGenerationInput {

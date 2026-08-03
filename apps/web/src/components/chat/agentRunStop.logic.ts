@@ -50,6 +50,28 @@ export function withAgentRunStopRequested(
   return next;
 }
 
+/**
+ * fork: f3 F-32 — drop the pending mark for a stop the server refused.
+ *
+ * The mark is written optimistically before the RPC, and used to survive a
+ * failure for the whole re-enable window: the card showed "Stopping…" with a
+ * disabled button for five seconds after the toast said the stop was refused.
+ */
+export function withoutAgentRunStopRequested(
+  requests: AgentRunStopRequests,
+  taskIds: ReadonlyArray<string>,
+): AgentRunStopRequests {
+  const present = taskIds.filter((taskId) => requests[taskId] !== undefined);
+  if (present.length === 0) {
+    return requests;
+  }
+  const next: Record<string, number> = { ...requests };
+  for (const taskId of present) {
+    delete next[taskId];
+  }
+  return next;
+}
+
 export function isAgentRunStopPending(
   requests: AgentRunStopRequests,
   taskId: string,

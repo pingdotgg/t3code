@@ -158,6 +158,17 @@ export function describeSignInEvent(
  */
 export const SIGN_OUT_CONFIRM_TIMEOUT_MS = 5_000;
 
-export function signOutButtonLabel(armed: boolean): string {
+/**
+ * fork: f1 F-22 — how long "Contacting…" may last before the dialog gives up.
+ *
+ * The stream has no error path for an unreachable environment: `followStream`
+ * turns an `acquireSupervisor` failure into an EMPTY stream, so `events.data`
+ * stays `undefined` and `events.error` stays `null` forever. Without a deadline
+ * the dialog spins indefinitely with no retry button rendered.
+ */
+export const SIGN_IN_START_TIMEOUT_MS = 20_000;
+
+export function signOutButtonLabel(armed: boolean, pending = false): string {
+  if (pending) return "Signing out…";
   return armed ? "Confirm sign-out" : "Sign out";
 }

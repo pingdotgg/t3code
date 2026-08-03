@@ -17,7 +17,7 @@ import { changeLetter, splitDisplayPath } from "./sourceControlPanel.logic";
 export function CommitDrawer(props: {
   readonly detail: WorkingCopyCommitDetail | null;
   readonly isLoading: boolean;
-  readonly onCopy: (text: string) => void;
+  readonly onCopy: (text: string, label?: string) => void;
   readonly onOpenFile: (path: string, oldPath: string | undefined) => void;
 }) {
   return (
@@ -33,7 +33,7 @@ export function CommitDrawer(props: {
             <button
               type="button"
               className="font-mono text-muted-foreground text-xs hover:text-foreground"
-              onClick={() => props.onCopy(props.detail?.hash ?? "")}
+              onClick={() => props.onCopy(props.detail?.hash ?? "", "the commit hash")}
               title="Copy full hash"
             >
               {props.detail.hash}

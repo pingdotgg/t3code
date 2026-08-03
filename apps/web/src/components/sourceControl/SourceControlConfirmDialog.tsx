@@ -25,23 +25,74 @@ import {
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 
-import type { ConfirmOutcome, PendingSourceControlConfirm } from "./useSourceControlConfirm";
+import type { ConfirmOutcome, PendingSourceControlRequest } from "./useSourceControlConfirm";
 
 export function SourceControlConfirmDialog(props: {
-  pending: PendingSourceControlConfirm | null;
-  onResolve: (outcome: ConfirmOutcome) => void;
+  pending: PendingSourceControlRequest | null;
+  onResolve: (outcome: ConfirmOutcome, value?: string) => void;
 }) {
   const { pending, onResolve } = props;
   const [typed, setTyped] = useState("");
   const [repeated, setRepeated] = useState(false);
+  // fork: f4 F-13 — the free-text rung's value, seeded per request id.
+  const [entered, setEntered] = useState("");
 
   // Reset per request id, so a second confirm never inherits the first's typing.
   useEffect(() => {
     setTyped("");
     setRepeated(false);
-  }, [pending?.id]);
+    setEntered(pending?.kind === "prompt" ? (pending.options.initialValue ?? "") : "");
+    // `pending` is a fresh object exactly once per request, so this is the same
+    // "reset per request id" rule stated in a way the dependency check accepts.
+  }, [pending]);
 
   if (!pending) return null;
+
+  if (pending.kind === "prompt") {
+    const { options } = pending;
+    const value = entered.trim();
+    return (
+      <AlertDialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onResolve("cancelled");
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{options.title}</AlertDialogTitle>
+            <AlertDialogDescription>{options.consequence}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="px-6 pb-4">
+            <label className="mb-1.5 block text-muted-foreground text-xs" htmlFor="sc-prompt-value">
+              {options.inputLabel}
+            </label>
+            <Input
+              id="sc-prompt-value"
+              autoFocus
+              value={entered}
+              onChange={(event) => setEntered(event.target.value)}
+              placeholder={options.placeholder ?? ""}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || value.length === 0) return;
+                event.preventDefault();
+                onResolve("confirmed", value);
+              }}
+            />
+          </div>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={() => onResolve("cancelled")}>
+              Cancel
+            </Button>
+            <Button disabled={value.length === 0} onClick={() => onResolve("confirmed", value)}>
+              {options.confirmLabel}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    );
+  }
+
   const { options } = pending;
   const typedSatisfied =
     options.requireTyped === undefined ||

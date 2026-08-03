@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildChangesRows,
+  changesAllFolderKeys,
   changesFileRowKey,
   changesFolderKeysIn,
   changesGroupOf,
+  changesGroupPaths,
   changesRowHeight,
   CHANGES_ROW_HEIGHT,
   CONFLICT_ACTIONS_HEIGHT,
@@ -303,5 +305,96 @@ describe("changesRowHeight", () => {
       CHANGES_ROW_HEIGHT.file + DISCARD_CONFIRM_HEIGHT,
     );
     expect(changesRowHeight(row({ key: "other" }), options)).toBe(CHANGES_ROW_HEIGHT.file);
+  });
+});
+
+// ─── F-08 regression: a group header's bulk action is GROUP-SCOPED ──────────
+//
+// The panel's group header used to call `onDiscard([])`, which the panel
+// re-expanded into `discard(null)` — the whole-working-copy rung. These pin
+// that the paths a group header acts on can never reach outside its group.
+
+describe("changesGroupPaths (F-08)", () => {
+  const mixed: ReadonlyArray<WorkingCopyFile> = [
+    file("staged-only.ts", "staged"),
+    file("both.ts", "staged"),
+    file("both.ts", "unstaged"),
+    file("dirty.ts", "unstaged"),
+    file("new.ts", "unstaged", "untracked"),
+    file("conflict.ts", "conflicted", "unmerged"),
+  ];
+  const scope = { files: mixed, filter: "all" as const, query: "" };
+
+  it("returns only that group's paths — never the whole working copy", () => {
+    expect(changesGroupPaths(scope, "staged").toSorted()).toEqual(["both.ts", "staged-only.ts"]);
+    expect(changesGroupPaths(scope, "unstaged").toSorted()).toEqual([
+      "both.ts",
+      "dirty.ts",
+      "new.ts",
+    ]);
+    expect(changesGroupPaths(scope, "conflicted")).toEqual(["conflict.ts"]);
+  });
+
+  it("never widens: no group's paths cover every changed path", () => {
+    const everyPath = new Set(mixed.map((entry) => entry.path));
+    for (const group of ["staged", "unstaged", "conflicted"] as const) {
+      const paths = changesGroupPaths(scope, group);
+      expect(paths.length).toBeLessThan(everyPath.size);
+    }
+  });
+
+  it("is never empty for a group that has files — an empty set is 'do nothing'", () => {
+    expect(changesGroupPaths(scope, "unstaged").length).toBeGreaterThan(0);
+  });
+
+  it("honours the same filter and query the rows were built from", () => {
+    expect(changesGroupPaths({ ...scope, filter: "untracked" }, "unstaged")).toEqual(["new.ts"]);
+    expect(changesGroupPaths({ ...scope, query: "dirty" }, "unstaged")).toEqual(["dirty.ts"]);
+  });
+
+  it("dedupes a path that appears twice inside one group", () => {
+    const scoped = {
+      files: [file("a.ts", "unstaged"), file("a.ts", "unstaged", "typechange")],
+      filter: "all" as const,
+      query: "",
+    };
+    expect(changesGroupPaths(scoped, "unstaged")).toEqual(["a.ts"]);
+  });
+
+  it("answers empty for a group with no files, so the caller does nothing", () => {
+    expect(changesGroupPaths({ files: [], filter: "all", query: "" }, "unstaged")).toEqual([]);
+  });
+});
+
+describe("changesAllFolderKeys (F-14)", () => {
+  const nested: ReadonlyArray<WorkingCopyFile> = [
+    file("src/a/deep/one.ts"),
+    file("src/a/deep/two.ts"),
+    file("src/b/three.ts"),
+    file("staged/x.ts", "staged"),
+  ];
+  const scope = { files: nested, filter: "all" as const, query: "" };
+
+  it("includes folders hidden inside a collapsed parent, unlike changesFolderKeysIn(rows)", () => {
+    const all = changesAllFolderKeys(scope, "unstaged");
+    // Every key is namespaced to the group it came from.
+    expect(all.every((key) => key.startsWith("unstaged:"))).toBe(true);
+    expect(all.length).toBeGreaterThan(0);
+
+    const visibleRows = build({
+      files: nested,
+      viewMode: "tree",
+      collapsedFolders: new Set(["unstaged:src"]),
+    });
+    const visible = changesFolderKeysIn(visibleRows).filter((key) => key.startsWith("unstaged:"));
+    // The old implementation could only ever collapse what was rendered.
+    expect(all.length).toBeGreaterThan(visible.length);
+  });
+
+  it("is scoped to one group", () => {
+    expect(changesAllFolderKeys(scope, "staged").every((key) => key.startsWith("staged:"))).toBe(
+      true,
+    );
+    expect(changesAllFolderKeys({ files: [], filter: "all", query: "" }, "staged")).toEqual([]);
   });
 });

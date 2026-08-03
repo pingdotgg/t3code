@@ -8,7 +8,7 @@
  *
  * fork: f4 source-control panel
  */
-import { Minus, Plus, Undo2 } from "lucide-react";
+import { Loader2, Minus, Plus, Undo2 } from "lucide-react";
 import { memo } from "react";
 
 import { CHANGES_ROW_HEIGHT, CONFLICT_ACTIONS_HEIGHT } from "~/lib/sourceControl/changesRows";
@@ -43,8 +43,10 @@ interface ChangeRowProps extends ChangeRowActions {
   readonly selected: boolean;
   readonly focused: boolean;
   readonly partial: boolean;
+  /** An action on THIS file's path is in flight — every rung below disables. */
   readonly busy: boolean;
   readonly indentPx: number;
+  readonly domId: string;
 }
 
 function ChangeRowImpl(props: ChangeRowProps) {
@@ -59,8 +61,12 @@ function ChangeRowImpl(props: ChangeRowProps) {
   return (
     <div
       className="flex flex-col"
+      // fork: f4 focus model — the listbox keeps DOM focus and points at the
+      // active row through `aria-activedescendant`, so the row needs a real id.
+      id={props.domId}
       data-source-control-row={row.key}
       aria-selected={props.selected}
+      aria-busy={props.busy}
       role="option"
     >
       <div
@@ -115,16 +121,16 @@ function ChangeRowImpl(props: ChangeRowProps) {
         </span>
         <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
           {staged ? (
-            <RowAction label="Unstage" onClick={() => props.onUnstage(row)}>
+            <RowAction label="Unstage" busy={props.busy} onClick={() => props.onUnstage(row)}>
               <Minus className="size-3.5" />
             </RowAction>
           ) : (
-            <RowAction label="Stage" onClick={() => props.onStage(row)}>
+            <RowAction label="Stage" busy={props.busy} onClick={() => props.onStage(row)}>
               <Plus className="size-3.5" />
             </RowAction>
           )}
           {!staged && !conflicted ? (
-            <RowAction label="Discard" onClick={() => props.onDiscard(row)}>
+            <RowAction label="Discard" busy={props.busy} onClick={() => props.onDiscard(row)}>
               <Undo2 className="size-3.5" />
             </RowAction>
           ) : null}
@@ -135,34 +141,28 @@ function ChangeRowImpl(props: ChangeRowProps) {
           style={{ height: CONFLICT_ACTIONS_HEIGHT, paddingLeft: 8 + props.indentPx }}
           className="flex items-center gap-1.5 pr-1.5 text-xs"
         >
-          <button
-            type="button"
-            className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent"
-            onClick={() => props.onResolve(row, "ours")}
-          >
+          {/* fork: f4 F-06 — conflict rungs disable while this path resolves. */}
+          <ConflictAction busy={props.busy} onClick={() => props.onResolve(row, "ours")}>
             Accept current
-          </button>
-          <button
-            type="button"
-            className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent"
-            onClick={() => props.onResolve(row, "theirs")}
-          >
+          </ConflictAction>
+          <ConflictAction busy={props.busy} onClick={() => props.onResolve(row, "theirs")}>
             Accept incoming
-          </button>
-          <button
-            type="button"
-            className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent"
-            onClick={() => props.onResolve(row)}
-          >
+          </ConflictAction>
+          <ConflictAction busy={props.busy} onClick={() => props.onResolve(row)}>
             Mark resolved
-          </button>
+          </ConflictAction>
         </div>
       ) : null}
     </div>
   );
 }
 
-function RowAction(props: { label: string; onClick: () => void; children: React.ReactNode }) {
+function RowAction(props: {
+  label: string;
+  busy: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -170,18 +170,35 @@ function RowAction(props: { label: string; onClick: () => void; children: React.
           <button
             type="button"
             aria-label={props.label}
-            className="flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            // fork: f4 F-06 — while this path's action is in flight the button
+            // is disabled and spinning, instead of staying live and silently
+            // discarding the second press.
+            disabled={props.busy}
+            className="flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             onClick={(event) => {
               event.stopPropagation();
               props.onClick();
             }}
           >
-            {props.children}
+            {props.busy ? <Loader2 className="size-3.5 animate-spin" /> : props.children}
           </button>
         }
       />
-      <TooltipPopup>{props.label}</TooltipPopup>
+      <TooltipPopup>{props.busy ? `${props.label} — working…` : props.label}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+function ConflictAction(props: { busy: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="rounded-sm border border-border px-1.5 py-0.5 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+      disabled={props.busy}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
   );
 }
 

@@ -13,7 +13,10 @@ import {
   commitSubjectLengthState,
   historyAuthorFacets,
   historyFilterKey,
+  isAmendCommitEnabled,
+  isCommitAndPushEnabled,
   isCommitPrimaryActionEnabled,
+  shouldPrefillAmendMessage,
   isHashIshQuery,
   isHistoryFilterActive,
   joinCommitMessage,
@@ -375,5 +378,144 @@ describe("commitMessageGenerationApply", () => {
 
   it("discards even when the draft was cleared mid-flight", () => {
     expect(commitMessageGenerationApply({ draftAtPress: "wip", draftNow: "" })).toBe("discard");
+  });
+});
+
+// ─── F-07: the entry points that used to bypass every gate ─────────────────
+//
+// `runPrimary` guarded on `enabled`, but the ⌘⇧↩ branch called
+// `onCommitAndPush` before reaching it and neither overflow menu item had a
+// `disabled` prop. With an empty message and nothing staged, "Commit & push"
+// staged the ENTIRE working tree and then let the server reject the empty
+// message — a side effect from a control that should not have fired.
+
+describe("isCommitAndPushEnabled (F-07)", () => {
+  const base = { amend: false, stagedCount: 0, dirtyCount: 0, ahead: 0, busy: false };
+
+  it("refuses an empty message even when there is something to stage", () => {
+    expect(isCommitAndPushEnabled({ ...base, dirtyCount: 3, hasMessage: false })).toBe(false);
+  });
+
+  it("refuses a clean tree even with a message", () => {
+    expect(isCommitAndPushEnabled({ ...base, hasMessage: true })).toBe(false);
+  });
+
+  it("allows a message plus staged files, and a message plus a dirty tree", () => {
+    expect(isCommitAndPushEnabled({ ...base, stagedCount: 1, hasMessage: true })).toBe(true);
+    expect(isCommitAndPushEnabled({ ...base, dirtyCount: 1, hasMessage: true })).toBe(true);
+  });
+
+  it("refuses while a commit is already in flight", () => {
+    expect(isCommitAndPushEnabled({ ...base, stagedCount: 1, hasMessage: true, busy: true })).toBe(
+      false,
+    );
+  });
+});
+
+describe("isAmendCommitEnabled (F-07)", () => {
+  it("needs a commit to amend", () => {
+    expect(isAmendCommitEnabled({ busy: false, hasLastCommit: false })).toBe(false);
+    expect(isAmendCommitEnabled({ busy: false, hasLastCommit: true })).toBe(true);
+  });
+
+  it("refuses while the commit busy key is taken", () => {
+    expect(isAmendCommitEnabled({ busy: true, hasLastCommit: true })).toBe(false);
+  });
+
+  it("does NOT require a message — amend keeps the existing one", () => {
+    // Stated as a test because the obvious "reuse the commit predicate" fix
+    // would silently break `git commit --amend --no-edit`.
+    expect(isAmendCommitEnabled({ busy: false, hasLastCommit: true })).toBe(true);
+  });
+});
+
+// ─── F-03: the amend prefill is a transition, not an invariant ──────────────
+//
+// The composer's effect had `message` in its dependency list and no edge guard,
+// so "amend on + empty draft" was re-asserted on every render: select-all +
+// Delete instantly repopulated the box, and backspacing to the last character
+// refilled it. The textarea was uneditable-to-empty while Amend was ticked.
+
+describe("shouldPrefillAmendMessage (F-03)", () => {
+  const last = "fix: the previous subject";
+
+  it("fills once when amend is switched on with an empty draft", () => {
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "",
+        lastCommitMessage: last,
+        prefilledFor: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT refill after the session already prefilled — this is the bug", () => {
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "",
+        lastCommitMessage: last,
+        prefilledFor: last,
+      }),
+    ).toBe(false);
+  });
+
+  it("never overwrites text the user has already typed", () => {
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "my own subject",
+        lastCommitMessage: last,
+        prefilledFor: null,
+      }),
+    ).toBe(false);
+    // Whitespace-only counts as empty.
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "   ",
+        lastCommitMessage: last,
+        prefilledFor: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does nothing while amend is off, or with no commit to amend", () => {
+    expect(
+      shouldPrefillAmendMessage({
+        amend: false,
+        message: "",
+        lastCommitMessage: last,
+        prefilledFor: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "",
+        lastCommitMessage: null,
+        prefilledFor: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "",
+        lastCommitMessage: "",
+        prefilledFor: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("re-arms when the commit being amended changes underneath", () => {
+    expect(
+      shouldPrefillAmendMessage({
+        amend: true,
+        message: "",
+        lastCommitMessage: "a different HEAD subject",
+        prefilledFor: last,
+      }),
+    ).toBe(true);
   });
 });

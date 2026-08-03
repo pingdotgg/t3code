@@ -8,9 +8,12 @@ import { LANE_COLOR_COUNT, LANE_COLOR_INDEX_NONE } from "~/lib/sourceControl/lan
 import { LANE_FALLBACK_COLOR, laneCenterX, laneColor } from "./laneGraphPalette";
 import {
   actionBusyKey,
+  anyPathBusy,
+  BUSY_DROPPED_PRESS_TITLE,
   BUSY_KEY_SEPARATOR,
   busyPathsFromKeys,
   changeLabel,
+  changesListActionPaths,
   changeLetter,
   describeWorkingCopyError,
   groupHeaderCountLabel,
@@ -24,7 +27,9 @@ import {
   operationGuidance,
   STAGE_ALL_PATHS,
   splitDisplayPath,
+  vcsStatusPushSignature,
   withBusyKey,
+  workingCopyBusyKey,
 } from "./sourceControlPanel.logic";
 
 const ALL_CHANGES = [
@@ -352,5 +357,116 @@ describe("isNothingStagedError", () => {
     expect(isNothingStagedError({ _tag: "VcsProcessExitError" })).toBe(false);
     expect(isNothingStagedError(null)).toBe(false);
     expect(isNothingStagedError("nothing staged")).toBe(false);
+  });
+});
+
+// ─── F-08: an empty path set is "nothing", never "everything" ───────────────
+//
+// This is the one gate every changes-list action passes through. The defect it
+// pins: the group header's "Discard all" handed the panel `[]`, and the panel
+// mapped `[]` onto `actions.discard(null)` — discard the ENTIRE working copy.
+
+describe("changesListActionPaths (F-08)", () => {
+  it("resolves an empty selection to null — do nothing", () => {
+    expect(changesListActionPaths([])).toBeNull();
+  });
+
+  it("never returns a sentinel that a caller could read as 'everything'", () => {
+    // `STAGE_ALL_PATHS` is the wire spelling of "everything" — an empty array.
+    // A changes-list action must never be able to produce it.
+    expect(changesListActionPaths(STAGE_ALL_PATHS)).toBeNull();
+    expect(changesListActionPaths([])).not.toEqual(STAGE_ALL_PATHS);
+  });
+
+  it("passes an explicit selection through, deduped and in order", () => {
+    expect(changesListActionPaths(["b.ts", "a.ts", "b.ts"])).toEqual(["b.ts", "a.ts"]);
+  });
+
+  it("preserves a single-path selection exactly", () => {
+    expect(changesListActionPaths(["src/one file.ts"])).toEqual(["src/one file.ts"]);
+  });
+});
+
+describe("anyPathBusy (F-04/F-06)", () => {
+  it("is true when ONE path of a bulk target is in flight", () => {
+    expect(anyPathBusy(new Set(["b.ts"]), ["a.ts", "b.ts", "c.ts"])).toBe(true);
+  });
+
+  it("is false for a disjoint set and for an empty busy set", () => {
+    expect(anyPathBusy(new Set(["z.ts"]), ["a.ts"])).toBe(false);
+    expect(anyPathBusy(new Set<string>(), ["a.ts"])).toBe(false);
+    expect(anyPathBusy(new Set(["a.ts"]), [])).toBe(false);
+  });
+});
+
+describe("workingCopyBusyKey (F-06)", () => {
+  // The controls read these keys; `useWorkingCopyActions` builds the same ones
+  // when it runs the action. If the two ever drift, a button stops disabling
+  // and its second press starts vanishing again — which is the whole defect.
+  it("matches the keys the action layer builds", () => {
+    expect(workingCopyBusyKey.commit()).toBe(actionBusyKey("commit"));
+    expect(workingCopyBusyKey.undoCommit()).toBe(actionBusyKey("undo-commit"));
+    expect(workingCopyBusyKey.abort()).toBe(actionBusyKey("abort"));
+    expect(workingCopyBusyKey.stashPush()).toBe(actionBusyKey("stash-push"));
+    expect(workingCopyBusyKey.stashPop("stash@{0}")).toBe(actionBusyKey("stash-pop", "stash@{0}"));
+    expect(workingCopyBusyKey.stashApply("stash@{1}")).toBe(
+      actionBusyKey("stash-apply", "stash@{1}"),
+    );
+    expect(workingCopyBusyKey.stashDrop("stash@{2}")).toBe(
+      actionBusyKey("stash-drop", "stash@{2}"),
+    );
+    expect(workingCopyBusyKey.restoreBackup("stash@{3}")).toBe(
+      actionBusyKey("restore-backup", "stash@{3}"),
+    );
+    expect(workingCopyBusyKey.cherryPick("abc")).toBe(actionBusyKey("cherry-pick", "abc"));
+    expect(workingCopyBusyKey.revert("abc")).toBe(actionBusyKey("revert", "abc"));
+    expect(workingCopyBusyKey.checkout("abc")).toBe(actionBusyKey("checkout", "abc"));
+    expect(workingCopyBusyKey.reset("abc")).toBe(actionBusyKey("reset", "abc"));
+    expect(workingCopyBusyKey.tag("abc")).toBe(actionBusyKey("tag", "abc"));
+    expect(workingCopyBusyKey.resolve("a.ts")).toBe(actionBusyKey("resolve", "a.ts"));
+  });
+
+  it("keys the whole-working-copy discard the same way the action does", () => {
+    // `discard(null)` uses the "*" scope.
+    expect(workingCopyBusyKey.discardAll()).toBe(actionBusyKey("discard", "*"));
+    // …and that key must NOT collide with a per-path discard.
+    expect(workingCopyBusyKey.discardAll()).not.toBe(actionBusyKey("discard", "a.ts"));
+  });
+
+  it("has a title for the press that is genuinely dropped", () => {
+    expect(BUSY_DROPPED_PRESS_TITLE.length).toBeGreaterThan(0);
+  });
+});
+
+// F-30 — `vcsEnvironment.status` is a subscription atom, so `useAtomValue`
+// yields a fresh object per stream frame. Keying the panel's re-read off object
+// identity cost one `workingCopy.status` RPC per frame.
+describe("vcsStatusPushSignature (F-30)", () => {
+  const base = {
+    refName: "main",
+    aheadCount: 1,
+    behindCount: 0,
+    hasUpstream: true,
+    hasWorkingTreeChanges: true,
+    workingTree: { files: [{}, {}] },
+  };
+
+  it("is stable across frames that changed nothing the panel renders", () => {
+    expect(vcsStatusPushSignature({ ...base })).toBe(vcsStatusPushSignature({ ...base }));
+  });
+
+  it("changes for every field a control actually depends on", () => {
+    const signature = vcsStatusPushSignature(base);
+    expect(vcsStatusPushSignature({ ...base, refName: "feature" })).not.toBe(signature);
+    expect(vcsStatusPushSignature({ ...base, aheadCount: 2 })).not.toBe(signature);
+    expect(vcsStatusPushSignature({ ...base, behindCount: 3 })).not.toBe(signature);
+    expect(vcsStatusPushSignature({ ...base, hasUpstream: false })).not.toBe(signature);
+    expect(vcsStatusPushSignature({ ...base, hasWorkingTreeChanges: false })).not.toBe(signature);
+    expect(vcsStatusPushSignature({ ...base, workingTree: { files: [{}] } })).not.toBe(signature);
+  });
+
+  it("handles the pre-first-frame null without pretending it is a real state", () => {
+    expect(vcsStatusPushSignature(null)).toBe("");
+    expect(vcsStatusPushSignature({})).not.toBe("");
   });
 });
