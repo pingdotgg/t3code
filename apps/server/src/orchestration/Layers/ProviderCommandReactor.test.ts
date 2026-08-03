@@ -21,7 +21,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
@@ -1744,6 +1744,127 @@ describe("ProviderCommandReactor", () => {
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       return thread?.session?.status === "ready" && thread.session.activeTurnId === null;
     });
+  });
+
+  it("interrupts an unacknowledged provider turn as soon as its turn id arrives", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const allowProviderSend = Effect.runSync(Deferred.make<void>());
+    const providerTurnId = asTurnId("turn-cancel-before-start");
+    let providerTurnStarted = false;
+    harness.sendTurn.mockImplementationOnce(
+      () =>
+        Effect.gen(function* () {
+          yield* Deferred.await(allowProviderSend);
+          providerTurnStarted = true;
+          return {
+            threadId: ThreadId.make("thread-1"),
+            turnId: providerTurnId,
+          };
+        }) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-cancel-before-provider-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cancel-before-provider-start"),
+          role: "user",
+          text: "do not start",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-before-provider-start"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+    await harness.drain();
+    expect(harness.interruptTurn.mock.calls.length).toBe(0);
+
+    await Effect.runPromise(Deferred.succeed(allowProviderSend, undefined));
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+
+    expect(providerTurnStarted).toBe(true);
+    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      turnId: providerTurnId,
+    });
+  });
+
+  it("keeps an active provider send alive so it can publish terminal lifecycle events", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const allowProviderSendToFinish = Effect.runSync(Deferred.make<void>());
+    const providerTurnId = asTurnId("turn-active-send-interrupt");
+    let providerTurnFinished = false;
+    harness.sendTurn.mockImplementationOnce(
+      () =>
+        Effect.gen(function* () {
+          const sessionIndex = harness.runtimeSessions.findIndex(
+            (session) => session.threadId === ThreadId.make("thread-1"),
+          );
+          const session = harness.runtimeSessions[sessionIndex];
+          if (session === undefined) {
+            throw new Error("Expected provider session.");
+          }
+          harness.runtimeSessions[sessionIndex] = {
+            ...session,
+            status: "running",
+            activeTurnId: providerTurnId,
+          };
+          yield* Deferred.await(allowProviderSendToFinish);
+          providerTurnFinished = true;
+          return {
+            threadId: ThreadId.make("thread-1"),
+            turnId: providerTurnId,
+          };
+        }) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-active-send-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-active-send-interrupt"),
+          role: "user",
+          text: "start then cancel",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() =>
+      harness.runtimeSessions.some((session) => session.activeTurnId === providerTurnId),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-active-send"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(Deferred.succeed(allowProviderSendToFinish, undefined));
+    await waitFor(() => providerTurnFinished);
   });
 
   it("clears visible running state when provider interrupt fails", async () => {

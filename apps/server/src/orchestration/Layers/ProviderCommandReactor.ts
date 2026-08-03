@@ -3,6 +3,7 @@ import {
   CommandId,
   EventId,
   type ModelSelection,
+  type MessageId,
   type OrchestrationEvent,
   ProviderDriverKind,
   type OrchestrationSession,
@@ -86,6 +87,16 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+
+interface PendingTurnStart {
+  readonly key: string;
+  readonly messageId: MessageId;
+  providerSendDispatched: boolean;
+  cancellationRequested: boolean;
+  cancellationRequestedAt: string | null;
+  providerTurnObserved: boolean;
+  requiresPostAcknowledgementInterrupt: boolean;
+}
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -188,6 +199,7 @@ const make = Effect.gen(function* () {
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
   });
+  const pendingTurnStarts = new Map<ThreadId, PendingTurnStart>();
 
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
@@ -304,10 +316,69 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const interruptProviderTurn = (input: {
+    readonly threadId: ThreadId;
+    readonly providerTurnId?: TurnId;
+    readonly activityTurnId: TurnId | null;
+    readonly createdAt: string;
+  }) =>
+    providerService
+      .interruptTurn({
+        threadId: input.threadId,
+        ...(input.providerTurnId !== undefined ? { turnId: input.providerTurnId } : {}),
+      })
+      .pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) => {
+            const detail = formatFailureDetail(cause);
+            return appendProviderFailureActivity({
+              threadId: input.threadId,
+              kind: "provider.turn.interrupt.failed",
+              summary: "Provider turn interrupt failed",
+              detail,
+              turnId: input.activityTurnId,
+              createdAt: input.createdAt,
+            }).pipe(
+              Effect.flatMap(() =>
+                settleInterruptedThreadSession({
+                  threadId: input.threadId,
+                  createdAt: input.createdAt,
+                  lastError: detail,
+                }),
+              ),
+            );
+          },
+          onSuccess: () =>
+            settleInterruptedThreadSession({
+              threadId: input.threadId,
+              createdAt: input.createdAt,
+              lastError: null,
+            }),
+        }),
+      );
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     return readModel.threads.find((entry) => entry.id === threadId);
   });
+
+  const hasActiveProviderTurn = (threadId: ThreadId) =>
+    providerService.listSessions().pipe(
+      Effect.map((sessions) =>
+        sessions.some(
+          (session) =>
+            session.threadId === threadId &&
+            session.activeTurnId !== undefined &&
+            session.activeTurnId !== null,
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor could not inspect pending turn start", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(true)),
+      ),
+    );
 
   const ensurePreTurnBaselineForThread = Effect.fn("ensurePreTurnBaselineForThread")(function* (
     threadId: ThreadId,
@@ -1027,14 +1098,85 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    const pendingTurnStart: PendingTurnStart = {
+      key,
+      messageId: event.payload.messageId,
+      providerSendDispatched: false,
+      cancellationRequested: false,
+      cancellationRequestedAt: null,
+      providerTurnObserved: false,
+      requiresPostAcknowledgementInterrupt: false,
+    };
+    pendingTurnStarts.set(event.payload.threadId, pendingTurnStart);
+    yield* Effect.suspend(() => {
+      if (pendingTurnStart.cancellationRequested) {
+        return Effect.void;
+      }
+      pendingTurnStart.providerSendDispatched = true;
+      return providerService.sendTurn(sendTurnRequest.value).pipe(
+        Effect.tap((turn) =>
+          Effect.suspend(() => {
+            if (!pendingTurnStart.requiresPostAcknowledgementInterrupt) {
+              return Effect.void;
+            }
+            pendingTurnStart.requiresPostAcknowledgementInterrupt = false;
+            return interruptProviderTurn({
+              threadId: event.payload.threadId,
+              providerTurnId: turn.turnId,
+              activityTurnId: turn.turnId,
+              createdAt: pendingTurnStart.cancellationRequestedAt ?? event.payload.createdAt,
+            });
+          }),
+        ),
+      );
+    }).pipe(
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (pendingTurnStarts.get(event.payload.threadId)?.key === key) {
+            pendingTurnStarts.delete(event.payload.threadId);
+          }
+        }),
+      ),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
+    const pendingTurnStart = pendingTurnStarts.get(event.payload.threadId);
+    if (pendingTurnStart) {
+      pendingTurnStart.cancellationRequested = true;
+      pendingTurnStart.cancellationRequestedAt = event.payload.createdAt;
+      if (!pendingTurnStart.providerSendDispatched) {
+        const detail = "Turn cancelled before the provider turn began.";
+        yield* settleInterruptedThreadSession({
+          threadId: event.payload.threadId,
+          createdAt: event.payload.createdAt,
+          lastError: null,
+        });
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "Turn cancelled",
+          detail,
+          turnId: null,
+          createdAt: event.payload.createdAt,
+          messageId: pendingTurnStart.messageId,
+        });
+        return;
+      }
+
+      const providerTurnActive =
+        pendingTurnStart.providerTurnObserved ||
+        (yield* hasActiveProviderTurn(event.payload.threadId));
+      if (!providerTurnActive) {
+        pendingTurnStart.requiresPostAcknowledgementInterrupt = true;
+        return;
+      }
+    }
+
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
@@ -1052,35 +1194,11 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
-      Effect.matchCauseEffect({
-        onFailure: (cause) => {
-          const detail = formatFailureDetail(cause);
-          return appendProviderFailureActivity({
-            threadId: event.payload.threadId,
-            kind: "provider.turn.interrupt.failed",
-            summary: "Provider turn interrupt failed",
-            detail,
-            turnId: event.payload.turnId ?? thread.session?.activeTurnId ?? null,
-            createdAt: event.payload.createdAt,
-          }).pipe(
-            Effect.flatMap(() =>
-              settleInterruptedThreadSession({
-                threadId: event.payload.threadId,
-                createdAt: event.payload.createdAt,
-                lastError: detail,
-              }),
-            ),
-          );
-        },
-        onSuccess: () =>
-          settleInterruptedThreadSession({
-            threadId: event.payload.threadId,
-            createdAt: event.payload.createdAt,
-            lastError: null,
-          }),
-      }),
-    );
+    yield* interruptProviderTurn({
+      threadId: event.payload.threadId,
+      activityTurnId: event.payload.turnId ?? thread.session?.activeTurnId ?? null,
+      createdAt: event.payload.createdAt,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1285,6 +1403,24 @@ const make = Effect.gen(function* () {
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      if (event.type === "thread.session-set" && event.payload.session.activeTurnId !== null) {
+        const pendingTurnStart = pendingTurnStarts.get(event.payload.threadId);
+        if (pendingTurnStart) {
+          pendingTurnStart.providerTurnObserved = true;
+          if (
+            pendingTurnStart.cancellationRequested &&
+            pendingTurnStart.requiresPostAcknowledgementInterrupt
+          ) {
+            pendingTurnStart.requiresPostAcknowledgementInterrupt = false;
+            yield* interruptProviderTurn({
+              threadId: event.payload.threadId,
+              activityTurnId: event.payload.session.activeTurnId,
+              createdAt: pendingTurnStart.cancellationRequestedAt ?? event.occurredAt,
+            });
+          }
+        }
+        return;
+      }
       if (
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.provider-fork-requested" ||
