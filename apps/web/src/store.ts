@@ -1505,7 +1505,7 @@ function updateThreadMessageState(
     }
   }
 
-  return {
+  const nextState: EnvironmentState = {
     ...state,
     ...(shell.updatedAt === event.occurredAt
       ? {}
@@ -1541,6 +1541,12 @@ function updateThreadMessageState(
       ? {}
       : { turnDiffSummaryByThreadId }),
   };
+
+  return reconcileSidebarActivitySummary(nextState, {
+    id: threadId,
+    session: state.threadSessionById[threadId] ?? null,
+    latestTurn,
+  });
 }
 
 function buildProjectState(

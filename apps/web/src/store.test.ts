@@ -679,6 +679,41 @@ describe("setThreadBranch", () => {
 });
 
 describe("incremental orchestration updates", () => {
+  it("keeps sidebar activity aligned with a live assistant message", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const environmentState = selectEnvironmentState(state, localEnvironmentId);
+    const stateWithSidebarSummary = withActiveEnvironmentState({
+      ...environmentState,
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarThreadSummary(thread),
+      },
+    });
+    const turnId = TurnId.make("turn-1");
+
+    const next = applyOrchestrationEvent(
+      stateWithSidebarSummary,
+      makeEvent("thread.message-sent", {
+        threadId: thread.id,
+        messageId: MessageId.make("assistant-1"),
+        role: "assistant",
+        text: "Working",
+        turnId,
+        streaming: true,
+        createdAt: "2026-02-27T00:00:02.000Z",
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(selectThreadByRef(next, scopeThreadRef(localEnvironmentId, thread.id))).toMatchObject({
+      latestTurn: { turnId, state: "running", completedAt: null },
+    });
+    expect(selectSidebarThreadsAcrossEnvironments(next)[0]).toMatchObject({
+      latestTurn: { turnId, state: "running", completedAt: null },
+    });
+  });
+
   it("keeps sidebar activity aligned with detail-stream session updates", () => {
     const thread = makeThread();
     const state = makeState(thread);
