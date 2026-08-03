@@ -5,6 +5,9 @@ import {
   COMMIT_SUBJECT_HARD_LIMIT,
   COMMIT_SUBJECT_SOFT_LIMIT,
   commitDraftKey,
+  commitMessageGenerationApply,
+  commitMessageGenerationLabel,
+  commitMessageGenerationState,
   commitPrimaryAction,
   commitPrimaryActionLabel,
   commitSubjectLengthState,
@@ -272,5 +275,105 @@ describe("status failure banner", () => {
   it("resets the streak on any success", () => {
     expect(nextStatusFailureStreak(3, false)).toBe(0);
     expect(nextStatusFailureStreak(3, true)).toBe(4);
+  });
+});
+
+// ─── fork: f4 AI commit message ─────────────────────────────────────────────
+
+describe("commitMessageGenerationState", () => {
+  const base = {
+    hasScope: true,
+    stagedCount: 1,
+    amend: false,
+    generating: false,
+    busy: false,
+    modelConfigured: true as boolean | null,
+  };
+
+  it("enables with a staged file and a configured model", () => {
+    expect(commitMessageGenerationState(base)).toEqual({ enabled: true, reason: null });
+  });
+
+  it("disables with nothing staged", () => {
+    const state = commitMessageGenerationState({ ...base, stagedCount: 0 });
+    expect(state.enabled).toBe(false);
+    expect(state.reason).toBe("nothing-staged");
+    expect(commitMessageGenerationLabel(state)).toBe("Stage some changes first");
+  });
+
+  it("amend needs nothing staged — the commit being rewritten is the context", () => {
+    expect(commitMessageGenerationState({ ...base, stagedCount: 0, amend: true })).toEqual({
+      enabled: true,
+      reason: null,
+    });
+  });
+
+  it("disables while a generation is in flight, ahead of every other reason", () => {
+    const state = commitMessageGenerationState({
+      ...base,
+      generating: true,
+      stagedCount: 0,
+      modelConfigured: false,
+    });
+    expect(state.reason).toBe("generating");
+    expect(commitMessageGenerationLabel(state)).toBe("Generating…");
+  });
+
+  it("disables while another panel action is running", () => {
+    expect(commitMessageGenerationState({ ...base, busy: true }).reason).toBe("busy");
+  });
+
+  it("disables with no scope at all", () => {
+    expect(commitMessageGenerationState({ ...base, hasScope: false }).reason).toBe("no-scope");
+  });
+
+  it("disables when no text generation model is configured", () => {
+    const state = commitMessageGenerationState({ ...base, modelConfigured: false });
+    expect(state.reason).toBe("no-model");
+    expect(commitMessageGenerationLabel(state)).toBe("Set a text generation model in Settings");
+  });
+
+  it("an unknown model configuration does NOT disable — the server answers", () => {
+    // Otherwise the button is dead for the first second of every session,
+    // while the server config is still in flight.
+    expect(commitMessageGenerationState({ ...base, modelConfigured: null }).enabled).toBe(true);
+  });
+
+  it("nothing-staged outranks no-model: it is the one the user can fix in a click", () => {
+    expect(
+      commitMessageGenerationState({ ...base, stagedCount: 0, modelConfigured: false }).reason,
+    ).toBe("nothing-staged");
+  });
+
+  it("the enabled label is the tooltip for the action itself", () => {
+    expect(commitMessageGenerationLabel({ enabled: true, reason: null })).toBe(
+      "Generate a commit message",
+    );
+  });
+});
+
+describe("commitMessageGenerationApply", () => {
+  it("fills an empty draft", () => {
+    expect(commitMessageGenerationApply({ draftAtPress: "", draftNow: "" })).toBe("fill");
+  });
+
+  it("fills a whitespace-only draft", () => {
+    expect(commitMessageGenerationApply({ draftAtPress: "  \n", draftNow: "  \n" })).toBe("fill");
+  });
+
+  it("confirms before replacing a message the user already wrote", () => {
+    expect(commitMessageGenerationApply({ draftAtPress: "wip", draftNow: "wip" })).toBe("confirm");
+  });
+
+  it("discards the result when the draft changed mid-flight", () => {
+    // The user typed over the field while the model was thinking; replacing
+    // their words is the one genuinely destructive outcome.
+    expect(commitMessageGenerationApply({ draftAtPress: "", draftNow: "typed by hand" })).toBe(
+      "discard",
+    );
+  });
+
+  it("discards even when the draft was cleared mid-flight", () => {
+    expect(commitMessageGenerationApply({ draftAtPress: "wip", draftNow: "" })).toBe("discard");
   });
 });

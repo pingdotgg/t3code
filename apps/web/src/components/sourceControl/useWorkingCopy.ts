@@ -56,6 +56,7 @@ import {
   BUSY_KEY_SEPARATOR,
   describeWorkingCopyError,
   isCwdDeniedError,
+  isNothingStagedError,
   STAGE_ALL_PATHS,
   withBusyKey,
 } from "./sourceControlPanel.logic";
@@ -230,7 +231,16 @@ export interface WorkingCopyActions {
     patch: string,
     flags: { cached?: boolean; reverse?: boolean },
   ) => Promise<boolean>;
+  /**
+   * fork: f4 AI commit message. Resolves to the generated message, or `null`
+   * when generation failed (already toasted) — it NEVER writes the draft
+   * itself; the composer decides what to do with the text.
+   */
+  readonly generateCommitMessage: (options: { readonly amend: boolean }) => Promise<string | null>;
 }
+
+/** The busy key the ✨ button watches. One generation per panel at a time. */
+export const GENERATE_COMMIT_MESSAGE_BUSY_KEY = actionBusyKey("generate-commit-message");
 
 export function useWorkingCopyActions(
   scope: SourceControlScope | null,
@@ -260,6 +270,7 @@ export function useWorkingCopyActions(
   const resetCommand = useAtomCommand(workingCopyEnvironment.resetToCommit);
   const tagCommand = useAtomCommand(workingCopyEnvironment.tagCommit);
   const applyPatchCommand = useAtomCommand(workingCopyEnvironment.applyPatch);
+  const generateCommitMessageCommand = useAtomCommand(workingCopyEnvironment.generateCommitMessage); // fork: f4 AI commit message
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -326,6 +337,7 @@ export function useWorkingCopyActions(
         resetToCommit: never,
         tagCommit: never,
         applyPatch: neverBool,
+        generateCommitMessage: async () => null,
       };
     }
 
@@ -554,6 +566,44 @@ export function useWorkingCopyActions(
         );
         return result !== null;
       },
+
+      /**
+       * fork: f4 AI commit message. Not routed through `run` for one reason:
+       * "nothing staged" is guidance rather than a failure, and rendering it in
+       * the same red, timeout-0 toast as a git stderr dump reads as a bug.
+       */
+      generateCommitMessage: async ({ amend }) => {
+        const key = GENERATE_COMMIT_MESSAGE_BUSY_KEY;
+        if (busyRef.current.has(key)) return null;
+        setBusy((current) => withBusyKey(current, key, true));
+        try {
+          const result = await generateCommitMessageCommand(target(amend ? { amend } : {}));
+          if (result._tag === "Failure") {
+            if (isAtomCommandInterrupted(result)) return null;
+            const error = squashAtomCommandFailure(result);
+            if (isNothingStagedError(error)) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "info",
+                  title: describeWorkingCopyError(error),
+                  timeout: 6_000,
+                }),
+              );
+              return null;
+            }
+            errorToast(
+              isCwdDeniedError(error)
+                ? "This folder is outside your open projects"
+                : "Could not generate a commit message",
+              failureMessage(result),
+            );
+            return null;
+          }
+          return result.value.message;
+        } finally {
+          setBusy((current) => withBusyKey(current, key, false));
+        }
+      },
     };
   }, [
     abortOperationCommand,
@@ -565,6 +615,7 @@ export function useWorkingCopyActions(
     commitStaged,
     confirmWith,
     discardPaths,
+    generateCommitMessageCommand,
     recoverability,
     resetCommand,
     resolveConflictCommand,

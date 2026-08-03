@@ -181,6 +181,7 @@ import {
   WorkingCopyCommitDetail,
   WorkingCopyCommitDetailInput,
   WorkingCopyCommitFileDiffInput,
+  WorkingCopyCommitMessageError,
   WorkingCopyCommitResult,
   WorkingCopyCommitStagedInput,
   WorkingCopyCwdInput,
@@ -191,6 +192,8 @@ import {
   WorkingCopyError,
   WorkingCopyFileAtRefInput,
   WorkingCopyFileContentResult,
+  WorkingCopyGenerateCommitMessageInput,
+  WorkingCopyGeneratedCommitMessage,
   WorkingCopyLastCommitMessageResult,
   WorkingCopyLogInput,
   WorkingCopyLogPage,
@@ -315,6 +318,8 @@ export const WS_METHODS = {
   workingCopyAmendCommit: "workingCopy.amendCommit",
   workingCopyUndoLastCommit: "workingCopy.undoLastCommit",
   workingCopyLastCommitMessage: "workingCopy.lastCommitMessage",
+  // fork: f4 AI commit message — a read of repo content that calls out to a model.
+  workingCopyGenerateCommitMessage: "workingCopy.generateCommitMessage",
   workingCopyLog: "workingCopy.log",
   workingCopyCommitDetail: "workingCopy.commitDetail",
   workingCopyCommitFileDiff: "workingCopy.commitFileDiff",
@@ -976,6 +981,17 @@ export const WsWorkingCopyLastCommitMessageRpc = Rpc.make(WS_METHODS.workingCopy
   error: WorkingCopyRpcError,
 });
 
+// fork: f4 AI commit message — its own error union, so the other 27 methods'
+// decoded error type is unchanged by generation-only failures.
+export const WsWorkingCopyGenerateCommitMessageRpc = Rpc.make(
+  WS_METHODS.workingCopyGenerateCommitMessage,
+  {
+    payload: WorkingCopyGenerateCommitMessageInput,
+    success: WorkingCopyGeneratedCommitMessage,
+    error: Schema.Union([WorkingCopyCommitMessageError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsWorkingCopyLogRpc = Rpc.make(WS_METHODS.workingCopyLog, {
   payload: WorkingCopyLogInput,
   success: WorkingCopyLogPage,
@@ -1120,6 +1136,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkingCopyAmendCommitRpc,
   WsWorkingCopyUndoLastCommitRpc,
   WsWorkingCopyLastCommitMessageRpc,
+  WsWorkingCopyGenerateCommitMessageRpc,
   WsWorkingCopyLogRpc,
   WsWorkingCopyCommitDetailRpc,
   WsWorkingCopyCommitFileDiffRpc,

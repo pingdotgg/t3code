@@ -8,12 +8,16 @@ import {
   WorkingCopyCwdDeniedError,
   WorkingCopyDiscardResult,
   WorkingCopyError,
+  WorkingCopyCommitMessageError,
   WorkingCopyFile,
+  WorkingCopyGenerateCommitMessageInput,
+  WorkingCopyGeneratedCommitMessage,
   WorkingCopyIndexLockedError,
   WorkingCopyInvalidRevisionError,
   WorkingCopyLogEntry,
   WorkingCopyLogInput,
   WorkingCopyLogPage,
+  WorkingCopyNothingStagedError,
   WorkingCopyStashEntry,
   WorkingCopyStatusResult,
 } from "./workingCopy.ts";
@@ -269,5 +273,92 @@ describe("WorkingCopyError", () => {
 
   it("fails closed on an unknown tag", () => {
     expect(decodes(WorkingCopyError, { _tag: "SomethingElse" })).toBe(false);
+  });
+});
+
+// ─── fork: f4 AI commit message ─────────────────────────────────────────────
+
+describe("WorkingCopyGenerateCommitMessageInput", () => {
+  it("round-trips with and without the amend flag", () => {
+    const plain = { cwd: "/work/proj" };
+    const amending = { cwd: "/work/proj", amend: true };
+
+    expect(roundTrip(WorkingCopyGenerateCommitMessageInput, plain)).toEqual(plain);
+    expect(roundTrip(WorkingCopyGenerateCommitMessageInput, amending)).toEqual(amending);
+  });
+
+  it("carries no paths and no message — the index is the only input", () => {
+    expect(decodes(WorkingCopyGenerateCommitMessageInput, { cwd: "" })).toBe(false);
+  });
+});
+
+describe("WorkingCopyGeneratedCommitMessage", () => {
+  it("round-trips a subject-only message with an empty body", () => {
+    const value = { subject: "Add the thing", body: "", message: "Add the thing" };
+    expect(roundTrip(WorkingCopyGeneratedCommitMessage, value)).toEqual(value);
+  });
+
+  it("requires all three fields, so a caller cannot re-derive the join wrongly", () => {
+    expect(decodes(WorkingCopyGeneratedCommitMessage, { subject: "s", body: "b" })).toBe(false);
+  });
+});
+
+describe("WorkingCopyCommitMessageError", () => {
+  it("accepts the generation-only failures", () => {
+    expect(
+      decodes(WorkingCopyCommitMessageError, {
+        _tag: "WorkingCopyNothingStagedError",
+        operation: "workingCopy.generateCommitMessage",
+        cwd: "/work/proj",
+        amend: false,
+      }),
+    ).toBe(true);
+    expect(
+      decodes(WorkingCopyCommitMessageError, {
+        _tag: "TextGenerationError",
+        operation: "generateCommitMessage",
+        detail: "codex is not on PATH",
+      }),
+    ).toBe(true);
+  });
+
+  it("still accepts every inherited working-copy failure", () => {
+    expect(
+      decodes(WorkingCopyCommitMessageError, {
+        _tag: "WorkingCopyCwdDeniedError",
+        operation: "workingCopy.generateCommitMessage",
+        cwd: "/elsewhere",
+      }),
+    ).toBe(true);
+  });
+
+  it("the base union stays narrow — generation failures are NOT in WorkingCopyError", () => {
+    // Widening `WorkingCopyError` would change the decoded error type of all
+    // 28 pre-existing methods for one method's benefit.
+    expect(
+      decodes(WorkingCopyError, {
+        _tag: "WorkingCopyNothingStagedError",
+        operation: "workingCopy.generateCommitMessage",
+        cwd: "/work/proj",
+        amend: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("wording distinguishes the amend case", () => {
+    expect(
+      new WorkingCopyNothingStagedError({
+        operation: "workingCopy.generateCommitMessage",
+        cwd: "/work/proj",
+        amend: false,
+      }).message,
+    ).toContain("Stage some changes first");
+    expect(
+      new WorkingCopyNothingStagedError({
+        operation: "workingCopy.generateCommitMessage",
+        cwd: "/work/proj",
+        amend: true,
+      }).message,
+    ).toContain("amended commit would be empty");
   });
 });

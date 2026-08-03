@@ -30,6 +30,7 @@ import type {
   WorkingCopyDiffInput,
   WorkingCopyDiscardPathsInput,
   WorkingCopyFileAtRefInput,
+  WorkingCopyGenerateCommitMessageInput,
   WorkingCopyLogInput,
   WorkingCopyPathsInput,
   WorkingCopyResetToCommitInput,
@@ -90,6 +91,10 @@ export function makeWorkingCopyRpcHandlers(deps: WorkingCopyRpcHandlerDeps) {
       read(WS_METHODS.workingCopyListDiscardBackups, workingCopy.listDiscardBackups(input)),
     [WS_METHODS.workingCopyLastCommitMessage]: (input: WorkingCopyCwdInput) =>
       read(WS_METHODS.workingCopyLastCommitMessage, workingCopy.lastCommitMessage(input)),
+    // fork: f4 AI commit message — a read, so no `refreshGitStatus`: it
+    // changes nothing in the repository and a status push would be a lie.
+    [WS_METHODS.workingCopyGenerateCommitMessage]: (input: WorkingCopyGenerateCommitMessageInput) =>
+      read(WS_METHODS.workingCopyGenerateCommitMessage, workingCopy.generateCommitMessage(input)),
     [WS_METHODS.workingCopyLog]: (input: WorkingCopyLogInput) =>
       read(WS_METHODS.workingCopyLog, workingCopy.log(input)),
     [WS_METHODS.workingCopyCommitDetail]: (input: WorkingCopyCommitDetailInput) =>

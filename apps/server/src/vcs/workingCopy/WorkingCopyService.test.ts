@@ -5,8 +5,16 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { WorkingCopyCwdDeniedError } from "@t3tools/contracts";
+import {
+  ServerSettingsError,
+  TextGenerationError,
+  WorkingCopyCwdDeniedError,
+  WorkingCopyNothingStagedError,
+} from "@t3tools/contracts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as VcsDriverRegistry from "../VcsDriverRegistry.ts";
 import type * as VcsProcess from "../VcsProcess.ts";
 import * as WorkingCopy from "./WorkingCopyService.ts";
@@ -76,6 +84,15 @@ const registryLayer = (options: {
       } as never),
   });
 
+/**
+ * fork: f4 AI commit message — the three services generation added. Every test
+ * in this file is about the guard and the scheduler, so all three are inert.
+ */
+const textGenerationLayer = Layer.mock(TextGeneration.TextGeneration)({});
+const providerRegistryLayer = Layer.mock(ProviderRegistry.ProviderRegistry)({
+  getProviders: Effect.succeed([]),
+});
+
 const makeLayer = (
   workspace: Workspace,
   registry: Layer.Layer<VcsDriverRegistry.VcsDriverRegistry>,
@@ -83,6 +100,9 @@ const makeLayer = (
   WorkingCopy.layer.pipe(
     Layer.provide(registry),
     Layer.provide(projectionsLayer(workspace)),
+    Layer.provide(textGenerationLayer),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(providerRegistryLayer),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -315,6 +335,241 @@ it.effect("does not serialize across different repositories", () => {
         { projectRoots: ["/work/proj-a", "/work/proj-b"], worktreePaths: [] },
         registryLayer({ repositoryRoot: identityRoot, execute }),
       ),
+    ),
+  );
+});
+
+// ─── fork: f4 AI commit message ─────────────────────────────────────────────
+
+interface GenerationHarness {
+  readonly workspace?: Workspace;
+  /** stdout for `git diff --cached --name-status`; empty means "nothing staged". */
+  readonly stagedSummary?: string;
+  readonly generate?: (input: {
+    readonly stagedSummary: string;
+    readonly stagedPatch: string;
+  }) => Effect.Effect<{ readonly subject: string; readonly body: string }, TextGenerationError>;
+  readonly settings?: Layer.Layer<ServerSettings.ServerSettingsService>;
+  readonly onGitArgs?: (args: ReadonlyArray<string>) => void;
+}
+
+const stdout = (value: string): VcsProcess.VcsProcessOutput => ({ ...okOutput, stdout: value });
+
+/**
+ * A git that answers only what generation asks for. Everything else answers
+ * empty, which is enough for the guard/scheduler assertions below.
+ */
+const generationLayer = (harness: GenerationHarness) =>
+  WorkingCopy.layer.pipe(
+    Layer.provide(
+      registryLayer({
+        repositoryRoot: identityRoot,
+        execute: (input) =>
+          Effect.sync(() => {
+            harness.onGitArgs?.(input.args);
+            if (input.args.includes("--name-status")) {
+              return stdout(harness.stagedSummary ?? "M\tsrc/a.ts\n");
+            }
+            if (input.args.includes("--patch")) {
+              return stdout("diff --git a/src/a.ts b/src/a.ts\n");
+            }
+            if (input.args[0] === "symbolic-ref") {
+              return stdout("main\n");
+            }
+            return okOutput;
+          }),
+      }),
+    ),
+    Layer.provide(
+      projectionsLayer(harness.workspace ?? { projectRoots: ["/work/proj"], worktreePaths: [] }),
+    ),
+    Layer.provide(
+      Layer.mock(TextGeneration.TextGeneration)({
+        generateCommitMessage: (input) =>
+          (harness.generate ?? (() => Effect.succeed({ subject: "Add a thing", body: "" })))({
+            stagedSummary: input.stagedSummary,
+            stagedPatch: input.stagedPatch,
+          }),
+      }),
+    ),
+    Layer.provide(harness.settings ?? ServerSettings.layerTest()),
+    Layer.provide(providerRegistryLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+it.effect(
+  "generateCommitMessage denies a cwd outside every project before any git or model call",
+  () => {
+    const gitCalls: Array<ReadonlyArray<string>> = [];
+    let generated = 0;
+    return Effect.gen(function* () {
+      const service = yield* WorkingCopyService;
+
+      const failure = yield* service
+        .generateCommitMessage({ cwd: "/tmp/elsewhere" })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, WorkingCopyCwdDeniedError);
+      assert.strictEqual(failure.operation, "workingCopy.generateCommitMessage");
+      assert.deepStrictEqual(gitCalls, []);
+      assert.strictEqual(generated, 0);
+    }).pipe(
+      Effect.provide(
+        generationLayer({
+          onGitArgs: (args) => gitCalls.push(args),
+          generate: () =>
+            Effect.sync(() => {
+              generated += 1;
+              return { subject: "never", body: "" };
+            }),
+        }),
+      ),
+    );
+  },
+);
+
+it.effect("generateCommitMessage refuses an empty index and never reaches the model", () => {
+  let generated = 0;
+  return Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const failure = yield* service.generateCommitMessage({ cwd: "/work/proj" }).pipe(Effect.flip);
+
+    assert.instanceOf(failure, WorkingCopyNothingStagedError);
+    assert.strictEqual(failure.amend, false);
+    assert.strictEqual(failure.cwd, "/work/proj");
+    // Generating from the unstaged tree instead would describe changes the
+    // user is about to not commit.
+    assert.strictEqual(generated, 0);
+  }).pipe(
+    Effect.provide(
+      generationLayer({
+        stagedSummary: "   \n",
+        generate: () =>
+          Effect.sync(() => {
+            generated += 1;
+            return { subject: "never", body: "" };
+          }),
+      }),
+    ),
+  );
+});
+
+it.effect("generateCommitMessage carries the amend flag into the refusal", () =>
+  Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const failure = yield* service
+      .generateCommitMessage({ cwd: "/work/proj", amend: true })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(failure, WorkingCopyNothingStagedError);
+    assert.strictEqual(failure.amend, true);
+    assert.include(failure.message, "amended commit would be empty");
+  }).pipe(Effect.provide(generationLayer({ stagedSummary: "" }))),
+);
+
+it.effect("generateCommitMessage surfaces a model failure as TextGenerationError", () =>
+  Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const failure = yield* service.generateCommitMessage({ cwd: "/work/proj" }).pipe(Effect.flip);
+
+    assert.instanceOf(failure, TextGenerationError);
+    assert.include(failure.detail, "not available on PATH");
+  }).pipe(
+    Effect.provide(
+      generationLayer({
+        generate: () =>
+          new TextGenerationError({
+            operation: "generateCommitMessage",
+            detail: "Codex CLI (`codex`) is required but not available on PATH.",
+          }),
+      }),
+    ),
+  ),
+);
+
+it.effect("a settings failure arrives typed rather than as a raw defect", () =>
+  Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const failure = yield* service.generateCommitMessage({ cwd: "/work/proj" }).pipe(Effect.flip);
+
+    assert.instanceOf(failure, TextGenerationError);
+    assert.strictEqual(failure.detail, "Could not read the text generation settings.");
+  }).pipe(
+    Effect.provide(
+      generationLayer({
+        settings: Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.fail(
+            new ServerSettingsError({
+              settingsPath: "/settings.json",
+              operation: "read-file",
+              cause: new Error("boom"),
+            }),
+          ),
+        }),
+      }),
+    ),
+  ),
+);
+
+it.effect("returns a sanitized, composer-ready message", () =>
+  Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const result = yield* service.generateCommitMessage({ cwd: "/work/proj" });
+
+    assert.deepStrictEqual(result, {
+      subject: "Add a thing",
+      body: "- detail",
+      message: "Add a thing\n\n- detail",
+    });
+  }).pipe(
+    Effect.provide(
+      generationLayer({
+        generate: () => Effect.succeed({ subject: "Add a thing.\n", body: "  - detail  " }),
+      }),
+    ),
+  ),
+);
+
+it.effect("the model call does NOT hold the repository semaphore", () => {
+  let releaseModel = () => {};
+  let signalModelStarted = () => {};
+  const modelStarted = new Promise<void>((resolve) => {
+    signalModelStarted = resolve;
+  });
+  const modelReleased = new Promise<void>((resolve) => {
+    releaseModel = resolve;
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const generation = yield* Effect.forkChild(
+      service.generateCommitMessage({ cwd: "/work/proj" }),
+    );
+    yield* Effect.promise(() => modelStarted);
+
+    // A generation takes tens of seconds. If it held the per-repo semaphore
+    // across the model call, this stage would hang until the model answered.
+    yield* service.stagePaths({ cwd: "/work/proj", paths: ["a.ts"] });
+
+    yield* Effect.sync(() => releaseModel());
+    const result = yield* Fiber.join(generation);
+    assert.strictEqual(result.subject, "Add a thing");
+  }).pipe(
+    Effect.provide(
+      generationLayer({
+        generate: () =>
+          Effect.gen(function* () {
+            signalModelStarted();
+            yield* Effect.promise(() => modelReleased);
+            return { subject: "Add a thing", body: "" };
+          }),
+      }),
     ),
   );
 });

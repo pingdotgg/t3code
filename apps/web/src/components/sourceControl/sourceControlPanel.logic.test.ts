@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ServerProvider, ServerSettings } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 
 import { historyCommitRowHeight } from "~/lib/sourceControl/historyRows";
 import { LANE_COLOR_COUNT, LANE_COLOR_INDEX_NONE } from "~/lib/sourceControl/laneGraph";
@@ -17,6 +19,8 @@ import {
   historyWidthBucket,
   isCwdDeniedError,
   isEmptyPathSelection,
+  isNothingStagedError,
+  isTextGenerationConfigured,
   operationGuidance,
   STAGE_ALL_PATHS,
   splitDisplayPath,
@@ -253,5 +257,100 @@ describe("busyPathsFromKeys", () => {
 
   it("returns a stable empty set when nothing is busy", () => {
     expect(busyPathsFromKeys(new Set())).toBe(busyPathsFromKeys(new Set(["commit"])));
+  });
+});
+
+// ─── fork: f4 AI commit message ─────────────────────────────────────────────
+
+function provider(overrides: Partial<ServerProvider> & { instanceId: string }): ServerProvider {
+  return {
+    driver: "codex",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    models: [],
+    slashCommands: [],
+    skills: [],
+    ...overrides,
+  } as ServerProvider;
+}
+
+const settingsWith = (overrides: Partial<ServerSettings>): ServerSettings => ({
+  ...DEFAULT_SERVER_SETTINGS,
+  ...overrides,
+});
+
+describe("isTextGenerationConfigured", () => {
+  it("answers null while the server config has not arrived", () => {
+    // Answering `false` here would disable the button for the first second of
+    // every session; the server is the authority, so let it try.
+    expect(isTextGenerationConfigured(null)).toBe(null);
+  });
+
+  it("is true when the global text generation instance is present and available", () => {
+    const settings = settingsWith({});
+    expect(
+      isTextGenerationConfigured({
+        settings,
+        providers: [provider({ instanceId: settings.textGenerationModelSelection.instanceId })],
+      }),
+    ).toBe(true);
+  });
+
+  it("is false when the configured instance is not in the provider list", () => {
+    expect(
+      isTextGenerationConfigured({
+        settings: settingsWith({}),
+        providers: [provider({ instanceId: ProviderInstanceId.make("something-else") })],
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when the config carries no providers at all", () => {
+    expect(isTextGenerationConfigured({ settings: settingsWith({}), providers: [] })).toBe(false);
+  });
+
+  it("is false when the instance exists but is disabled", () => {
+    const settings = settingsWith({});
+    expect(
+      isTextGenerationConfigured({
+        settings,
+        providers: [
+          provider({
+            instanceId: settings.textGenerationModelSelection.instanceId,
+            enabled: false,
+          }),
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when the instance exists but its driver is unavailable", () => {
+    const settings = settingsWith({});
+    expect(
+      isTextGenerationConfigured({
+        settings,
+        providers: [
+          provider({
+            instanceId: settings.textGenerationModelSelection.instanceId,
+            availability: "unavailable",
+          }),
+        ],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isNothingStagedError", () => {
+  it("recognises the server's typed refusal", () => {
+    expect(isNothingStagedError({ _tag: "WorkingCopyNothingStagedError" })).toBe(true);
+  });
+
+  it("does not confuse it with any other working-copy failure", () => {
+    expect(isNothingStagedError({ _tag: "VcsProcessExitError" })).toBe(false);
+    expect(isNothingStagedError(null)).toBe(false);
+    expect(isNothingStagedError("nothing staged")).toBe(false);
   });
 });

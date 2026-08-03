@@ -286,12 +286,21 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(VcsProjectConfig.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(VcsProvisioningService.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
-  // fork: f4 — source-control panel. Its remaining requirement
-  // (`ProjectionSnapshotQuery`, for the cwd containment guard) is satisfied by
-  // `ProviderRuntimeLayerLive` further down `RuntimeCoreDependenciesLive`,
-  // which is why this rides an existing chain rather than adding a pipe step
-  // there: `Layer.pipe` maxes out at 20 arguments.
-  Layer.provideMerge(WorkingCopyService.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
+  // fork: f4 — source-control panel. Its remaining requirements
+  // (`ProjectionSnapshotQuery` for the cwd containment guard, plus
+  // `ServerSettingsService` / `ProviderRegistry` / `ProviderInstanceRegistry`
+  // for the AI commit message) are satisfied further down
+  // `RuntimeCoreDependenciesLive` / `RuntimeDependenciesLive`, which is why
+  // this rides an existing chain rather than adding a pipe step there:
+  // `Layer.pipe` maxes out at 20 arguments. `TextGeneration.layer` is provided
+  // here because `GitManagerLayerLive` exposes it *earlier* in that chain,
+  // i.e. on the consuming side of this layer.
+  Layer.provideMerge(
+    WorkingCopyService.layer.pipe(
+      Layer.provide(VcsDriverRegistryLayerLive),
+      Layer.provide(TextGeneration.layer), // fork: f4 AI commit message
+    ),
+  ),
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(ReviewLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),

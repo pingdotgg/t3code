@@ -13,16 +13,23 @@
  */
 import type { EnvironmentId, WorkingCopyFile, WorkingCopyLogEntry } from "@t3tools/contracts";
 import type { HistoryFilter } from "@t3tools/client-runtime/state/working-copy-logic";
+import { commitMessageGenerationApply } from "@t3tools/client-runtime/state/working-copy-logic";
+import { useAtomValue } from "@effect/atom-react";
 import { AlertCircle, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { confirmResetHard, confirmRevertMerge } from "~/lib/sourceControl/safetyLadder";
-import { busyPathsFromKeys } from "./sourceControlPanel.logic";
+import {
+  confirmReplaceCommitDraft,
+  confirmResetHard,
+  confirmRevertMerge,
+} from "~/lib/sourceControl/safetyLadder";
+import { busyPathsFromKeys, isTextGenerationConfigured } from "./sourceControlPanel.logic";
 import type { ChangesStatusFilter } from "~/lib/sourceControl/changesRows";
 import { DiffPanelShell, type DiffPanelMode } from "~/components/DiffPanelShell";
 import { Input } from "~/components/ui/input";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useGitStackedAction, useVcsPullAction } from "~/state/sourceControlActions";
 import { vcsEnvironment } from "~/state/vcs";
@@ -42,6 +49,7 @@ import { SourceControlHeader } from "./SourceControlHeader";
 import { StashesSection } from "./StashesSection";
 import { useSourceControlConfirm } from "./useSourceControlConfirm";
 import {
+  GENERATE_COMMIT_MESSAGE_BUSY_KEY,
   useWorkingCopyActions,
   useWorkingCopyStatus,
   type SourceControlScope,
@@ -134,6 +142,15 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       : null,
   );
 
+  // fork: f4 AI commit message — read from THIS environment's config, not the
+  // primary server's: a remote environment runs generation on its own host with
+  // its own settings and its own providers.
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const textGenerationConfigured = useMemo(
+    () => isTextGenerationConfigured(serverConfig),
+    [serverConfig],
+  );
+
   const history = useWorkingCopyHistory(scope, historyFilter, {
     enabled: props.visible && prefs.activeSection === "history",
   });
@@ -224,6 +241,34 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     },
     [actions, confirm],
   );
+
+  /**
+   * fork: f4 AI commit message.
+   *
+   * The result **fills the editable draft** — it never commits, and it never
+   * silently overwrites text the user wrote. Three outcomes, decided purely by
+   * `commitMessageGenerationApply`:
+   *   - empty draft → filled,
+   *   - draft edited while the model was thinking → result dropped on the floor,
+   *   - non-empty and untouched → one confirm before replacing.
+   */
+  const handleGenerateMessage = useCallback(() => {
+    if (props.cwd === null) return;
+    const cwd = props.cwd;
+    const draftAtPress = commitDraft;
+    void (async () => {
+      const generated = await actions.generateCommitMessage({ amend });
+      if (generated === null) return;
+      const draftNow = useSourceControlStore.getState().commitDraftByCwd[cwd] ?? "";
+      const decision = commitMessageGenerationApply({ draftAtPress, draftNow });
+      if (decision === "discard") return;
+      if (decision === "confirm") {
+        const outcome = await confirm.confirm(confirmReplaceCommitDraft({ generated }));
+        if (outcome !== "confirmed") return;
+      }
+      setCommitDraft(cwd, generated);
+    })();
+  }, [actions, amend, commitDraft, confirm, props.cwd, setCommitDraft]);
 
   const [stashDialogOpen, setStashDialogOpen] = useState(false);
 
@@ -366,6 +411,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 }
               })();
             }}
+            onGenerateMessage={handleGenerateMessage}
+            generating={actions.busy.has(GENERATE_COMMIT_MESSAGE_BUSY_KEY)}
+            textGenerationConfigured={textGenerationConfigured}
             onPush={() => handleSync("push")}
             onCommitAndPush={(options) => {
               void (async () => {

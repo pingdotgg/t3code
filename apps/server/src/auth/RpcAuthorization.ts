@@ -100,6 +100,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.workingCopyAmendCommit]: AuthOrchestrationOperateScope,
   [WS_METHODS.workingCopyUndoLastCommit]: AuthOrchestrationOperateScope,
   [WS_METHODS.workingCopyLastCommitMessage]: AuthOrchestrationReadScope,
+  // fork: f4 AI commit message — a READ: it reads the staged diff and returns
+  // text. It never touches the index, the worktree, refs or the stash, so it
+  // takes the same scope as its sibling reads.
+  [WS_METHODS.workingCopyGenerateCommitMessage]: AuthOrchestrationReadScope,
   [WS_METHODS.workingCopyLog]: AuthOrchestrationReadScope,
   [WS_METHODS.workingCopyCommitDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.workingCopyCommitFileDiff]: AuthOrchestrationReadScope,

@@ -17,6 +17,9 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+// fork: f4 AI commit message — reuses the existing text-generation failure
+// rather than minting a second one. `git.ts` itself is NOT modified.
+import { TextGenerationError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
 /** Anything that reaches git as positional argv must look like an object name. */
@@ -219,6 +222,22 @@ export const WorkingCopyLastCommitMessageResult = Schema.Struct({
 });
 export type WorkingCopyLastCommitMessageResult = typeof WorkingCopyLastCommitMessageResult.Type;
 
+/**
+ * fork: f4 AI commit message — what the ✨ button drops into the composer.
+ *
+ * `subject` and `body` are carried separately because the composer splits its
+ * draft on the first blank line; `message` is the already-joined form so a
+ * caller that only wants "the text" cannot re-derive the join wrongly.
+ */
+export const WorkingCopyGeneratedCommitMessage = Schema.Struct({
+  subject: Schema.String,
+  /** May be empty — a one-line commit is a legitimate answer. */
+  body: Schema.String,
+  /** `subject`, or `subject` + blank line + `body`. */
+  message: Schema.String,
+});
+export type WorkingCopyGeneratedCommitMessage = typeof WorkingCopyGeneratedCommitMessage.Type;
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
@@ -310,6 +329,23 @@ export const WorkingCopyAmendCommitInput = Schema.Struct({
   message: Schema.optional(Schema.String),
 });
 export type WorkingCopyAmendCommitInput = typeof WorkingCopyAmendCommitInput.Type;
+
+/**
+ * fork: f4 AI commit message. There is no `paths` and no `message`: the panel
+ * hand-builds the index, so the model describes exactly what is staged and
+ * nothing else. The server never runs `add`.
+ */
+export const WorkingCopyGenerateCommitMessageInput = Schema.Struct({
+  cwd: WorkingCopyCwd,
+  /**
+   * Describe the *amended* commit — `HEAD`'s parent against the index — rather
+   * than the index against `HEAD`. Without it, pressing ✨ while Amend is on
+   * would describe only the changes added since the commit being rewritten.
+   */
+  amend: Schema.optional(Schema.Boolean),
+});
+export type WorkingCopyGenerateCommitMessageInput =
+  typeof WorkingCopyGenerateCommitMessageInput.Type;
 
 export const WorkingCopyLogInput = Schema.Struct({
   cwd: WorkingCopyCwd,
@@ -449,6 +485,30 @@ export class WorkingCopyIndexLockedError extends Schema.TaggedErrorClass<Working
 }
 
 /**
+ * fork: f4 AI commit message — the empty-index answer.
+ *
+ * Generating from the *unstaged* tree when nothing is staged would describe
+ * changes the user is about to not commit, so this is a refusal rather than a
+ * silent widening. It is a plain sentence in the UI, not a stderr dump, which
+ * is why it carries no `detail`.
+ */
+export class WorkingCopyNothingStagedError extends Schema.TaggedErrorClass<WorkingCopyNothingStagedError>()(
+  "WorkingCopyNothingStagedError",
+  {
+    operation: Schema.String,
+    cwd: Schema.String,
+    /** True when the caller asked about an amend, which changes the wording. */
+    amend: Schema.Boolean,
+  },
+) {
+  override get message(): string {
+    return this.amend
+      ? "Nothing to describe: the amended commit would be empty."
+      : "Stage some changes first — the message is generated from the staged diff.";
+  }
+}
+
+/**
  * Reuses the existing `VcsError` taxonomy — `VcsProcess` produces it for free —
  * and adds only the three failures the panel introduces.
  */
@@ -459,3 +519,16 @@ export const WorkingCopyError = Schema.Union([
   WorkingCopyIndexLockedError,
 ]);
 export type WorkingCopyError = typeof WorkingCopyError.Type;
+
+/**
+ * fork: f4 AI commit message — `WorkingCopyError` plus the two failures only
+ * generation can produce. Deliberately a *separate* union: widening
+ * `WorkingCopyError` would change the decoded error type of all 28 existing
+ * methods for one method's benefit.
+ */
+export const WorkingCopyCommitMessageError = Schema.Union([
+  WorkingCopyError,
+  WorkingCopyNothingStagedError,
+  TextGenerationError,
+]);
+export type WorkingCopyCommitMessageError = typeof WorkingCopyCommitMessageError.Type;

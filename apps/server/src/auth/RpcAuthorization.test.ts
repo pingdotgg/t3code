@@ -76,6 +76,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.workingCopyStashList,
       WS_METHODS.workingCopyListDiscardBackups,
       WS_METHODS.workingCopyLastCommitMessage,
+      // fork: f4 AI commit message — reads the staged diff and returns text.
+      WS_METHODS.workingCopyGenerateCommitMessage,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }

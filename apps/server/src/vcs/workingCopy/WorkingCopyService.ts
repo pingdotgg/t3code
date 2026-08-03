@@ -24,6 +24,8 @@ import * as Semaphore from "effect/Semaphore";
 
 import {
   WorkingCopyCwdDeniedError,
+  // fork: f4 AI commit message
+  WorkingCopyNothingStagedError,
   type WorkingCopyAbortOperationInput,
   type WorkingCopyAmendCommitInput,
   type WorkingCopyApplyPatchInput,
@@ -41,8 +43,11 @@ import {
   type WorkingCopyDiscardPathsInput,
   type WorkingCopyDiscardResult,
   type WorkingCopyError,
+  type WorkingCopyCommitMessageError,
   type WorkingCopyFileAtRefInput,
   type WorkingCopyFileContentResult,
+  type WorkingCopyGenerateCommitMessageInput,
+  type WorkingCopyGeneratedCommitMessage,
   type WorkingCopyLastCommitMessageResult,
   type WorkingCopyLogInput,
   type WorkingCopyLogPage,
@@ -58,11 +63,16 @@ import {
   type WorkingCopyTagCommitInput,
 } from "@t3tools/contracts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+// fork: f4 AI commit message — the existing text-generation stack, reused whole.
+import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as VcsDriverRegistry from "../VcsDriverRegistry.ts";
 import { findContainingRoot, normalizeContainmentPath } from "./cwdContainment.ts";
 import { makeWorkingCopyGit, type WorkingCopyGit } from "./WorkingCopyGit.ts";
 import * as Commit from "./WorkingCopyCommit.ts";
 import * as CommitDetail from "./WorkingCopyCommitDetail.ts";
+import * as CommitMessage from "./WorkingCopyCommitMessage.ts";
 import * as Conflicts from "./WorkingCopyConflicts.ts";
 import * as Diff from "./WorkingCopyDiff.ts";
 import * as Discard from "./WorkingCopyDiscard.ts";
@@ -122,6 +132,14 @@ export interface WorkingCopyServiceShape {
   readonly lastCommitMessage: (
     input: WorkingCopyCwdInput,
   ) => Effect.Effect<WorkingCopyLastCommitMessageResult, WorkingCopyError>;
+  /**
+   * fork: f4 AI commit message. A read: the staged diff in, text out. Its
+   * error channel is wider than every sibling's because only it can fail with
+   * "nothing staged" or a model failure.
+   */
+  readonly generateCommitMessage: (
+    input: WorkingCopyGenerateCommitMessageInput,
+  ) => Effect.Effect<WorkingCopyGeneratedCommitMessage, WorkingCopyCommitMessageError>;
   readonly log: (input: WorkingCopyLogInput) => Effect.Effect<WorkingCopyLogPage, WorkingCopyError>;
   readonly commitDetail: (
     input: WorkingCopyCommitDetailInput,
@@ -167,6 +185,11 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionSnapshotQuery;
   const fileSystem = yield* FileSystem.FileSystem;
   const semaphores = yield* Ref.make(new Map<string, Semaphore.Semaphore>());
+  // fork: f4 AI commit message — the same three services `GitManager` resolves
+  // the writer model from, so the panel and the stacked action cannot drift.
+  const textGeneration = yield* TextGeneration.TextGeneration;
+  const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
 
   /**
    * Every open project root plus every thread worktree. Read fresh on each
@@ -277,6 +300,64 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
 
+  /**
+   * fork: f4 AI commit message — `settings.sourceControlWriterModelSelection`
+   * when it points at an enabled, available provider, else the global
+   * `textGenerationModelSelection`. Byte-for-byte the resolution
+   * `GitManager.runStackedAction` performs.
+   */
+  const resolveTextGenerationSettings = Effect.fn(
+    "WorkingCopyService.resolveTextGenerationSettings",
+  )(function* () {
+    const settings = yield* serverSettingsService.getSettings;
+    const modelSelection =
+      settings.sourceControlWriterModelSelection === null
+        ? settings.textGenerationModelSelection
+        : ServerSettings.resolveSourceControlWriterModelSelection(
+            settings,
+            yield* providerRegistry.getProviders,
+          );
+    return { modelSelection, style: settings.sourceControlWritingStyle };
+  }, Effect.mapError(CommitMessage.settingsFailure));
+
+  /**
+   * The git reads run under the repository semaphore so the snapshot is
+   * consistent with the panel's own mutations; the **model call does not**. A
+   * generation takes tens of seconds, and holding the semaphore across it
+   * would freeze staging and committing in that repository for its duration.
+   *
+   * Settings are read before the containment guard because the guard's cost
+   * (`runMutating`) is what tells us whether we may run `git log` for the
+   * `repo_conventions` examples. That read is an in-memory settings lookup
+   * that returns nothing to the caller and spawns no process, so a denied cwd
+   * still reaches git and the model exactly zero times.
+   */
+  const generateCommitMessage = Effect.fn("WorkingCopyService.generateCommitMessage")(function* (
+    input: WorkingCopyGenerateCommitMessageInput,
+  ): Effect.fn.Return<WorkingCopyGeneratedCommitMessage, WorkingCopyCommitMessageError> {
+    const amend = input.amend === true;
+    const settings = yield* resolveTextGenerationSettings();
+    const context = yield* runMutating(CommitMessage.OPERATION, input.cwd, (git) =>
+      CommitMessage.readCommitMessageContext(git, {
+        amend,
+        wantsRecentSubjects: CommitMessage.styleNeedsRecentSubjects(settings.style),
+      }),
+    );
+    if (context === null) {
+      return yield* new WorkingCopyNothingStagedError({
+        operation: CommitMessage.OPERATION,
+        cwd: input.cwd,
+        amend,
+      });
+    }
+    return yield* CommitMessage.generateCommitMessage(textGeneration, {
+      cwd: input.cwd,
+      context,
+      style: settings.style,
+      modelSelection: settings.modelSelection,
+    });
+  });
+
   return WorkingCopyService.of({
     status: (input) =>
       withRepository("workingCopy.status", input.cwd, (git) => readWorkingCopyStatus(git)).pipe(
@@ -328,6 +409,7 @@ export const make = Effect.gen(function* () {
       withRepository("workingCopy.lastCommitMessage", input.cwd, (git) =>
         Commit.lastCommitMessage(git),
       ),
+    generateCommitMessage, // fork: f4 AI commit message
     log: (input) => withRepository("workingCopy.log", input.cwd, (git) => Log.readLog(git, input)),
     commitDetail: (input) =>
       withRepository("workingCopy.commitDetail", input.cwd, (git) =>

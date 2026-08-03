@@ -42,6 +42,16 @@ export interface WorkingCopyTarget {
  */
 export const workingCopyCommandScheduler = createAtomCommandScheduler();
 
+/**
+ * fork: f4 AI commit message — a SEPARATE lane from the mutation scheduler.
+ *
+ * Generation is a read that can take tens of seconds. Putting it on
+ * `workingCopyCommandScheduler` would make a staging press queue behind a model
+ * call in the same repository, which is exactly the freeze the server-side
+ * semaphore split avoids.
+ */
+export const workingCopyGenerationScheduler = createAtomCommandScheduler();
+
 export const workingCopyCommandConcurrency: AtomCommandConcurrency<{
   readonly environmentId: EnvironmentId;
   readonly input: { readonly cwd: string };
@@ -189,6 +199,23 @@ export function createWorkingCopyEnvironmentAtoms<R, E>(
         ),
     });
 
+  /**
+   * fork: f4 AI commit message. Not a `mutation`: nothing in the repository
+   * changes, so there is nothing to invalidate and no status refresh to push.
+   * `singleFlight` keyed by env:cwd:amend means a second press while one is in
+   * flight joins the first rather than paying for a second model call.
+   */
+  const generateCommitMessage = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:working-copy:generate-commit-message",
+    tag: WS_METHODS.workingCopyGenerateCommitMessage,
+    scheduler: workingCopyGenerationScheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) =>
+        JSON.stringify([environmentId, input.cwd, input.amend === true]),
+    },
+  });
+
   return {
     status,
     stashList,
@@ -199,6 +226,7 @@ export function createWorkingCopyEnvironmentAtoms<R, E>(
     diff,
     commitFileDiff,
     fileAtRef,
+    generateCommitMessage,
 
     stagePaths: mutation(
       "environment-data:working-copy:stage-paths",

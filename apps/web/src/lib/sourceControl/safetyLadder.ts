@@ -279,3 +279,24 @@ export function noteDiscardRecoverability(
 export function discardRequiresConfirm(state: DiscardRecoverabilityState, cwd: string): boolean {
   return state.has(cwd);
 }
+
+/**
+ * fork: f4 AI commit message — the one rung generation needs.
+ *
+ * A generated message replacing text the user already wrote is the only
+ * destructive outcome of pressing ✨, so it asks. An empty draft is filled with
+ * no dialog, and a draft edited *during* the flight is left alone entirely (the
+ * result is discarded rather than queued behind a dialog the user did not
+ * expect).
+ */
+export function confirmReplaceCommitDraft(options: {
+  readonly generated: string;
+}): SourceControlConfirmOptions {
+  return {
+    title: "Replace your commit message?",
+    consequence: "Your current message is replaced by the generated one.",
+    body: options.generated,
+    confirmLabel: "Replace",
+    tone: "neutral",
+  };
+}

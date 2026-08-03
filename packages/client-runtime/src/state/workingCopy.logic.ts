@@ -135,6 +135,114 @@ export function isCommitPrimaryActionEnabled(
   }
 }
 
+// ─── AI commit message (the ✨ button) ──────────────────────────────────────
+
+export interface CommitMessageGenerationInput {
+  /** No cwd, no repository, nothing to describe. */
+  readonly hasScope: boolean;
+  readonly stagedCount: number;
+  readonly amend: boolean;
+  /** A generation is already in flight for this repository. */
+  readonly generating: boolean;
+  /** Any panel mutation is in flight (staging, committing, discarding…). */
+  readonly busy: boolean;
+  /**
+   * `false` only when the client can *prove* no usable text-generation model
+   * is configured. `null` means "not known yet" (the server config has not
+   * arrived) and must not disable the button — the server answers definitively.
+   */
+  readonly modelConfigured: boolean | null;
+}
+
+export type CommitMessageGenerationDisabledReason =
+  | "no-scope"
+  | "generating"
+  | "busy"
+  | "nothing-staged"
+  | "no-model";
+
+export interface CommitMessageGenerationState {
+  readonly enabled: boolean;
+  readonly reason: CommitMessageGenerationDisabledReason | null;
+}
+
+/**
+ * Order matters: the *most actionable* reason wins. "Stage something" is the
+ * one the user can fix in one click, so it outranks "no model configured",
+ * which is a settings trip.
+ *
+ * Amend is the one mode that does not require a staged file: `git commit
+ * --amend` with an empty index still rewrites HEAD, and the server describes
+ * `HEAD~1..index` for it.
+ */
+export function commitMessageGenerationState(
+  input: CommitMessageGenerationInput,
+): CommitMessageGenerationState {
+  const disabled = (
+    reason: CommitMessageGenerationDisabledReason,
+  ): CommitMessageGenerationState => ({
+    enabled: false,
+    reason,
+  });
+  if (!input.hasScope) {
+    return disabled("no-scope");
+  }
+  if (input.generating) {
+    return disabled("generating");
+  }
+  if (input.busy) {
+    return disabled("busy");
+  }
+  if (!input.amend && input.stagedCount === 0) {
+    return disabled("nothing-staged");
+  }
+  if (input.modelConfigured === false) {
+    return disabled("no-model");
+  }
+  return { enabled: true, reason: null };
+}
+
+export function commitMessageGenerationLabel(state: CommitMessageGenerationState): string {
+  switch (state.reason) {
+    case null:
+      return "Generate a commit message";
+    case "no-scope":
+      return "Open a repository first";
+    case "generating":
+      return "Generating…";
+    case "busy":
+      return "Wait for the current action to finish";
+    case "nothing-staged":
+      return "Stage some changes first";
+    case "no-model":
+      return "Set a text generation model in Settings";
+  }
+}
+
+export type CommitMessageGenerationApply = "fill" | "confirm" | "discard";
+
+/**
+ * What to do with a generated message when it lands.
+ *
+ * - the draft is empty → **fill** it,
+ * - the draft is untouched since the press → **fill** it (this is the amend
+ *   prefill case: the user asked for a rewrite of exactly that text),
+ * - the draft changed mid-flight → **discard** the result. The user typed over
+ *   it while the model was thinking; replacing their words with the model's is
+ *   the one genuinely destructive outcome here, and 2code chose the same.
+ * - the draft was non-empty and unchanged, but the user did not author it in
+ *   this flight → **confirm** before overwriting.
+ */
+export function commitMessageGenerationApply(input: {
+  readonly draftAtPress: string;
+  readonly draftNow: string;
+}): CommitMessageGenerationApply {
+  if (input.draftNow !== input.draftAtPress) {
+    return "discard";
+  }
+  return input.draftNow.trim().length === 0 ? "fill" : "confirm";
+}
+
 // ─── History search (hybrid: instant client filter + debounced server read) ──
 
 export const HISTORY_SEARCH_DEBOUNCE_MS = 250;

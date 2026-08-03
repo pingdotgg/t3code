@@ -4,7 +4,15 @@
  *
  * fork: f4 source-control panel
  */
-import type { WorkingCopyFile, WorkingCopyOperation } from "@t3tools/contracts";
+import {
+  isProviderAvailable,
+  type ServerProvider,
+  type ServerSettings,
+  type WorkingCopyFile,
+  type WorkingCopyOperation,
+} from "@t3tools/contracts";
+// fork: f4 AI commit message — the same resolution the server performs.
+import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
 import type { ChangesGroup } from "~/lib/sourceControl/changesRows";
 import type { HistoryWidth } from "~/lib/sourceControl/historyRows";
@@ -273,4 +281,44 @@ export function isCwdDeniedError(error: unknown): boolean {
     error !== null &&
     (error as { readonly _tag?: unknown })._tag === "WorkingCopyCwdDeniedError"
   );
+}
+
+/** "Nothing staged" is guidance, not a failure — it gets a plain toast. */
+export function isNothingStagedError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { readonly _tag?: unknown })._tag === "WorkingCopyNothingStagedError"
+  );
+}
+
+// ─── Text generation availability ───────────────────────────────────────────
+
+/**
+ * fork: f4 AI commit message — can this environment generate at all?
+ *
+ * `null` is the honest answer while the server config is still in flight, and
+ * the composer treats it as "let the server decide". Answering `false` there
+ * would disable the button for the first second of every session.
+ *
+ * The resolution mirrors the server's exactly: the source-control writer model
+ * when it is set AND its provider instance is enabled and available, otherwise
+ * the global text generation model.
+ */
+export function isTextGenerationConfigured(
+  config: {
+    readonly settings: ServerSettings;
+    readonly providers: ReadonlyArray<ServerProvider>;
+  } | null,
+): boolean | null {
+  if (config === null) {
+    return null;
+  }
+  const selection = resolveSourceControlWriterModelSelection(config.settings, config.providers);
+  const provider = config.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  // The config has arrived, so an instance that is not in it (or is disabled,
+  // or has no binary) is a definite "no", not a loading state.
+  return provider !== undefined && provider.enabled === true && isProviderAvailable(provider);
 }

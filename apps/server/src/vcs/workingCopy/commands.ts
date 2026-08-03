@@ -272,6 +272,58 @@ export function commitFileCountArgs(hash: string): ReadonlyArray<string> {
 }
 
 // ---------------------------------------------------------------------------
+// AI commit message context
+// ---------------------------------------------------------------------------
+
+/**
+ * fork: f4 AI commit message — git's fixed empty-tree object name.
+ *
+ * Amending a root commit has no `HEAD^` to diff against; diffing the index
+ * against the empty tree is what "everything this commit contains" means there.
+ */
+export const EMPTY_TREE_OBJECT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/**
+ * The **staged** name-status summary. `base` is only ever supplied for an
+ * amend, where the commit being rewritten is `HEAD`'s parent, so the change the
+ * model must describe is `base..index`, not `HEAD..index`.
+ *
+ * There is deliberately no `add` anywhere near this: the panel's whole premise
+ * is a hand-built index (see `WorkingCopyCommit.ts`).
+ */
+export function stagedSummaryArgs(base?: string): ReadonlyArray<string> {
+  return ["diff", "--cached", "--name-status", "-M", ...(base !== undefined ? [base] : [])];
+}
+
+export function stagedPatchArgs(base?: string): ReadonlyArray<string> {
+  return [
+    "diff",
+    "--no-ext-diff",
+    "--cached",
+    "--patch",
+    "--minimal",
+    "-M",
+    ...(base !== undefined ? [base] : []),
+  ];
+}
+
+/**
+ * Exits non-zero (quietly) when HEAD has no parent — an unborn or root commit.
+ *
+ * `~1` here is the FIRST parent on purpose, unlike `logArgs` where it is banned:
+ * amending a merge rewrites it against the side it was merged into, which is
+ * exactly what `git commit --amend` itself does.
+ */
+export function headParentArgs(): ReadonlyArray<string> {
+  return ["rev-parse", "--verify", "--quiet", "HEAD~1"];
+}
+
+/** Style examples for the `repo_conventions` writing style. */
+export function recentCommitSubjectsArgs(limit: number): ReadonlyArray<string> {
+  return ["log", `-n`, String(Math.max(1, Math.trunc(limit))), "--no-merges", "--pretty=format:%s"];
+}
+
+// ---------------------------------------------------------------------------
 // Log
 // ---------------------------------------------------------------------------
 

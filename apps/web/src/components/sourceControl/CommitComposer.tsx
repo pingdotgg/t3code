@@ -14,11 +14,13 @@
  *
  * fork: f4 source-control panel
  */
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Loader2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   COMMIT_SUBJECT_HARD_LIMIT,
   COMMIT_SUBJECT_SOFT_LIMIT,
+  commitMessageGenerationLabel,
+  commitMessageGenerationState,
   commitPrimaryAction,
   commitPrimaryActionLabel,
   commitSubjectLengthState,
@@ -47,6 +49,15 @@ export interface CommitComposerProps {
   readonly onAmend: () => void;
   readonly onPush: () => void;
   readonly onCommitAndPush: (options: { readonly stageAllFirst: boolean }) => void;
+  /**
+   * fork: f4 AI commit message. Absent = the button is not rendered at all
+   * (a surface with no generation wired). Present = it renders, and its own
+   * enablement is decided from the props below.
+   */
+  readonly onGenerateMessage?: (() => void) | undefined;
+  readonly generating?: boolean | undefined;
+  /** `null` while the server config is in flight — treated as "let it try". */
+  readonly textGenerationConfigured?: boolean | null | undefined;
 }
 
 export function CommitComposer(props: CommitComposerProps) {
@@ -70,6 +81,17 @@ export function CommitComposer(props: CommitComposerProps) {
       ...actionInput,
       hasMessage: props.message.trim().length > 0,
     });
+
+  // fork: f4 AI commit message — enablement and its reason are one pure
+  // decision, so the tooltip can never disagree with the disabled state.
+  const generation = commitMessageGenerationState({
+    hasScope: props.onGenerateMessage !== undefined,
+    stagedCount: props.stagedCount,
+    amend: props.amend,
+    generating: props.generating === true,
+    busy: props.busy,
+    modelConfigured: props.textGenerationConfigured ?? null,
+  });
 
   // Turning amend on with an empty draft prefills the last commit message —
   // amending and retyping the message from memory is how subjects drift.
@@ -127,6 +149,31 @@ export function CommitComposer(props: CommitComposerProps) {
         )}
       />
       <div className="flex items-center gap-2">
+        {props.onGenerateMessage === undefined ? null : (
+          <button
+            type="button"
+            // Disabled but present, always: a button that disappears when the
+            // index empties makes the row reflow under the cursor, which is the
+            // same reason the primary action morphs instead of vanishing.
+            disabled={!generation.enabled}
+            onClick={props.onGenerateMessage}
+            aria-label={commitMessageGenerationLabel(generation)}
+            title={commitMessageGenerationLabel(generation)}
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground",
+              "hover:bg-accent hover:text-foreground",
+              // NOT `pointer-events-none` while disabled: that suppresses the
+              // native tooltip, and the tooltip IS the disabled reason.
+              "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+            )}
+          >
+            {props.generating === true ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+          </button>
+        )}
         <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground text-xs">
           <input
             type="checkbox"
