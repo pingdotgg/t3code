@@ -91,4 +91,4 @@ WORKDIR /workspace
 EXPOSE 3773
 
 ENTRYPOINT ["tini", "--"]
-CMD ["t3", "serve"]
+CMD ["t3", "serve", "--host", "0.0.0.0"]
