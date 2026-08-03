@@ -258,6 +258,8 @@ export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
   port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
   url: Url,
+  /** Optional checkout/branch label supplied by the T3 dev-environment marker. */
+  displayName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   processName: Schema.NullOr(TrimmedNonEmptyString),
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   terminal: Schema.NullOr(

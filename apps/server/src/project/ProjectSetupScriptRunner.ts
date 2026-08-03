@@ -136,6 +136,7 @@ export const make = Effect.gen(function* () {
     const env = projectScriptRuntimeEnv({
       project: { cwd: project.workspaceRoot },
       worktreePath: input.worktreePath,
+      threadId: input.threadId,
     });
 
     yield* terminalManager

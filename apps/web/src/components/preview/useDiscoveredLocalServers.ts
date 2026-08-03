@@ -60,6 +60,7 @@ export function mergeServers(input: {
       host: parsed.host,
       port: parsed.port,
       url: parsed.url,
+      displayName: null,
       processName: null,
       pid: null,
       terminal: null,
@@ -76,6 +77,7 @@ export function mergeServers(input: {
       // `listening` so it pulses green like a scanner-discovered entry.
       seen.set(key, {
         ...existing,
+        displayName: server.displayName ?? existing.displayName,
         processName: server.processName ?? existing.processName,
         pid: server.pid ?? existing.pid,
         terminal: server.terminal ?? existing.terminal,
@@ -95,6 +97,7 @@ export function mergeServers(input: {
       host: parsed.host,
       port: parsed.port,
       url: parsed.url,
+      displayName: null,
       processName: null,
       pid: null,
       terminal: null,

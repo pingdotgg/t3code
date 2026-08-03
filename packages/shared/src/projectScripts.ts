@@ -5,6 +5,7 @@ interface ProjectScriptRuntimeEnvInput {
     cwd: string;
   };
   worktreePath?: string | null;
+  threadId?: string | null;
   extraEnv?: Record<string, string>;
 }
 
@@ -25,6 +26,9 @@ export function projectScriptRuntimeEnv(
   };
   if (input.worktreePath) {
     env.T3CODE_WORKTREE_PATH = input.worktreePath;
+  }
+  if (input.threadId) {
+    env.T3CODE_THREAD_ID = input.threadId;
   }
   if (input.extraEnv) {
     return { ...env, ...input.extraEnv };

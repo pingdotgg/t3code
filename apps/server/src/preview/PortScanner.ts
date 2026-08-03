@@ -19,7 +19,9 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -53,6 +55,8 @@ export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+const T3_ENVIRONMENT_METADATA_RELATIVE_PATH = ".t3/t3-dev-environment/metadata.json";
+const IGNORED_PREVIEW_PROCESS_NAMES = new Set(["cloudflared", "sshd", "systemd"]);
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
@@ -78,6 +82,57 @@ const terminalOwnerKey = (owner: {
   readonly threadId: string;
   readonly terminalId: string;
 }): string => `${owner.threadId}\u0000${owner.terminalId}`;
+
+/** Parse the cwd records returned by `lsof -a -p <pids> -d cwd -Fn`. */
+export const parseLsofCwdOutput = (raw: string): ReadonlyMap<number, string> => {
+  const result = new Map<number, string>();
+  let pid: number | null = null;
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("p")) {
+      const parsed = Number.parseInt(line.slice(1), 10);
+      pid = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    } else if (line.startsWith("n") && pid !== null) {
+      const cwd = line.slice(1).trim();
+      if (cwd.length > 0) result.set(pid, cwd);
+    }
+  }
+  return result;
+};
+
+/** Read only the display label from the checkout-owned, non-secret marker. */
+export const parseT3DevEnvironmentMetadata = (raw: string): string | null => {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const displayName = (parsed as { displayName?: unknown }).displayName;
+    if (typeof displayName !== "string") return null;
+    const normalized = displayName.trim();
+    return normalized.length > 0 && normalized.length <= 128 ? normalized : null;
+  } catch {
+    return null;
+  }
+};
+
+const metadataPathsForCwd = (cwd: string, path: Path.Path): ReadonlyArray<string> => {
+  const paths: Array<string> = [];
+  let current = path.resolve(cwd);
+  while (true) {
+    paths.push(path.join(current, T3_ENVIRONMENT_METADATA_RELATIVE_PATH));
+    const parent = path.dirname(current);
+    if (parent === current) return paths;
+    current = parent;
+  }
+};
+
+const isPreviewCandidate = (server: DiscoveredLocalServer): boolean => {
+  if (server.port === 22) return false;
+  const processName = server.processName?.toLowerCase();
+  return (
+    processName === undefined ||
+    processName === null ||
+    !IGNORED_PREVIEW_PROCESS_NAMES.has(processName)
+  );
+};
 
 const parseLsofOutput = (
   raw: string,
@@ -111,6 +166,7 @@ const parseLsofOutput = (
         host: "localhost",
         port: portMatch,
         url,
+        displayName: null,
         processName,
         pid,
         terminal: pid === null ? null : (terminalByProcessId.get(pid) ?? null),
@@ -118,7 +174,9 @@ const parseLsofOutput = (
     }
   }
 
-  return Array.from(seen.values()).toSorted((a, b) => a.port - b.port);
+  return Array.from(seen.values())
+    .filter(isPreviewCandidate)
+    .toSorted((a, b) => a.port - b.port);
 };
 
 const parsePortFromLsofName = (name: string): number | null => {
@@ -154,12 +212,15 @@ const parseWindowsListenerOutput = (
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
+      displayName: null,
       processName: processNameRaw?.trim() || null,
       pid: normalizedPid,
       terminal: normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null),
     });
   }
-  return [...seen.values()].toSorted((left, right) => left.port - right.port);
+  return [...seen.values()]
+    .filter(isPreviewCandidate)
+    .toSorted((left, right) => left.port - right.port);
 };
 
 const serversEqual = (
@@ -175,6 +236,7 @@ const serversEqual = (
       a.host !== b.host ||
       a.port !== b.port ||
       a.url !== b.url ||
+      a.displayName !== b.displayName ||
       a.processName !== b.processName ||
       a.pid !== b.pid ||
       a.terminal?.threadId !== b.terminal?.threadId ||
@@ -190,6 +252,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
     listeners: new Set(),
@@ -215,6 +279,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         host: "localhost",
         port: result.port,
         url: `http://localhost:${result.port}`,
+        displayName: null,
         processName: null,
         pid: null,
         terminal: null,
@@ -228,6 +293,62 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         probe,
         platform: hostPlatform,
       }).pipe(Effect.as(null));
+
+  const addCheckoutDisplayNames = Effect.fn("PortDiscovery.addCheckoutDisplayNames")(function* (
+    servers: ReadonlyArray<DiscoveredLocalServer>,
+  ) {
+    const processIds = [
+      ...new Set(servers.map((server) => server.pid).filter((pid): pid is number => pid !== null)),
+    ];
+    if (processIds.length === 0) return servers;
+
+    const cwdProbe = yield* processRunner
+      .run({
+        command: "lsof",
+        args: ["-a", "-p", processIds.join(","), "-d", "cwd", "-Fn"],
+        timeout: Duration.millis(LSOF_TIMEOUT_MS),
+        maxOutputBytes: 1024 * 1024,
+        outputMode: "truncate",
+      })
+      .pipe(
+        Effect.map((result) => parseLsofCwdOutput(result.stdout)),
+        Effect.catchTags({
+          ProcessSpawnError: () => Effect.succeed(new Map<number, string>()),
+          ProcessStdinError: () => Effect.succeed(new Map<number, string>()),
+          ProcessOutputLimitError: () => Effect.succeed(new Map<number, string>()),
+          ProcessReadError: () => Effect.succeed(new Map<number, string>()),
+          ProcessTimeoutError: () => Effect.succeed(new Map<number, string>()),
+        }),
+      );
+
+    const displayNameByCwd = new Map<string, string | null>();
+    const readCheckoutDisplayName = Effect.fn("PortDiscovery.readCheckoutDisplayName")(function* (
+      cwd: string,
+    ) {
+      for (const metadataPath of metadataPathsForCwd(cwd, path)) {
+        const result = yield* fileSystem.readFileString(metadataPath).pipe(Effect.result);
+        if (result._tag === "Success") {
+          return parseT3DevEnvironmentMetadata(result.success);
+        }
+      }
+      return null;
+    });
+
+    yield* Effect.forEach(
+      [...new Set(cwdProbe.values())],
+      (cwd) =>
+        readCheckoutDisplayName(cwd).pipe(
+          Effect.tap((displayName) => Effect.sync(() => displayNameByCwd.set(cwd, displayName))),
+        ),
+      { discard: true, concurrency: "unbounded" },
+    );
+
+    return servers.map((server) => {
+      const cwd = server.pid === null ? undefined : cwdProbe.get(server.pid);
+      const displayName = cwd === undefined ? null : (displayNameByCwd.get(cwd) ?? null);
+      return displayName === null ? server : { ...server, displayName };
+    });
+  });
 
   const scanOnce = Effect.fn("PortDiscovery.scan")(function* () {
     const state = yield* Ref.get(stateRef);
@@ -272,7 +393,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         outputMode: "truncate",
       })
       .pipe(
-        Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
+        Effect.map((result) => result.stdout),
         Effect.catchTags({
           ProcessSpawnError: recoverLsofProbeFailure,
           ProcessStdinError: recoverLsofProbeFailure,
@@ -281,7 +402,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverLsofProbeFailure,
         }),
       );
-    if (lsofResult !== null) return lsofResult;
+    if (lsofResult !== null) {
+      const listeners = parseLsofOutput(lsofResult, terminalByProcessId);
+      return yield* addCheckoutDisplayNames(listeners);
+    }
     return yield* probeCommonPorts();
   });
 

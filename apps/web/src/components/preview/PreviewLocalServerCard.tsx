@@ -27,6 +27,7 @@ export function PreviewLocalServerCard({ server, onOpen }: Props) {
 }
 
 function describeServer(server: PreviewableServer): string {
+  if (server.displayName) return server.displayName;
   if (server.processName) return server.processName;
   if (server.listening) return "Listening";
   if (server.source === "configured") return "Configured";

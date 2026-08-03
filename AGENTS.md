@@ -62,6 +62,11 @@ We need to be on the same page with terminology. When communicating, use this la
 2. **Writing to the live install.** `~/.t3/userdata` is the developer's real T3 Code database, in use while you work. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
+## Worktree and branch continuity
+
+Once an agent starts work in a git worktree on a specific branch, it must remain in that worktree and on that branch for the duration of the task. The agent may rename the branch when needed, but must continue working on that same branch after renaming it. It must not switch to another branch or worktree unless the user explicitly instructs it to do so.
+If it renames the branch, the replacement branch must start with `t3code/`; existing branches with older prefixes may remain unchanged.
+
 ## Hit every surface
 
 The most common defect in this repo is a change that works on the path you tested and is missing everywhere else. Before calling frontend work done, walk this list and say which entries applied:
@@ -76,11 +81,15 @@ The most common defect in this repo is a change that works on the path you teste
 
 ## Dev servers
 
-- `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.
+- `vp i` installs. Worktrees get this from the `t3.json` setup action, which delegates the
+  checkout metadata and env-link setup to the VPS-level `/usr/local/sbin/t3code-worktree-dev`
+  helper; the helper intentionally does not live in this codebase. If module resolution looks
+  broken, the action probably did not run.
 - `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.t3`, which deliberately outranks an ambient `T3CODE_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
-- `--share` publishes over the tailnet. Do not open the URL when you use this, just send it to the user with the pairing code included in url
-- The web app requires pairing. Hand over the pairing URL, not the bare origin. A URL without its token is useless to whoever you gave it to.
+- `t3code-worktree-dev` and `t3code-agent-dev-switch` publish over the shared tunnel and inject
+  the one-time pairing URL into the matching thread as a system message. Do not print, copy, or
+  open the URL or token from the shell; use the message in the thread.
 - Stop what you started, by the PID you tracked. See rule 1.
 
 ## Test data

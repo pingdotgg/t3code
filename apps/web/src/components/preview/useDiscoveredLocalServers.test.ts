@@ -7,6 +7,7 @@ const scannerServer = (overrides: Partial<DiscoveredLocalServer>): DiscoveredLoc
   host: "localhost",
   port: 5173,
   url: "http://localhost:5173",
+  displayName: null,
   processName: "vite",
   pid: 1234,
   terminal: null,
@@ -44,6 +45,15 @@ describe("mergeServers", () => {
       processName: "node",
       pid: 9999,
     });
+  });
+
+  it("enriches configured entries with the checkout display name", () => {
+    const result = mergeServers({
+      scanner: [scannerServer({ port: 5173, displayName: "terminal-polish" })],
+      configuredUrls: ["http://localhost:5173"],
+      recentlySeenUrls: [],
+    });
+    expect(result[0]?.displayName).toBe("terminal-polish");
   });
 
   it("keeps configured entries that the scanner doesn't see, with listening=false", () => {

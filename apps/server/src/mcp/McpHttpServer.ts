@@ -18,6 +18,11 @@ import {
   PreviewStandardToolkitHandlersLive,
 } from "./toolkits/preview/handlers.ts";
 import {
+  FileUploadToolkitHandlersLive,
+  GenericActionToolkitHandlersLive,
+} from "./toolkits/fileUpload/handlers.ts";
+import { FileUploadToolkit, GenericActionToolkit } from "./toolkits/fileUpload/tools.ts";
+import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
@@ -211,9 +216,19 @@ const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnaps
   Layer.provide(PreviewSnapshotToolkitHandlersLive),
 );
 
+const FileUploadRegistrationLive = McpServer.toolkit(FileUploadToolkit).pipe(
+  Layer.provide(FileUploadToolkitHandlersLive),
+);
+
+const GenericActionRegistrationLive = McpServer.toolkit(GenericActionToolkit).pipe(
+  Layer.provide(GenericActionToolkitHandlersLive),
+);
+
 export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewStandardToolkitRegistrationLive,
   PreviewSnapshotRegistrationLive,
+  FileUploadRegistrationLive,
+  GenericActionRegistrationLive,
 );
 
 const McpTransportLive = McpServer.layerHttp({

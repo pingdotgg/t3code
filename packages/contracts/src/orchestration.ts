@@ -722,6 +722,19 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/**
+ * Append a non-turn system message to a thread. This lets local automation
+ * surface operational values without starting another provider turn or
+ * adding those values to provider conversation context.
+ */
+const ThreadSystemMessageAppendCommand = Schema.Struct({
+  type: Schema.Literal("thread.system-message.append"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
@@ -779,6 +792,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadSystemMessageAppendCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -804,6 +818,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ThreadSystemMessageAppendCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,

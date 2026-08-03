@@ -47,7 +47,13 @@ type ProjectMutationTarget = {
 type ProjectCommandExecutionMode = "live" | "offline";
 type ProjectCliDispatchCommand = Extract<
   ClientOrchestrationCommand,
-  { type: "project.create" | "project.meta.update" | "project.delete" }
+  {
+    type:
+      | "project.create"
+      | "project.meta.update"
+      | "project.delete"
+      | "thread.system-message.append";
+  }
 >;
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
@@ -155,6 +161,32 @@ export class ProjectAlreadyExistsError extends Schema.TaggedErrorClass<ProjectAl
   }
 }
 
+export class ThreadNotFoundError extends Schema.TaggedErrorClass<ThreadNotFoundError>()(
+  "ThreadNotFoundError",
+  {
+    operation: Schema.Literal("resolveThreadTarget"),
+    worktreePath: Schema.String,
+    activeThreadCount: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `No active thread found for worktree '${this.worktreePath}'.`;
+  }
+}
+
+export class ThreadSystemMessageInputError extends Schema.TaggedErrorClass<ThreadSystemMessageInputError>()(
+  "ThreadSystemMessageInputError",
+  {
+    operation: Schema.Literal("readSystemMessage"),
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -164,6 +196,8 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ThreadNotFoundError,
+  ThreadSystemMessageInputError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -306,6 +340,67 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
     title: resolved.title,
     workspaceRoot: resolved.workspaceRoot,
   } satisfies ProjectMutationTarget;
+});
+
+const findActiveThreadTarget = Effect.fn("findActiveThreadTarget")(function* (input: {
+  readonly snapshot: OrchestrationReadModel;
+  readonly worktreePath: string;
+}) {
+  const normalizedWorktreePath = yield* normalizeWorkspaceRootForProjectCommand(input.worktreePath);
+  const activeProjects = input.snapshot.projects.filter((project) => project.deletedAt === null);
+  const rootProjectIds = new Set(
+    activeProjects
+      .filter((project) => project.workspaceRoot === normalizedWorktreePath)
+      .map((project) => project.id),
+  );
+  const descendantProjectIds = new Set(
+    activeProjects
+      .filter((project) => project.workspaceRoot.startsWith(`${normalizedWorktreePath}/`))
+      .map((project) => project.id),
+  );
+  const activeThreads = input.snapshot.threads.filter(
+    (thread) => thread.deletedAt === null && thread.archivedAt === null,
+  );
+  const candidates = activeThreads.filter(
+    (thread) =>
+      thread.worktreePath === normalizedWorktreePath ||
+      (thread.worktreePath === null && rootProjectIds.has(thread.projectId)),
+  );
+  const legacyDescendantCandidates =
+    candidates.length > 0
+      ? candidates
+      : activeThreads.filter(
+          (thread) => thread.worktreePath === null && descendantProjectIds.has(thread.projectId),
+        );
+  const resolvedCandidates = legacyDescendantCandidates;
+  const resolved = [...resolvedCandidates].toSorted((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  )[0];
+  if (!resolved) {
+    return yield* new ThreadNotFoundError({
+      operation: "resolveThreadTarget",
+      worktreePath: normalizedWorktreePath,
+      activeThreadCount: resolvedCandidates.length,
+    });
+  }
+  return resolved;
+});
+
+const resolveActiveThreadTarget = Effect.fn("resolveActiveThreadTarget")(function* (input: {
+  readonly snapshot: OrchestrationReadModel;
+  readonly target: string;
+}) {
+  const exactThread = input.snapshot.threads.find(
+    (thread) =>
+      thread.id === input.target && thread.deletedAt === null && thread.archivedAt === null,
+  );
+  if (exactThread) {
+    return exactThread;
+  }
+  return yield* findActiveThreadTarget({
+    snapshot: input.snapshot,
+    worktreePath: input.target,
+  });
 });
 
 const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
@@ -570,7 +665,61 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const threadAppendSystemMessageCommand = Command.make("append-system-message", {
+  ...projectLocationFlags,
+  target: Argument.string("thread-or-worktree").pipe(
+    Argument.withDescription(
+      "Thread id, or a worktree path whose newest active thread receives the message.",
+    ),
+  ),
+}).pipe(
+  Command.withDescription("Append a system message without starting a provider turn."),
+  Command.withHandler((flags) =>
+    runProjectMutation(
+      flags,
+      Effect.fn("threadAppendSystemMessageMutation")(function* ({ snapshot, dispatch }) {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const message = yield* fileSystem.readFileString("/dev/stdin").pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThreadSystemMessageInputError({
+                operation: "readSystemMessage",
+                detail: "Failed to read the system message from stdin.",
+                cause,
+              }),
+          ),
+          Effect.map((value) => value.trim()),
+        );
+        if (message.length === 0) {
+          return yield* new ThreadSystemMessageInputError({
+            operation: "readSystemMessage",
+            detail: "The system message read from stdin was empty.",
+          });
+        }
+
+        const thread = yield* resolveActiveThreadTarget({
+          snapshot,
+          target: flags.target,
+        });
+        yield* dispatch({
+          type: "thread.system-message.append",
+          commandId: CommandId.make(yield* projectCommandUuid),
+          threadId: thread.id,
+          text: message,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        return `Appended a system message to thread ${thread.id}.`;
+      }),
+    ),
+  ),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
   Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+);
+
+export const threadCommand = Command.make("thread").pipe(
+  Command.withDescription("Manage thread-level automation."),
+  Command.withSubcommands([threadAppendSystemMessageCommand]),
 );

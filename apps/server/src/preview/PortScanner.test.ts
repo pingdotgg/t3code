@@ -1,5 +1,6 @@
 import * as NodeNet from "node:net";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -41,13 +42,19 @@ const makeProbeFailureLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
         Layer.succeed(HostProcessPlatform, "linux"),
+        NodeServices.layer,
       ),
     ),
   );
 
 const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(TestProcessRunner, Net.layer, Layer.succeed(HostProcessPlatform, "win32")),
+    Layer.mergeAll(
+      TestProcessRunner,
+      Net.layer,
+      Layer.succeed(HostProcessPlatform, "win32"),
+      NodeServices.layer,
+    ),
   ),
 );
 
@@ -93,6 +100,31 @@ const commonDevServer = Effect.acquireRelease(
  * `lsof` being installed.
  */
 effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fallback)", (it) => {
+  it.effect("parses checkout cwd records for listener processes", () =>
+    Effect.sync(() => {
+      const result = PortScanner.parseLsofCwdOutput(
+        "p123\nf1\nn/root/Projects/t3code/apps/web\np456\nf1\nn/root/.t3/worktrees/t3code/demo/apps/server\n",
+      );
+      expect([...result.entries()]).toEqual([
+        [123, "/root/Projects/t3code/apps/web"],
+        [456, "/root/.t3/worktrees/t3code/demo/apps/server"],
+      ]);
+    }),
+  );
+
+  it.effect("accepts only a bounded non-empty checkout display name", () =>
+    Effect.sync(() => {
+      expect(PortScanner.parseT3DevEnvironmentMetadata('{"displayName":"terminal-polish"}')).toBe(
+        "terminal-polish",
+      );
+      expect(
+        PortScanner.parseT3DevEnvironmentMetadata('{"displayName":"  terminal-polish  "}'),
+      ).toBe("terminal-polish");
+      expect(PortScanner.parseT3DevEnvironmentMetadata("not json")).toBeNull();
+      expect(PortScanner.parseT3DevEnvironmentMetadata('{"displayName":""}')).toBeNull();
+    }),
+  );
+
   it.effect(
     "scan() returns a server we just opened on a curated dev port",
     Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
