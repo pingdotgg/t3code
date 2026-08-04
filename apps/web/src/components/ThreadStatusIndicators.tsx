@@ -20,6 +20,7 @@ export interface PrStatusIndicator {
   colorClass: string;
   tooltip: string;
   url: string;
+  number: number;
 }
 
 export interface TerminalStatusIndicator {
@@ -39,6 +40,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       tooltip: `#${pr.number} PR open: ${pr.title}`,
       url: pr.url,
+      number: pr.number,
     };
   }
   if (pr.state === "closed") {
@@ -47,6 +49,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
       tooltip: `#${pr.number} PR closed: ${pr.title}`,
       url: pr.url,
+      number: pr.number,
     };
   }
   if (pr.state === "merged") {
@@ -55,6 +58,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
       colorClass: "text-violet-600 dark:text-violet-300/90",
       tooltip: `#${pr.number} PR merged: ${pr.title}`,
       url: pr.url,
+      number: pr.number,
     };
   }
   return null;

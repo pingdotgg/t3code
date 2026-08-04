@@ -4,7 +4,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CloudIcon,
-  GitPullRequestIcon,
   FolderIcon,
   FolderPlusIcon,
   Globe2Icon,
@@ -366,10 +365,11 @@ const SidebarThreadPrStatus = memo(function SidebarThreadPrStatus(props: {
           <button
             type="button"
             aria-label={prStatus.tooltip}
-            className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+            className={`inline-flex shrink-0 items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+            style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
             onClick={handleClick}
           >
-            <GitPullRequestIcon className="size-3" />
+            #{prStatus.number}
           </button>
         }
       />
@@ -790,12 +790,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
           ) : null}
           <div className="flex min-w-0 items-center gap-1.5">
-            <SidebarThreadPrStatus
-              environmentId={thread.environmentId}
-              branch={thread.branch}
-              gitCwd={gitCwd}
-              openPrLink={openPrLink}
-            />
             {threadStatus && <ThreadStatusLabel status={threadStatus} />}
             {renamingThreadKey === threadKey ? (
               <input
@@ -847,14 +841,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </button>
             ) : null}
           </div>
-          {worktreeLabel ? (
-            <div
-              className="min-w-0 truncate text-muted-foreground/70"
-              style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
-            >
-              {worktreeLabel}
-            </div>
-          ) : null}
+          <div className="flex min-w-0 items-center gap-1.5">
+            {worktreeLabel ? (
+              <span
+                className="min-w-0 truncate text-muted-foreground/70"
+                style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
+              >
+                {worktreeLabel}
+              </span>
+            ) : null}
+            <SidebarThreadPrStatus
+              environmentId={thread.environmentId}
+              branch={thread.branch}
+              gitCwd={gitCwd}
+              openPrLink={openPrLink}
+            />
+          </div>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {discoveredPorts.length > 0 ? (
@@ -1282,7 +1284,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
 
   const content = (
     <SidebarMenuSub
-      className={`my-0 w-full translate-x-0 gap-0.5 overflow-hidden py-0 ${
+      className={`my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 py-0 ${
         indented ? "mx-1 px-1.5" : "mx-0 px-0"
       }`}
       style={{ animation: "none", transition: "none" }}

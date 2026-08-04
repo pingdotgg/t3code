@@ -2,7 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { resolveTerminalThreadRef } from "./ThreadStatusIndicators";
+import { prStatusIndicator, resolveTerminalThreadRef } from "./ThreadStatusIndicators";
 import type { SidebarThreadSummary } from "../types";
 
 const environmentId = EnvironmentId.make("env-a");
@@ -54,5 +54,34 @@ describe("resolveTerminalThreadRef", () => {
     expect(resolveTerminalThreadRef(regularThread)).toEqual(
       scopeThreadRef(environmentId, regularThread.id),
     );
+  });
+});
+
+describe("prStatusIndicator", () => {
+  const pr = {
+    number: 137,
+    title: "Add sidebar filter",
+    url: "https://example.test/pr/137",
+    baseBranch: "main",
+    headBranch: "feat/sidebar-filter",
+  };
+
+  it("exposes the number for each state alongside its own colour", () => {
+    // The sidebar renders `#number` inline instead of an icon, so the number
+    // has to survive on the indicator and stay colour-coded by state.
+    const states = [
+      { state: "open", colorClass: "text-emerald-600 dark:text-emerald-300/90" },
+      { state: "closed", colorClass: "text-zinc-500 dark:text-zinc-400/80" },
+      { state: "merged", colorClass: "text-violet-600 dark:text-violet-300/90" },
+    ] as const;
+
+    for (const { state, colorClass } of states) {
+      const indicator = prStatusIndicator({ ...pr, state });
+      expect(indicator).toMatchObject({ number: 137, colorClass, url: pr.url });
+    }
+  });
+
+  it("returns null without a pull request", () => {
+    expect(prStatusIndicator(null)).toBeNull();
   });
 });
