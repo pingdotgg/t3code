@@ -440,16 +440,26 @@ jobs:
           name: wsl-node-pty-${{ matrix.arch }}
           path: wsl-prebuild
 
-      - name: Install Spectre-mitigated MSVC libs
+      - name: Install MSVC components
         if: matrix.platform == 'win'
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $installPath = & $vswhere -products * -latest -property installationPath
           $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          $proc = Start-Process -FilePath $setupExe `
-            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+          $components = @("Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre")
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            # The runner ships VS Build Tools rather than the full IDE, so the ARM64
+            # toolset that links aarch64-pc-windows-msvc is not guaranteed to be
+            # present. Requesting it is a no-op when it already is.
+            $components += "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+          }
+          $arguments = @("modify", "--installPath", "`"$installPath`"")
+          foreach ($component in $components) {
+            $arguments += @("--add", $component)
+          }
+          $arguments += @("--quiet", "--norestart")
+          $proc = Start-Process -FilePath $setupExe -ArgumentList $arguments `
             -Wait -PassThru -NoNewWindow
           if ($null -eq $proc -or $proc.ExitCode -ne 0) {
             $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
