@@ -33,9 +33,6 @@ import {
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
 
-// Coalesce one render-sized burst so web and mobile derive their large thread
-// views once instead of once per streamed event. The size cap bounds catch-up
-// memory and prevents a quiet connection from waiting indefinitely.
 const THREAD_EVENT_BATCH_WINDOW = Duration.millis(16);
 const THREAD_EVENT_BATCH_MAX_SIZE = 64;
 
@@ -43,8 +40,8 @@ interface ThreadStreamBatchReduction {
   readonly state: EnvironmentThreadState;
   readonly lastSequence: number;
   readonly awaitingCompletion: boolean;
-  readonly threadChanged: boolean;
   readonly threadDeleted: boolean;
+  readonly persistableSnapshot: OrchestrationThreadDetailSnapshot | null;
 }
 
 export interface EnvironmentThreadStateOptions {
@@ -61,8 +58,8 @@ function reduceThreadStreamItems(
   let lastSequence = currentSequence;
   let awaitingCompletion = currentAwaitingCompletion;
   let thread = Option.getOrNull(currentState.data);
-  let threadChanged = false;
   let threadDeleted = false;
+  let persistableSnapshot: OrchestrationThreadDetailSnapshot | null = null;
 
   for (const item of items) {
     if (item.kind === "synchronized") {
@@ -80,8 +77,8 @@ function reduceThreadStreamItems(
     if (item.kind === "snapshot") {
       lastSequence = item.snapshot.snapshotSequence;
       thread = item.snapshot.thread;
-      threadChanged = true;
       threadDeleted = false;
+      persistableSnapshot = shouldPersistThread(thread) ? item.snapshot : null;
       state = {
         data: Option.some(thread),
         status: awaitingCompletion ? "synchronizing" : "live",
@@ -99,6 +96,7 @@ function reduceThreadStreamItems(
       if (item.event.type === "thread.deleted") {
         awaitingCompletion = false;
         threadDeleted = true;
+        persistableSnapshot = null;
         state = {
           data: Option.none(),
           status: "deleted",
@@ -111,7 +109,9 @@ function reduceThreadStreamItems(
     const result = applyThreadDetailEvent(thread, item.event);
     if (result.kind === "updated") {
       thread = result.thread;
-      threadChanged = true;
+      if (shouldPersistThread(thread)) {
+        persistableSnapshot = { snapshotSequence: lastSequence, thread };
+      }
       state = {
         data: Option.some(thread),
         status: awaitingCompletion ? "synchronizing" : "live",
@@ -121,6 +121,7 @@ function reduceThreadStreamItems(
       awaitingCompletion = false;
       thread = null;
       threadDeleted = true;
+      persistableSnapshot = null;
       state = {
         data: Option.none(),
         status: "deleted",
@@ -133,8 +134,8 @@ function reduceThreadStreamItems(
     state,
     lastSequence,
     awaitingCompletion,
-    threadChanged,
     threadDeleted,
+    persistableSnapshot,
   };
 }
 
@@ -281,15 +282,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       return;
     }
 
-    const thread = Option.getOrNull(reduction.state.data);
-    // Active threads can update many times per second and retain large tool
-    // payloads. The server remains the source of truth while a turn is active;
-    // persist once it settles so cache encoding stays off the streaming path.
-    if (reduction.threadChanged && thread !== null && shouldPersistThread(thread)) {
-      yield* Queue.offer(persistence, {
-        snapshotSequence: reduction.lastSequence,
-        thread,
-      });
+    if (reduction.persistableSnapshot !== null) {
+      yield* Queue.offer(persistence, reduction.persistableSnapshot);
     }
   });
 

@@ -8,6 +8,7 @@ import {
   TurnId,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
+  type OrchestrationSession,
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -281,6 +282,44 @@ const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem =>
 
 const synchronized = (): OrchestrationThreadStreamItem => ({ kind: "synchronized" });
 
+const sessionUpdated = (
+  status: OrchestrationSession["status"],
+  sequence: number,
+  activeTurnId: TurnId | null,
+): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make(`event-session-${sequence}`),
+    sequence,
+    occurredAt:
+      sequence === CACHED_SNAPSHOT_SEQUENCE + 1
+        ? "2026-04-01T08:00:00.000Z"
+        : "2026-04-01T09:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.session-set",
+    payload: {
+      threadId: THREAD_ID,
+      session: {
+        threadId: THREAD_ID,
+        status,
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId,
+        lastError: null,
+        updatedAt:
+          sequence === CACHED_SNAPSHOT_SEQUENCE + 1
+            ? "2026-04-01T08:00:00.000Z"
+            : "2026-04-01T09:00:00.000Z",
+      },
+    },
+  },
+});
+
 const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamItem => ({
   kind: "event",
   event: {
@@ -394,6 +433,42 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.getOrThrow(state.data).title).toBe("Final title");
       expect(yield* Ref.get(harness.statePublicationCount)).toBe(publicationsBeforeBurst + 1);
+    }),
+  );
+
+  it.effect("persists a settled snapshot before a batched turn starts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: ACTIVE_THREAD,
+        eventBatchSize: 2,
+      });
+
+      yield* Queue.offer(
+        harness.inputs,
+        sessionUpdated("ready", CACHED_SNAPSHOT_SEQUENCE + 1, null),
+      );
+      yield* Queue.offer(
+        harness.inputs,
+        sessionUpdated("running", CACHED_SNAPSHOT_SEQUENCE + 2, TurnId.make("turn-2")),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.session?.status === "running" &&
+          value.data.value.session.activeTurnId === TurnId.make("turn-2"),
+      );
+
+      expect(Option.getOrThrow(state.data).session?.status).toBe("running");
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+      expect(saved?.snapshotSequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      expect(saved?.thread.session?.status).toBe("ready");
     }),
   );
 
