@@ -133,10 +133,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly cached?: OrchestrationThread;
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
   readonly completionMarker?: boolean;
+  readonly eventBatchSize?: number;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
+  const statePublicationCount = yield* Ref.make(0);
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
   const loaderCalls = yield* Ref.make(0);
@@ -221,7 +223,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
+  const threadState = yield* makeEnvironmentThreadState(THREAD_ID, {
+    eventBatchSize: options?.eventBatchSize ?? 1,
+  }).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
@@ -232,7 +236,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>
-      Ref.set(latest, state).pipe(Effect.andThen(Queue.offer(observed, state))),
+      Ref.update(statePublicationCount, (count) => count + 1).pipe(
+        Effect.andThen(Ref.set(latest, state)),
+        Effect.andThen(Queue.offer(observed, state)),
+      ),
     ),
     Effect.forkScoped,
   );
@@ -241,6 +248,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     inputs,
     observed,
     latest,
+    statePublicationCount,
     retryCount,
     subscriptionCount,
     loaderCalls,
@@ -344,6 +352,48 @@ describe("EnvironmentThreads", () => {
       // full snapshot over HTTP.
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("applies a live burst in order with one state publication", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: BASE_THREAD,
+        completionMarker: true,
+        eventBatchSize: 64,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+      const publicationsBeforeBurst = yield* Ref.get(harness.statePublicationCount);
+
+      const finalSequence = CACHED_SNAPSHOT_SEQUENCE + 63;
+      for (let sequence = CACHED_SNAPSHOT_SEQUENCE + 1; sequence <= finalSequence; sequence += 1) {
+        yield* Queue.offer(
+          harness.inputs,
+          titleUpdated(
+            sequence === finalSequence
+              ? "Final title"
+              : sequence === CACHED_SNAPSHOT_SEQUENCE + 1
+                ? "First title"
+                : "Interim title",
+            sequence,
+          ),
+        );
+      }
+      yield* Queue.offer(harness.inputs, synchronized());
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Final title",
+      );
+
+      expect(Option.getOrThrow(state.data).title).toBe("Final title");
+      expect(yield* Ref.get(harness.statePublicationCount)).toBe(publicationsBeforeBurst + 1);
     }),
   );
 
