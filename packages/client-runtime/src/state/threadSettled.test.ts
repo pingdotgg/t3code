@@ -178,6 +178,45 @@ describe("effectiveSettled", () => {
     }
   });
 
+  it("keeps merged and closed change request threads active when their auto-settle is disabled", () => {
+    const recentlyActive = makeShell({ activityAt: "2026-04-09T23:59:59.999Z" });
+    for (const changeRequestState of ["merged", "closed"] as const) {
+      expect(
+        effectiveSettled(recentlyActive, {
+          now: NOW,
+          autoSettleAfterDays: null,
+          autoSettleOnChangeRequestCompletion: false,
+          changeRequestState,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("keeps inactivity and manual settlement independent from change request auto-settle", () => {
+    const stale = makeShell({ activityAt: STALE });
+    expect(
+      effectiveSettled(stale, {
+        now: NOW,
+        autoSettleAfterDays: 3,
+        autoSettleOnChangeRequestCompletion: false,
+        changeRequestState: "merged",
+      }),
+    ).toBe(true);
+
+    const manuallySettled = makeShell({
+      settledOverride: "settled",
+      activityAt: FRESH,
+    });
+    expect(
+      effectiveSettled(manuallySettled, {
+        now: NOW,
+        autoSettleAfterDays: null,
+        autoSettleOnChangeRequestCompletion: false,
+        changeRequestState: "merged",
+      }),
+    ).toBe(true);
+  });
+
   it("never auto-settles a stale thread with an open change request", () => {
     const stale = makeShell({ activityAt: STALE });
     expect(

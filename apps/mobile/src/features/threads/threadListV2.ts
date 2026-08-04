@@ -9,7 +9,11 @@ import {
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -25,6 +29,24 @@ export { snoozeWakeLabel };
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+
+export function resolveThreadListV2SettlementPreferences(input: {
+  readonly autoSettleInactive?: boolean;
+  readonly autoSettleOnChangeRequestCompletion?: boolean;
+  readonly preferencesLoaded: boolean;
+}) {
+  if (!input.preferencesLoaded) {
+    return {
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+    };
+  }
+  return {
+    autoSettleAfterDays:
+      input.autoSettleInactive === false ? null : DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+    autoSettleOnChangeRequestCompletion: input.autoSettleOnChangeRequestCompletion !== false,
+  };
+}
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -303,9 +325,9 @@ export function buildThreadListV2ListItems(input: {
 
 /**
  * Partitions visible threads into the active card block (creation order) and
- * the settled recency tail, matching the web v2 list. `autoSettleAfterDays`
- * mirrors the web default of 3 — mobile has no client-settings sync yet, so
- * the default is fixed here rather than user-configurable.
+ * the settled recency tail, matching the web v2 list. Automatic-settlement
+ * preferences are device-local on mobile and default to the existing
+ * three-day inactivity window plus terminal-review settlement.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -325,7 +347,8 @@ export function buildThreadListV2Items(input: {
   /** Environments whose server supports thread.snooze/unsnooze. Same
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  readonly autoSettleAfterDays?: number;
+  readonly autoSettleAfterDays?: number | null;
+  readonly autoSettleOnChangeRequestCompletion?: boolean;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
@@ -345,7 +368,11 @@ export function buildThreadListV2Items(input: {
 }): ThreadListV2Layout {
   const now = input.now ?? new Date().toISOString();
   const snoozeNow = input.snoozeNow ?? now;
-  const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
+  const autoSettleAfterDays =
+    input.autoSettleAfterDays === undefined
+      ? DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
+      : input.autoSettleAfterDays;
+  const autoSettleOnChangeRequestCompletion = input.autoSettleOnChangeRequestCompletion !== false;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
@@ -394,7 +421,12 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-      effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+      effectiveSettled(thread, {
+        now,
+        autoSettleAfterDays,
+        autoSettleOnChangeRequestCompletion,
+        changeRequestState,
+      })
     ) {
       settled.push(thread);
     } else {

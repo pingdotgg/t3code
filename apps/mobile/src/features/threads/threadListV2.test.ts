@@ -17,6 +17,7 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   resolveThreadListV2Enabled,
+  resolveThreadListV2SettlementPreferences,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -118,6 +119,35 @@ describe("resolveThreadListV2Enabled", () => {
     expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: false })).toBe(
       true,
     );
+  });
+});
+
+describe("resolveThreadListV2SettlementPreferences", () => {
+  it("defaults both automatic triggers on", () => {
+    expect(resolveThreadListV2SettlementPreferences({ preferencesLoaded: true })).toEqual({
+      autoSettleAfterDays: 3,
+      autoSettleOnChangeRequestCompletion: true,
+    });
+  });
+
+  it("holds both automatic triggers off while preferences are loading", () => {
+    expect(resolveThreadListV2SettlementPreferences({ preferencesLoaded: false })).toEqual({
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+    });
+  });
+
+  it("supports fully manual settlement", () => {
+    expect(
+      resolveThreadListV2SettlementPreferences({
+        autoSettleInactive: false,
+        autoSettleOnChangeRequestCompletion: false,
+        preferencesLoaded: true,
+      }),
+    ).toEqual({
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+    });
   });
 });
 
@@ -259,6 +289,27 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps a stale merged-review thread active when both auto-settle triggers are disabled", () => {
+    const thread = makeThread({
+      id: ThreadId.make("manual-only"),
+      title: "Manual only",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+    });
+    const layout = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[`${environmentId}:${thread.id}`, "merged"]]),
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["manual-only", "card"],
+    ]);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

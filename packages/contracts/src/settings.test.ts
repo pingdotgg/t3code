@@ -72,6 +72,7 @@ describe("ClientSettings sidebar v2", () => {
     const settings = decodeClientSettings({});
     expect(settings.sidebarV2Enabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleOnChangeRequestCompletion).toBe(true);
   });
 
   it("treats settings written before the beta had a per-channel default as unconfigured", () => {
@@ -103,6 +104,17 @@ describe("ClientSettings sidebar v2", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
     ).toBeNull();
+  });
+
+  it("allows auto-settle on merged or closed change requests to be disabled", () => {
+    expect(
+      decodeClientSettings({ sidebarAutoSettleOnChangeRequestCompletion: false })
+        .sidebarAutoSettleOnChangeRequestCompletion,
+    ).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ sidebarAutoSettleOnChangeRequestCompletion: false })
+        .sidebarAutoSettleOnChangeRequestCompletion,
+    ).toBe(false);
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {

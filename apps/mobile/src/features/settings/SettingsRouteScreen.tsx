@@ -37,7 +37,10 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import {
+  useThreadListV2Enabled,
+  useThreadListV2SettlementPreferences,
+} from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
   registerHiddenUpdateTap,
@@ -555,6 +558,8 @@ function GeneralSettingsSection() {
 function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const { autoSettleAfterDays, autoSettleOnChangeRequestCompletion } =
+    useThreadListV2SettlementPreferences();
 
   return (
     <View className="gap-3">
@@ -565,10 +570,31 @@ function BetaSettingsSection() {
           value={threadListV2Enabled}
           onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
         />
+        {threadListV2Enabled ? (
+          <>
+            <SettingsSwitchRow
+              icon="clock"
+              label="Auto-settle inactive threads"
+              value={autoSettleAfterDays !== null}
+              onValueChange={(value) => savePreferences({ threadListV2AutoSettleInactive: value })}
+            />
+            <SettingsSwitchRow
+              icon="arrow.triangle.pull"
+              label="Auto-settle merged/closed PRs"
+              value={autoSettleOnChangeRequestCompletion}
+              onValueChange={(value) =>
+                savePreferences({
+                  threadListV2AutoSettleOnChangeRequestCompletion: value,
+                })
+              }
+            />
+          </>
+        ) : null}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         One flat thread list in creation order. Active work renders as cards; settled threads
-        collapse to compact rows. Switch back any time.
+        collapse to compact rows. Inactive threads use a three-day window when automatic settling is
+        on. Switch back any time.
       </Text>
     </View>
   );

@@ -6,7 +6,39 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
+import {
+  mergeEnvironmentSettings,
+  resolveClientThreadSettlementPreferences,
+  resolveEnvironmentIdentificationMode,
+} from "./useSettings";
+
+describe("resolveClientThreadSettlementPreferences", () => {
+  it("holds both automatic triggers off until client settings hydrate", () => {
+    expect(
+      resolveClientThreadSettlementPreferences({
+        autoSettleAfterDays: 3,
+        autoSettleOnChangeRequestCompletion: true,
+        settingsHydrated: false,
+      }),
+    ).toEqual({
+      autoSettleAfterDays: null,
+      autoSettleOnChangeRequestCompletion: false,
+    });
+  });
+
+  it("uses the persisted preferences after hydration", () => {
+    expect(
+      resolveClientThreadSettlementPreferences({
+        autoSettleAfterDays: 7,
+        autoSettleOnChangeRequestCompletion: false,
+        settingsHydrated: true,
+      }),
+    ).toEqual({
+      autoSettleAfterDays: 7,
+      autoSettleOnChangeRequestCompletion: false,
+    });
+  });
+});
 
 describe("resolveEnvironmentIdentificationMode", () => {
   it("keeps identification hidden until client settings hydrate", () => {
