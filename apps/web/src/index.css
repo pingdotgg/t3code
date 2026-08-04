@@ -1065,6 +1065,19 @@ code {
   -webkit-app-region: no-drag;
 }
 
+@media (pointer: coarse) {
+  [data-long-press-context-menu] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  [data-long-press-context-menu] :is(input, textarea, [contenteditable]) {
+    -webkit-user-select: auto;
+    user-select: auto;
+  }
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: var(--app-scrollbar-width);

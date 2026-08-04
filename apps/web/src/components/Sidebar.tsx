@@ -105,6 +105,7 @@ import {
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { readLocalApi } from "../localApi";
+import { longPressContextMenuProps } from "../longPressContextMenu";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
@@ -676,6 +677,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
+        {...longPressContextMenuProps}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           {prStatus && (
@@ -2221,6 +2223,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           className={`pr-8 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground max-sm:pr-14 ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : ""
           }`}
+          {...longPressContextMenuProps}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}

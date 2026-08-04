@@ -15,6 +15,7 @@ import { isElectron } from "~/env";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { longPressContextMenuProps } from "~/longPressContextMenu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -384,6 +385,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   onMouseDown={handleTabMouseDown}
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
+                  {...longPressContextMenuProps}
                   className={cn(
                     "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",
                     active

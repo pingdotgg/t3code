@@ -23,6 +23,7 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
+import { longPressContextMenuProps } from "../longPressContextMenu";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
@@ -686,6 +687,7 @@ export function BranchToolbarBranchSelector({
         className="pe-1.5"
         onClick={() => selectBranch(refName)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
+        {...longPressContextMenuProps}
       >
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 flex-1 truncate">{itemValue}</span>
@@ -742,6 +744,7 @@ export function BranchToolbarBranchSelector({
         <span
           className="flex min-w-0"
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
+          {...longPressContextMenuProps}
         >
           <ComboboxTrigger
             render={<Button variant="ghost" size="xs" />}
