@@ -175,7 +175,7 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
  *
  * Mirrors `SchemaGetter.parseJson()` but strips JSONC syntax before parsing.
  */
-const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
+const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
   // Strip single-line comments - alternation preserves quoted strings.

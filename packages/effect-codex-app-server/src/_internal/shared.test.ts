@@ -8,7 +8,7 @@ import * as Shared from "./shared.ts";
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
   Schema.Struct({ profile: Schema.Struct({ token: Schema.Number }) }),
 );
-const encodeUnknownJson = Schema.encodeSync(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.effect("preserves schema decode diagnostics without deriving the message from the cause", () =>
   Effect.gen(function* () {

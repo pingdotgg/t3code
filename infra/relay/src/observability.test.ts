@@ -21,11 +21,11 @@ interface ExportedRequest {
 const otlpAttributeValue = (value: {
   readonly stringValue?: string | null;
   readonly boolValue?: boolean | null;
-  readonly intValue?: number | null;
+  readonly intValue?: string | number | null;
   readonly doubleValue?: number | null;
 }) => value.stringValue ?? value.boolValue ?? value.intValue ?? value.doubleValue;
 
-const decodeJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect("exports schema error fields as span attributes", () =>
   Effect.gen(function* () {

@@ -38,7 +38,7 @@ class OxlintFixtureExpectedFailure extends Data.TaggedError("OxlintFixtureExpect
   }
 }
 
-const encodeOxlintConfig = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const encodeOxlintConfig = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface RuleHarness {
   readonly run: (

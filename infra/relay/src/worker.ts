@@ -72,6 +72,11 @@ const webcryptoLayer = Layer.succeed(
 );
 
 const httpPlatformNotSupportedLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
+  platform: "web",
+  compression: {
+    algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
+    compressResponse: (response) => Effect.succeed(response),
+  },
   fileResponse: () => Effect.die("Relay API does not serve filesystem responses"),
   fileWebResponse: () => Effect.die("Relay API does not serve file responses"),
 });

@@ -91,8 +91,8 @@ export class AgentActivityRows extends Context.Service<
   }
 >()("t3code-relay/agentActivity/AgentActivityRows") {}
 
-const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
-const encodeJsonValue = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const encodeRelayAgentActivityStateJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayAgentActivityStateSchema),

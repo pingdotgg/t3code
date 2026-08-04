@@ -13,13 +13,13 @@ import * as CodexProtocol from "./protocol.ts";
 import * as CodexRpc from "./rpc.ts";
 import * as CodexSchema from "./schema.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
-const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const encoder = new TextEncoder();
 
 const encodeJsonl = (value: unknown) => encoder.encode(`${encodeUnknownJsonString(value)}\n`);
 
-const decodeJson = Schema.decodeEffect(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeAccountTokenUsageResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/usage/read"],
 );
