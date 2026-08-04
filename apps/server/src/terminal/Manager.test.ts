@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -538,6 +539,108 @@ it.layer(
 
       expect(process.writes).toEqual(["ls\n"]);
       expect(process.resizeCalls).toEqual([{ cols: 120, rows: 30 }]);
+    }),
+  );
+
+  it.effect("publishes old-width output before acknowledging a resize", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // The data callback queues output synchronously, while its Effect drain
+      // runs independently. The resize acknowledgement must wait behind it.
+      process.emitData("old-width bytes\n");
+      const resizeResult = yield* manager.resize({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        cols: 42,
+        rows: 20,
+      });
+
+      const events = yield* getEvents;
+      const outputEvent = events.find((event) => event.type === "output");
+      expect(outputEvent).toBeDefined();
+      expect(resizeResult.sequence).toBe(outputEvent?.sequence);
+      expect(process.resizeCalls).toEqual([{ cols: 42, rows: 20 }]);
+    }),
+  );
+
+  it.effect("does not deadlock when an output listener resizes synchronously", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const resizeFinished = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? manager
+              .resize({
+                threadId: "thread-1",
+                terminalId: DEFAULT_TERMINAL_ID,
+                cols: 42,
+                rows: 20,
+              })
+              .pipe(
+                Effect.tap(() => Deferred.succeed(resizeFinished, undefined)),
+                Effect.ignore,
+              )
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("listener-triggered resize\n");
+      yield* Deferred.await(resizeFinished);
+      expect(process.resizeCalls).toEqual([{ cols: 42, rows: 20 }]);
+    }),
+  );
+
+  it.effect("releases a resize flush when exit disposes the pending queue", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const outputEntered = yield* Deferred.make<void>();
+      const releaseOutput = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Effect.gen(function* () {
+              yield* Deferred.succeed(outputEntered, undefined);
+              yield* Deferred.await(releaseOutput);
+            })
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      process.emitData("output being published\n");
+      yield* Deferred.await(outputEntered);
+
+      // Queue the exit before the resize sentinel. Once the blocked output is
+      // released, exit cleanup must dispose the sentinel instead of leaving
+      // the resize fiber suspended forever.
+      process.emitExit({ exitCode: 0, signal: 0 });
+      const resizeFiber = yield* manager
+        .resize({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          cols: 42,
+          rows: 20,
+        })
+        .pipe(Effect.forkChild);
+      yield* waitFor(Effect.sync(() => process.resizeCalls.length === 1));
+      yield* Deferred.succeed(releaseOutput, undefined);
+      yield* Fiber.join(resizeFiber);
+      yield* waitFor(
+        Effect.map(getEvents, (events) => events.some((event) => event.type === "exited")),
+      );
     }),
   );
 

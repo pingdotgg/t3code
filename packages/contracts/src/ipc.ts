@@ -44,6 +44,7 @@ import type {
   TerminalMetadataStreamEvent,
   TerminalOpenInput,
   TerminalResizeInput,
+  TerminalResizeResult,
   TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
@@ -1149,7 +1150,7 @@ export interface EnvironmentApi {
       },
     ) => () => void;
     write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
-    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
+    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<TerminalResizeResult>;
     clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
     restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
     close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;

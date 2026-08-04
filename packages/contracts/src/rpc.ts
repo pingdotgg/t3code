@@ -98,6 +98,7 @@ import {
   TerminalMetadataStreamEvent,
   TerminalOpenInput,
   TerminalResizeInput,
+  TerminalResizeResult,
   TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
@@ -595,6 +596,7 @@ export const WsTerminalWriteRpc = Rpc.make(WS_METHODS.terminalWrite, {
 
 export const WsTerminalResizeRpc = Rpc.make(WS_METHODS.terminalResize, {
   payload: TerminalResizeInput,
+  success: TerminalResizeResult,
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
 });
 

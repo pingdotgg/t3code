@@ -9,6 +9,7 @@ import {
   TerminalEvent,
   TerminalOpenInput,
   TerminalResizeInput,
+  TerminalResizeResult,
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
@@ -181,6 +182,13 @@ describe("TerminalResizeInput", () => {
         rows: 24,
       }),
     ).toBe(false);
+  });
+});
+
+describe("TerminalResizeResult", () => {
+  it("carries the attach-stream sequence covered by the acknowledgement", () => {
+    expect(decodes(TerminalResizeResult, { sequence: 12 })).toBe(true);
+    expect(decodes(TerminalResizeResult, { sequence: -1 })).toBe(false);
   });
 });
 

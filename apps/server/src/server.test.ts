@@ -7622,7 +7622,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             open: () => Effect.succeed(snapshot),
             write: () => Effect.void,
-            resize: () => Effect.void,
+            resize: () => Effect.succeed({ sequence: 0 }),
             clear: () => Effect.void,
             restart: () => Effect.succeed(snapshot),
             close: () => Effect.void,

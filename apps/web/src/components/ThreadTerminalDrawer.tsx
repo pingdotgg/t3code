@@ -69,6 +69,42 @@ const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
+/**
+ * Keeps PTY resize acknowledgements behind terminal output already committed
+ * to Ghostty. The server orders the wire messages, but React may commit the
+ * stream update one render after the resize RPC resolves.
+ */
+export class TerminalWriteBarrier {
+  private settledSequence = 0;
+  private released = false;
+  private waiters: Array<{
+    readonly sequence: number;
+    readonly resolve: (applied: boolean) => void;
+  }> = [];
+
+  waitFor(sequence: number): Promise<boolean> {
+    if (this.released) return Promise.resolve(false);
+    if (sequence <= this.settledSequence) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      this.waiters.push({ sequence, resolve });
+    });
+  }
+
+  markApplied(sequence: number): void {
+    this.settledSequence = Math.max(this.settledSequence, sequence);
+    const ready = this.waiters.filter((waiter) => waiter.sequence <= this.settledSequence);
+    this.waiters = this.waiters.filter((waiter) => waiter.sequence > this.settledSequence);
+    for (const waiter of ready) waiter.resolve(true);
+  }
+
+  release(): void {
+    this.released = true;
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const waiter of waiters) waiter.resolve(false);
+  }
+}
+
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
   return Math.max(MIN_DRAWER_HEIGHT, Math.floor(window.innerHeight * MAX_DRAWER_HEIGHT_RATIO));
@@ -335,12 +371,6 @@ export function TerminalViewport({
       input: { threadId, terminalId, data },
     }),
   );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) =>
-    runTerminalResize({
-      environmentId,
-      input: { threadId, terminalId, cols, rows },
-    }),
-  );
   const terminalBuffer = terminalSession.buffer;
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
@@ -363,10 +393,12 @@ export function TerminalViewport({
     },
   );
   const terminalVersion = terminalSession.version;
+  const terminalSequence = terminalSession.sequence;
   const previousSessionRef = useRef({
     buffer: terminalBuffer,
     error: terminalError,
     status: terminalStatus,
+    sequence: terminalSequence,
     version: terminalVersion,
   });
   const latestSessionRef = useRef(previousSessionRef.current);
@@ -374,8 +406,40 @@ export function TerminalViewport({
     buffer: terminalBuffer,
     error: terminalError,
     status: terminalStatus,
+    sequence: terminalSequence,
     version: terminalVersion,
   };
+  const terminalWriteBarrierRef = useRef<TerminalWriteBarrier | null>(null);
+  const waitForTerminalWrites = useEffectEvent(
+    async (sequence = latestSessionRef.current.sequence) => {
+      const barrier = terminalWriteBarrierRef.current;
+      if (barrier === null) return false;
+      return await barrier.waitFor(sequence);
+    },
+  );
+  const resizeTerminal = useEffectEvent(async (cols: number, rows: number) => {
+    // The attach stream and the resize RPC share a transport, but the stream
+    // state reaches Ghostty through a React effect. Drain that effect before
+    // sending the resize so old-width bytes cannot be reinterpreted later.
+    if (!(await waitForTerminalWrites())) return false;
+    const result = await runTerminalResize({
+      environmentId,
+      input: { threadId, terminalId, cols, rows },
+    });
+    // The server publishes queued output before resolving this request. Wait
+    // for React to commit that output before the surface applies the new grid.
+    if (
+      result._tag === "Success" &&
+      !(await waitForTerminalWrites(
+        Math.max(result.value.sequence, latestSessionRef.current.sequence),
+      ))
+    ) {
+      return false;
+    }
+    // A failed request leaves the PTY at its previous dimensions, so the
+    // surface must keep its old grid and retry instead of guessing.
+    return result._tag === "Success";
+  });
 
   useEffect(() => {
     keybindingsRef.current = keybindings;
@@ -397,6 +461,9 @@ export function TerminalViewport({
     let teardown: (() => void) | null = null;
     let setupTerminal: GhosttyTerminalSurface | null = null;
     let setupCleanups: Array<() => void> = [];
+    const terminalWriteBarrier = new TerminalWriteBarrier();
+    terminalWriteBarrier.markApplied(latestSessionRef.current.sequence);
+    terminalWriteBarrierRef.current = terminalWriteBarrier;
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
@@ -404,7 +471,7 @@ export function TerminalViewport({
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
-        onResize: (cols, rows) => void resizeTerminal(cols, rows),
+        onResize: (cols, rows) => resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
         onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
@@ -748,6 +815,10 @@ export function TerminalViewport({
     return () => {
       cancelled = true;
       teardown?.();
+      terminalWriteBarrier.release();
+      if (terminalWriteBarrierRef.current === terminalWriteBarrier) {
+        terminalWriteBarrierRef.current = null;
+      }
     };
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
@@ -759,16 +830,20 @@ export function TerminalViewport({
       buffer: terminalBuffer,
       error: terminalError,
       status: terminalStatus,
+      sequence: terminalSequence,
       version: terminalVersion,
     };
     if (!terminal) {
       previousSessionRef.current = current;
+      terminalWriteBarrierRef.current?.markApplied(current.sequence);
       return;
     }
 
     const previous = previousSessionRef.current;
     synchronizeTerminalStatus(terminal, current.status);
     if (current.version === previous.version) {
+      previousSessionRef.current = current;
+      terminalWriteBarrierRef.current?.markApplied(current.sequence);
       return;
     }
 
@@ -792,7 +867,8 @@ export function TerminalViewport({
       });
     }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+    terminalWriteBarrierRef.current?.markApplied(current.sequence);
+  }, [autoFocus, terminalBuffer, terminalError, terminalSequence, terminalStatus, terminalVersion]);
 
   useEffect(() => {
     if (!autoFocus) return;

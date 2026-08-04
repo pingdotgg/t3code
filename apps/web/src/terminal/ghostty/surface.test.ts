@@ -5,12 +5,15 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
+  flushPendingTerminalInput,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  prefillTerminalCanvas,
+  settleGhosttyResize,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalScrollbarGeometry,
@@ -298,6 +301,76 @@ describe("terminal font resolution", () => {
     expect(terminalFontSize(13.4)).toBe(13);
     expect(terminalFontSize(2)).toBe(6);
     expect(terminalFontSize(90)).toBe(32);
+  });
+});
+
+describe("ghostty resize acknowledgements", () => {
+  it("applies only accepted dimensions and retries an unchanged failure", () => {
+    expect(
+      settleGhosttyResize({
+        request: { cols: 80, rows: 24 },
+        desired: { cols: 80, rows: 24 },
+        accepted: false,
+      }),
+    ).toEqual({ apply: false, requestNext: false, retry: true });
+    expect(
+      settleGhosttyResize({
+        request: { cols: 80, rows: 24 },
+        desired: { cols: 100, rows: 30 },
+        accepted: false,
+      }),
+    ).toEqual({ apply: false, requestNext: true, retry: false });
+  });
+
+  it("applies the acknowledged request before asking for a newer measurement", () => {
+    expect(
+      settleGhosttyResize({
+        request: { cols: 80, rows: 24 },
+        desired: { cols: 100, rows: 30 },
+        accepted: true,
+      }),
+    ).toEqual({ apply: true, requestNext: true, retry: false });
+  });
+});
+
+describe("terminal canvas prefill", () => {
+  it("fills the opaque backing store with the theme background", () => {
+    let fillStyle = "";
+    const fillRect = (left: number, top: number, width: number, height: number) => {
+      expect([left, top, width, height]).toEqual([0, 0, 320, 180]);
+    };
+    const context = {
+      canvas: { width: 320, height: 180 },
+      fillRect,
+      get fillStyle() {
+        return fillStyle;
+      },
+      set fillStyle(value: string) {
+        fillStyle = value;
+      },
+    } as unknown as CanvasRenderingContext2D;
+
+    prefillTerminalCanvas(context, {
+      background: { r: 14, g: 18, b: 24 },
+      foreground: { r: 237, g: 241, b: 247 },
+      cursor: { r: 237, g: 241, b: 247 },
+    });
+
+    expect(fillStyle).toBe("rgb(14, 18, 24)");
+  });
+});
+
+describe("initial terminal input", () => {
+  it("replays history before streamed output after the grid is acknowledged", () => {
+    const calls: string[] = [];
+
+    flushPendingTerminalInput(
+      { reset: "history", writes: ["output-1", "output-2"] },
+      (data) => calls.push(`reset:${data}`),
+      (data) => calls.push(`write:${data}`),
+    );
+
+    expect(calls).toEqual(["reset:history", "write:output-1", "write:output-2"]);
   });
 });
 

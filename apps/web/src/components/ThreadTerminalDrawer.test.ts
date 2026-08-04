@@ -4,9 +4,49 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  TerminalWriteBarrier,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
+
+describe("TerminalWriteBarrier", () => {
+  it("holds a resize until the matching output version is applied", async () => {
+    const barrier = new TerminalWriteBarrier();
+    let released = false;
+    const waiting = barrier.waitFor(2).then(() => {
+      released = true;
+    });
+
+    await Promise.resolve();
+    expect(released).toBe(false);
+    barrier.markApplied(1);
+    await Promise.resolve();
+    expect(released).toBe(false);
+    barrier.markApplied(2);
+    await waiting;
+    expect(released).toBe(true);
+  });
+
+  it("can seed a recreated barrier with output already applied", async () => {
+    const barrier = new TerminalWriteBarrier();
+    barrier.markApplied(4);
+
+    expect(await barrier.waitFor(4)).toBe(true);
+  });
+
+  it("releases an in-flight waiter when the terminal is disposed", async () => {
+    const barrier = new TerminalWriteBarrier();
+    let released = false;
+    const waiting = barrier.waitFor(1).then(() => {
+      released = true;
+    });
+
+    barrier.release();
+    await waiting;
+    expect(released).toBe(true);
+    expect(await barrier.waitFor(1)).toBe(false);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {

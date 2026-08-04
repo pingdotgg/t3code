@@ -14,6 +14,7 @@ export interface TerminalSessionState {
   readonly error: string | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
+  readonly sequence: number;
   readonly version: number;
 }
 
@@ -22,6 +23,7 @@ export interface TerminalBufferState {
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly updatedAt: string | null;
+  readonly sequence: number;
   readonly version: number;
 }
 
@@ -49,6 +51,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   status: "closed",
   error: null,
   updatedAt: null,
+  sequence: 0,
   version: 0,
 });
 
@@ -59,6 +62,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   error: null,
   hasRunningSubprocess: false,
   updatedAt: null,
+  sequence: 0,
   version: 0,
 });
 
@@ -97,8 +101,17 @@ export function terminalBufferStateFromSnapshot(
     status: snapshot.status,
     error: null,
     updatedAt: snapshot.updatedAt,
+    sequence: snapshot.sequence ?? 0,
     version: 1,
   };
+}
+
+function nextTerminalSequence(
+  current: TerminalBufferState,
+  event: TerminalAttachStreamEvent,
+): number {
+  if (event.type === "snapshot") return current.sequence + 1;
+  return event.sequence ?? current.sequence + 1;
 }
 
 function latestTimestamp(left: string | null, right: string | null): string | null {
@@ -118,6 +131,7 @@ export function combineTerminalSessionState(
     error: buffer.error,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
+    sequence: buffer.sequence,
     version: buffer.version,
   };
 }
@@ -137,6 +151,7 @@ export function applyTerminalAttachStreamEvent(
         buffer: trimBufferToBytes(`${current.buffer}${event.data}`, maxBufferBytes),
         status: current.status === "closed" ? "running" : current.status,
         error: null,
+        sequence: nextTerminalSequence(current, event),
         version: current.version + 1,
       };
     case "cleared":
@@ -144,6 +159,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         buffer: "",
         error: null,
+        sequence: nextTerminalSequence(current, event),
         version: current.version + 1,
       };
     case "exited":
@@ -151,6 +167,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         status: "exited",
         error: null,
+        sequence: nextTerminalSequence(current, event),
         version: current.version + 1,
       };
     case "closed":
@@ -158,6 +175,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         status: "closed",
         error: null,
+        sequence: nextTerminalSequence(current, event),
         version: current.version + 1,
       };
     case "error":
@@ -165,10 +183,11 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         status: "error",
         error: event.message,
+        sequence: nextTerminalSequence(current, event),
         version: current.version + 1,
       };
     case "activity":
-      return current;
+      return { ...current, sequence: nextTerminalSequence(current, event) };
   }
 }
 

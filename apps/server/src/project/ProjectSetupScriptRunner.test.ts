@@ -53,7 +53,7 @@ const makeTerminalManagerLayer = (
   Layer.succeed(TerminalManager.TerminalManager, {
     ...overrides,
     attachStream: () => Effect.die(new Error("unused")),
-    resize: () => Effect.void,
+    resize: () => Effect.succeed({ sequence: 0 }),
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),
     close: () => Effect.void,

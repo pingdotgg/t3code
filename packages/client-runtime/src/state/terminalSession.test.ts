@@ -28,6 +28,7 @@ const BASE_SNAPSHOT: TerminalSessionSnapshot = {
   exitSignal: null,
   label: "Terminal 1",
   updatedAt: "2026-04-01T00:00:00.000Z",
+  sequence: 7,
 };
 
 describe("terminal session reducers", () => {
@@ -121,6 +122,7 @@ describe("terminal session reducers", () => {
         threadId: TARGET.threadId,
         terminalId: TARGET.terminalId,
         data: " world",
+        sequence: 8,
       },
       8,
     );
@@ -129,6 +131,7 @@ describe("terminal session reducers", () => {
       buffer: "lo world",
       status: "running",
       error: null,
+      sequence: 8,
       version: 2,
     });
   });

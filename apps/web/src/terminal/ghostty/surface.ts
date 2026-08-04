@@ -7,6 +7,7 @@ import {
   type GhosttyTheme,
 } from "./core";
 import {
+  cssColor,
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
@@ -18,6 +19,8 @@ import { isMonospaceFamily } from "../../appearanceFonts";
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
 const MAX_TERMINAL_FONT_SIZE = 32;
+const INITIAL_TERMINAL_COLS = 1;
+const INITIAL_TERMINAL_ROWS = 1;
 // The glyph fallbacks only supply symbols the text faces are missing (powerline
 // separators, devicons, and other private-use prompt symbols), so shells
 // configured for a locally installed Nerd Font keep their prompt glyphs no
@@ -129,6 +132,60 @@ export function fittedTerminalFontSize(
 export function terminalFontSize(size?: number): number {
   if (size === undefined || !Number.isFinite(size)) return DEFAULT_TERMINAL_FONT_SIZE;
   return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.round(size)));
+}
+
+export interface GhosttyResizeDimensions {
+  readonly cols: number;
+  readonly rows: number;
+}
+
+export interface GhosttyResizeSettlement {
+  readonly apply: boolean;
+  readonly requestNext: boolean;
+  readonly retry: boolean;
+}
+
+/**
+ * Decide how one PTY resize acknowledgement changes the surface state. A
+ * rejected request never moves the grid; a newer measurement is sent after
+ * the current request settles, while an unchanged rejection is retried.
+ */
+export function settleGhosttyResize(input: {
+  readonly request: GhosttyResizeDimensions;
+  readonly desired: GhosttyResizeDimensions;
+  readonly accepted: boolean;
+}): GhosttyResizeSettlement {
+  const requestNext =
+    input.request.cols !== input.desired.cols || input.request.rows !== input.desired.rows;
+  return {
+    apply: input.accepted,
+    requestNext,
+    retry: !input.accepted && !requestNext,
+  };
+}
+
+export interface PendingTerminalInput {
+  readonly reset: string | null;
+  readonly writes: readonly string[];
+}
+
+/** Replay input collected before the first accepted PTY dimensions. */
+export function flushPendingTerminalInput(
+  input: PendingTerminalInput,
+  resetAndWrite: (data: string) => void,
+  write: (data: string) => void,
+): void {
+  if (input.reset !== null) resetAndWrite(input.reset);
+  for (const data of input.writes) write(data);
+}
+
+/** Fill an opaque canvas before asynchronous font/WASM initialization yields. */
+export function prefillTerminalCanvas(
+  context: CanvasRenderingContext2D,
+  theme: GhosttyTheme,
+): void {
+  context.fillStyle = cssColor(theme.background);
+  context.fillRect(0, 0, context.canvas.width, context.canvas.height);
 }
 
 /**
@@ -387,7 +444,11 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
   readonly onData: (data: string) => void;
-  readonly onResize: (cols: number, rows: number) => void;
+  /**
+   * Requests a PTY resize. When it returns a promise, the grid is resized only
+   * once it settles; resolving false means the PTY kept its old size.
+   */
+  readonly onResize: (cols: number, rows: number) => Promise<boolean> | void;
   readonly onSelectionChange: () => void;
   readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
@@ -425,7 +486,7 @@ export class GhosttyTerminalSurface {
   private scrollbarPointerId: number | null = null;
   private scrollbarPointerOffset = 0;
   private disposed = false;
-  private resizeNotifyTimer: number | null = null;
+  private resizeRetryTimer: number | null = null;
   private originY = CONTENT_PADDING;
   private mountHeight = 0;
   private selectionEnd: { x: number; y: number } | null = null;
@@ -448,7 +509,13 @@ export class GhosttyTerminalSurface {
   private selectionMoved = false;
   private composing = false;
   private focused = false;
-  private resizeNotified = false;
+  private resizeRequestedOnce = false;
+  private resizeRequestActive = false;
+  private resizeReady = false;
+  private pendingInitialReset: string | null = null;
+  private pendingInitialWrites: string[] = [];
+  private desiredCols = 0;
+  private desiredRows = 0;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
@@ -525,6 +592,10 @@ export class GhosttyTerminalSurface {
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
+    // An opaque backing store starts black and remains visible through the
+    // font and WASM awaits below. Prefill it with the theme background before
+    // any asynchronous initialization can yield to the browser.
+    prefillTerminalCanvas(context, options.theme);
     const fontFamily = terminalFontFamily(options.font?.family);
     const fontSize = terminalFontSize(options.font?.size);
     try {
@@ -536,10 +607,9 @@ export class GhosttyTerminalSurface {
       // Metrics fall back to whichever faces are already available.
     }
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
-    const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
-      grid.cols,
-      grid.rows,
+      INITIAL_TERMINAL_COLS,
+      INITIAL_TERMINAL_ROWS,
       metrics.width,
       metrics.height,
       options.theme,
@@ -563,7 +633,11 @@ export class GhosttyTerminalSurface {
 
   write(data: string): void {
     if (this.disposed) return;
-    this.core.write(data);
+    if (!this.resizeReady) {
+      if (data.length > 0) this.pendingInitialWrites.push(data);
+    } else {
+      this.core.write(data);
+    }
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -573,7 +647,12 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
-    this.core.resetAndWrite(data);
+    if (!this.resizeReady) {
+      this.pendingInitialReset = data;
+      this.pendingInitialWrites = [];
+    } else {
+      this.core.resetAndWrite(data);
+    }
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -610,6 +689,8 @@ export class GhosttyTerminalSurface {
   }
 
   private applyFontMetrics(): void {
+    // Keep the core on the last PTY-acknowledged grid while a newer resize is
+    // in flight. The initial sentinel is also the core's initial dimensions.
     this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
     this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
     // Cached IME textarea coordinates are stale in the new cell geometry.
@@ -687,13 +768,19 @@ export class GhosttyTerminalSurface {
     }
     const grid = terminalGridSize(width, height, this.metrics, CONTENT_PADDING);
     this.mountHeight = height;
-    // onResize is the only PTY resize channel, so the first successful fit must
-    // notify even when the measured grid equals the 1x1 construction sentinel.
-    if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
-      this.cols = grid.cols;
-      this.rows = grid.rows;
-      this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
-      this.notifyResize();
+    // The PTY and the grid must agree on width for every byte, or shell redraw
+    // sequences get interpreted at a width they were not generated for. A
+    // single in-flight request keeps resize acknowledgements ordered; if the
+    // mount moves again while it is active, the newest desired size is sent
+    // after the current request settles.
+    if (
+      grid.cols !== this.desiredCols ||
+      grid.rows !== this.desiredRows ||
+      !this.resizeRequestedOnce
+    ) {
+      this.desiredCols = grid.cols;
+      this.desiredRows = grid.rows;
+      this.requestResize();
       this.forceFullRender = true;
       this.scrollbarDirty = true;
       shouldRender = true;
@@ -705,18 +792,85 @@ export class GhosttyTerminalSurface {
     return true;
   }
 
-  /**
-   * The local grid reflows immediately, but the PTY only hears about settled
-   * dimensions: notifying on every drag step makes the shell reprint its
-   * prompt mid-drag, which reads as jitter.
-   */
-  private notifyResize(): void {
-    this.resizeNotified = true;
-    if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
-    this.resizeNotifyTimer = window.setTimeout(() => {
-      this.resizeNotifyTimer = null;
-      if (!this.disposed) this.options.onResize(this.cols, this.rows);
-    }, 150);
+  private requestResize(): void {
+    if (this.disposed || this.resizeRequestActive) return;
+    if (this.resizeRetryTimer !== null) {
+      window.clearTimeout(this.resizeRetryTimer);
+      this.resizeRetryTimer = null;
+    }
+    this.resizeRequestActive = true;
+    this.resizeRequestedOnce = true;
+    const cols = this.desiredCols;
+    const rows = this.desiredRows;
+    const settle = (granted: boolean) => {
+      if (this.disposed) return;
+      this.resizeRequestActive = false;
+      const settlement = settleGhosttyResize({
+        request: { cols, rows },
+        desired: { cols: this.desiredCols, rows: this.desiredRows },
+        accepted: granted,
+      });
+      if (settlement.apply) {
+        this.applyGridSize(cols, rows);
+      }
+      if (settlement.requestNext) {
+        this.requestResize();
+      } else if (settlement.retry) {
+        this.scheduleResizeRetry();
+      }
+    };
+    let acknowledgement: Promise<boolean> | void;
+    try {
+      acknowledgement = this.options.onResize(cols, rows);
+    } catch {
+      settle(false);
+      return;
+    }
+    if (acknowledgement && typeof acknowledgement.then === "function") {
+      void acknowledgement.then(
+        (granted) => settle(granted !== false),
+        () => settle(false),
+      );
+    } else {
+      settle(true);
+    }
+  }
+
+  private scheduleResizeRetry(): void {
+    if (this.disposed || this.resizeRetryTimer !== null) return;
+    this.resizeRetryTimer = window.setTimeout(() => {
+      this.resizeRetryTimer = null;
+      if (!this.disposed) this.requestResize();
+    }, 1000);
+  }
+
+  private applyGridSize(cols: number, rows: number): void {
+    const wasResizeReady = this.resizeReady;
+    const dimensionsChanged = cols !== this.cols || rows !== this.rows;
+    if (dimensionsChanged) {
+      this.cols = cols;
+      this.rows = rows;
+      this.core.resize(cols, rows, this.metrics.width, this.metrics.height);
+    }
+    if (!this.resizeReady) {
+      this.resizeReady = true;
+      const pendingInput = {
+        reset: this.pendingInitialReset,
+        writes: this.pendingInitialWrites,
+      };
+      this.pendingInitialReset = null;
+      this.pendingInitialWrites = [];
+      flushPendingTerminalInput(
+        pendingInput,
+        (data) => this.core.resetAndWrite(data),
+        (data) => this.core.write(data),
+      );
+      this.cursorOn = true;
+    }
+    if (!dimensionsChanged && wasResizeReady) return;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.renderFrame();
   }
 
   focus(): void {
@@ -789,18 +943,14 @@ export class GhosttyTerminalSurface {
     this.dprMedia = null;
     this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
-    if (this.resizeNotifyTimer !== null) {
-      window.clearTimeout(this.resizeNotifyTimer);
-      this.resizeNotifyTimer = null;
-      // Flush the settled dimensions so the PTY keeps the final size even when
-      // the surface unmounts inside the debounce window.
-      this.options.onResize(this.cols, this.rows);
-    }
+    if (this.resizeRetryTimer !== null) window.clearTimeout(this.resizeRetryTimer);
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
+    this.pendingInitialReset = null;
+    this.pendingInitialWrites = [];
     this.removeEvents();
     this.core.dispose();
     if (

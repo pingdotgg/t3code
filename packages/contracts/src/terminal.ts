@@ -70,6 +70,12 @@ export const TerminalResizeInput = Schema.Struct({
 });
 export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInput>;
 
+/** Event sequence visible to an attach stream when a resize is acknowledged. */
+export const TerminalResizeResult = Schema.Struct({
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type TerminalResizeResult = Schema.Schema.Type<typeof TerminalResizeResult>;
+
 export const TerminalClearInput = TerminalSessionInput;
 export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 
