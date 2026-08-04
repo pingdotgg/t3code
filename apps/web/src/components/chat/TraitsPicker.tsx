@@ -16,8 +16,8 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon, ZapIcon } from "lucide-react";
-import { Button, buttonVariants } from "../ui/button";
+import { ZapIcon } from "lucide-react";
+import { buttonVariants } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -31,6 +31,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./ComposerControl";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -133,8 +134,6 @@ function getSelectedTraits(
       : getDescriptorStringValue(primarySelectDescriptor)) ?? null;
   const thinkingEnabled =
     typeof thinkingDescriptor?.currentValue === "boolean" ? thinkingDescriptor.currentValue : null;
-  const fastModeEnabled =
-    typeof fastModeDescriptor?.currentValue === "boolean" ? fastModeDescriptor.currentValue : false;
   const contextWindow = getDescriptorStringValue(contextWindowDescriptor);
   const selectedAgent = getDescriptorStringValue(agentDescriptor);
   const selectedAgentLabel = agentDescriptor
@@ -153,7 +152,6 @@ function getSelectedTraits(
     thinkingDescriptor,
     effort,
     thinkingEnabled,
-    fastModeEnabled,
     contextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
@@ -387,17 +385,32 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
  * chevron) would leave the trigger unreadable.
  */
 export function buildTraitsTriggerDisplay(input: {
+  provider: ProviderDriverKind;
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
-  fastModeEnabled: boolean;
 }): { label: string; showFastModeIcon: boolean } {
   let hasFastMode = false;
+  let fastModeEnabled = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       hasFastMode = true;
+      fastModeEnabled = descriptor.currentValue === true;
       continue;
+    }
+    if (
+      input.provider === "codex" &&
+      descriptor.id === "serviceTier" &&
+      descriptor.type === "select"
+    ) {
+      const currentValue = getProviderOptionCurrentValue(descriptor);
+      const fastTier = descriptor.options.find(({ label }) => label === "Fast");
+      if (fastTier && (currentValue === "default" || currentValue === fastTier.id)) {
+        hasFastMode = true;
+        fastModeEnabled = currentValue === fastTier.id;
+        continue;
+      }
     }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
@@ -414,9 +427,9 @@ export function buildTraitsTriggerDisplay(input: {
   // off an empty label list alone would also catch descriptors that resolved to
   // no label at all, printing a bogus "Normal" for a model without fast mode.
   if (labels.length === 0 && hasFastMode) {
-    return { label: input.fastModeEnabled ? "Fast" : "Normal", showFastModeIcon: false };
+    return { label: fastModeEnabled ? "Fast" : "Normal", showFastModeIcon: false };
   }
-  return { label: labels.join(" · "), showFastModeIcon: input.fastModeEnabled };
+  return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled };
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
@@ -433,7 +446,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled, fastModeEnabled } =
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
       models,
@@ -456,14 +469,20 @@ export const TraitsPicker = memo(function TraitsPicker({
   }
 
   const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
+    provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
-    fastModeEnabled,
   });
   const fastModeIcon = showFastModeIcon ? (
     <>
-      <ZapIcon aria-hidden="true" className="size-3 shrink-0 text-foreground/80 opacity-100" />
+      <ComposerControlIcon
+        icon={ZapIcon}
+        className={cn(
+          "fill-current opacity-80",
+          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+        )}
+      />
       <span className="sr-only">Fast mode on</span>
     </>
   ) : null;
@@ -479,13 +498,12 @@ export const TraitsPicker = memo(function TraitsPicker({
     >
       <MenuTrigger
         render={
-          <Button
-            size="sm"
+          <ComposerControl
             variant={triggerVariant ?? "ghost"}
             className={cn(
               isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
-                : "shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3",
+                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                : "shrink-0 whitespace-nowrap",
               triggerClassName,
             )}
           />
@@ -495,13 +513,13 @@ export const TraitsPicker = memo(function TraitsPicker({
           <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
             {fastModeIcon}
             <span className="min-w-0 truncate">{triggerLabel}</span>
-            <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+            <ComposerControlChevron />
           </span>
         ) : (
           <>
             {fastModeIcon}
             <span>{triggerLabel}</span>
-            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+            <ComposerControlChevron />
           </>
         )}
       </MenuTrigger>

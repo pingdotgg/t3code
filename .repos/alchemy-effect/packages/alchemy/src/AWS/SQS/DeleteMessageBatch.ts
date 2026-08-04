@@ -1,10 +1,6 @@
 import * as sqs from "@distilled.cloud/aws/sqs";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isInstance } from "../EC2/Instance.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Queue } from "./Queue.ts";
 
 export interface DeleteMessageBatchRequest extends Omit<
@@ -12,8 +8,34 @@ export interface DeleteMessageBatchRequest extends Omit<
   "QueueUrl"
 > {}
 
-export class DeleteMessageBatch extends Binding.Service<
+/**
+ * Runtime binding for `sqs:DeleteMessageBatch`.
+ *
+ * Bind this operation to a {@link Queue} inside a function runtime to delete
+ * up to 10 received messages per call with per-entry success/failure results.
+ * The binding grants the host function `sqs:DeleteMessage` on the queue.
+ * Provide the `DeleteMessageBatchHttp` layer on the Function to implement the
+ * binding.
+ * @binding
+ * @section Deleting Message Batches
+ * @example Delete a Batch of Processed Messages
+ * ```typescript
+ * // init (provide SQS.DeleteMessageBatchHttp on the Function)
+ * const deleteMessageBatch = yield* SQS.DeleteMessageBatch(queue);
+ *
+ * // runtime: acknowledge messages received via ReceiveMessage
+ * const result = yield* deleteMessageBatch({
+ *   Entries: messages.map((message, index) => ({
+ *     Id: `${index}`,
+ *     ReceiptHandle: message.ReceiptHandle!,
+ *   })),
+ * });
+ * // result.Successful / result.Failed
+ * ```
+ */
+export interface DeleteMessageBatch extends Binding.Service<
   DeleteMessageBatch,
+  "AWS.SQS.DeleteMessageBatch",
   (
     queue: Queue,
   ) => Effect.Effect<
@@ -24,49 +46,8 @@ export class DeleteMessageBatch extends Binding.Service<
       sqs.DeleteMessageBatchError
     >
   >
->()("AWS.SQS.DeleteMessageBatch") {}
+> {}
 
-export const DeleteMessageBatchLive = Layer.effect(
-  DeleteMessageBatch,
-  Effect.gen(function* () {
-    const Policy = yield* DeleteMessageBatchPolicy;
-    const deleteMessageBatch = yield* sqs.deleteMessageBatch;
-
-    return Effect.fn(function* (queue: Queue) {
-      const QueueUrl = yield* queue.queueUrl;
-      yield* Policy(queue);
-      return Effect.fn(function* (request: DeleteMessageBatchRequest) {
-        return yield* deleteMessageBatch({
-          ...request,
-          QueueUrl: yield* QueueUrl,
-        });
-      });
-    });
-  }),
+export const DeleteMessageBatch = Binding.Service<DeleteMessageBatch>(
+  "AWS.SQS.DeleteMessageBatch",
 );
-
-export class DeleteMessageBatchPolicy extends Binding.Policy<
-  DeleteMessageBatchPolicy,
-  (queue: Queue) => Effect.Effect<void>
->()("AWS.SQS.DeleteMessageBatch") {}
-
-export const DeleteMessageBatchPolicyLive =
-  DeleteMessageBatchPolicy.layer.succeed(
-    Effect.fn(function* (host, queue) {
-      if (isFunction(host) || isInstance(host)) {
-        yield* host.bind`Allow(${host}, AWS.SQS.DeleteMessageBatch(${queue}))`({
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: ["sqs:DeleteMessage"],
-              Resource: [Output.interpolate`${queue.queueArn}`],
-            },
-          ],
-        });
-      } else {
-        return yield* Effect.die(
-          `DeleteMessageBatchPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

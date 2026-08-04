@@ -1,8 +1,6 @@
 import * as secretsmanager from "@distilled.cloud/aws/secrets-manager";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Secret } from "./Secret.ts";
 
 export interface GetSecretValueRequest extends Omit<
@@ -12,9 +10,36 @@ export interface GetSecretValueRequest extends Omit<
 
 /**
  * Runtime binding for `secretsmanager:GetSecretValue`.
+ *
+ * Bind this operation to a `Secret` in the function's init phase to get a
+ * callable that reads the current (or a specific) secret version — the secret
+ * ARN is injected automatically and `secretsmanager:GetSecretValue` is
+ * granted on the secret. Provide the implementation with
+ * `Effect.provide(AWS.SecretsManager.GetSecretValueHttp)`.
+ *
+ * Secret values are sensitive: `SecretString` / `SecretBinary` may be handed
+ * back wrapped in `Redacted` — unwrap with `Redacted.value` before use.
+ * @binding
+ * @section Reading Secret Values
+ * @example Read the Current Secret Value
+ * ```typescript
+ * // init — bind the operation to the secret
+ * const secret = yield* AWS.SecretsManager.Secret("DbPassword", {
+ *   secretString: Redacted.make("initial-password"),
+ * });
+ * const getSecretValue = yield* AWS.SecretsManager.GetSecretValue(secret);
+ *
+ * // runtime — reads the AWSCURRENT version
+ * const result = yield* getSecretValue();
+ * const value =
+ *   typeof result.SecretString === "string"
+ *     ? result.SecretString
+ *     : Redacted.value(result.SecretString!);
+ * ```
  */
-export class GetSecretValue extends Binding.Service<
+export interface GetSecretValue extends Binding.Service<
   GetSecretValue,
+  "AWS.SecretsManager.GetSecretValue",
   (
     secret: Secret,
   ) => Effect.Effect<
@@ -25,54 +50,8 @@ export class GetSecretValue extends Binding.Service<
       secretsmanager.GetSecretValueError
     >
   >
->()("AWS.SecretsManager.GetSecretValue") {}
+> {}
 
-export const GetSecretValueLive = Layer.effect(
-  GetSecretValue,
-  Effect.gen(function* () {
-    const Policy = yield* GetSecretValuePolicy;
-    const getSecretValue = yield* secretsmanager.getSecretValue;
-
-    return Effect.fn(function* (secret: Secret) {
-      const SecretId = yield* secret.secretArn;
-      yield* Policy(secret);
-      return Effect.fn(function* (request: GetSecretValueRequest = {}) {
-        const secretId = yield* SecretId;
-        return yield* getSecretValue({
-          ...request,
-          SecretId: secretId,
-        });
-      });
-    });
-  }),
-);
-
-export class GetSecretValuePolicy extends Binding.Policy<
-  GetSecretValuePolicy,
-  (secret: Secret) => Effect.Effect<void>
->()("AWS.SecretsManager.GetSecretValue") {}
-
-export const GetSecretValuePolicyLive = GetSecretValuePolicy.layer.succeed(
-  Effect.fn(function* (host, secret) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SecretsManager.GetSecretValue(${secret}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-              ],
-              Resource: [secret.secretArn],
-            },
-          ],
-        },
-      );
-    } else {
-      return yield* Effect.die(
-        `GetSecretValuePolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const GetSecretValue = Binding.Service<GetSecretValue>(
+  "AWS.SecretsManager.GetSecretValue",
 );

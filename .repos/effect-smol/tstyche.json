@@ -1,7 +1,8 @@
 {
   "$schema": "./node_modules/tstyche/schemas/config.json",
   "testFileMatch": [
-    "packages/*/typetest/**/*.tst.*"
+    "packages/*/typetest/**/*.tst.*",
+    "packages/ai/*/typetest/**/*.tst.*"
   ],
   "tsconfig": "baseline"
 }

@@ -1,32 +1,9 @@
 /**
  * Bun process runner for Effect programs.
  *
- * This module exposes Bun's `runMain` entry point. It is the function to call
- * at the outer edge of a Bun CLI, script, server, or worker when a single
- * Effect should become the process main fiber and use Bun's Node-compatible
- * process, signal, and teardown behavior.
- *
- * **Mental model**
- *
- * `runMain` delegates to the shared Node-compatible runner. It starts the
- * supplied Effect as the process root, reports failures through the configured
- * runtime reporting, and translates `SIGINT` or `SIGTERM` into interruption so
- * scoped resources can finalize before teardown chooses an exit code.
- *
- * **Common tasks**
- *
- * - Launch a Bun CLI or one-off script from an Effect.
- * - Start a long-running Bun server or worker under an Effect scope.
- * - Customize error reporting or teardown with `runMain` options.
- * - Provide `BunServices.layer` or narrower layers before calling `runMain`.
- *
- * **Gotchas**
- *
- * This module runs the program; it does not provide filesystem, network,
- * terminal, or other platform services. Long-lived servers, subscriptions, and
- * worker loops should be acquired in Effect scopes so interruption from process
- * signals can release them. Finalizers that never complete can keep shutdown
- * waiting.
+ * This module exports `runMain`, which runs one Effect as the main process
+ * fiber in Bun. It reuses the shared Node runtime runner, including its error
+ * reporting, signal handling, and optional teardown behavior.
  *
  * @since 4.0.0
  */
@@ -39,9 +16,8 @@ import type { Teardown } from "effect/Runtime"
  *
  * **When to use**
  *
- * Use to run an Effect as your application's main program,
- * especially when you need structured error handling, log management,
- * interrupt support, or advanced teardown capabilities.
+ * Use to run a Bun application's main Effect with structured error handling,
+ * log management, interrupt support, or advanced teardown capabilities.
  *
  * **Details**
  *

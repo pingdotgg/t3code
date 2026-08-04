@@ -34,6 +34,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -69,6 +70,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -92,16 +94,26 @@ export const ChatHeader = memo(function ChatHeader({
             doesn't answer it. */}
         {activeProjectName ? (
           <span className="inline-flex shrink-0 items-center gap-2">
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              <ProjectFavicon
-                environmentId={activeThreadEnvironmentId}
-                cwd={activeProjectCwd ?? ""}
-                className="size-3.5"
-              />
-              <span className="max-w-40 truncate text-sm font-medium text-muted-foreground">
-                {activeProjectName}
-              </span>
-            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`New thread in ${activeProjectName}`}
+                    onClick={onNewThreadInProject}
+                    className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                }
+              >
+                <ProjectFavicon
+                  environmentId={activeThreadEnvironmentId}
+                  cwd={activeProjectCwd ?? ""}
+                  className="size-3.5"
+                />
+                <span className="max-w-40 truncate text-sm font-medium">{activeProjectName}</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
+            </Tooltip>
             <span aria-hidden className="text-muted-foreground/40">
               /
             </span>

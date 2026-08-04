@@ -45,10 +45,11 @@ const decodeSessionCancelNotification = Schema.decodeEffect(
   Schema.fromJsonString(SessionCancelNotification),
 );
 const decodeExtRequest = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
+const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse));
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
-const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encoder = new TextEncoder();
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
@@ -285,7 +286,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.deepInclude(requestError, {
         operation: "encode-message",
         method: "x/request",
-        requestId: "1",
+        requestId: 1,
       });
     }),
   );
@@ -376,8 +377,41 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         code: -32602,
         errorMessage: "Invalid params",
         method: "x/private",
-        requestId: "1",
+        requestId: 1,
         operation: "receive-response",
+      });
+    }),
+  );
+
+  it.effect("preserves numeric ids for inbound extension requests", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: () => Effect.succeed({ ok: true }),
+      });
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "x/test",
+          params: {
+            hello: "world",
+          },
+          headers: [],
+        }),
+      );
+
+      const outbound = yield* Queue.take(output);
+      assert.deepEqual(yield* decodeExtResponse(outbound), {
+        jsonrpc: "2.0",
+        id: 7,
+        result: {
+          ok: true,
+        },
       });
     }),
   );
@@ -416,7 +450,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const message = yield* Deferred.await(inboundRequest);
       assert.deepEqual(message, {
         _tag: "Request",
-        id: "0",
+        id: 0,
         tag: "session/request_permission",
         payload: {
           sessionId: "session-1",
@@ -431,7 +465,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       yield* transport.serverProtocol.send(0, {
         _tag: "Exit",
-        requestId: "0",
+        requestId: 0,
         exit: {
           _tag: "Success",
           value: {
@@ -499,7 +533,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const message = yield* Deferred.await(lateResponse);
       assert.deepEqual(message, {
         _tag: "Exit",
-        requestId: "1",
+        requestId: 1,
         exit: {
           _tag: "Success",
           value: {

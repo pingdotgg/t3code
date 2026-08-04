@@ -1,24 +1,40 @@
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as S from "effect/Schema";
 import * as Argument from "effect/unstable/cli/Argument";
 import * as CliError from "effect/unstable/cli/CliError";
 import * as Flag from "effect/unstable/cli/Flag";
+import { pathToFileURL } from "node:url";
 
 import {
   type AuthProvider,
   AuthError,
   AuthProviders,
 } from "../../Auth/AuthProvider.ts";
-import type { AlchemyProfile } from "../../Auth/Profile.ts";
-import type * as Stack from "../../Stack.ts";
+import {
+  type AlchemyProfileProviders,
+  ALCHEMY_PROFILE,
+  withProfileOverride,
+} from "../../Auth/Profile.ts";
+import { AwsAuth } from "../../AWS/AuthProvider.ts";
+import { AxiomAuth } from "../../Axiom/AuthProvider.ts";
+import { CloudflareAuth } from "../../Cloudflare/Auth/AuthProvider.ts";
+import { GitHubAuth } from "../../GitHub/AuthProvider.ts";
+import { NeonAuth } from "../../Neon/AuthProvider.ts";
+import { PlanetscaleAuth } from "../../Planetscale/AuthProvider.ts";
+import * as Stack from "../../Stack.ts";
+import { Stage } from "../../Stage.ts";
 import { recordCli } from "../../Telemetry/Metrics.ts";
 import { PromptCancelled } from "../../Util/Clank.ts";
+import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
+import { fileLogger } from "../../Util/FileLogger.ts";
 
 export const USER = Config.string("USER").pipe(
   Config.orElse(() => Config.string("USERNAME")),
@@ -146,10 +162,22 @@ export const script = Argument.file("main", {
 
 export const profile = Flag.string("profile").pipe(
   Flag.withDescription(
-    "Auth profile to use (~/.alchemy/profiles.json). Defaults to 'default' or $ALCHEMY_PROFILE.",
+    "Auth profile to use (~/.alchemy/profiles.json). Defaults to $ALCHEMY_PROFILE or 'default'.",
   ),
   Flag.optional,
-  Flag.map(Option.getOrElse(() => "default")),
+  Flag.mapEffect(
+    Effect.fn(function* (profile) {
+      // --profile wins; otherwise fall back to $ALCHEMY_PROFILE (which
+      // itself defaults to "default"). Without this, the flag's default
+      // would shadow the env var via withProfileOverride.
+      if (Option.isSome(profile)) {
+        return profile.value;
+      }
+      return yield* ALCHEMY_PROFILE.pipe(
+        Effect.catch(() => Effect.succeed("default")),
+      );
+    }),
+  ),
 );
 
 export const resourceFilter = Flag.string("filter").pipe(
@@ -269,7 +297,7 @@ export const instrumentCommand =
  */
 export const printProfile = Effect.fn(function* (
   profile: string,
-  stored: AlchemyProfile,
+  stored: AlchemyProfileProviders,
   registry: AuthProviders["Service"],
 ) {
   yield* Console.log(`Profile: ${profile}`);
@@ -295,13 +323,30 @@ export const printProfile = Effect.fn(function* (
       }
       continue;
     }
-    yield* provider.prettyPrint(profile, cfg);
+    // A provider's `prettyPrint` catches its own credential-resolution
+    // failures, but some resolve paths `Effect.orDie` (e.g. AWS SSO with an
+    // expired token), which escapes as a defect. Contain it here — via
+    // `Console.log` so the message stays on stdout under this provider's
+    // header instead of interleaving on stderr — so one broken provider
+    // can't abort rendering the rest of the profile.
+    yield* provider.prettyPrint(profile, cfg).pipe(
+      Effect.catchCause((cause) => {
+        const error = Cause.squash(cause);
+        const message = error instanceof Error ? error.message : String(error);
+        return Console.log(`  Failed to retrieve credentials: ${message}`);
+      }),
+    );
   }
 });
 
 export const importStack = Effect.fn(function* (main: string) {
   const path = yield* Path.Path;
-  const url = import.meta.resolve(path.resolve(main));
+  // Build a `file://` URL from the absolute path. `import.meta.resolve` expects a
+  // module specifier / URL, not a raw filesystem path: on Windows an absolute
+  // path like `D:\stack.ts` is not a valid specifier and fails to resolve, so the
+  // CLI cannot load the user's stack. `pathToFileURL` produces a valid URL on
+  // every platform.
+  const url = pathToFileURL(path.resolve(main)).href;
   const module = yield* Effect.promise(() => import(url));
   const stackEffect = module.default as ReturnType<
     ReturnType<typeof Stack.make>
@@ -320,3 +365,130 @@ export const importStack = Effect.fn(function* (main: string) {
     state: Layer.Layer<never>;
   };
 });
+
+/**
+ * Placeholder {@link Stack.Stack} value used while building a stack's
+ * `providers()` layer out of band. No real resources exist yet — we only
+ * want the layer's provider/auth registrations and cloud-environment
+ * services, so `resources`/`bindings`/`actions` are empty and the stage is a
+ * sentinel.
+ */
+const placeholderStack = (name: string) => ({
+  actions: {},
+  bindings: {},
+  name,
+  resources: {},
+  stage: "placeholder",
+});
+
+export interface BuildStackProvidersOptions {
+  /** Stack entrypoint to import (e.g. `"alchemy.run.ts"`). */
+  main: string;
+  envFile: Option.Option<string>;
+  profile: string;
+  /**
+   * Registry to populate. Pass a pre-seeded registry (e.g. one that already
+   * has built-in providers) to layer the stack's providers on top of it,
+   * overriding by name. Defaults to a fresh empty registry.
+   */
+  registry?: AuthProviders["Service"];
+  /**
+   * Logger layer used during the build. Defaults to the file logger
+   * (`out`). `alchemy unsafe nuke` overrides this to log to the console in
+   * debug mode.
+   */
+  logger?: Layer.Layer<never, never, never>;
+  /**
+   * Extra layer merged into the placeholder scaffold — e.g.
+   * `Layer.succeed(MinimumLogLevel, ...)`, which sets a fiber-ref default
+   * and so contributes no context service (`Layer<never>`).
+   */
+  extra?: Layer.Layer<never, never, never>;
+}
+
+/**
+ * Import a stack entrypoint and build its `providers()` (+ `state()`) layer
+ * out of band against placeholder {@link Stack.Stack}/{@link Stage} services,
+ * so its `AuthProviderLayer` registrations land in an {@link AuthProviders}
+ * registry and the built context holds every resource provider plus the
+ * cloud-environment services their operations need.
+ *
+ * Shared by `alchemy login`, `alchemy profile show`, and `alchemy unsafe
+ * nuke`. The caller decides what to do with the result — use `authProviders`
+ * (login / profile show) or `context` (nuke) — and whether a missing/invalid
+ * entrypoint is fatal (login / nuke let it propagate) or best-effort
+ * (profile show wraps the call in `Effect.catchCause`).
+ */
+export const buildStackProviders = Effect.fn("buildStackProviders")(function* (
+  options: BuildStackProvidersOptions,
+) {
+  const authProviders = options.registry ?? {};
+  const stackEffect = yield* importStack(options.main);
+  const configProvider = withProfileOverride(
+    yield* loadConfigProvider(options.envFile),
+    options.profile,
+  );
+  const context = yield* Layer.build(
+    (stackEffect.providers ?? Layer.empty).pipe(
+      Layer.provideMerge(stackEffect.state ?? Layer.empty),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(AuthProviders, authProviders),
+          ConfigProvider.layer(configProvider),
+          options.logger ??
+            Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
+          Layer.succeed(Stage, "placeholder"),
+          Layer.succeed(Stack.Stack, placeholderStack(stackEffect.stackName)),
+          options.extra ?? Layer.empty,
+        ),
+      ),
+    ),
+  );
+  return { authProviders, context, stackEffect };
+});
+
+/**
+ * The auth providers Alchemy ships with. Used as the baseline registry so
+ * `alchemy login` works from any folder (no `alchemy.run.ts` required) and
+ * `alchemy profile show` can pretty-print any provider a profile mentions,
+ * even one the current stack doesn't wire up.
+ */
+export const builtinAuth = Layer.mergeAll(
+  AwsAuth,
+  AxiomAuth,
+  CloudflareAuth,
+  GitHubAuth,
+  NeonAuth,
+  PlanetscaleAuth,
+);
+
+/**
+ * Build {@link builtinAuth} against `registry` so every built-in auth
+ * provider registers itself, without importing any stack entrypoint.
+ */
+export const buildBuiltinAuthProviders = Effect.fn("buildBuiltinAuthProviders")(
+  function* (options: {
+    envFile: Option.Option<string>;
+    profile: string;
+    /** Registry to populate. Defaults to a fresh empty registry. */
+    registry?: AuthProviders["Service"];
+  }) {
+    const authProviders = options.registry ?? {};
+    yield* Layer.build(
+      Layer.provide(
+        builtinAuth,
+        Layer.mergeAll(
+          Layer.succeed(AuthProviders, authProviders),
+          ConfigProvider.layer(
+            withProfileOverride(
+              yield* loadConfigProvider(options.envFile),
+              options.profile,
+            ),
+          ),
+          Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
+        ),
+      ),
+    );
+    return authProviders;
+  },
+);

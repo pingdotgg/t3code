@@ -331,6 +331,7 @@ export const make = Effect.gen(function* () {
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
+        backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -510,6 +511,18 @@ export const make = Effect.gen(function* () {
       event.preventDefault();
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
+      }
+    });
+
+    // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the
+    // close-terminal shortcut can outlive the terminal that handled its first
+    // press, so reject repeats before they reach the native window accelerator.
+    // Deliberate presses still flow through the renderer or native menu.
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || !input.isAutoRepeat) return;
+      const modifier = environment.platform === "darwin" ? input.meta : input.control;
+      if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
+        event.preventDefault();
       }
     });
 

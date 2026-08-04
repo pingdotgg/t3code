@@ -1,0 +1,160 @@
+---
+title: Datasets & ingest
+description: Axiom datasets per OTel signal with OTLP endpoints as outputs, least-privilege ingest tokens, and per-stage naming with Stack.useSync.
+---
+
+A `Dataset` is Axiom's top-level container — it stores your events,
+logs, traces, or metrics. An `ApiToken` is the credential your
+runtime ships with. Both are one-line resources, declared in the
+same Stack as the Workers and Functions that emit the data.
+
+## Create a dataset
+
+```typescript
+import * as Axiom from "alchemy/Axiom";
+
+const logs = yield* Axiom.Dataset("logs", {
+  name: "my-app-logs",
+  kind: "otel:logs:v1",
+  description: "Application logs from prod workers",
+  retentionDays: 30,
+  useRetentionPeriod: true,
+});
+```
+
+`description`, `retentionDays`, and `useRetentionPeriod` update in
+place, so a retention change is a reviewable diff.
+
+:::caution[Name and kind changes delete data]
+`name` is the dataset's stable identifier in Axiom and `kind` is
+fixed at creation — changing either triggers a **replacement**: the
+old dataset is deleted along with everything ingested into it. Pick
+both up front, and never rename a dataset that holds data you care
+about.
+:::
+
+## One dataset per signal
+
+`kind` determines the schema and how the data renders in the Axiom
+UI. For OTel pipelines, create one dataset per signal:
+
+```typescript
+const traces  = yield* Axiom.Dataset("traces",  { name: "app-traces",  kind: "otel:traces:v1"  });
+const logs    = yield* Axiom.Dataset("logs",    { name: "app-logs",    kind: "otel:logs:v1"    });
+const metrics = yield* Axiom.Dataset("metrics", { name: "app-metrics", kind: "otel:metrics:v1" });
+```
+
+The default `kind` is `axiom:events:v1` — Axiom's general-purpose
+event store — for anything that isn't OTLP.
+
+## OTLP endpoints as outputs
+
+Each dataset exposes Axiom's OTLP/HTTP endpoints as output
+attributes, so wiring an exporter is a matter of passing outputs
+into your runtime's env:
+
+```typescript
+yield* Cloudflare.Worker("api", {
+  vars: {
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: traces.otelTracesEndpoint,
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:   logs.otelLogsEndpoint,
+    // Bearer token must come from a secret store, not the dataset state.
+    OTEL_EXPORTER_OTLP_HEADERS:
+      `Authorization=Bearer ${env.AXIOM_TOKEN},X-Axiom-Dataset=${traces.name}`,
+  },
+});
+```
+
+- `otelTracesEndpoint` / `otelLogsEndpoint` / `otelMetricsEndpoint` —
+  the per-signal OTLP/HTTP URLs.
+- `otelEndpoint` — the root; most exporters auto-append the signal
+  path.
+- `otelHeaders` — the non-secret headers Axiom expects, i.e.
+  `X-Axiom-Dataset: <name>`. The `Authorization: Bearer` header is
+  deliberately excluded so no secret lives in dataset state — that's
+  what the ingest token below is for.
+
+## Mint an ingest token
+
+An `ApiToken` scoped with `datasetCapabilities` can ingest into
+exactly the datasets you list and nothing else:
+
+```typescript
+const ingest = yield* Axiom.ApiToken("ingest", {
+  name: "prod-ingest",
+  description: "OTEL collector ingest",
+  datasetCapabilities: {
+    "my-app-traces": { ingest: ["create"] },
+  },
+});
+```
+
+The same shape covers read-side credentials — for example a
+query-only token for Grafana:
+
+```typescript
+yield* Axiom.ApiToken("query", {
+  name: "grafana-reader",
+  datasetCapabilities: {
+    "my-app-traces": { query: ["read"] },
+    "my-app-logs":   { query: ["read"] },
+  },
+});
+```
+
+## Token rotation
+
+Axiom has no update endpoint for tokens, so capabilities are pinned
+at creation: changing **any** prop replaces the token and mints a
+new bearer value; identical props never rotate it. That makes
+rotation a deploy — tweak the `description` (or any other field)
+and the next deploy creates a fresh token, rewires every consumer,
+and deletes the old one.
+
+:::caution[The bearer persists in alchemy state]
+Axiom returns the raw token exactly once, at create time. Alchemy
+captures it into `ingest.token` as a `Redacted<string>` and persists
+it in resource state — otherwise later deploys couldn't rewire it
+into consumers. Treat your state store as sensitive: anyone with
+read access can recover the bearer. Pass `ingest.token` to secret
+sinks (a Worker env var becomes a `secret_text` binding; or a
+[secrets store](/cloudflare/security/secrets-env)) rather than ever unwrapping it
+yourself.
+:::
+
+## Per-stage datasets
+
+Dataset names are global to your Axiom org, so give each stage its
+own. `Stack.useSync` computes props from the resolved stage — handy
+at module scope where there's no `yield*` available:
+
+```typescript
+import * as Axiom from "alchemy/Axiom";
+import { Stack } from "alchemy/Stack";
+
+export const Traces = Axiom.Dataset(
+  "Traces",
+  Stack.useSync(({ stage }) => ({
+    name: `${stage}-traces`,
+    kind: "otel:traces:v1" as const,
+    description: `OTEL traces for stage '${stage}'`,
+    retentionDays: 30,
+  })),
+);
+```
+
+Now `dev-sam` telemetry never lands in the `prod` dataset, and
+tearing down a preview stage deletes its data with it. See
+[Stack](/infrastructure-as-code/stack) for the full `useSync` semantics.
+
+## Where next
+
+- [Ship Worker telemetry to Axiom](/cloudflare/observability/axiom-observability) —
+  the end-to-end guide: datasets, token, env wiring, and the
+  zero-exporter Cloudflare push path.
+- [Alerting](/axiom/guides/alerting) — monitors and notifiers over
+  the data you just ingested.
+- [Observability](/testing/observability) — the exporter-as-a-Layer
+  pattern and OTel across clouds.
+- Reference: [Dataset](/providers/axiom/dataset) ·
+  [ApiToken](/providers/axiom/apitoken)

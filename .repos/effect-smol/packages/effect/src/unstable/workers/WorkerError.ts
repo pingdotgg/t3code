@@ -1,38 +1,9 @@
 /**
- * The `WorkerError` module defines the typed error model shared by the
- * unstable worker APIs. Worker client and runner platforms use
- * {@link WorkerError} when platform setup, sending, receiving, or
- * runtime-specific worker behavior fails.
+ * Typed error model for worker APIs.
  *
- * **Mental model**
- *
- * - {@link WorkerError} is the outer error exposed in worker effect error
- *   channels
- * - {@link WorkerErrorReason} records one tagged reason: spawn, send,
- *   receive, or unknown
- * - The outer error delegates `message` and `cause` to the nested reason
- * - Reason schemas can be encoded and decoded when worker or RPC layers need
- *   structured diagnostics
- *
- * **Common tasks**
- *
- * - Detect worker failures with {@link isWorkerError}
- * - Classify startup and setup problems with {@link WorkerSpawnError}
- * - Classify `postMessage` or transfer-list failures with
- *   {@link WorkerSendError}
- * - Classify inbound event, `messageerror`, or worker-exit failures with
- *   {@link WorkerReceiveError}
- * - Preserve runtime-specific failures that do not fit another case with
- *   {@link WorkerUnknownError}
- *
- * **Gotchas**
- *
- * - The `cause` is diagnostic data and can have different shapes across
- *   browser, Node, Bun, and child-process transports
- * - A `WorkerSendError` often means the payload was invalid for the selected
- *   structured-clone or transfer-list rules
- * - A `WorkerSpawnError` can mean the runner code is not executing inside the
- *   expected worker context
+ * This module defines the `WorkerError` wrapper, the reason variants for spawn,
+ * send, receive, and unknown worker failures, a schema union for those reasons,
+ * and a guard for recognizing worker errors at runtime.
  *
  * @since 4.0.0
  */
@@ -68,7 +39,7 @@ export class WorkerSpawnError extends Schema.ErrorClass<WorkerSpawnError>(
 )({
   _tag: Schema.tag("WorkerSpawnError"),
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect)
+  cause: Schema.optional(Schema.Defect())
 }) {}
 
 /**
@@ -82,7 +53,7 @@ export class WorkerSendError extends Schema.ErrorClass<WorkerSendError>(
 )({
   _tag: Schema.tag("WorkerSendError"),
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect)
+  cause: Schema.optional(Schema.Defect())
 }) {}
 
 /**
@@ -97,7 +68,7 @@ export class WorkerReceiveError extends Schema.ErrorClass<WorkerReceiveError>(
 )({
   _tag: Schema.tag("WorkerReceiveError"),
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect)
+  cause: Schema.optional(Schema.Defect())
 }) {}
 
 /**
@@ -111,7 +82,7 @@ export class WorkerUnknownError extends Schema.ErrorClass<WorkerUnknownError>(
 )({
   _tag: Schema.tag("WorkerUnknownError"),
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect)
+  cause: Schema.optional(Schema.Defect())
 }) {}
 
 /**

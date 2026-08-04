@@ -9,14 +9,13 @@ import type {
 import * as S3 from "../AWS/S3/index.ts";
 import type { S3EventType } from "../AWS/S3/S3Event.ts";
 import * as SQS from "../AWS/SQS/index.ts";
-import * as Binding from "../Binding.ts";
 import { SQSQueueEventSource } from "./SQSQueueEventSource.ts";
 
+/** @binding */
 export const S3BucketEventSource = Layer.effect(
   S3.BucketEventSource,
   Effect.gen(function* () {
     const Queue = yield* SQS.Queue;
-    const bind = yield* S3BucketEventSourcePolicy;
 
     return Effect.fn(function* <
       Events extends S3EventType[],
@@ -31,12 +30,42 @@ export const S3BucketEventSource = Layer.effect(
     ) {
       const queue = yield* Queue(`${bucket.LogicalId}-BucketEvents`);
 
-      yield* bind(bucket, {
-        queue,
-        events: props.events,
-      });
+      // Deploy-time: grant the bucket sqs:SendMessage on the queue and attach the
+      // bucket's notification config. Skipped once running inside the deployed
+      // Function (the global guard); the runtime only registers the consumer below.
+      if (!globalThis.__ALCHEMY_RUNTIME__) {
+        const events = props.events ?? ["s3:ObjectCreated:*"];
+        yield* queue.bind(`AWS.SQS.SendMessage(${bucket.LogicalId})`, {
+          policyStatements: [
+            {
+              Sid: `AllowS3EventsFrom${bucket.LogicalId}`,
+              Effect: "Allow",
+              Action: ["sqs:SendMessage"],
+              Resource: [queue.queueArn],
+              Condition: {
+                ArnEquals: {
+                  "aws:SourceArn": bucket.bucketArn,
+                },
+              },
+            },
+          ],
+        });
+        yield* bucket.bind(
+          `AWS.S3.NotificationConfiguration(${queue.LogicalId})`,
+          {
+            notificationConfiguration: {
+              QueueConfigurations: [
+                {
+                  QueueArn: queue.queueArn,
+                  Events: events,
+                },
+              ],
+            },
+          },
+        );
+      }
 
-      yield* SQS.messages(queue).subscribe((stream) =>
+      yield* SQS.consumeQueueMessages(queue, (stream) =>
         stream.pipe(
           Stream.flatMap((record) =>
             Stream.fromArray((JSON.parse(record.body) as S3.S3Event).Records),
@@ -54,47 +83,3 @@ export const S3BucketEventSource = Layer.effect(
     }) as S3.BucketEventSourceService;
   }),
 ).pipe(Layer.provideMerge(SQSQueueEventSource));
-
-export class S3BucketEventSourcePolicy extends Binding.Policy<
-  S3BucketEventSourcePolicy,
-  (
-    bucket: S3.Bucket,
-    props: {
-      queue: SQS.Queue;
-      events?: S3.S3EventType[];
-    },
-  ) => Effect.Effect<void>
->()("Process.S3BucketEventSource") {}
-
-export const S3BucketEventSourcePolicyLive =
-  /** @__PURE__ */
-  S3BucketEventSourcePolicy.layer.succeed(
-    (_ctx, bucket, { queue, events: Events = ["s3:ObjectCreated:*"] }) =>
-      Effect.all([
-        queue.bind(`AWS.SQS.SendMessage(${bucket.LogicalId})`, {
-          policyStatements: [
-            {
-              Sid: `AllowS3EventsFrom${bucket.LogicalId}`,
-              Effect: "Allow",
-              Action: ["sqs:SendMessage"],
-              Resource: [queue.queueArn],
-              Condition: {
-                ArnEquals: {
-                  "aws:SourceArn": bucket.bucketArn,
-                },
-              },
-            },
-          ],
-        }),
-        bucket.bind(`AWS.S3.NotificationConfiguration(${queue.LogicalId})`, {
-          notificationConfiguration: {
-            QueueConfigurations: [
-              {
-                QueueArn: queue.queueArn,
-                Events,
-              },
-            ],
-          },
-        }),
-      ]),
-  );

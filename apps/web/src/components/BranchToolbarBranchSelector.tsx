@@ -24,6 +24,7 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThread } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -35,6 +36,8 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchTriggerLabel,
+  resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -80,21 +83,6 @@ function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
-function getBranchTriggerLabel(input: {
-  activeWorktreePath: string | null;
-  effectiveEnvMode: "local" | "worktree";
-  resolvedActiveBranch: string | null;
-}): string {
-  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch } = input;
-  if (!resolvedActiveBranch) {
-    return "Select ref";
-  }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    return `From ${resolvedActiveBranch}`;
-  }
-  return resolvedActiveBranch;
-}
-
 export function BranchToolbarBranchSelector({
   className,
   environmentId,
@@ -128,11 +116,11 @@ export function BranchToolbarBranchSelector({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
-  const serverThread = useThread(threadRef);
-  const serverSession = serverThread?.session ?? null;
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
+  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
+  const serverSession = serverThread?.session ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
   const activeProjectRef = serverThread
@@ -243,7 +231,7 @@ export function BranchToolbarBranchSelector({
   const refs = branchRefState.refs;
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
-  const isFetchingNextPage = branchRefState.isPending && branchRefState.data !== null;
+  const isFetchingNextPage = branchRefState.isFetchingNextPage;
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
@@ -307,6 +295,29 @@ export function BranchToolbarBranchSelector({
     canonicalActiveBranch,
     (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
   );
+  const listedActiveBranch =
+    resolvedActiveBranch === null ? null : (branchByName.get(resolvedActiveBranch) ?? null);
+  const activeBranchRefQuery = useEnvironmentQuery(
+    branchCwd !== null && resolvedActiveBranch !== null
+      ? vcsEnvironment.listRefs({
+          environmentId,
+          input: {
+            cwd: branchCwd,
+            query: resolvedActiveBranch,
+            limit: 10,
+          },
+        })
+      : null,
+  );
+  const queriedActiveBranch = activeBranchRefQuery.data?.refs.find(
+    (refName) => refName.name === resolvedActiveBranch,
+  );
+  const resolvedActiveBranchIsRemote =
+    listedActiveBranch !== null
+      ? listedActiveBranch.isRemote === true
+      : queriedActiveBranch
+        ? queriedActiveBranch.isRemote === true
+        : null;
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const totalBranchCount = branchRefState.data?.totalCount ?? 0;
   const branchStatusText = isInitialBranchesLoadPending
@@ -495,19 +506,16 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   // Combobox / list plumbing
   // ---------------------------------------------------------------------------
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      setIsBranchMenuOpen(open);
-      if (!open) {
-        setBranchQuery("");
-        return;
-      }
-      branchRefState.refresh();
-    },
-    [branchRefState.refresh],
-  );
-
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
+  const previousBranchListScrollTopRef = useRef<number | null>(null);
+  const handleOpenChange = useCallback((open: boolean) => {
+    previousBranchListScrollTopRef.current = null;
+    setIsBranchMenuOpen(open);
+    if (!open) {
+      setBranchQuery("");
+    }
+  }, []);
+
   const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
   const [showBottomBranchScrollFade, setShowBottomBranchScrollFade] = useState(false);
   const fetchNextBranchPage = useCallback(() => {
@@ -518,18 +526,24 @@ export function BranchToolbarBranchSelector({
     branchRefState.loadNext();
   }, [branchRefState.loadNext, hasNextPage, isFetchingNextPage]);
   const maybeFetchNextBranchPage = useCallback(() => {
-    if (!isBranchMenuOpen || !hasNextPage || isFetchingNextPage) {
-      return;
-    }
-
     const scrollElement = branchListScrollElementRef.current;
     if (!scrollElement) {
       return;
     }
 
-    const distanceFromBottom =
-      scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
-    if (distanceFromBottom > 96) {
+    const previousScrollTop = previousBranchListScrollTopRef.current;
+    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
+    if (
+      !isBranchMenuOpen ||
+      !hasNextPage ||
+      isFetchingNextPage ||
+      !shouldLoadNextBranchPageAfterScroll({
+        previousScrollTop,
+        scrollTop: scrollElement.scrollTop,
+        scrollHeight: scrollElement.scrollHeight,
+        clientHeight: scrollElement.clientHeight,
+      })
+    ) {
       return;
     }
 
@@ -579,21 +593,21 @@ export function BranchToolbarBranchSelector({
     void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
   }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
 
-  useEffect(() => {
-    maybeFetchNextBranchPage();
-  }, [refs.length, maybeFetchNextBranchPage]);
-
-  const triggerLabel = getBranchTriggerLabel({
+  const triggerLabel = resolveBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
+    resolvedActiveBranchIsRemote,
+    startFromOrigin,
   });
 
   // PR pill shown next to the branch selector when the active branch has one.
   const branchPr = resolveThreadPr({
-    threadBranch: resolvedActiveBranch,
+    threadBranch: resolveBranchToolbarPrBranch({
+      activeThreadBranch,
+      resolvedActiveBranch,
+    }),
     gitStatus: branchStatusQuery.data ?? null,
-    hasDedicatedWorktree: activeWorktreePath !== null,
   });
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
@@ -777,14 +791,10 @@ export function BranchToolbarBranchSelector({
                 renderItem={({ item, index }) => renderPickerItem(item, index)}
                 estimatedItemSize={28}
                 drawDistance={336}
-                onEndReached={() => {
-                  if (hasNextPage && !isFetchingNextPage) {
-                    fetchNextBranchPage();
-                  }
-                }}
                 onLayout={() => {
                   updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
+                  previousBranchListScrollTopRef.current =
+                    branchListScrollElementRef.current?.scrollTop ?? null;
                 }}
                 onScroll={() => {
                   updateBranchListScrollFades();
