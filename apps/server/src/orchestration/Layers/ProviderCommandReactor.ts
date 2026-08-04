@@ -129,9 +129,13 @@ function limitFirstUserSection(section: string): string {
   )}${FIRST_USER_CONTEXT_TRUNCATION_MARKER}`;
 }
 
-function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): {
-  readonly message: string;
+function collectRecentThreadTitleContext(
+  messages: ReadonlyArray<ThreadTitleMessage>,
+  maxChars: number,
+): {
+  readonly context: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly truncated: boolean;
 } {
   let context = "";
   let truncated = false;
@@ -144,7 +148,7 @@ function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): 
     }
 
     const separator = context.length > 0 ? "\n\n" : "";
-    const available = MAX_THREAD_TITLE_CONTEXT_CHARS - context.length - separator.length;
+    const available = maxChars - context.length - separator.length;
     if (section.length > available) {
       if (available > 0) {
         context = `${section.slice(-available)}${separator}${context}`;
@@ -157,34 +161,48 @@ function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): 
     retainedAttachments.unshift(...(message.attachments ?? []));
   }
 
-  let recentContext = context;
-  const firstUserMessage = truncated
-    ? messages.find((message) => message.role === "user" && formatThreadTitleSection(message))
-    : undefined;
-  if (firstUserMessage) {
-    const firstUserSection = formatThreadTitleSection(firstUserMessage);
-    if (firstUserSection) {
-      const pinnedSection = limitFirstUserSection(firstUserSection);
-      const recentContextBudget =
-        MAX_THREAD_TITLE_CONTEXT_CHARS -
-        pinnedSection.length -
-        "\n\n".length -
-        THREAD_TITLE_CONTEXT_TRUNCATION_MARKER.length;
-      recentContext = context.slice(-recentContextBudget);
-      context = `${pinnedSection}\n\n${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${recentContext}`;
-    }
-  } else if (truncated) {
-    context = `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}`;
+  return { context, attachments: retainedAttachments, truncated };
+}
+
+function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): {
+  readonly message: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+} {
+  const recent = collectRecentThreadTitleContext(messages, MAX_THREAD_TITLE_CONTEXT_CHARS);
+  if (!recent.truncated) {
+    return {
+      message: recent.context,
+      attachments: recent.attachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    };
   }
 
-  const pinnedAttachment = firstUserMessage?.attachments?.[0];
-  const recentAttachments = retainedAttachments.filter(
-    (attachment) =>
-      attachment.id !== pinnedAttachment?.id && recentContext.includes(attachment.name),
+  const firstUserMessage = messages.find(
+    (message) => message.role === "user" && formatThreadTitleSection(message),
+  );
+  const firstUserSection = firstUserMessage
+    ? formatThreadTitleSection(firstUserMessage)
+    : undefined;
+  if (!firstUserMessage || !firstUserSection) {
+    return {
+      message: `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${recent.context}`,
+      attachments: recent.attachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    };
+  }
+
+  const pinnedSection = limitFirstUserSection(firstUserSection);
+  const recentContextBudget =
+    MAX_THREAD_TITLE_CONTEXT_CHARS -
+    pinnedSection.length -
+    "\n\n".length -
+    THREAD_TITLE_CONTEXT_TRUNCATION_MARKER.length;
+  const retainedRecent = collectRecentThreadTitleContext(messages, recentContextBudget);
+  const pinnedAttachment = firstUserMessage.attachments?.[0];
+  const recentAttachments = retainedRecent.attachments.filter(
+    (attachment) => attachment.id !== pinnedAttachment?.id,
   );
 
   return {
-    message: context,
+    message: `${pinnedSection}\n\n${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${retainedRecent.context}`,
     attachments: [
       ...(pinnedAttachment ? [pinnedAttachment] : []),
       ...recentAttachments.slice(

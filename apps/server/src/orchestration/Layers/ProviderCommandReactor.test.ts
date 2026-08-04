@@ -815,7 +815,7 @@ describe("ProviderCommandReactor", () => {
             {
               type: "image",
               id: "opening-context-image",
-              name: "opening.png",
+              name: "image.png",
               mimeType: "image/png",
               sizeBytes: 5,
             },
@@ -839,7 +839,7 @@ describe("ProviderCommandReactor", () => {
             {
               type: "image",
               id: "middle-context-image",
-              name: "middle.png",
+              name: "image.png",
               mimeType: "image/png",
               sizeBytes: 5,
             },
@@ -863,7 +863,7 @@ describe("ProviderCommandReactor", () => {
             {
               type: "image",
               id: "recent-context-image",
-              name: "recent.png",
+              name: "image.png",
               mimeType: "image/png",
               sizeBytes: 5,
             },
@@ -894,8 +894,7 @@ describe("ProviderCommandReactor", () => {
     expect(message.startsWith("USER:\nReview subagent monitoring risks.")).toBe(true);
     expect(message).toContain("[First user message truncated]");
     expect(message).toContain("[Earlier content truncated]");
-    expect(message).toContain("recent.png");
-    expect(message).not.toContain("middle.png");
+    expect(message).toContain("image.png");
     expect(message).toHaveLength(8_000);
     expect(input.attachments?.map((attachment) => attachment.id)).toEqual([
       "opening-context-image",
