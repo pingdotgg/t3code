@@ -450,6 +450,10 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   ) {
     return undefined;
   }
+  const githubCommand = (entry.rawCommand ?? entry.command)?.trim();
+  if (entry.githubActions && githubCommand) {
+    return `github-actions:${githubCommand}`;
+  }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";

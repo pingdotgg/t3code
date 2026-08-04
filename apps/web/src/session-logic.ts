@@ -878,6 +878,10 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   if (entry.toolCallId) {
     return `tool:${entry.toolCallId}`;
   }
+  const githubCommand = (entry.rawCommand ?? entry.command)?.trim();
+  if (entry.githubActions && githubCommand) {
+    return `github-actions:${githubCommand}`;
+  }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";

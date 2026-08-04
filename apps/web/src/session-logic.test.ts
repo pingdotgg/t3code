@@ -701,12 +701,15 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "github-started",
         kind: "tool.started",
+        summary: "Ran command started",
         payload: {
           itemType: "command_execution",
-          title: "Ran command",
           detail: "gh pr checks 42 --watch",
           status: "inProgress",
-          data: { toolCallId: "github-watch", githubActions },
+          data: {
+            item: { command: "gh pr checks 42 --watch" },
+            githubActions,
+          },
         },
       }),
       makeActivity({
@@ -718,7 +721,7 @@ describe("deriveWorkLogEntries", () => {
           detail: "gh pr checks 42 --watch",
           status: "completed",
           data: {
-            toolCallId: "github-watch",
+            item: { command: "gh pr checks 42 --watch" },
             githubActions: {
               ...githubActions,
               checks: [{ name: "Test", bucket: "pass", duration: "1m2s" }],

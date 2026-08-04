@@ -83,6 +83,27 @@ describe("buildThreadFeed", () => {
       ],
       activities: [
         makeActivity({
+          id: EventId.make("github-started"),
+          kind: "tool.started",
+          tone: "tool",
+          summary: "Ran command started",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            detail: "gh pr checks 42 --watch",
+            status: "inProgress",
+            data: {
+              item: { command: "gh pr checks 42 --watch" },
+              githubActions: {
+                kind: "pr-checks",
+                watching: true,
+                checks: [{ name: "Test", bucket: "pending" }],
+              },
+            },
+          },
+        }),
+        makeActivity({
           id: EventId.make("github-completed"),
           kind: "tool.completed",
           tone: "tool",
@@ -95,6 +116,7 @@ describe("buildThreadFeed", () => {
             detail: "gh pr checks 42 --watch",
             status: "completed",
             data: {
+              item: { command: "gh pr checks 42 --watch" },
               githubActions: {
                 kind: "pr-checks",
                 watching: true,
