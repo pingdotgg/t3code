@@ -116,7 +116,7 @@ describe("terminatePosixOwnedProcessTree", () => {
   });
 
   it.live("sweeps empty t3-acp sibling leases owned by dead pids only", () =>
-    Effect.gen(function* () {
+    Effect.sync(() => {
       const scratchRoot = NodePath.join(process.cwd(), "tmp");
       NodeFS.mkdirSync(scratchRoot, { recursive: true });
       const parent = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-cgroup-stale-siblings-"));
