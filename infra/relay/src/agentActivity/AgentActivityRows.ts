@@ -134,12 +134,7 @@ export const make = Effect.gen(function* () {
           updatedAt: input.state.updatedAt,
           createdAt: DateTime.formatIso(now),
         })
-        .onConflictDoUpdate({
-          target: [
-            relayAgentActivityRows.environmentId,
-            relayAgentActivityRows.environmentPublicKey,
-            relayAgentActivityRows.threadId,
-          ],
+        .onDuplicateKeyUpdate({
           set: {
             stateJson,
             updatedAt: input.state.updatedAt,
@@ -191,7 +186,7 @@ export const make = Effect.gen(function* () {
         .delete(relayAgentActivityRows)
         .where(
           and(
-            sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
+            sql`${relayAgentActivityRows.stateJson} ->> '$.phase' IN ('completed', 'failed')`,
             lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
           ),
         )

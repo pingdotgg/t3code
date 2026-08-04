@@ -4,7 +4,7 @@ import type {
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import type { SQL } from "drizzle-orm";
-import { PgDialect } from "drizzle-orm/pg-core";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -49,7 +49,7 @@ describe("LiveActivities", () => {
       const conflictConfigs: Array<{
         readonly set?: Record<string, unknown>;
       }> = [];
-      const dialect = new PgDialect();
+      const dialect = new MySqlDialect();
 
       const fakeDb = {
         update: (table: unknown) => {
@@ -78,10 +78,10 @@ describe("LiveActivities", () => {
               insertedValues.push(values);
               calls.push("insert.values");
               return {
-                onConflictDoUpdate: (config: { readonly set?: Record<string, unknown> }) => {
+                onDuplicateKeyUpdate: (config: { readonly set?: Record<string, unknown> }) => {
                   expect(config).toBeDefined();
                   conflictConfigs.push(config);
-                  calls.push("insert.onConflictDoUpdate");
+                  calls.push("insert.onDuplicateKeyUpdate");
                   return Effect.void;
                 },
               };
@@ -100,7 +100,7 @@ describe("LiveActivities", () => {
           "update.where",
           "insert",
           "insert.values",
-          "insert.onConflictDoUpdate",
+          "insert.onDuplicateKeyUpdate",
         ]);
         expect(updateSets).toEqual([
           expect.objectContaining({
@@ -111,7 +111,7 @@ describe("LiveActivities", () => {
         ]);
         expect(updateConditions.map((condition) => dialect.sqlToQuery(condition))).toEqual([
           {
-            sql: '"relay_live_activities"."activity_push_token" = $1',
+            sql: "`relay_live_activities`.`activity_push_token` = ?",
             params: ["activity-push-token"],
           },
         ]);
@@ -150,6 +150,7 @@ describe("LiveActivities", () => {
     const conflictConfigs: Array<{
       readonly set?: Record<string, unknown>;
     }> = [];
+    const dialect = new MySqlDialect();
 
     const fakeDb = {
       insert: (table: unknown) => {
@@ -158,7 +159,7 @@ describe("LiveActivities", () => {
           values: (values: Record<string, unknown>) => {
             insertedValues.push(values);
             return {
-              onConflictDoUpdate: (config: { readonly set?: Record<string, unknown> }) => {
+              onDuplicateKeyUpdate: (config: { readonly set?: Record<string, unknown> }) => {
                 conflictConfigs.push(config);
                 return Effect.void;
               },
@@ -187,10 +188,13 @@ describe("LiveActivities", () => {
       ]);
       expect(conflictConfigs[0]?.set).toEqual(
         expect.objectContaining({
-          endedAt: relayLiveActivities.endedAt,
           lastLiveActivityDeliveryAt: "2026-05-25T00:00:10.000Z",
         }),
       );
+      expect(dialect.sqlToQuery(conflictConfigs[0]?.set?.endedAt as SQL)).toEqual({
+        sql: "`relay_live_activities`.`ended_at`",
+        params: [],
+      });
     }).pipe(
       Effect.provide(
         LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
@@ -203,7 +207,7 @@ describe("LiveActivities", () => {
     const fakeDb = {
       insert: () => ({
         values: () => ({
-          onConflictDoUpdate: (config: { readonly set?: Record<string, unknown> }) => {
+          onDuplicateKeyUpdate: (config: { readonly set?: Record<string, unknown> }) => {
             conflictConfigs.push(config);
             return Effect.void;
           },
@@ -261,7 +265,7 @@ describe("LiveActivities", () => {
         set: () => ({ where: () => Effect.fail(cause) }),
       }),
       insert: () => ({
-        values: () => ({ onConflictDoUpdate: () => Effect.fail(cause) }),
+        values: () => ({ onDuplicateKeyUpdate: () => Effect.fail(cause) }),
       }),
       select: () => ({
         from: () => ({

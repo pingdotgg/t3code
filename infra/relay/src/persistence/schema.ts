@@ -6,29 +6,33 @@ import type {
 import {
   boolean,
   index,
-  integer,
-  jsonb,
-  pgTable,
+  int,
+  json,
+  mysqlTable,
   primaryKey,
   text,
   uniqueIndex,
   varchar,
-} from "drizzle-orm/pg-core";
+} from "drizzle-orm/mysql-core";
 
-export const relayMobileDevices = pgTable(
+// InnoDB cannot index TEXT columns without a prefix length, so every column
+// that participates in an index or primary key is a bounded VARCHAR here
+// (push/activity tokens, hostnames, tunnel names, environment public keys).
+
+export const relayMobileDevices = mysqlTable(
   "relay_mobile_devices",
   {
     userId: varchar("user_id", { length: 255 }).notNull(),
     deviceId: varchar("device_id", { length: 255 }).notNull(),
     label: text("label").notNull().default("iOS device"),
     platform: varchar("platform", { length: 16 }).notNull().$type<"ios">(),
-    iosMajorVersion: integer("ios_major_version").notNull(),
+    iosMajorVersion: int("ios_major_version").notNull(),
     appVersion: varchar("app_version", { length: 64 }),
     bundleId: varchar("bundle_id", { length: 255 }),
     apsEnvironment: varchar("aps_environment", { length: 16 }).$type<"sandbox" | "production">(),
-    pushToken: text("push_token"),
-    pushToStartToken: text("push_to_start_token"),
-    preferencesJson: jsonb("preferences_json").notNull().$type<RelayAgentAwarenessPreferences>(),
+    pushToken: varchar("push_token", { length: 255 }),
+    pushToStartToken: varchar("push_to_start_token", { length: 255 }),
+    preferencesJson: json("preferences_json").notNull().$type<RelayAgentAwarenessPreferences>(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
   },
@@ -39,16 +43,16 @@ export const relayMobileDevices = pgTable(
   ],
 );
 
-export const relayLiveActivities = pgTable(
+export const relayLiveActivities = mysqlTable(
   "relay_live_activities",
   {
     userId: varchar("user_id", { length: 255 }).notNull(),
     deviceId: varchar("device_id", { length: 255 }).notNull(),
-    activityPushToken: text("activity_push_token"),
+    activityPushToken: varchar("activity_push_token", { length: 255 }),
     remoteStartQueuedAt: varchar("remote_start_queued_at", { length: 64 }),
     remoteStartedAt: varchar("remote_started_at", { length: 64 }),
     endedAt: varchar("ended_at", { length: 64 }),
-    lastAggregateJson: jsonb("last_aggregate_json").$type<RelayAgentActivityAggregateState>(),
+    lastAggregateJson: json("last_aggregate_json").$type<RelayAgentActivityAggregateState>(),
     lastLiveActivityDeliveryAt: varchar("last_live_activity_delivery_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
@@ -59,13 +63,13 @@ export const relayLiveActivities = pgTable(
   ],
 );
 
-export const relayEnvironmentLinks = pgTable(
+export const relayEnvironmentLinks = mysqlTable(
   "relay_environment_links",
   {
     userId: varchar("user_id", { length: 191 }).notNull(),
     environmentId: varchar("environment_id", { length: 191 }).notNull(),
     environmentLabel: text("environment_label").notNull().default("T3 Environment"),
-    environmentPublicKey: text("environment_public_key").notNull(),
+    environmentPublicKey: varchar("environment_public_key", { length: 255 }).notNull(),
     endpointHttpBaseUrl: text("endpoint_http_base_url").notNull(),
     endpointWsBaseUrl: text("endpoint_ws_base_url").notNull(),
     endpointProviderKind: varchar("endpoint_provider_kind", { length: 32 }).notNull(),
@@ -83,14 +87,14 @@ export const relayEnvironmentLinks = pgTable(
   ],
 );
 
-export const relayManagedEndpointAllocations = pgTable(
+export const relayManagedEndpointAllocations = mysqlTable(
   "relay_managed_endpoint_allocations",
   {
     userId: varchar("user_id", { length: 191 }).notNull(),
     environmentId: varchar("environment_id", { length: 191 }).notNull(),
-    hostname: text("hostname").notNull(),
+    hostname: varchar("hostname", { length: 255 }).notNull(),
     tunnelId: varchar("tunnel_id", { length: 191 }),
-    tunnelName: text("tunnel_name").notNull(),
+    tunnelName: varchar("tunnel_name", { length: 255 }).notNull(),
     dnsRecordId: varchar("dns_record_id", { length: 191 }),
     readyAt: varchar("ready_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
@@ -103,19 +107,19 @@ export const relayManagedEndpointAllocations = pgTable(
   ],
 );
 
-export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
+export const relayManagedTunnelLimits = mysqlTable("relay_managed_tunnel_limits", {
   userId: varchar("user_id", { length: 191 }).primaryKey(),
-  maxTunnels: integer("max_tunnels").notNull(),
+  maxTunnels: int("max_tunnels").notNull(),
   createdAt: varchar("created_at", { length: 64 }).notNull(),
   updatedAt: varchar("updated_at", { length: 64 }).notNull(),
 });
 
-export const relayEnvironmentCredentials = pgTable(
+export const relayEnvironmentCredentials = mysqlTable(
   "relay_environment_credentials",
   {
     credentialId: varchar("credential_id", { length: 64 }).primaryKey(),
     environmentId: varchar("environment_id", { length: 191 }).notNull(),
-    environmentPublicKey: text("environment_public_key").notNull(),
+    environmentPublicKey: varchar("environment_public_key", { length: 255 }).notNull(),
     credentialHash: varchar("credential_hash", { length: 191 }).notNull(),
     revokedAt: varchar("revoked_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
@@ -132,13 +136,13 @@ export const relayEnvironmentCredentials = pgTable(
   ],
 );
 
-export const relayAgentActivityRows = pgTable(
+export const relayAgentActivityRows = mysqlTable(
   "relay_agent_activity_rows",
   {
     environmentId: varchar("environment_id", { length: 191 }).notNull(),
-    environmentPublicKey: text("environment_public_key").notNull(),
+    environmentPublicKey: varchar("environment_public_key", { length: 255 }).notNull(),
     threadId: varchar("thread_id", { length: 191 }).notNull(),
-    stateJson: jsonb("state_json").notNull().$type<RelayAgentActivityState>(),
+    stateJson: json("state_json").notNull().$type<RelayAgentActivityState>(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },
@@ -148,7 +152,7 @@ export const relayAgentActivityRows = pgTable(
   ],
 );
 
-export const relayDeliveryAttempts = pgTable(
+export const relayDeliveryAttempts = mysqlTable(
   "relay_delivery_attempts",
   {
     id: varchar("id", { length: 36 }).primaryKey(),
@@ -160,7 +164,7 @@ export const relayDeliveryAttempts = pgTable(
     kind: varchar("kind", { length: 64 }).notNull(),
     sourceJobId: varchar("source_job_id", { length: 64 }),
     tokenSuffix: varchar("token_suffix", { length: 16 }),
-    apnsStatus: integer("apns_status"),
+    apnsStatus: int("apns_status"),
     apnsReason: text("apns_reason"),
     apnsId: varchar("apns_id", { length: 128 }),
     transportError: text("transport_error"),
@@ -175,12 +179,12 @@ export const relayDeliveryAttempts = pgTable(
   ],
 );
 
-export const relayDpopProofs = pgTable(
+export const relayDpopProofs = mysqlTable(
   "relay_dpop_proofs",
   {
     thumbprint: varchar("thumbprint", { length: 128 }).notNull(),
     jti: varchar("jti", { length: 255 }).notNull(),
-    iat: integer("iat").notNull(),
+    iat: int("iat").notNull(),
     expiresAt: varchar("expires_at", { length: 64 }).notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },

@@ -7,9 +7,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { and, eq, exists, isNull, ne, notExists } from "drizzle-orm";
-import { QueryBuilder } from "drizzle-orm/pg-core";
+import { QueryBuilder } from "drizzle-orm/mysql-core";
 
 import * as RelayDb from "../db.ts";
+import { affectedRows } from "../persistence/mysqlResult.ts";
 import { relayEnvironmentCredentials, relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialCreatePersistenceError>()(
@@ -245,7 +246,7 @@ const make = Effect.gen(function* () {
     )(function* (input) {
       yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
       const revokedAt = DateTime.formatIso(yield* DateTime.now);
-      const rows = yield* db
+      const revoked = yield* db
         .update(relayEnvironmentCredentials)
         .set({
           revokedAt,
@@ -270,9 +271,6 @@ const make = Effect.gen(function* () {
             ),
           ),
         )
-        .returning({
-          credentialId: relayEnvironmentCredentials.credentialId,
-        })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -282,7 +280,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      return rows.length > 0;
+      return affectedRows(revoked) > 0;
     }),
   });
 });

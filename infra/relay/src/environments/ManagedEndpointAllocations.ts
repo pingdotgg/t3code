@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import * as RelayDb from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
+import { affectedRows } from "../persistence/mysqlResult.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
 
 export interface ManagedEndpointAllocation {
@@ -194,15 +195,17 @@ export const make = Effect.gen(function* () {
       input: ReserveManagedEndpointAllocationInput,
     ) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      const inserted = yield* db
+      // INSERT IGNORE swallows any unique-index conflict (allocation key,
+      // hostname, tunnel name), like the untargeted ON CONFLICT DO NOTHING
+      // did on Postgres; the read-back below resolves whichever row won.
+      yield* db
         .insert(relayManagedEndpointAllocations)
+        .ignore()
         .values({
           ...input,
           createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoNothing()
-        .returning(allocationSelection)
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -215,25 +218,23 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-      const allocation =
-        inserted[0] ??
-        (yield* db
-          .select(allocationSelection)
-          .from(relayManagedEndpointAllocations)
-          .where(whereAllocation(input))
-          .limit(1)
-          .pipe(
-            Effect.map((rows) => rows[0]),
-            Effect.mapError(
-              (cause) =>
-                new ManagedEndpointAllocationPersistenceError({
-                  operation: "reserve",
-                  stage: "database-request",
-                  ...input,
-                  cause,
-                }),
-            ),
-          ));
+      const allocation = yield* db
+        .select(allocationSelection)
+        .from(relayManagedEndpointAllocations)
+        .where(whereAllocation(input))
+        .limit(1)
+        .pipe(
+          Effect.map((rows) => rows[0]),
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointAllocationPersistenceError({
+                operation: "reserve",
+                stage: "database-request",
+                ...input,
+                cause,
+              }),
+          ),
+        );
 
       if (allocation === undefined) {
         return yield* new ManagedEndpointAllocationPersistenceError({
@@ -327,9 +328,8 @@ export const make = Effect.gen(function* () {
             eq(relayManagedEndpointAllocations.updatedAt, input.updatedAt),
           ),
         )
-        .returning({ userId: relayManagedEndpointAllocations.userId })
         .pipe(
-          Effect.map((rows) => rows.length > 0),
+          Effect.map((result) => affectedRows(result) > 0),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({
@@ -357,9 +357,8 @@ export const make = Effect.gen(function* () {
             eq(relayManagedEndpointAllocations.updatedAt, input.updatedAt),
           ),
         )
-        .returning({ userId: relayManagedEndpointAllocations.userId })
         .pipe(
-          Effect.map((rows) => rows.length > 0),
+          Effect.map((result) => affectedRows(result) > 0),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({
@@ -402,9 +401,8 @@ export const make = Effect.gen(function* () {
             eq(relayManagedEndpointAllocations.updatedAt, input.updatedAt),
           ),
         )
-        .returning({ userId: relayManagedEndpointAllocations.userId })
         .pipe(
-          Effect.map((rows) => rows.length > 0),
+          Effect.map((result) => affectedRows(result) > 0),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({

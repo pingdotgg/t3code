@@ -62,19 +62,14 @@ function makeDpopProof(input: {
 function layer(
   insert: (
     values: DpopProofInsertValues,
-  ) => Effect.Effect<ReadonlyArray<{ readonly jti: string }>, { _tag: string }>,
+  ) => Effect.Effect<{ readonly affectedRows: number }, { _tag: string }>,
 ) {
   const fakeDb = {
     insert: (table: unknown) => {
       expect(table).toBe(relayDpopProofs);
       return {
-        values: (values: DpopProofInsertValues) => ({
-          onConflictDoNothing: () => ({
-            returning: (selection: unknown) => {
-              expect(selection).toBeDefined();
-              return insert(values);
-            },
-          }),
+        ignore: () => ({
+          values: (values: DpopProofInsertValues) => insert(values),
         }),
       };
     },
@@ -88,10 +83,10 @@ function consumeEachProofOnce() {
     Effect.sync(() => {
       const key = `${values.thumbprint}:${values.jti}`;
       if (consumed.has(key)) {
-        return [];
+        return { affectedRows: 0 };
       }
       consumed.add(key);
-      return [{ jti: values.jti }];
+      return { affectedRows: 1 };
     });
 }
 

@@ -40,7 +40,9 @@ credential, or authorization behavior.
   APNs delivery, and queue processing.
 - [`src/auth`](./src/auth) contains relay token and DPoP proof handling.
 - [`src/persistence/schema.ts`](./src/persistence/schema.ts) defines persisted relay state. Keep
-  schema and migration changes together.
+  schema and migration changes together: after editing the schema, run
+  `pnpm exec drizzle-kit generate` (see [`drizzle.config.ts`](./drizzle.config.ts)) and commit the
+  new `migrations/mysql/` directory — MySQL migrations are generated manually, not by the deploy.
 
 Shared request and response schemas live in
 [`packages/contracts/src/relay.ts`](../../packages/contracts/src/relay.ts). Shared client-side relay
@@ -89,10 +91,10 @@ file from the relay directory. Runtime secrets include Clerk and APNs credential
 the configured API and tunnel DNS zones as retained Cloudflare resources. Personal stages reference
 the production-owned zones.
 
-The `prod` Alchemy stage owns the retained PlanetScale database and is the shared hosted relay for
-stable and nightly clients. Every other stage references that database and provisions an isolated
-PlanetScale branch and runtime role for local development, so deploy `prod` before creating
-developer stages:
+The `prod` Alchemy stage owns the retained PlanetScale database (Vitess/MySQL) and is the shared
+hosted relay for stable and nightly clients. Every other stage references that database and
+provisions an isolated PlanetScale branch and runtime password for local development, so deploy
+`prod` before creating developer stages:
 
 ```sh
 vp run --filter t3code-relay deploy -- --stage prod

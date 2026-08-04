@@ -8,6 +8,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 
 import * as RelayDb from "../db.ts";
+import { affectedRows } from "../persistence/mysqlResult.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
 
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedErrorClass<DeliveryAttemptRecordPersistenceError>()(
@@ -148,12 +149,14 @@ export const make = Effect.gen(function* () {
         const id = yield* crypto.randomUUIDv4;
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
+        // INSERT IGNORE: the only unique constraint a fresh UUID row can hit
+        // is idx_relay_delivery_attempts_source_job, so an ignored insert
+        // means the source job is already claimed.
         const inserted = yield* db
           .insert(relayDeliveryAttempts)
-          .values(insertValues(input, id, createdAt))
-          .onConflictDoNothing({ target: relayDeliveryAttempts.sourceJobId })
-          .returning({ id: relayDeliveryAttempts.id });
-        if (inserted.length > 0) {
+          .ignore()
+          .values(insertValues(input, id, createdAt));
+        if (affectedRows(inserted) > 0) {
           return "claimed";
         }
 
@@ -198,9 +201,8 @@ export const make = Effect.gen(function* () {
               isNull(relayDeliveryAttempts.apnsId),
               isNull(relayDeliveryAttempts.transportError),
             ),
-          )
-          .returning({ id: relayDeliveryAttempts.id });
-        return reclaimed.length > 0 ? "claimed" : "in_flight";
+          );
+        return affectedRows(reclaimed) > 0 ? "claimed" : "in_flight";
       }).pipe(
         Effect.mapError(
           (cause) =>

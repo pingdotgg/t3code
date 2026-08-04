@@ -166,8 +166,7 @@ export const make = Effect.gen(function* () {
             createdAt: updatedAt,
             updatedAt,
           })
-          .onConflictDoUpdate({
-            target: [relayLiveActivities.userId, relayLiveActivities.deviceId],
+          .onDuplicateKeyUpdate({
             set: {
               activityPushToken: registration.activityPushToken,
               remoteStartQueuedAt: null,
@@ -277,8 +276,7 @@ export const make = Effect.gen(function* () {
             createdAt: input.deliveredAt,
             updatedAt: input.deliveredAt,
           })
-          .onConflictDoUpdate({
-            target: [relayLiveActivities.userId, relayLiveActivities.deviceId],
+          .onDuplicateKeyUpdate({
             set: {
               // A delivered start begins a NEW activity generation: the stored
               // update token belongs to the previous activity (dead once a new
@@ -298,7 +296,7 @@ export const make = Effect.gen(function* () {
                   ? input.deliveredAt
                   : sql`coalesce(
                       ${relayLiveActivities.remoteStartedAt},
-                      excluded.remote_started_at
+                      values(remote_started_at)
                     )`,
               remoteStartQueuedAt: null,
               endedAt:
@@ -306,7 +304,7 @@ export const make = Effect.gen(function* () {
                   ? null
                   : input.kind === "live_activity_end"
                     ? input.deliveredAt
-                    : relayLiveActivities.endedAt,
+                    : sql`${relayLiveActivities.endedAt}`,
               lastAggregateJson: aggregateJson,
               lastLiveActivityDeliveryAt: input.deliveredAt,
               updatedAt: input.deliveredAt,
@@ -341,12 +339,11 @@ export const make = Effect.gen(function* () {
           createdAt: input.queuedAt,
           updatedAt: input.queuedAt,
         })
-        .onConflictDoUpdate({
-          target: [relayLiveActivities.userId, relayLiveActivities.deviceId],
+        .onDuplicateKeyUpdate({
           set: {
             remoteStartQueuedAt: sql`coalesce(
               ${relayLiveActivities.remoteStartQueuedAt},
-              excluded.remote_start_queued_at
+              values(remote_start_queued_at)
             )`,
             endedAt: null,
             updatedAt: input.queuedAt,

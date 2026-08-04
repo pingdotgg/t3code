@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@clerk/backend": "catalog:",
+    "@effect/sql-mysql2": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",

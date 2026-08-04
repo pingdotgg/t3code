@@ -60,22 +60,16 @@ describe("DeliveryAttempts", () => {
 
   it.effect("claims signed queue source jobs before APNs delivery", () => {
     const insertedValues: Array<Record<string, unknown>> = [];
-    const conflictTargets: Array<unknown> = [];
     const fakeDb = {
       insert: (table: unknown) => {
         expect(table).toBe(relayDeliveryAttempts);
         return {
-          values: (values: Record<string, unknown>) => {
-            insertedValues.push(values);
-            return {
-              onConflictDoNothing: (config: { readonly target: unknown }) => {
-                conflictTargets.push(config.target);
-                return {
-                  returning: () => Effect.succeed([{ id: values.id }]),
-                };
-              },
-            };
-          },
+          ignore: () => ({
+            values: (values: Record<string, unknown>) => {
+              insertedValues.push(values);
+              return Effect.succeed({ affectedRows: 1 });
+            },
+          }),
         };
       },
     } as unknown as RelayDb.RelayDb["Service"];
@@ -93,7 +87,6 @@ describe("DeliveryAttempts", () => {
       });
 
       expect(claimed).toBe("claimed");
-      expect(conflictTargets).toEqual([relayDeliveryAttempts.sourceJobId]);
       expect(insertedValues[0]).toMatchObject({
         kind: "push_notification",
         sourceJobId: "job-1",
@@ -113,10 +106,8 @@ describe("DeliveryAttempts", () => {
   it.effect("reports completed source jobs when the durable claim already exists", () => {
     const fakeDb = {
       insert: () => ({
-        values: () => ({
-          onConflictDoNothing: () => ({
-            returning: () => Effect.succeed([]),
-          }),
+        ignore: () => ({
+          values: () => Effect.succeed({ affectedRows: 0 }),
         }),
       }),
       select: () => ({
@@ -163,10 +154,8 @@ describe("DeliveryAttempts", () => {
   it.effect("reports in-flight source jobs while an active claim lease exists", () => {
     const fakeDb = {
       insert: () => ({
-        values: () => ({
-          onConflictDoNothing: () => ({
-            returning: () => Effect.succeed([]),
-          }),
+        ignore: () => ({
+          values: () => Effect.succeed({ affectedRows: 0 }),
         }),
       }),
       select: () => ({
@@ -214,10 +203,8 @@ describe("DeliveryAttempts", () => {
     const updatedValues: Array<Record<string, unknown>> = [];
     const fakeDb = {
       insert: () => ({
-        values: () => ({
-          onConflictDoNothing: () => ({
-            returning: () => Effect.succeed([]),
-          }),
+        ignore: () => ({
+          values: () => Effect.succeed({ affectedRows: 0 }),
         }),
       }),
       select: () => ({
@@ -240,9 +227,7 @@ describe("DeliveryAttempts", () => {
         set: (values: Record<string, unknown>) => {
           updatedValues.push(values);
           return {
-            where: () => ({
-              returning: () => Effect.succeed([{ id: "attempt-1" }]),
-            }),
+            where: () => Effect.succeed({ affectedRows: 1 }),
           };
         },
       }),
@@ -325,14 +310,10 @@ describe("DeliveryAttempts", () => {
     const cause = new Error("database unavailable");
     const fakeDb = {
       insert: () => ({
-        values: (values: Record<string, unknown>) =>
-          values.kind === "record"
-            ? Effect.fail(cause)
-            : {
-                onConflictDoNothing: () => ({
-                  returning: () => Effect.fail(cause),
-                }),
-              },
+        values: () => Effect.fail(cause),
+        ignore: () => ({
+          values: () => Effect.fail(cause),
+        }),
       }),
       update: () => ({
         set: () => ({

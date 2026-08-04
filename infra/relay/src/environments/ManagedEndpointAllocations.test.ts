@@ -19,9 +19,7 @@ describe("ManagedEndpointAllocations", () => {
           set: (values: { readonly updatedAt: string }) => {
             claimedAt = values.updatedAt;
             return {
-              where: () => ({
-                returning: () => Effect.succeed([{ userId: "user-1" }]),
-              }),
+              where: () => Effect.succeed({ affectedRows: 1 }),
             };
           },
         };
@@ -46,9 +44,7 @@ describe("ManagedEndpointAllocations", () => {
       delete: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          where: () => ({
-            returning: () => Effect.succeed([]),
-          }),
+          where: () => Effect.succeed({ affectedRows: 0 }),
         };
       },
     } as unknown as RelayDb.RelayDb["Service"];
@@ -102,10 +98,8 @@ describe("ManagedEndpointAllocations", () => {
       insert: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          values: () => ({
-            onConflictDoNothing: () => ({
-              returning: () => Effect.succeed([]),
-            }),
+          ignore: () => ({
+            values: () => Effect.succeed({ affectedRows: 0 }),
           }),
         };
       },

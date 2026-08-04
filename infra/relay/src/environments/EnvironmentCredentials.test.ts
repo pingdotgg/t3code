@@ -1,6 +1,6 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { PgDialect } from "drizzle-orm/pg-core";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -87,11 +87,11 @@ describe("EnvironmentCredentials", () => {
       expect(error).not.toHaveProperty("token");
       expect(whereConditions).toHaveLength(1);
 
-      const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
+      const query = new MySqlDialect().sqlToQuery(whereConditions[0] as never);
       expect(query.sql).toContain("exists");
-      expect(query.sql).toContain('"relay_environment_links"."environment_id"');
-      expect(query.sql).toContain('"relay_environment_links"."environment_public_key"');
-      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
+      expect(query.sql).toContain("`relay_environment_links`.`environment_id`");
+      expect(query.sql).toContain("`relay_environment_links`.`environment_public_key`");
+      expect(query.sql).toContain("`relay_environment_links`.`revoked_at` is null");
     }).pipe(
       Effect.provide(
         EnvironmentCredentials.layer.pipe(
@@ -168,13 +168,13 @@ describe("EnvironmentCredentials", () => {
           staleCredentialRevocations[0]?.values.updatedAt,
         );
 
-        const query = new PgDialect().sqlToQuery(staleCredentialRevocations[0]?.condition as never);
-        expect(query.sql).toContain('"relay_environment_credentials"."environment_id" = $1');
-        expect(query.sql).toContain(
-          '"relay_environment_credentials"."environment_public_key" = $2',
+        const query = new MySqlDialect().sqlToQuery(
+          staleCredentialRevocations[0]?.condition as never,
         );
-        expect(query.sql).toContain('"relay_environment_credentials"."credential_id" <> $3');
-        expect(query.sql).toContain('"relay_environment_credentials"."revoked_at" is null');
+        expect(query.sql).toContain("`relay_environment_credentials`.`environment_id` = ?");
+        expect(query.sql).toContain("`relay_environment_credentials`.`environment_public_key` = ?");
+        expect(query.sql).toContain("`relay_environment_credentials`.`credential_id` <> ?");
+        expect(query.sql).toContain("`relay_environment_credentials`.`revoked_at` is null");
         expect(query.params).toEqual(["env_test", "environment-public-key", credentialId]);
       }).pipe(
         Effect.provide(
@@ -199,12 +199,7 @@ describe("EnvironmentCredentials", () => {
             return {
               where: (condition: unknown) => {
                 whereConditions.push(condition);
-                return {
-                  returning: (selection: unknown) => {
-                    expect(selection).toBeDefined();
-                    return Effect.succeed([{ credentialId: "credential-1" }]);
-                  },
-                };
+                return Effect.succeed({ affectedRows: 1 });
               },
             };
           },
@@ -224,14 +219,14 @@ describe("EnvironmentCredentials", () => {
       expect(updateValues[0]?.revokedAt).toEqual(updateValues[0]?.updatedAt);
       expect(whereConditions).toHaveLength(1);
 
-      const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
-      expect(query.sql).toContain('"relay_environment_credentials"."environment_id" = $1');
-      expect(query.sql).toContain('"relay_environment_credentials"."environment_public_key" = $2');
-      expect(query.sql).toContain('"relay_environment_credentials"."revoked_at" is null');
+      const query = new MySqlDialect().sqlToQuery(whereConditions[0] as never);
+      expect(query.sql).toContain("`relay_environment_credentials`.`environment_id` = ?");
+      expect(query.sql).toContain("`relay_environment_credentials`.`environment_public_key` = ?");
+      expect(query.sql).toContain("`relay_environment_credentials`.`revoked_at` is null");
       expect(query.sql).toContain("not exists");
-      expect(query.sql).toContain('"relay_environment_links"."environment_id" = $3');
-      expect(query.sql).toContain('"relay_environment_links"."environment_public_key" = $4');
-      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
+      expect(query.sql).toContain("`relay_environment_links`.`environment_id` = ?");
+      expect(query.sql).toContain("`relay_environment_links`.`environment_public_key` = ?");
+      expect(query.sql).toContain("`relay_environment_links`.`revoked_at` is null");
       expect(query.params).toEqual([
         "env_test",
         "environment-public-key",

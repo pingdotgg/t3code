@@ -1,7 +1,7 @@
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import type { SQL } from "drizzle-orm";
-import { PgDialect } from "drizzle-orm/pg-core";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -35,7 +35,7 @@ describe("Devices", () => {
     const updateSets: Array<Record<string, unknown>> = [];
     const updateConditions: Array<SQL> = [];
     const insertedValues: Array<Record<string, unknown>> = [];
-    const dialect = new PgDialect();
+    const dialect = new MySqlDialect();
 
     const fakeDb = {
       update: (table: unknown) => {
@@ -64,9 +64,9 @@ describe("Devices", () => {
             insertedValues.push(values);
             calls.push("insert.values");
             return {
-              onConflictDoUpdate: (config: unknown) => {
+              onDuplicateKeyUpdate: (config: unknown) => {
                 expect(config).toBeDefined();
-                calls.push("insert.onConflictDoUpdate");
+                calls.push("insert.onDuplicateKeyUpdate");
                 return Effect.void;
               },
             };
@@ -88,7 +88,7 @@ describe("Devices", () => {
         "update.where",
         "insert",
         "insert.values",
-        "insert.onConflictDoUpdate",
+        "insert.onDuplicateKeyUpdate",
       ]);
       expect(updateSets).toEqual([
         expect.objectContaining({ pushToken: null }),
@@ -96,11 +96,11 @@ describe("Devices", () => {
       ]);
       expect(updateConditions.map((condition) => dialect.sqlToQuery(condition))).toEqual([
         {
-          sql: '"relay_mobile_devices"."push_token" = $1',
+          sql: "`relay_mobile_devices`.`push_token` = ?",
           params: ["apns-device-token"],
         },
         {
-          sql: '"relay_mobile_devices"."push_to_start_token" = $1',
+          sql: "`relay_mobile_devices`.`push_to_start_token` = ?",
           params: ["push-to-start-token"],
         },
       ]);
@@ -122,7 +122,7 @@ describe("Devices", () => {
   it.effect("unregisters APNs state only for the current user device", () => {
     const calls: Array<string> = [];
     const deleteConditions: Array<SQL> = [];
-    const dialect = new PgDialect();
+    const dialect = new MySqlDialect();
 
     const fakeDb = {
       delete: (table: unknown) => {
@@ -151,14 +151,14 @@ describe("Devices", () => {
       expect(deleteConditions.map((condition) => dialect.sqlToQuery(condition))).toEqual([
         {
           sql:
-            '(("relay_live_activities"."user_id" = $1) and ' +
-            '("relay_live_activities"."device_id" = $2))',
+            "((`relay_live_activities`.`user_id` = ?) and " +
+            "(`relay_live_activities`.`device_id` = ?))",
           params: ["user-2", "device-1"],
         },
         {
           sql:
-            '(("relay_mobile_devices"."user_id" = $1) and ' +
-            '("relay_mobile_devices"."device_id" = $2))',
+            "((`relay_mobile_devices`.`user_id` = ?) and " +
+            "(`relay_mobile_devices`.`device_id` = ?))",
           params: ["user-2", "device-1"],
         },
       ]);
@@ -168,7 +168,7 @@ describe("Devices", () => {
   });
 
   it.effect("lists safe notification state without exposing APNs tokens", () => {
-    const dialect = new PgDialect();
+    const dialect = new MySqlDialect();
     let condition: SQL | null = null;
     const fakeDb = {
       select: () => ({
@@ -200,7 +200,7 @@ describe("Devices", () => {
 
       expect(condition).not.toBeNull();
       expect(dialect.sqlToQuery(condition!)).toEqual({
-        sql: '"relay_mobile_devices"."user_id" = $1',
+        sql: "`relay_mobile_devices`.`user_id` = ?",
         params: ["user-2"],
       });
       expect(listed).toEqual([

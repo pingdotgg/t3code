@@ -138,23 +138,23 @@ export const make = Effect.gen(function* () {
           createdAt: updatedAt,
           updatedAt,
         })
-        .onConflictDoUpdate({
-          target: [relayMobileDevices.userId, relayMobileDevices.deviceId],
+        .onDuplicateKeyUpdate({
           set: {
             platform: registration.platform,
             label: registration.label,
             iosMajorVersion: registration.iosMajorVersion,
             appVersion: registration.appVersion ?? null,
             // Preserve routing from newer app builds when an older build
-            // re-registers without these fields.
-            bundleId: sql`coalesce(excluded.bundle_id, ${relayMobileDevices.bundleId})`,
+            // re-registers without these fields. `values(col)` is MySQL's
+            // spelling of Postgres' `excluded.col`.
+            bundleId: sql`coalesce(values(bundle_id), ${relayMobileDevices.bundleId})`,
             apsEnvironment: sql`coalesce(
-                excluded.aps_environment,
+                values(aps_environment),
                 ${relayMobileDevices.apsEnvironment}
               )`,
-            pushToken: sql`coalesce(excluded.push_token, ${relayMobileDevices.pushToken})`,
+            pushToken: sql`coalesce(values(push_token), ${relayMobileDevices.pushToken})`,
             pushToStartToken: sql`coalesce(
-                excluded.push_to_start_token,
+                values(push_to_start_token),
                 ${relayMobileDevices.pushToStartToken}
               )`,
             preferencesJson: registration.preferences,

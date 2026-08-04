@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import { and, eq, isNull, or } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
+import { affectedRows } from "../persistence/mysqlResult.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
@@ -191,8 +192,7 @@ const make = Effect.gen(function* () {
           createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoUpdate({
-          target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
+        .onDuplicateKeyUpdate({
           set: {
             environmentPublicKey: proof.environmentPublicKey,
             environmentLabel: proof.descriptor.label,
@@ -401,7 +401,7 @@ const make = Effect.gen(function* () {
         "relay.environment_id": input.environmentId,
       });
       const revokedAt = DateTime.formatIso(yield* DateTime.now);
-      const rows = yield* db
+      const revoked = yield* db
         .update(relayEnvironmentLinks)
         .set({
           revokedAt,
@@ -414,7 +414,6 @@ const make = Effect.gen(function* () {
             isNull(relayEnvironmentLinks.revokedAt),
           ),
         )
-        .returning({ environmentId: relayEnvironmentLinks.environmentId })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -425,7 +424,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      return rows.length > 0;
+      return affectedRows(revoked) > 0;
     }),
   });
 });

@@ -24,7 +24,7 @@ describe("AgentActivityRows", () => {
     const failingDb = {
       insert: () => ({
         values: () => ({
-          onConflictDoUpdate: () => Effect.fail(cause),
+          onDuplicateKeyUpdate: () => Effect.fail(cause),
         }),
       }),
       delete: () => ({

@@ -23,19 +23,13 @@ describe("DpopProofReplay", () => {
         expect(table).toBe(relayDpopProofs);
         calls.push("insert");
         return {
-          values: (values: (typeof insertedValues)[number]) => {
-            insertedValues.push(values);
-            calls.push("insert.values");
+          ignore: () => {
+            calls.push("insert.ignore");
             return {
-              onConflictDoNothing: () => {
-                calls.push("insert.onConflictDoNothing");
-                return {
-                  returning: (selection: unknown) => {
-                    expect(selection).toBeDefined();
-                    calls.push("insert.returning");
-                    return Effect.succeed([{ jti: values.jti }]);
-                  },
-                };
+              values: (values: (typeof insertedValues)[number]) => {
+                insertedValues.push(values);
+                calls.push("insert.values");
+                return Effect.succeed({ affectedRows: 1 });
               },
             };
           },
@@ -53,12 +47,7 @@ describe("DpopProofReplay", () => {
       });
 
       expect(consumed).toBe(true);
-      expect(calls).toEqual([
-        "insert",
-        "insert.values",
-        "insert.onConflictDoNothing",
-        "insert.returning",
-      ]);
+      expect(calls).toEqual(["insert", "insert.ignore", "insert.values"]);
       expect(insertedValues).toMatchObject([
         {
           thumbprint: "thumbprint",

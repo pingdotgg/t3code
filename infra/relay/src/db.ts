@@ -1,10 +1,9 @@
-import type { PgClient } from "@effect/sql-pg/PgClient";
+import type { MysqlClient } from "@effect/sql-mysql2/MysqlClient";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
 import * as Planetscale from "alchemy/Planetscale";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
-import type { EffectPgDatabase } from "drizzle-orm/effect-postgres";
+import type { EffectMysql2Database } from "drizzle-orm/effect-mysql2";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,8 +12,8 @@ import { relayDatabaseMode } from "./dbConfig.ts";
 
 export class RelayDb extends Context.Service<
   RelayDb,
-  EffectPgDatabase & {
-    readonly $client: PgClient;
+  EffectMysql2Database & {
+    readonly $client: MysqlClient;
   }
 >()("t3code-relay/db/RelayDb") {}
 
@@ -35,70 +34,79 @@ export class RelayTransactions extends Context.Service<
   );
 }
 
+// Unlike Postgres, alchemy has no automatic Drizzle.Schema generation for
+// MySQL (drizzle-kit exposes no programmatic mysql API): migrations are
+// generated manually with `pnpm exec drizzle-kit generate` (drizzle.config.ts)
+// and checked in; deploys apply whatever is committed here.
+const mysqlMigrationsDir = "migrations/mysql";
+
 export const PlanetscaleDatabase = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
-  const schema = yield* Drizzle.Schema("RelaySchema", {
-    schema: "./src/persistence/schema.ts",
-    out: "./migrations/postgres",
-    dialect: "postgres",
-  });
-
   const mode = relayDatabaseMode(stage);
 
-  // Phase 1 of the Vitess migration
-  // (docs/operations/relay-postgres-to-vitess-migration.md): provision the
-  // MySQL target and apply its checked-in baseline schema while the worker
-  // still runs on Postgres, so DMS can replicate data into it ahead of the
-  // cutover deploy. Deliberately prod-only: nothing speaks MySQL until the
-  // cutover PR, which takes over this resource id and adds the per-stage
-  // MySQLBranch/MySQLPassword mirror of the Postgres branch-per-stage
-  // setup below for developer stages.
+  // The retired Postgres database stays in the stack (prod only) until the
+  // Vitess cutover has soaked: prod must own BOTH databases while DMS
+  // replicates data across and while rollback (redeploying the previous
+  // commit, which flips Hyperdrive back to this role's origin) is still on
+  // the table. The migrations dir is the frozen checked-in history — every
+  // file is already recorded in relay_migrations, so deploys no-op against
+  // it. Remove this block together with migrations/postgres once the old
+  // database is decommissioned
+  // (docs/operations/relay-postgres-to-vitess-migration.md).
   if (mode === "shared-database") {
-    yield* Planetscale.MySQLDatabase("RelayMysqlDatabase", {
-      name: "t3coderelay-vitess",
+    const postgresDatabase = yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
+      name: "t3coderelay",
       region: { slug: "us-west" },
       clusterSize: "PS_20",
-      migrationsDir: "migrations/mysql",
+      migrationsDir: "migrations/postgres",
       migrationsTable: "relay_migrations",
       replicas: 2,
     }).pipe(RemovalPolicy.retain());
+    yield* Planetscale.PostgresRole("RelayPostgresRuntimeRole", {
+      database: postgresDatabase,
+      inheritedRoles: ["pg_read_all_data", "pg_write_all_data"],
+    });
   }
 
   const database =
     mode === "shared-database"
-      ? yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
-          name: "t3coderelay",
+      ? // Same resource + props as the provisioning PR that created this
+        // database (with its baseline already applied) ahead of the cutover,
+        // so this deploy no-ops on the database itself.
+        yield* Planetscale.MySQLDatabase("RelayMysqlDatabase", {
+          name: "t3coderelay-vitess",
           region: { slug: "us-west" },
           clusterSize: "PS_20",
-          migrationsDir: schema.out,
+          migrationsDir: mysqlMigrationsDir,
           migrationsTable: "relay_migrations",
           replicas: 2,
         }).pipe(RemovalPolicy.retain())
-      : yield* Planetscale.PostgresDatabase.ref("RelayPostgresDatabase", {
+      : yield* Planetscale.MySQLDatabase.ref("RelayMysqlDatabase", {
           stage: "prod",
         });
   const branch =
     mode === "stage-branch"
-      ? yield* Planetscale.PostgresBranch("RelayPostgresBranch", {
+      ? yield* Planetscale.MySQLBranch("RelayMysqlBranch", {
           database,
-          migrationsDir: schema.out,
+          isProduction: false,
+          migrationsDir: mysqlMigrationsDir,
           migrationsTable: "relay_migrations",
         })
       : undefined;
 
-  const runtimeRole = yield* Planetscale.PostgresRole("RelayPostgresRuntimeRole", {
+  const runtimePassword = yield* Planetscale.MySQLPassword("RelayMysqlRuntimePassword", {
     database,
     ...(branch ? { branch } : {}),
-    inheritedRoles: ["pg_read_all_data", "pg_write_all_data"],
+    role: "readwriter",
   });
 
-  return { branch, database, runtimeRole };
+  return { branch, database, runtimePassword };
 });
 
 export const RelayHyperdrive = Effect.gen(function* () {
-  const { runtimeRole } = yield* PlanetscaleDatabase;
+  const { runtimePassword } = yield* PlanetscaleDatabase;
   return yield* Cloudflare.Hyperdrive.Connection("RelayHyperdrive", {
-    origin: runtimeRole.origin,
+    origin: runtimePassword.origin,
     caching: {
       disabled: true,
     },

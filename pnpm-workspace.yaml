@@ -35,6 +35,7 @@ catalog:
   "@effect/platform-bun": 4.0.0-beta.102
   "@effect/platform-node": 4.0.0-beta.102
   "@effect/platform-node-shared": 4.0.0-beta.102
+  "@effect/sql-mysql2": 4.0.0-beta.102
   "@effect/sql-pg": 4.0.0-beta.102
   "@effect/sql-sqlite-bun": 4.0.0-beta.102
   "@effect/tsgo": 0.13.2
@@ -69,6 +70,7 @@ minimumReleaseAgeExclude:
   - "@effect/platform-bun@4.0.0-beta.102"
   - "@effect/platform-node-shared@4.0.0-beta.102"
   - "@effect/platform-node@4.0.0-beta.102"
+  - "@effect/sql-mysql2@4.0.0-beta.102"
   - "@effect/sql-pg@4.0.0-beta.102"
   - "@effect/sql-sqlite-bun@4.0.0-beta.102"
   - "@effect/vitest@4.0.0-beta.102"
@@ -93,6 +95,7 @@ overrides:
   "@effect/platform-bun": "catalog:"
   "@effect/platform-node": "catalog:"
   "@effect/platform-node-shared": "catalog:"
+  "@effect/sql-mysql2": "catalog:"
   "@effect/sql-pg": "catalog:"
   "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"

@@ -8,6 +8,7 @@ import { lt } from "drizzle-orm";
 
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as RelayDb from "../db.ts";
+import { affectedRows } from "../persistence/mysqlResult.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
 export class DpopProofReplayPersistenceError extends Schema.TaggedErrorClass<DpopProofReplayPersistenceError>()(
@@ -55,6 +56,7 @@ const make = Effect.gen(function* () {
       const createdAt = DateTime.formatIso(yield* DateTime.now);
       const inserted = yield* db
         .insert(relayDpopProofs)
+        .ignore()
         .values({
           thumbprint: input.thumbprint,
           jti: input.jti,
@@ -62,8 +64,6 @@ const make = Effect.gen(function* () {
           expiresAt: DateTime.formatIso(input.expiresAt),
           createdAt,
         })
-        .onConflictDoNothing()
-        .returning({ jti: relayDpopProofs.jti })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -76,7 +76,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      return inserted.length > 0;
+      return affectedRows(inserted) > 0;
     },
   );
 
