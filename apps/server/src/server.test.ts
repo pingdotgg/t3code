@@ -2,7 +2,8 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as NodeURL from "node:url";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   AuthAccessTokenType,
@@ -16,6 +17,10 @@ import {
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
+  OrchestrationShellSnapshot,
+  type OrchestrationShellStreamItem,
+  OrchestrationThreadDetailSnapshot,
+  type OrchestrationThreadStreamItem,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
@@ -41,6 +46,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -52,6 +58,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -70,6 +78,24 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationShellSnapshot),
+);
+const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
+);
+
+const collectQueueUntil = Effect.fn("TransferBudget.collectQueueUntil")(function* <A>(
+  queue: Queue.Queue<A>,
+  predicate: (value: A) => boolean,
+) {
+  const values: A[] = [];
+  while (true) {
+    const value = yield* Queue.take(queue);
+    values.push(value);
+    if (predicate(value)) return values;
+  }
+});
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
@@ -122,6 +148,29 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as Data from "effect/Data";
+
+import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
+import {
+  countingWsRpcProtocolLayer,
+  makeCountingWsRpcClient,
+  makeWebSocketTransferRecorder,
+  measureHttpGet,
+  transferDelta,
+} from "../integration/NetworkTransferMeasurement.integration.ts";
+import {
+  expectedMeasuredAssistantText,
+  queueMeasuredTransferTurn,
+  seedTransferBudgetHistory,
+  TRANSFER_MEASURED_TURN_INDEX,
+  TRANSFER_THREAD_ID,
+  transferModelSelection,
+  waitForTurnQuiesced,
+} from "../integration/TransferBudgetScenario.integration.ts";
+import {
+  formatTransferBudgetReport,
+  type TransferBudgetRun,
+  transferBudgetViolations,
+} from "../integration/TransferBudgetReport.integration.ts";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -549,9 +598,12 @@ const buildAppUnderTest = (options?: {
         ),
       ),
     );
+    const serviceLauncherClientLayer = ServiceLauncherClient.layer.pipe(
+      Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
+    );
 
     const servedRoutesLayer = HttpRouter.serve(
-      makeRoutesLayer.pipe(Layer.provide(ServiceLauncherClient.layer)),
+      makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
       {
         disableListenLog: true,
         disableLogger: true,
@@ -1318,6 +1370,28 @@ const getWsServerUrl = (
       yield* getAuthenticatedSessionCookieHeader(options?.credential),
     );
   });
+
+// Mirrors NodeHttpServer.layerTest, which does not expose server options,
+// with the production `websocket: { perMessageDeflate: true }` setting.
+const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
+  Layer.provide(
+    Layer.fresh(FetchHttpClient.layer).pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit)({ keepalive: false })),
+    ),
+  ),
+  Layer.provideMerge(
+    Layer.unwrap(
+      Effect.map(
+        Effect.promise(() => import("node:http")),
+        (NodeHttp) =>
+          NodeHttpServer.layer(NodeHttp.createServer, {
+            port: 0,
+            websocket: { perMessageDeflate: true },
+          }),
+      ),
+    ),
+  ),
+);
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("parks HTTP ingress until command readiness", () =>
@@ -3217,28 +3291,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  // Mirrors NodeHttpServer.layerTest, which does not expose server options,
-  // with the production `websocket: { perMessageDeflate: true }` setting.
-  const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
-    Layer.provide(
-      Layer.fresh(FetchHttpClient.layer).pipe(
-        Layer.provide(Layer.succeed(FetchHttpClient.RequestInit)({ keepalive: false })),
-      ),
-    ),
-    Layer.provideMerge(
-      Layer.unwrap(
-        Effect.map(
-          Effect.promise(() => import("node:http")),
-          (NodeHttp) =>
-            NodeHttpServer.layer(NodeHttp.createServer, {
-              port: 0,
-              websocket: { perMessageDeflate: true },
-            }),
-        ),
-      ),
-    ),
   );
 
   it.effect("negotiates permessage-deflate with clients that offer it", () =>
@@ -7839,3 +7891,179 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });
+
+it.live("reports basic-use HTTP and WebSocket transfer budgets", () =>
+  Effect.gen(function* () {
+    const providers = [
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claudeAgent"),
+    ] as const;
+    const staticDir = NodeURL.fileURLToPath(new URL("../../web", import.meta.url));
+
+    const runs = yield* Effect.forEach(
+      providers,
+      (provider) =>
+        Effect.acquireUseRelease(
+          makeOrchestrationIntegrationHarness({ provider }),
+          (harness) =>
+            Effect.gen(function* () {
+              yield* seedTransferBudgetHistory(harness, provider);
+              yield* buildAppUnderTest({
+                config: { staticDir },
+                layers: {
+                  orchestrationEngine: harness.engine,
+                  projectionSnapshotQuery: harness.snapshotQuery,
+                },
+              });
+
+              const baseUrl = yield* getHttpServerUrl();
+              const cookie = yield* getAuthenticatedSessionCookieHeader();
+              const document = yield* measureHttpGet({ url: `${baseUrl}/` });
+              assert.equal(document.status, 200);
+
+              const recorder = makeWebSocketTransferRecorder();
+              const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+              const protocolLayer = countingWsRpcProtocolLayer({
+                url: wsUrl,
+                cookie,
+                recorder,
+              });
+
+              return yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const client = yield* makeCountingWsRpcClient;
+                  yield* client[WS_METHODS.serverGetConfig]({});
+
+                  const configEvents = yield* Queue.unbounded<unknown>();
+                  yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(
+                    Stream.runForEach((event) =>
+                      Queue.offer(configEvents, event).pipe(Effect.asVoid),
+                    ),
+                    Effect.forkScoped,
+                  );
+                  yield* Queue.take(configEvents);
+
+                  const shellSnapshot = yield* measureHttpGet({
+                    url: `${baseUrl}/api/orchestration/shell`,
+                    headers: { cookie },
+                  });
+                  assert.equal(shellSnapshot.status, 200);
+                  assert.equal(shellSnapshot.contentEncoding, "gzip");
+                  const decodedShell = yield* decodeTransferShellSnapshot(
+                    Buffer.from(shellSnapshot.decodedBody).toString("utf8"),
+                  );
+
+                  const shellItems = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+                  yield* client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+                    afterSequence: decodedShell.snapshotSequence,
+                    requestCompletionMarker: true,
+                  }).pipe(
+                    Stream.runForEach((item) => Queue.offer(shellItems, item).pipe(Effect.asVoid)),
+                    Effect.forkScoped,
+                  );
+                  const initialShellItems = yield* collectQueueUntil(
+                    shellItems,
+                    (item) => item.kind === "synchronized",
+                  );
+                  assert.isFalse(initialShellItems.some((item) => item.kind === "snapshot"));
+
+                  const threadSnapshot = yield* measureHttpGet({
+                    url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}`,
+                    headers: { cookie },
+                  });
+                  assert.equal(threadSnapshot.status, 200);
+                  assert.equal(threadSnapshot.contentEncoding, "gzip");
+                  const decodedThread = yield* decodeTransferThreadSnapshot(
+                    Buffer.from(threadSnapshot.decodedBody).toString("utf8"),
+                  );
+                  assert.equal(decodedThread.thread.messages.length, 12);
+
+                  const threadItems = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                  yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                    threadId: TRANSFER_THREAD_ID,
+                    afterSequence: decodedThread.snapshotSequence,
+                    requestCompletionMarker: true,
+                  }).pipe(
+                    Stream.runForEach((item) => Queue.offer(threadItems, item).pipe(Effect.asVoid)),
+                    Effect.forkScoped,
+                  );
+                  const initialThreadItems = yield* collectQueueUntil(
+                    threadItems,
+                    (item) => item.kind === "synchronized",
+                  );
+                  assert.isFalse(initialThreadItems.some((item) => item.kind === "snapshot"));
+                  assert.include(recorder.negotiatedExtensions(), "permessage-deflate");
+
+                  const coldOpenWebSocket = recorder.totals();
+                  yield* queueMeasuredTransferTurn(harness, provider);
+                  const turnStartTotals = recorder.totals();
+                  yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "thread.turn.start",
+                    commandId: CommandId.make(`transfer:${provider}:measured-turn`),
+                    threadId: TRANSFER_THREAD_ID,
+                    message: {
+                      messageId: MessageId.make("transfer-user-measured"),
+                      role: "user",
+                      text: "Measure the client-bound transfer for this turn.",
+                      attachments: [],
+                    },
+                    modelSelection: transferModelSelection(provider),
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    createdAt: "2026-06-01T00:06:00.000Z",
+                  });
+                  yield* waitForTurnQuiesced(harness, TRANSFER_MEASURED_TURN_INDEX + 1);
+                  const finalSequence = yield* harness.engine.latestSequence;
+
+                  yield* collectQueueUntil(
+                    threadItems,
+                    (item) => item.kind === "event" && item.event.sequence >= finalSequence,
+                  );
+                  yield* collectQueueUntil(
+                    shellItems,
+                    (item) =>
+                      item.kind !== "snapshot" &&
+                      item.kind !== "synchronized" &&
+                      item.sequence >= finalSequence,
+                  );
+                  const measuredTurnWebSocket = transferDelta(turnStartTotals, recorder.totals());
+
+                  const finalThreadSnapshot = yield* harness.snapshotQuery
+                    .getThreadDetailSnapshot(TRANSFER_THREAD_ID)
+                    .pipe(Effect.map(Option.getOrThrow));
+                  const finalAssistant = finalThreadSnapshot.thread.messages.findLast(
+                    (message) => message.role === "assistant",
+                  );
+                  assert.equal(finalAssistant?.text, expectedMeasuredAssistantText(provider));
+                  assert.equal(finalAssistant?.streaming, false);
+                  assert.equal(finalThreadSnapshot.thread.session?.status, "ready");
+                  assert.equal(finalThreadSnapshot.thread.checkpoints.length, 7);
+
+                  return {
+                    provider,
+                    document,
+                    shellSnapshot,
+                    threadSnapshot,
+                    coldOpenWebSocket,
+                    measuredTurnWebSocket,
+                  } satisfies TransferBudgetRun;
+                }).pipe(Effect.provide(protocolLayer)),
+              );
+            }),
+          (harness) => harness.dispose,
+        ).pipe(Effect.provide(NodeHttpServerTestWithWsDeflate)),
+      { concurrency: 1 },
+    );
+
+    const report = formatTransferBudgetReport(runs);
+    yield* Effect.logInfo(`\n${report}`);
+    const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
+      Config.option,
+    );
+    if (Option.isSome(reportPath)) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(reportPath.value, report);
+    }
+    assert.deepEqual(transferBudgetViolations(runs), []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
