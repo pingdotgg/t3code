@@ -2994,8 +2994,12 @@ describe("ClaudeAdapterV2 query message stream", () => {
       let closed = false;
       let releaseRead = () => {};
       const readStarted = Promise.withResolvers<void>();
+      // Never yields a message — the read stays pending until close() flips
+      // `closed` and releases the in-flight await.
+      // oxlint-disable-next-line require-yield
       async function* sdkMessages(): AsyncGenerator<SDKMessage, void> {
-        while (!closed) {
+        for (;;) {
+          if (closed) return;
           await new Promise<void>((resolve) => {
             releaseRead = resolve;
             readStarted.resolve();

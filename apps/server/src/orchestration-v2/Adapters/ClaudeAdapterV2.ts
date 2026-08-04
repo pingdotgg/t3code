@@ -308,8 +308,14 @@ export interface ClaudeAgentSdkSessionForkInput {
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
 
+const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
+const isProviderAdapterRuntimeRequestResponseError = Schema.is(
+  ProviderAdapterRuntimeRequestResponseError,
+);
+const isProviderAdapterRollbackThreadError = Schema.is(ProviderAdapterRollbackThreadError);
+
 function queryRunnerError(cause: unknown, method: string): ClaudeAgentSdkQueryRunnerError {
-  return Schema.is(ClaudeAgentSdkQueryRunnerError)(cause)
+  return isClaudeAgentSdkQueryRunnerError(cause)
     ? cause
     : new ClaudeAgentSdkQueryRunnerError({ cause, method });
 }
@@ -1105,6 +1111,7 @@ const ClaudeRuntimeSandboxPolicyKind = Schema.Struct({
 });
 type ClaudeRuntimeSandboxPolicy = typeof ClaudeRuntimeSandboxPolicyKind.Type;
 type ClaudeRuntimeSandboxPolicyKindName = ClaudeRuntimeSandboxPolicy["type"];
+const isClaudeRuntimeSandboxPolicyKind = Schema.is(ClaudeRuntimeSandboxPolicyKind);
 
 const ClaudeRuntimeReadOnlyFullAccessSandboxPolicy = Schema.Struct({
   type: Schema.Literal("readOnly"),
@@ -1112,12 +1119,15 @@ const ClaudeRuntimeReadOnlyFullAccessSandboxPolicy = Schema.Struct({
     type: Schema.Literal("fullAccess"),
   }),
 });
+const isClaudeRuntimeReadOnlyFullAccessSandboxPolicy = Schema.is(
+  ClaudeRuntimeReadOnlyFullAccessSandboxPolicy,
+);
 
 function sandboxPolicyKindForClaudeRuntimePolicy(
   runtimePolicy: ProviderAdapterV2RuntimePolicy,
 ): ClaudeRuntimeSandboxPolicyKindName | undefined {
   return runtimePolicy.sandboxPolicy !== undefined &&
-    Schema.is(ClaudeRuntimeSandboxPolicyKind)(runtimePolicy.sandboxPolicy)
+    isClaudeRuntimeSandboxPolicyKind(runtimePolicy.sandboxPolicy)
     ? runtimePolicy.sandboxPolicy.type
     : undefined;
 }
@@ -1125,7 +1135,7 @@ function sandboxPolicyKindForClaudeRuntimePolicy(
 function readOnlyPolicyAllowsGlobalReads(runtimePolicy: ProviderAdapterV2RuntimePolicy): boolean {
   return (
     runtimePolicy.sandboxPolicy !== undefined &&
-    Schema.is(ClaudeRuntimeReadOnlyFullAccessSandboxPolicy)(runtimePolicy.sandboxPolicy)
+    isClaudeRuntimeReadOnlyFullAccessSandboxPolicy(runtimePolicy.sandboxPolicy)
   );
 }
 
@@ -1329,6 +1339,7 @@ function isClaudeWebSearchOutput(output: unknown): output is WebSearchOutput {
 
 const ClaudeNativeToolInputRecord = Schema.Record(Schema.String, Schema.Unknown);
 type ClaudeNativeToolInputRecord = typeof ClaudeNativeToolInputRecord.Type;
+const isClaudeNativeToolInputRecord = Schema.is(ClaudeNativeToolInputRecord);
 
 type ClaudeNativeToolInput =
   | {
@@ -1346,7 +1357,7 @@ const EMPTY_CLAUDE_NATIVE_TOOL_INPUT = {
 } satisfies ClaudeNativeToolInput;
 
 function claudeNativeToolInputFromUnknown(input: unknown): ClaudeNativeToolInput {
-  return Schema.is(ClaudeNativeToolInputRecord)(input)
+  return isClaudeNativeToolInputRecord(input)
     ? { type: "record", value: input }
     : { type: "non_record", value: input };
 }
@@ -4054,7 +4065,7 @@ export function makeClaudeAdapterV2(
             (effect, requestInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  Schema.is(ProviderAdapterRuntimeRequestResponseError)(cause)
+                  isProviderAdapterRuntimeRequestResponseError(cause)
                     ? cause
                     : new ProviderAdapterRuntimeRequestResponseError({
                         driver: CLAUDE_PROVIDER,
@@ -4137,7 +4148,7 @@ export function makeClaudeAdapterV2(
             (effect, rollbackInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  Schema.is(ProviderAdapterRollbackThreadError)(cause)
+                  isProviderAdapterRollbackThreadError(cause)
                     ? cause
                     : new ProviderAdapterRollbackThreadError({
                         driver: CLAUDE_PROVIDER,
