@@ -785,6 +785,77 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
+  it("pins the first user message when regeneration context is truncated", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const firstUserMessage = "Review the subagent monitoring design for release risks.";
+    const recentAssistantMessage = `LATEST FINDING: ${"implementation detail ".repeat(500)}`;
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Review subagent monitoring risks" }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-existing-long"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Generic PR review",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-long-title-regeneration"),
+          role: "user",
+          text: firstUserMessage,
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-assistant-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("assistant-message-before-long-title-regeneration"),
+        delta: recentAssistantMessage,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-assistant-complete-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("assistant-message-before-long-title-regeneration"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate-long"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    const message = harness.generateThreadTitle.mock.calls[0]?.[0].message;
+    expect(message?.startsWith(`USER:\n${firstUserMessage}`)).toBe(true);
+    expect(message).toContain("[Earlier content truncated]");
+    expect(message).toContain("implementation detail");
+    expect(message).toHaveLength(8_000);
+  });
+
   it("clears title regeneration state left pending across reactor startup", async () => {
     const harness = await createHarness({
       titleRegenerationBeforeStart: "one",
@@ -972,10 +1043,14 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
-  it("keeps the full retained context and excludes attachments outside it", async () => {
+  it("pins the first user context and attachment before the retained tail", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
-    const retainedContext = "x".repeat(8_000);
+    const firstUserContext = "USER:\nOld visual issue\n[Attachments: old-issue.png]";
+    const truncationMarker = "[Earlier content truncated]\n\n";
+    const retainedContext = "x".repeat(
+      8_000 - firstUserContext.length - "\n\n".length - truncationMarker.length,
+    );
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -1040,9 +1115,14 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
 
     expect(harness.generateThreadTitle.mock.calls[0]?.[0].message).toBe(
-      `[Earlier content truncated]\n\n${retainedContext}`,
+      `${firstUserContext}\n\n${truncationMarker}${retainedContext}`,
     );
-    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toBeUndefined();
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toEqual([
+      expect.objectContaining({
+        id: "old-title-context-image",
+        name: "old-issue.png",
+      }),
+    ]);
   });
 
   it("does not overwrite a manual rename while title regeneration is running", async () => {

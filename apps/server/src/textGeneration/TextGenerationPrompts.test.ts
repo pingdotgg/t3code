@@ -195,11 +195,17 @@ describe("buildThreadTitlePrompt", () => {
     });
 
     expect(result.prompt).toContain(
-      "Generate a new title that will help the user recognize this T3 Code thread weeks later.",
+      "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
     );
     expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
     expect(result.prompt).toContain(
-      "Capture the current durable subject and outcome across the whole thread, not merely its initial request or latest step.",
+      "Read the USER messages first. Identify the latest explicit durable goal.",
+    );
+    expect(result.prompt).toContain(
+      "Do not promote one assistant finding into the thread subject unless the user adopts it as a new goal.",
+    );
+    expect(result.prompt).toContain(
+      'A subagent-monitoring review that finds a Codex roster bug remains "Review Subagent Monitoring Risks,"',
     );
     expect(result.prompt).toContain("Thread contents:");
     expect(result.prompt).toContain("The remaining issue is stale session state");
