@@ -186,13 +186,17 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   return registryLayer;
 }
 
+const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
+  CodexReplay.CodexAppServerReplayTranscript,
+);
+
 export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   CodexReplay.CodexAppServerReplayTranscript,
   CodexOrchestratorReplayHarnessError
 > = {
   driver: CODEX_DRIVER_KIND,
   decodeTranscript: (transcript) =>
-    Schema.decodeUnknownEffect(CodexReplay.CodexAppServerReplayTranscript)(transcript).pipe(
+    decodeCodexAppServerReplayTranscript(transcript).pipe(
       Effect.mapError(
         (cause) =>
           new CodexReplayTranscriptDecodeError({

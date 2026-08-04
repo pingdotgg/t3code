@@ -41,6 +41,16 @@ const LegacyShellStreamItem = Schema.Union([
 const decodeLegacyShellStreamItem = Schema.decodeUnknownSync(LegacyShellStreamItem);
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const decodeOrchestrationV2CheckpointScope = Schema.decodeUnknownSync(
+  OrchestrationV2CheckpointScope,
+);
+const decodeOrchestrationV2Checkpoint = Schema.decodeUnknownSync(OrchestrationV2Checkpoint);
+const decodeOrchestrationV2DomainEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
+const decodeProviderReplayTranscript = Schema.decodeUnknownSync(ProviderReplayTranscript);
+const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
+const decodeOrchestrationV2ThreadProjection = Schema.decodeUnknownSync(
+  OrchestrationV2ThreadProjection,
+);
 
 describe("orchestration V2 contracts", () => {
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
@@ -61,7 +71,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes nested checkpoint scopes without making child scopes advance app run count", () => {
-    const rootScope = Schema.decodeUnknownSync(OrchestrationV2CheckpointScope)({
+    const rootScope = decodeOrchestrationV2CheckpointScope({
       id: "scope-root-1",
       threadId: "thread-1",
       runId: "run-1",
@@ -74,7 +84,7 @@ describe("orchestration V2 contracts", () => {
       cwd: "/tmp/project",
       createdAt: now,
     });
-    const childScope = Schema.decodeUnknownSync(OrchestrationV2CheckpointScope)({
+    const childScope = decodeOrchestrationV2CheckpointScope({
       id: "scope-child-1",
       threadId: "thread-1",
       runId: "run-1",
@@ -94,7 +104,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes checkpoint captures that attach to scopes, nodes, and optional app run ordinals", () => {
-    const checkpoint = Schema.decodeUnknownSync(OrchestrationV2Checkpoint)({
+    const checkpoint = decodeOrchestrationV2Checkpoint({
       id: "checkpoint-1",
       threadId: "thread-1",
       scopeId: "scope-child-1",
@@ -126,7 +136,7 @@ describe("orchestration V2 contracts", () => {
       attachments: [],
       dispatchMode: { type: "start_immediately" },
     });
-    const event = Schema.decodeUnknownSync(OrchestrationV2DomainEvent)({
+    const event = decodeOrchestrationV2DomainEvent({
       id: "event-1",
       type: "run.created",
       threadId: "thread-1",
@@ -272,7 +282,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes provider-neutral replay transcripts", () => {
-    const transcript = Schema.decodeUnknownSync(ProviderReplayTranscript)({
+    const transcript = decodeProviderReplayTranscript({
       provider: "codex",
       protocol: "codex.app-server",
       version: "0.120.0",
@@ -303,7 +313,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes strictly typed turn items for known tools and dynamic fallback tools", () => {
-    const fileChange = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const fileChange = decodeOrchestrationV2TurnItem({
       id: "turn-item-file-change-1",
       type: "file_change",
       threadId: "thread-1",
@@ -324,7 +334,7 @@ describe("orchestration V2 contracts", () => {
       completedAt: now,
       updatedAt: now,
     });
-    const dynamicTool = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const dynamicTool = decodeOrchestrationV2TurnItem({
       id: "turn-item-dynamic-1",
       type: "dynamic_tool",
       threadId: "thread-1",
@@ -355,7 +365,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes bounded provider failures as expected error turn items", () => {
-    const errorItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const errorItem = decodeOrchestrationV2TurnItem({
       id: "turn-item-error-1",
       type: "error",
       threadId: "thread-1",
@@ -383,7 +393,7 @@ describe("orchestration V2 contracts", () => {
     if (errorItem.type !== "error") throw new Error("expected error item");
     expect(errorItem.failure.message).toBe("Invalid reasoning effort.");
     expect(() =>
-      Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+      decodeOrchestrationV2TurnItem({
         ...errorItem,
         failure: { ...errorItem.failure, message: "x".repeat(4_097) },
       }),
@@ -391,7 +401,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes provider-native subagent lifecycle records and timeline items", () => {
-    const subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent)({
+    const subagent = decodeOrchestrationV2Subagent({
       id: "node-subagent-1",
       threadId: "thread-1",
       runId: "run-1",
@@ -417,7 +427,7 @@ describe("orchestration V2 contracts", () => {
       completedAt: now,
       updatedAt: now,
     });
-    const turnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const turnItem = decodeOrchestrationV2TurnItem({
       id: "turn-item-subagent-1",
       type: "subagent",
       threadId: "thread-1",
@@ -485,7 +495,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes thread projections with an ordered turn item rendering stream", () => {
-    const projection = Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
+    const projection = decodeOrchestrationV2ThreadProjection({
       thread: {
         createdBy: "user",
         creationSource: "web",
@@ -581,7 +591,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes orchestration lifecycle turn items for compaction, handoff, and fork UI", () => {
-    const compaction = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const compaction = decodeOrchestrationV2TurnItem({
       id: "turn-item-compaction-1",
       type: "compaction",
       threadId: "thread-1",
@@ -600,7 +610,7 @@ describe("orchestration V2 contracts", () => {
       completedAt: null,
       updatedAt: now,
     });
-    const handoff = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const handoff = decodeOrchestrationV2TurnItem({
       id: "turn-item-handoff-1",
       type: "handoff",
       threadId: "thread-1",
@@ -624,7 +634,7 @@ describe("orchestration V2 contracts", () => {
       completedAt: now,
       updatedAt: now,
     });
-    const fork = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+    const fork = decodeOrchestrationV2TurnItem({
       id: "turn-item-fork-1",
       type: "fork",
       threadId: "thread-1",

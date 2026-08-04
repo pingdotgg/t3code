@@ -660,14 +660,17 @@ function nativeSessionIdFor(transcript: ClaudeAgentSdkReplayTranscript): string 
     : "00000000-0000-4000-8000-000000000000";
 }
 
+const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
+const isClaudeAgentSdkReplayError = Schema.is(ClaudeAgentSdkReplayError);
+
 function replayQueryRunnerError(
   transcript: ClaudeAgentSdkReplayTranscript,
   cause: unknown,
 ): ClaudeAgentSdkQueryRunnerError {
-  if (Schema.is(ClaudeAgentSdkQueryRunnerError)(cause)) {
+  if (isClaudeAgentSdkQueryRunnerError(cause)) {
     return cause;
   }
-  const replayCause = Schema.is(ClaudeAgentSdkReplayError)(cause)
+  const replayCause = isClaudeAgentSdkReplayError(cause)
     ? cause
     : new ClaudeReplayDriverError({ scenario: transcript.scenario, cause });
   return new ClaudeAgentSdkQueryRunnerError({
@@ -2410,13 +2413,17 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
   };
 }
 
+const decodeClaudeAgentSdkReplayTranscript = Schema.decodeUnknownEffect(
+  ClaudeAgentSdkReplayTranscript,
+);
+
 export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   ClaudeAgentSdkReplayTranscript,
   ClaudeOrchestratorReplayHarnessError
 > = {
   driver: CLAUDE_PROVIDER,
   decodeTranscript: (transcript) =>
-    Schema.decodeUnknownEffect(ClaudeAgentSdkReplayTranscript)(transcript).pipe(
+    decodeClaudeAgentSdkReplayTranscript(transcript).pipe(
       Effect.mapError(
         (cause) =>
           new ClaudeReplayTranscriptDecodeError({
