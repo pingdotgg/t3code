@@ -107,6 +107,25 @@ describe("CursorAcpExtension", () => {
     });
   });
 
+  it("falls back to the title when content is present but blank", () => {
+    expect(
+      extractTodosAsPlan({
+        toolCallId: "todos-2",
+        todos: [
+          { id: "1", content: "", title: "Titled step", status: "pending" },
+          { id: "2", content: "   ", title: "Whitespace content", status: "in_progress" },
+          { id: "3", content: "", title: "", status: "pending" },
+        ],
+        merge: true,
+      }),
+    ).toEqual({
+      plan: [
+        { step: "Titled step", status: "pending" },
+        { step: "Whitespace content", status: "inProgress" },
+      ],
+    });
+  });
+
   it("decodes Cursor list_available_models responses with per-model config options", () => {
     const decoded = CursorListAvailableModelsResponse.make({
       models: [
