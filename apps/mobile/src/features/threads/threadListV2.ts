@@ -57,20 +57,12 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozable: boolean;
   /** Row is on the snoozed shelf. */
   readonly snoozed?: boolean;
-  /** Row is in the pinned block. Settle stays the primary quick action
-      (settling clears the pin server-side); snooze is withheld because
-      snoozing does not unpin, so the pin would override it invisibly.
-      Unpin itself lives in the long-press menu only. */
-  readonly pinned?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
   readonly secondary: "snooze" | null;
 } {
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
-  }
-  if (input.pinned === true) {
-    return { primary: input.settlementSupported ? "settle" : "archive", secondary: null };
   }
   const primary = input.settlementSupported
     ? input.variant === "slim"
@@ -389,15 +381,10 @@ export function buildThreadListV2Items(input: {
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =
       input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
-    // Parity with web: a pin overrides the whole lifecycle — pinned threads
-    // render above the inbox and never classify into a shelf.
-    if (thread.pinnedAt != null) {
-      pinned.push(thread);
-      continue;
-    }
-    // Visibility parity with web: a snoozed thread leaves the list until it
-    // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
-    // work). Snooze outranks settled classification, same as web.
+    // Visibility parity with web: snooze outranks everything, including a
+    // pin — a snoozed thread leaves the list until it wakes (or raises its
+    // hand). The pin survives underneath, so a woken thread reappears at
+    // its original spot in the creation-ordered pinned block.
     if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
       snoozed.push(thread);
       if (
@@ -407,6 +394,12 @@ export function buildThreadListV2Items(input: {
       ) {
         nextSnoozeWakeAt = thread.snoozedUntil;
       }
+      continue;
+    }
+    // A pin otherwise overrides the lifecycle: pinned threads render above
+    // the inbox and never auto-settle out of sight.
+    if (thread.pinnedAt != null) {
+      pinned.push(thread);
       continue;
     }
     if (

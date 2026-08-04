@@ -17,6 +17,10 @@ const PINNED_AT = "1969-12-30T00:00:00.000Z";
 function makeReadModel(input: {
   readonly pinnedAt?: string | null;
   readonly archivedAt?: string | null;
+  readonly settledOverride?: "settled" | "active" | null;
+  readonly settledAt?: string | null;
+  readonly snoozedUntil?: string | null;
+  readonly snoozedAt?: string | null;
 }): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -35,10 +39,10 @@ function makeReadModel(input: {
         createdAt: NOW,
         updatedAt: NOW,
         archivedAt: input.archivedAt ?? null,
-        settledOverride: null,
-        settledAt: null,
-        snoozedUntil: null,
-        snoozedAt: null,
+        settledOverride: input.settledOverride ?? null,
+        settledAt: input.settledAt ?? (input.settledOverride === "settled" ? NOW : null),
+        snoozedUntil: input.snoozedUntil ?? null,
+        snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? PINNED_AT : null),
         pinnedAt: input.pinnedAt ?? null,
         deletedAt: null,
         messages: [],
@@ -124,6 +128,55 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
       if (events[0]?.type === "thread.unpinned") {
         expect(events[0].payload.updatedAt).toBe(NOW);
       }
+    }),
+  );
+
+  it.effect("pinning a settled thread also un-settles it", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin",
+          commandId: CommandId.make("cmd-pin-settled"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({ settledOverride: "settled" }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsettled"]);
+      const unsettled = events.find((entry) => entry.type === "thread.unsettled");
+      if (unsettled?.type === "thread.unsettled") {
+        expect(unsettled.payload.reason).toBe("user");
+      }
+    }),
+  );
+
+  it.effect("pinning a snoozed thread also wakes it", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin",
+          commandId: CommandId.make("cmd-pin-snoozed"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({ snoozedUntil: "1970-01-02T09:00:00.000Z" }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsnoozed"]);
+    }),
+  );
+
+  it.effect("pinning an unparked thread emits only thread.pinned", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin",
+          commandId: CommandId.make("cmd-pin-plain"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({}),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned"]);
     }),
   );
 

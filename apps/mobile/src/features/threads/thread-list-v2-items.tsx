@@ -82,15 +82,6 @@ const SNOOZED_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
-// Pinned rows: Settle stays the lifecycle action (settling clears the pin
-// server-side); Unpin is the menu-only escape hatch. Snooze is withheld —
-// it does not unpin, so the pin would override it invisibly.
-const PINNED_MENU_ACTIONS: MenuAction[] = [
-  { id: "settle", title: "Settle", image: "checkmark" },
-  { id: "unpin", title: "Unpin", image: "pin.slash" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
 // Pre-settlement servers: no lifecycle items, archive fills the gap.
 const LEGACY_MENU_ACTIONS: MenuAction[] = [
   { id: "archive", title: "Archive", image: "archivebox" },
@@ -441,7 +432,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: new Date().toISOString() }),
     snoozed: snoozedRow,
-    pinned: pinnedRow,
   });
   const snoozePresets = useMemo(
     () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
@@ -456,6 +446,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       })),
     [snoozePresets],
   );
+  // Pinned cards keep the full lifecycle menu; only the pin item flips to
+  // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
+  // hides the card until wake with the pin intact.)
+  const pinMenuItem = useMemo<MenuAction[]>(
+    () =>
+      props.pinningSupported
+        ? [
+            pinnedRow
+              ? { id: "unpin", title: "Unpin", image: "pin.slash" }
+              : { id: "pin", title: "Pin", image: "pin" },
+          ]
+        : [],
+    [pinnedRow, props.pinningSupported],
+  );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
       { id: "settle", title: "Settle", image: "checkmark" },
@@ -465,21 +469,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         image: "clock",
         subactions: snoozePresetActions,
       },
-      ...(props.pinningSupported ? [{ id: "pin", title: "Pin", image: "pin" } as MenuAction] : []),
+      ...pinMenuItem,
       { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
     ],
-    [props.pinningSupported, snoozePresetActions],
+    [pinMenuItem, snoozePresetActions],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
-    () =>
-      props.pinningSupported
-        ? [
-            CARD_MENU_ACTIONS[0]!,
-            { id: "pin", title: "Pin", image: "pin" },
-            ...CARD_MENU_ACTIONS.slice(1),
-          ]
-        : CARD_MENU_ACTIONS,
-    [props.pinningSupported],
+    () => [CARD_MENU_ACTIONS[0]!, ...pinMenuItem, ...CARD_MENU_ACTIONS.slice(1)],
+    [pinMenuItem],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -838,17 +835,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {(close) => (
           <ControlPillMenu
             actions={
-              pinnedRow
-                ? PINNED_MENU_ACTIONS
-                : snoozedRow
-                  ? SNOOZED_MENU_ACTIONS
-                  : !props.settlementSupported
-                    ? LEGACY_MENU_ACTIONS
-                    : canUnsettle
-                      ? SLIM_MENU_ACTIONS
-                      : swipeActions.secondary === "snooze"
-                        ? snoozableCardMenuActions
-                        : cardMenuActions
+              snoozedRow
+                ? SNOOZED_MENU_ACTIONS
+                : !props.settlementSupported
+                  ? LEGACY_MENU_ACTIONS
+                  : canUnsettle
+                    ? SLIM_MENU_ACTIONS
+                    : swipeActions.secondary === "snooze"
+                      ? snoozableCardMenuActions
+                      : cardMenuActions
             }
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress

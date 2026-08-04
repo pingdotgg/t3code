@@ -395,10 +395,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   settlementSupported: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
-  // Pinned cards keep Settle as the hover quick action (settling clears the
-  // pin server-side), but hide Snooze: snoozing does NOT unpin, so it would
-  // stamp state the pin immediately overrides. Pin/unpin themselves live in
-  // the context menu only.
+  // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
+  // actions: settling clears the pin server-side, and snoozing hides the
+  // card until wake with the pin intact underneath. Pin/unpin themselves
+  // live in the context menu only.
   isPinned: boolean;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
@@ -677,9 +677,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // Snooze is offered only where it can succeed: capability-gated and never
   // on blocked-on-you work or queued turns (the server rejects both).
   const showSnoozeButton =
-    !props.isPinned &&
-    props.snoozeSupported &&
-    canSnooze(thread, { now: new Date().toISOString() });
+    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
   // If the thread becomes blocked while the popover is open, the button
   // unmounts without firing onOpenChange(false). Deriving the flag keeps a
   // stale true from permanently hiding the status label / pinning the
@@ -1615,17 +1613,20 @@ export default function SidebarV2() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
         const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
-        // A pin overrides the whole lifecycle: pinned threads never classify
-        // into a shelf, so a pinned thread can neither auto-settle out of
-        // sight nor be hidden by stale snooze state. Unpinning returns the
-        // thread to wherever it would otherwise classify.
-        if (thread.pinnedAt != null) {
-          pinned.push(thread);
-          // Snooze outranks settled classification: an explicitly snoozed thread
-          // belongs to the shelf even if it would also auto-settle (the shelf's
-          // wake time is a stronger statement about when it matters again).
-        } else if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
+        // Snooze outranks everything, including a pin: "hide until Tuesday"
+        // temporarily suspends "keep on top". The pin survives underneath —
+        // pinned cards are creation-ordered, so on wake the thread reappears
+        // at its original spot in the pinned block. (For unpinned threads
+        // this is also the snooze-beats-auto-settle rule: the wake time is a
+        // stronger statement about when the thread matters again.)
+        if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
           snoozed.push(thread);
+          // A pin otherwise overrides the lifecycle: pinned threads never
+          // auto-settle out of sight. (The decider clears settled state on
+          // pin and the pin on settle, so pin-vs-settled conflicts only
+          // arise from stale or raced writes.)
+        } else if (thread.pinnedAt != null) {
+          pinned.push(thread);
         } else if (
           supportsSettlement &&
           effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
@@ -2186,13 +2187,9 @@ export default function SidebarV2() {
         const thread = threadByKeyRef.current.get(threadKey);
         return thread ? [thread] : [];
       });
-      // Pinned threads count as un-snoozable: the pin overrides snooze
-      // classification, so snoozing one would toast and navigate as if the
-      // row left the inbox while the pinned card stays visible.
       const canSnoozeSelection = selectedThreads.every(
         (thread) =>
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
-          thread.pinnedAt == null &&
           canSnooze(thread, { now: selectionNow.toISOString() }),
       );
       const titleRegenerationThreads = selectedThreads.filter(
@@ -2402,10 +2399,9 @@ export default function SidebarV2() {
                       : { id: "pin", label: "Pin thread" },
                   ]
                 : []),
-              // Settle stays available on pinned threads: the decider clears
-              // the pin as part of settling ("done" beats "keep on top").
-              // Snooze does NOT unpin, so it is hidden while pinned rather
-              // than offered as a no-op the pin immediately overrides.
+              // Both lifecycle actions stay available on pinned threads:
+              // settling clears the pin ("done" beats "keep on top"), and
+              // snoozing hides the card until wake with the pin intact.
               ...(supportsSettlement
                 ? [
                     isSettled
@@ -2413,7 +2409,7 @@ export default function SidebarV2() {
                       : { id: "settle", label: "Settle thread" },
                   ]
                 : []),
-              ...(supportsSnooze && !isPinned
+              ...(supportsSnooze
                 ? [
                     isSnoozed
                       ? { id: "unsnooze", label: "Wake thread" }

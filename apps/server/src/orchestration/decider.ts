@@ -665,20 +665,58 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // projection is a no-op. Pinning has no lifecycle invariants — a pin
       // only ever promotes visibility, so it can never hide pending work.
       const existingPinnedAt = thread.pinnedAt ?? null;
-      return {
+      const pinnedEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt,
           commandId: command.commandId,
         })),
-        type: "thread.pinned",
+        type: "thread.pinned" as const,
         payload: {
           threadId: command.threadId,
           pinnedAt: existingPinnedAt ?? occurredAt,
           updatedAt: existingPinnedAt !== null ? thread.updatedAt : occurredAt,
         },
       };
+      // Pinning is a promotion: it clears the parked states rather than
+      // silently outranking them. An explicit settle un-settles (reason
+      // "user", same override the un-settle button stamps), and a snooze's
+      // return ticket is spent — the thread is on top NOW, not on Tuesday.
+      const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (thread.settledOverride === "settled") {
+        promotionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "user",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      if (thread.snoozedUntil != null) {
+        promotionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "user",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      return promotionEvents.length > 0 ? [pinnedEvent, ...promotionEvents] : pinnedEvent;
     }
 
     case "thread.unpin": {
