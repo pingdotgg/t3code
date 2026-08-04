@@ -691,6 +691,53 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps and collapses GitHub Actions watch lifecycle entries", () => {
+    const githubActions = {
+      kind: "pr-checks",
+      watching: true,
+      checks: [{ name: "Test", bucket: "pending" }],
+    };
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "github-started",
+        kind: "tool.started",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "gh pr checks 42 --watch",
+          status: "inProgress",
+          data: { toolCallId: "github-watch", githubActions },
+        },
+      }),
+      makeActivity({
+        id: "github-completed",
+        kind: "tool.completed",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "gh pr checks 42 --watch",
+          status: "completed",
+          data: {
+            toolCallId: "github-watch",
+            githubActions: {
+              ...githubActions,
+              checks: [{ name: "Test", bucket: "pass", duration: "1m2s" }],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "github-completed",
+      toolLifecycleStatus: "completed",
+      githubActions: {
+        watching: true,
+        checks: [{ name: "Test", bucket: "pass", duration: "1m2s" }],
+      },
+    });
+  });
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

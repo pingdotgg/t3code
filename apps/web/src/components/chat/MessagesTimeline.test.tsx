@@ -223,6 +223,51 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders GitHub Actions watch progress as a check list", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        timelineEntries={[
+          buildUserTimelineEntry("Watch CI"),
+          {
+            id: "github-checks",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "github-checks",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Ran command",
+              tone: "tool",
+              command: "gh pr checks 42 --watch",
+              itemType: "command_execution",
+              toolLifecycleStatus: "inProgress",
+              githubActions: {
+                kind: "pr-checks",
+                watching: true,
+                checks: [
+                  { name: "Lint", bucket: "pass", duration: "12s" },
+                  {
+                    name: "Test",
+                    bucket: "pending",
+                    link: "https://github.com/acme/repo/actions/runs/1",
+                    workflow: "CI",
+                  },
+                ],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("GitHub Actions");
+    expect(markup).toContain("Watching · 1 of 2 complete");
+    expect(markup).toContain("Lint");
+    expect(markup).toContain("Test");
+    expect(markup).toContain('href="https://github.com/acme/repo/actions/runs/1"');
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 

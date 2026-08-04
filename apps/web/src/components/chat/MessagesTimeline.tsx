@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { summarizeGitHubActions, type GitHubCheckBucket } from "@t3tools/shared/githubActions";
 import {
   createContext,
   Fragment,
@@ -45,9 +46,12 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  ExternalLinkIcon,
+  GithubIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  CircleDotIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
@@ -1155,7 +1159,10 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
+    () =>
+      groupedEntries.filter(
+        (entry) => entry.githubActions || !workEntryIndicatesToolNeutralStatus(entry),
+      ),
     [groupedEntries],
   );
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
@@ -1176,11 +1183,13 @@ const WorkGroupSection = memo(function WorkGroupSection({
       )}
       <div className="space-y-px">
         {nonEmptyEntries.map((workEntry) => (
-          <SimpleWorkEntryRow
-            key={workEntry.id}
-            workEntry={workEntry}
-            workspaceRoot={workspaceRoot}
-          />
+          <Fragment key={workEntry.id}>
+            {workEntry.githubActions ? (
+              <GitHubActionsWorkEntry workEntry={workEntry} />
+            ) : (
+              <SimpleWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />
+            )}
+          </Fragment>
         ))}
       </div>
     </section>
@@ -2077,5 +2086,131 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         </div>
       ) : null}
     </div>
+  );
+});
+
+function gitHubCheckIcon(bucket: GitHubCheckBucket) {
+  if (bucket === "pass") {
+    return <CheckIcon className="size-3.5 text-success" aria-hidden />;
+  }
+  if (bucket === "fail") {
+    return <XIcon className="size-3.5 text-destructive" aria-hidden />;
+  }
+  if (bucket === "pending") {
+    return <CircleDotIcon className="size-3.5 text-warning" aria-hidden />;
+  }
+  return <MinusIcon className="size-3.5 text-muted-foreground/60" aria-hidden />;
+}
+
+function gitHubActionsStatus(workEntry: TimelineWorkEntry): string {
+  const snapshot = workEntry.githubActions!;
+  const summary = summarizeGitHubActions(snapshot);
+  if (summary.total === 0) {
+    return workEntry.toolLifecycleStatus === "inProgress"
+      ? "Waiting for checks"
+      : "No checks reported";
+  }
+  if (summary.failed > 0) {
+    return `${summary.failed} ${summary.failed === 1 ? "check" : "checks"} failed`;
+  }
+  if (summary.pending > 0) {
+    return `${summary.total - summary.pending} of ${summary.total} complete`;
+  }
+  const outcomes = [
+    ...(summary.passed > 0 ? [`${summary.passed} passed`] : []),
+    ...(summary.skipped > 0 ? [`${summary.skipped} skipped`] : []),
+    ...(summary.cancelled > 0 ? [`${summary.cancelled} cancelled`] : []),
+  ];
+  return outcomes.join(" · ");
+}
+
+const GitHubActionsWorkEntry = memo(function GitHubActionsWorkEntry({
+  workEntry,
+}: {
+  workEntry: TimelineWorkEntry;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const snapshot = workEntry.githubActions!;
+  const visibleChecks = showAll ? snapshot.checks : snapshot.checks.slice(0, 6);
+  const hiddenCount = snapshot.checks.length - visibleChecks.length;
+
+  return (
+    <section
+      className="overflow-hidden rounded-lg border border-border/70 bg-background/70"
+      aria-label="GitHub Actions checks"
+      aria-live="polite"
+    >
+      <header className="flex items-center gap-2 border-b border-border/55 px-3 py-2.5">
+        <GithubIcon className="size-4 shrink-0 text-foreground" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-foreground">GitHub Actions</p>
+          <p className="text-[11px] text-muted-foreground">
+            {snapshot.watching && workEntry.toolLifecycleStatus === "inProgress"
+              ? `Watching · ${gitHubActionsStatus(workEntry)}`
+              : gitHubActionsStatus(workEntry)}
+          </p>
+        </div>
+      </header>
+      {visibleChecks.length > 0 ? (
+        <div className="divide-y divide-border/45">
+          {visibleChecks.map((check) => {
+            const content = (
+              <>
+                <span className="flex size-5 shrink-0 items-center justify-center">
+                  {gitHubCheckIcon(check.bucket)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium text-foreground/90">
+                    {check.name}
+                  </span>
+                  {(check.workflow || check.description) && (
+                    <span className="block truncate text-[11px] text-muted-foreground/65">
+                      {check.workflow || check.description}
+                    </span>
+                  )}
+                </span>
+                {check.duration && (
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/65">
+                    {check.duration}
+                  </span>
+                )}
+                {check.link && (
+                  <ExternalLinkIcon
+                    className="size-3 shrink-0 text-muted-foreground/55"
+                    aria-hidden
+                  />
+                )}
+              </>
+            );
+            return check.link ? (
+              <a
+                key={check.link}
+                href={check.link}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 px-3 py-2 transition-colors hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+              >
+                {content}
+              </a>
+            ) : (
+              <div key={check.name} className="flex items-center gap-2 px-3 py-2">
+                {content}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="px-3 py-3 text-xs text-muted-foreground">Checks have not reported yet.</p>
+      )}
+      {(hiddenCount > 0 || showAll) && snapshot.checks.length > 6 ? (
+        <button
+          type="button"
+          className="w-full border-t border-border/45 px-3 py-2 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/25 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll ? "Show fewer checks" : `Show ${hiddenCount} more checks`}
+        </button>
+      ) : null}
+    </section>
   );
 });

@@ -188,6 +188,41 @@ describe("projectActivityPayload", () => {
     expect(projectActivityPayload(fixtures[4]!)).toBe(fixtures[4]);
   });
 
+  it("retains a bounded GitHub Actions snapshot instead of command output", () => {
+    const activity = makeActivity("github-checks", "command_execution", {
+      item: {
+        command: "gh pr checks 42 --watch",
+        aggregatedOutput: [
+          "Test\tpending\t0\thttps://github.com/acme/repo/actions/runs/1",
+          "Lint\tpass\t12s\thttps://github.com/acme/repo/actions/runs/2",
+        ].join("\n"),
+      },
+      toolCallId: "github-checks",
+    });
+
+    expect(projectActivityPayload(activity).payload).toMatchObject({
+      data: {
+        githubActions: {
+          kind: "pr-checks",
+          watching: true,
+          checks: [
+            {
+              name: "Test",
+              bucket: "pending",
+              link: "https://github.com/acme/repo/actions/runs/1",
+            },
+            {
+              name: "Lint",
+              bucket: "pass",
+              duration: "12s",
+              link: "https://github.com/acme/repo/actions/runs/2",
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("keeps current web and mobile derived output identical for every tool item type", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);

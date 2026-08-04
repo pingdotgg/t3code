@@ -8,6 +8,10 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import {
+  readGitHubActionsSnapshot,
+  type GitHubActionsSnapshot,
+} from "@t3tools/shared/githubActions";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -54,6 +58,7 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  readonly githubActions?: GitHubActionsSnapshot;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -75,6 +80,7 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  githubActions?: GitHubActionsSnapshot;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -241,7 +247,7 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (activity.kind === "tool.started") continue;
+    if (activity.kind === "tool.started" && !extractGitHubActions(activity.payload)) continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
@@ -249,6 +255,12 @@ function deriveWorkLogEntries(
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
+}
+
+function extractGitHubActions(payload: unknown): GitHubActionsSnapshot | null {
+  const payloadRecord = asRecord(payload);
+  const data = asRecord(payloadRecord?.data);
+  return readGitHubActionsSnapshot(data?.githubActions);
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -328,6 +340,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.toolData = data.item;
     }
   }
+  const githubActions = extractGitHubActions(payload);
+  if (githubActions) {
+    entry.githubActions = githubActions;
+  }
   if (itemType) {
     entry.itemType = itemType;
   }
@@ -367,7 +383,11 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    previous.activityKind !== "tool.started" &&
+    previous.activityKind !== "tool.updated" &&
+    previous.activityKind !== "tool.completed"
+  ) {
     return false;
   }
   if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
@@ -393,6 +413,7 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const githubActions = next.githubActions ?? previous.githubActions;
   return {
     ...previous,
     ...next,
@@ -406,6 +427,7 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(githubActions !== undefined ? { githubActions } : {}),
   };
 }
 
@@ -421,7 +443,11 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
     return undefined;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
@@ -1084,7 +1110,16 @@ function deriveThreadFeedTurnFolds(
 
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.id !== terminalAssistantMessageId).map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.id !== terminalAssistantMessageId &&
+            !(
+              entry.type === "activity-group" &&
+              entry.activities.some((activity) => activity.githubActions !== undefined)
+            ),
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
@@ -1414,6 +1449,7 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              ...(entry.githubActions ? { githubActions: entry.githubActions } : {}),
             },
           };
         }),

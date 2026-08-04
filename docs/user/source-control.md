@@ -41,6 +41,16 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+**Follow GitHub Actions in the thread**
+
+When an agent runs `gh pr checks` or `gh pr checks --watch`, T3 Code shows the result as a GitHub
+Actions check list in the thread. Pending, passed, failed, skipped, and cancelled checks remain easy
+to scan, and links open the corresponding check on GitHub. The completed check list stays visible
+after the rest of the turn's work log folds.
+
+This uses the GitHub CLI authentication on the machine running T3 Code. T3 Code does not start or
+continue monitoring independently of the agent command.
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

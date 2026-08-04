@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { parseGitHubActionsSnapshot } from "@t3tools/shared/githubActions";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -151,6 +152,17 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+function githubActionsSnapshot(data: Record<string, unknown>) {
+  const item = asRecord(data.item);
+  const input = asRecord(item?.input);
+  const result = asRecord(item?.result);
+  const rawOutput = asRecord(data.rawOutput);
+  const command = item?.command ?? input?.command ?? result?.command ?? data.command;
+  const output =
+    item?.aggregatedOutput ?? result?.aggregatedOutput ?? rawOutput?.content ?? rawOutput?.stdout;
+  return parseGitHubActionsSnapshot({ command, output });
+}
+
 /**
  * Removes activity payload fields that no current client reads while retaining
  * the full payload in persistence and the event store.
@@ -185,6 +197,11 @@ export function projectActivityPayload(
   }
   if ("kind" in data) {
     projectedData.kind = data.kind;
+  }
+
+  const githubActions = githubActionsSnapshot(data);
+  if (githubActions) {
+    projectedData.githubActions = githubActions;
   }
 
   const rawOutput = projectRawOutput(data.rawOutput);

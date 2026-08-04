@@ -12,6 +12,10 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  readGitHubActionsSnapshot,
+  type GitHubActionsSnapshot,
+} from "@t3tools/shared/githubActions";
 
 import type {
   ChatMessage,
@@ -72,6 +76,7 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
+  githubActions?: GitHubActionsSnapshot;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
@@ -630,7 +635,7 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (activity.kind === "tool.started") continue;
+    if (activity.kind === "tool.started" && !extractGitHubActions(activity.payload)) continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
@@ -641,6 +646,12 @@ export function deriveWorkLogEntries(
     const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
   });
+}
+
+function extractGitHubActions(payload: unknown): GitHubActionsSnapshot | null {
+  const payloadRecord = asRecord(payload);
+  const data = asRecord(payloadRecord?.data);
+  return readGitHubActionsSnapshot(data?.githubActions);
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -740,6 +751,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.toolData = data.item;
     }
   }
+  const githubActions = extractGitHubActions(payload);
+  if (githubActions) {
+    entry.githubActions = githubActions;
+  }
   if (itemType) {
     entry.itemType = itemType;
   }
@@ -782,7 +797,11 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    previous.activityKind !== "tool.started" &&
+    previous.activityKind !== "tool.updated" &&
+    previous.activityKind !== "tool.completed"
+  ) {
     return false;
   }
   if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
@@ -818,6 +837,7 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const githubActions = next.githubActions ?? previous.githubActions;
   return {
     ...previous,
     ...next,
@@ -832,6 +852,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(githubActions !== undefined ? { githubActions } : {}),
   };
 }
 
@@ -847,7 +868,11 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
     return undefined;
   }
   if (entry.toolCallId) {

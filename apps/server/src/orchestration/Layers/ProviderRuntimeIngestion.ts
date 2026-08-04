@@ -24,8 +24,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { parseGitHubActionsSnapshot } from "@t3tools/shared/githubActions";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -123,6 +125,20 @@ function sameId(left: string | null | undefined, right: string | null | undefine
     return false;
   }
   return left === right;
+}
+
+function githubActionsStartedData(value: unknown): Record<string, unknown> | undefined {
+  const data = Predicate.isObject(value) ? value : null;
+  const item = Predicate.isObject(data?.item) ? data.item : null;
+  const input = Predicate.isObject(item?.input) ? item.input : null;
+  const result = Predicate.isObject(item?.result) ? item.result : null;
+  const command = item?.command ?? input?.command ?? result?.command ?? data?.command;
+  const githubActions = parseGitHubActionsSnapshot({ command });
+  if (!githubActions) return undefined;
+  return {
+    githubActions,
+    ...(command !== undefined ? { item: { command } } : {}),
+  };
 }
 
 function hasAssistantMessageForTurn(
@@ -663,6 +679,7 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const githubActionsData = githubActionsStartedData(event.payload.data);
       return [
         {
           id: event.eventId,
@@ -672,7 +689,9 @@ export function runtimeEventToActivities(
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
             itemType: event.payload.itemType,
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(githubActionsData ? { data: githubActionsData } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

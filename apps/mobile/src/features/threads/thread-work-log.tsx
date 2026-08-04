@@ -1,6 +1,18 @@
 import * as Haptics from "expo-haptics";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
+import {
+  LayoutAnimation,
+  Linking,
+  Pressable,
+  ScrollView,
+  useColorScheme,
+  View,
+} from "react-native";
+import {
+  summarizeGitHubActions,
+  type GitHubActionsSnapshot,
+  type GitHubCheckBucket,
+} from "@t3tools/shared/githubActions";
 
 import { AppText as Text } from "../../components/AppText";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
@@ -83,7 +95,9 @@ function isFreshRow(createdAt: string): boolean {
 export function visibleWorkLogActivities(
   activities: ReadonlyArray<ThreadFeedActivity>,
 ): ReadonlyArray<ThreadFeedActivity> {
-  return activities.filter((activity) => !(activity.toolLike && activity.status === "neutral"));
+  return activities.filter(
+    (activity) => activity.githubActions || !(activity.toolLike && activity.status === "neutral"),
+  );
 }
 
 // Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
@@ -97,6 +111,18 @@ const WORK_ROW_HEIGHT = 32; // min-h-8
 const WORK_ROW_GAP = 1; // gap-px
 const WORK_LOG_HEADER_PADDING = 2; // pb-0.5 under the "work log" label
 const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
+const GITHUB_ACTIONS_HEADER_HEIGHT = 52;
+const GITHUB_ACTIONS_CHECK_HEIGHT = 40;
+const GITHUB_ACTIONS_MORE_HEIGHT = 32;
+
+function githubActionsCardHeight(snapshot: GitHubActionsSnapshot): number {
+  const visibleChecks = Math.max(1, Math.min(snapshot.checks.length, 6));
+  return (
+    GITHUB_ACTIONS_HEADER_HEIGHT +
+    visibleChecks * GITHUB_ACTIONS_CHECK_HEIGHT +
+    (snapshot.checks.length > visibleChecks ? GITHUB_ACTIONS_MORE_HEIGHT : 0)
+  );
+}
 
 export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
 
@@ -114,8 +140,121 @@ export function collapsedWorkLogHeight(
   return (
     WORK_LOG_BOTTOM_MARGIN +
     (onlyToolRows ? 0 : headerHeight) +
-    rows.length * WORK_ROW_HEIGHT +
+    rows.reduce(
+      (height, row) =>
+        height + (row.githubActions ? githubActionsCardHeight(row.githubActions) : WORK_ROW_HEIGHT),
+      0,
+    ) +
     (rows.length - 1) * WORK_ROW_GAP
+  );
+}
+
+function githubActionsStatus(activity: ThreadFeedActivity): string {
+  const snapshot = activity.githubActions!;
+  const summary = summarizeGitHubActions(snapshot);
+  if (summary.total === 0) {
+    return activity.status === "neutral" ? "Watching · Waiting for checks" : "No checks reported";
+  }
+  if (summary.failed > 0) {
+    return `${summary.failed} ${summary.failed === 1 ? "check" : "checks"} failed`;
+  }
+  if (summary.pending > 0) return `${summary.total - summary.pending} of ${summary.total} complete`;
+  const outcomes = [
+    ...(summary.passed > 0 ? [`${summary.passed} passed`] : []),
+    ...(summary.skipped > 0 ? [`${summary.skipped} skipped`] : []),
+    ...(summary.cancelled > 0 ? [`${summary.cancelled} cancelled`] : []),
+  ];
+  return outcomes.join(" · ");
+}
+
+function gitHubCheckSymbol(bucket: GitHubCheckBucket): AppSymbolName {
+  if (bucket === "pass") return { ios: "checkmark.circle", android: "check_circle" };
+  if (bucket === "fail") return { ios: "xmark.circle.fill", android: "cancel" };
+  if (bucket === "pending") return { ios: "clock", android: "schedule" };
+  return { ios: "minus", android: "remove" };
+}
+
+function GitHubActionsCard(props: {
+  readonly activity: ThreadFeedActivity;
+  readonly iconSubtleColor: import("react-native").ColorValue;
+}) {
+  const snapshot = props.activity.githubActions!;
+  const visibleChecks = snapshot.checks.slice(0, 6);
+  const hiddenCount = snapshot.checks.length - visibleChecks.length;
+
+  return (
+    <View className="overflow-hidden rounded-lg border border-neutral-200/80 bg-background dark:border-white/[0.12]">
+      <View className="h-[52px] flex-row items-center gap-2 border-b border-neutral-200/70 px-3 dark:border-white/[0.1]">
+        <SymbolView
+          name={{ ios: "bolt.circle", android: "bolt" }}
+          size={17}
+          tintColor={props.iconSubtleColor}
+          type="monochrome"
+        />
+        <View className="min-w-0 flex-1">
+          <Text className="font-t3-medium text-xs text-foreground">GitHub Actions</Text>
+          <Text className="text-2xs text-foreground-muted">
+            {githubActionsStatus(props.activity)}
+          </Text>
+        </View>
+      </View>
+      {visibleChecks.length > 0 ? (
+        visibleChecks.map((check) => {
+          const failed = check.bucket === "fail";
+          return (
+            <Pressable
+              key={check.link ?? check.name}
+              accessibilityRole={check.link ? "link" : undefined}
+              accessibilityLabel={`${check.name}, ${check.bucket}`}
+              disabled={!check.link}
+              onPress={() => {
+                if (check.link) void Linking.openURL(check.link).catch(() => undefined);
+              }}
+              className="h-10 flex-row items-center gap-2 border-b border-neutral-200/60 px-3 dark:border-white/[0.08]"
+            >
+              <SymbolView
+                name={gitHubCheckSymbol(check.bucket)}
+                size={14}
+                tintColor={failed ? "#e11d48" : props.iconSubtleColor}
+                type="monochrome"
+              />
+              <View className="min-w-0 flex-1">
+                <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
+                  {check.name}
+                </Text>
+                {check.workflow || check.description ? (
+                  <Text className="text-3xs text-foreground-muted" numberOfLines={1}>
+                    {check.workflow || check.description}
+                  </Text>
+                ) : null}
+              </View>
+              {check.duration ? (
+                <Text className="text-2xs text-foreground-muted">{check.duration}</Text>
+              ) : null}
+              {check.link ? (
+                <SymbolView
+                  name={{ ios: "safari", android: "open_in_new" }}
+                  size={12}
+                  tintColor={props.iconSubtleColor}
+                  type="monochrome"
+                />
+              ) : null}
+            </Pressable>
+          );
+        })
+      ) : (
+        <View className="h-10 justify-center px-3">
+          <Text className="text-xs text-foreground-muted">Checks have not reported yet.</Text>
+        </View>
+      )}
+      {hiddenCount > 0 ? (
+        <View className="h-8 justify-center px-3">
+          <Text className="font-t3-medium text-2xs text-foreground-muted">
+            {hiddenCount} more {hiddenCount === 1 ? "check" : "checks"}
+          </Text>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -150,6 +289,16 @@ export function ThreadWorkLog(props: {
 
       <View className="gap-px">
         {rows.map((row) => {
+          if (row.githubActions) {
+            return (
+              <Animated.View
+                key={row.id}
+                {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
+              >
+                <GitHubActionsCard activity={row} iconSubtleColor={props.iconSubtleColor} />
+              </Animated.View>
+            );
+          }
           const expanded = props.expandedRows[row.id] ?? false;
           const canExpand = row.canExpand;
           const fullDetail = expanded ? row.getFullDetail() : null;

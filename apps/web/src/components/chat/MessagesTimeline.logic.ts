@@ -352,7 +352,10 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id) {
+      if (
+        entry.id !== group.terminalEntry?.id &&
+        !(entry.kind === "work" && entry.entry.githubActions !== undefined)
+      ) {
         hiddenEntryIds.add(entry.id);
       }
     }
@@ -476,7 +479,7 @@ export function deriveMessagesTimelineRows(input: {
         cursor += 1;
       }
       const visibleGroupedEntries = groupedEntries.filter(
-        (entry) => !workEntryIndicatesToolNeutralStatus(entry),
+        (entry) => entry.githubActions || !workEntryIndicatesToolNeutralStatus(entry),
       );
       if (visibleGroupedEntries.length > 0) {
         if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {

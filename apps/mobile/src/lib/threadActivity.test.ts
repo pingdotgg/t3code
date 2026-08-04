@@ -56,6 +56,74 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps GitHub Actions watch progress visible after a settled turn folds", () => {
+    const turnId = TurnId.make("turn-github");
+    const thread = makeThread({
+      id: ThreadId.make("thread-github"),
+      projectId: ProjectId.make("project-1"),
+      title: "GitHub Actions",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:10.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "Checks passed.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:09.000Z",
+          updatedAt: "2026-04-01T00:00:10.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("github-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            title: "Ran command",
+            detail: "gh pr checks 42 --watch",
+            status: "completed",
+            data: {
+              githubActions: {
+                kind: "pr-checks",
+                watching: true,
+                checks: [{ name: "Test", bucket: "pass", duration: "1m2s" }],
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const group = feed.find((entry) => entry.type === "activity-group");
+    expect(group).toMatchObject({
+      type: "activity-group",
+      activities: [
+        {
+          githubActions: {
+            watching: true,
+            checks: [{ name: "Test", bucket: "pass", duration: "1m2s" }],
+          },
+        },
+      ],
+    });
+
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    expect(collapsed.map((entry) => entry.id)).toContain("github-completed");
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

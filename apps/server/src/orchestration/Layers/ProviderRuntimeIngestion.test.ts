@@ -2734,9 +2734,14 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-9"),
       payload: {
         itemType: "command_execution",
-        status: "in_progress",
-        title: "Read file",
-        detail: "/tmp/file.ts",
+        status: "inProgress",
+        title: "Ran command",
+        detail: "gh pr checks 42 --watch",
+        data: {
+          item: {
+            command: "gh pr checks 42 --watch",
+          },
+        },
       },
     });
 
@@ -2756,6 +2761,20 @@ describe("ProviderRuntimeIngestion", () => {
         (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
       ),
     ).toBe(true);
+    expect(
+      thread.activities.find(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
+      )?.payload,
+    ).toMatchObject({
+      status: "inProgress",
+      data: {
+        githubActions: {
+          kind: "pr-checks",
+          watching: true,
+          checks: [],
+        },
+      },
+    });
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {

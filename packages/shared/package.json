@@ -23,6 +23,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./githubActions": {
+      "types": "./src/githubActions.ts",
+      "import": "./src/githubActions.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
