@@ -48,8 +48,10 @@ import {
   useVersionControlPanelApi,
 } from "./useVersionControlPanelApi";
 import {
+  retainPullRefreshIndicator,
   retryInterruptedVersionControlRequest,
   runInitialRemoteFetch,
+  VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS,
 } from "./versionControlRequest";
 import {
   BranchCommitRow,
@@ -183,7 +185,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       const requestCwd = selectedThreadCwd;
       if (requestCwd !== selectedThreadCwdRef.current) return;
       const requestId = ++snapshotRequestId.current;
-      setRefreshing(options.pull === true);
+      setRefreshing((current) => retainPullRefreshIndicator(current, options.pull === true));
       if (!requestCwd) {
         if (requestId === snapshotRequestId.current) {
           setSettledSnapshotCwd(null);
@@ -648,9 +650,10 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const switchBranch = useCallback(
     (branch: VcsRef) => {
       void runAction("switch", async () => {
-        await gitActions.onCheckoutSelectedThreadBranch(branch.name, {
-          throwOnFailure: true,
-        });
+        await gitActions.onCheckoutSelectedThreadBranch(
+          branch.name,
+          VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS,
+        );
       });
     },
     [gitActions, runAction],

@@ -5,6 +5,15 @@ export class VersionControlCommandInterrupted extends Error {
   }
 }
 
+export const VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS = {
+  reportFailure: false,
+  throwOnFailure: true,
+} as const;
+
+export function retainPullRefreshIndicator(current: boolean, pullRequest: boolean): boolean {
+  return current || pullRequest;
+}
+
 export async function runInitialRemoteFetch(options: {
   readonly cwd: string;
   readonly fetchedCwds: Set<string>;

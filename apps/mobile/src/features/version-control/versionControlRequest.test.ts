@@ -1,12 +1,27 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  retainPullRefreshIndicator,
   retryInterruptedVersionControlRequest,
   runInitialRemoteFetch,
+  VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS,
   VersionControlCommandInterrupted,
 } from "./versionControlRequest";
 
 describe("native Version Control requests", () => {
+  it("retains pull-to-refresh feedback when a background refresh supersedes it", () => {
+    expect(retainPullRefreshIndicator(false, true)).toBe(true);
+    expect(retainPullRefreshIndicator(true, false)).toBe(true);
+    expect(retainPullRefreshIndicator(false, false)).toBe(false);
+  });
+
+  it("keeps checkout failures local to the Version Control mutation surface", () => {
+    expect(VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS).toEqual({
+      reportFailure: false,
+      throwOnFailure: true,
+    });
+  });
+
   it("releases a failed initial remote fetch so focus can retry it", async () => {
     const fetchedCwds = new Set<string>();
     const fetch = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error("offline"));

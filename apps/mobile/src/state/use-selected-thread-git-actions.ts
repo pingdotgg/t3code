@@ -133,6 +133,7 @@ export function useSelectedThreadGitActions() {
       }) => Promise<AtomCommandResult<T, E>>,
       options?: {
         readonly managedExternally?: boolean;
+        readonly reportFailure?: boolean;
         readonly throwOnFailure?: boolean;
       },
     ): Promise<T | null> => {
@@ -147,7 +148,8 @@ export function useSelectedThreadGitActions() {
         environmentId: selectedThread.environmentId,
         cwd: selectedThreadCwd,
       };
-      setPendingConnectionError(null);
+      const reportFailure = options?.reportFailure !== false;
+      if (reportFailure) setPendingConnectionError(null);
       const run = () =>
         execute({
           thread: selectedThread,
@@ -164,8 +166,10 @@ export function useSelectedThreadGitActions() {
         }
         const error = Cause.squash(result.cause);
         const message = error instanceof Error ? error.message : "Git action failed.";
-        setPendingConnectionError(message);
-        showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        if (reportFailure) {
+          setPendingConnectionError(message);
+          showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        }
         if (options?.throwOnFailure === true) {
           throw error;
         }
@@ -206,7 +210,13 @@ export function useSelectedThreadGitActions() {
   );
 
   const onCheckoutSelectedThreadBranch = useCallback(
-    async (branch: string, options?: { readonly throwOnFailure?: boolean }) => {
+    async (
+      branch: string,
+      options?: {
+        readonly reportFailure?: boolean;
+        readonly throwOnFailure?: boolean;
+      },
+    ) => {
       return await runSelectedThreadGitMutation(
         "switch_ref",
         "Switching branch",
