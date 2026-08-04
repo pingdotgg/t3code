@@ -3,6 +3,7 @@ import type { OrchestrationProjectShell, OrchestrationThreadShell } from "@t3too
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import { buildArchivedThreadGroups } from "./archivedThreadList";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -142,5 +143,33 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(result).toEqual([]);
+  });
+
+  it("scopes the archive to the selected project", () => {
+    const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const secondProject = makeProject({ id: ProjectId.make("project-2"), title: "Website" });
+    const firstThread = makeThread({
+      id: ThreadId.make("thread-1"),
+      projectId: firstProject.id,
+      title: "Keep",
+    });
+    const secondThread = makeThread({
+      id: ThreadId.make("thread-2"),
+      projectId: secondProject.id,
+      title: "Filter out",
+    });
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([firstProject, secondProject], [firstThread, secondThread])],
+      environmentLabels: {},
+      environmentId: null,
+      projectKeys: new Set([scopedProjectKey(environmentId, firstProject.id)]),
+      searchQuery: "",
+      sortOrder: "newest",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.project.id).toBe(firstProject.id);
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([firstThread.id]);
   });
 });

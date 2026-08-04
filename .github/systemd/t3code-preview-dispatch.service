@@ -1,0 +1,15 @@
+[Unit]
+Description=Dispatch the personal T3 Code Android preview build
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=GH_CONFIG_DIR=/home/admin/.config/gh
+Environment=HOME=/home/admin
+ExecStart=/usr/bin/gh workflow run personal-android-preview.yml --repo Feighery89/t3code --ref main -f force_rebuild=false
+Restart=on-failure
+RestartSec=15min
+TimeoutStartSec=2min
+NoNewPrivileges=true
+PrivateTmp=true

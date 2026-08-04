@@ -414,10 +414,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             // replaces that lease and starts a fresh attempt without backoff.
             return true;
           }
-          if (next.reason === "application-active" || next.reason === "application-active-probe") {
+          if (
+            next.reason === "application-active" ||
+            next.reason === "application-active-preserved" ||
+            next.reason === "application-active-probe"
+          ) {
             const probe = yield* lease.session.probe.pipe(
               Effect.timeoutOrElse({
                 duration:
+                  next.reason === "application-active-preserved" ||
                   next.reason === "application-active-probe"
                     ? MOBILE_CONNECTION_PROBE_TIMEOUT
                     : CONNECTION_PROBE_TIMEOUT,
@@ -441,6 +446,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                 ),
               );
               if (probeEvent._tag === "ProbeCompleted") {
+                if (
+                  next.reason === "application-active-preserved" &&
+                  Exit.isFailure(probeEvent.exit)
+                ) {
+                  // Protection means this lease was expected to remain live.
+                  // A failed bounded probe is therefore definitive stale-socket
+                  // evidence: replace it immediately instead of adding the
+                  // ordinary transient-failure backoff to foreground resume.
+                  return true;
+                }
                 yield* probeEvent.exit;
                 break;
               }

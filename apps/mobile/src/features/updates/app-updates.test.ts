@@ -7,12 +7,23 @@ import {
   type AppUpdateCheckState,
   type AppUpdateClient,
 } from "./app-updates";
+import type { PersonalPreviewUpdateClient } from "./personal-preview-updates";
 
 vi.mock("expo-updates", () => ({
   isEnabled: true,
   checkForUpdateAsync: vi.fn(),
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
+}));
+
+vi.mock("expo-constants", () => ({
+  default: { expoConfig: { extra: {} }, nativeBuildVersion: "1" },
+}));
+
+vi.mock("react-native", () => ({
+  Alert: { alert: vi.fn() },
+  Linking: { openURL: vi.fn() },
+  Platform: { OS: "android" },
 }));
 
 function makeUpdateClient(overrides: Partial<AppUpdateClient> = {}): AppUpdateClient {
@@ -32,6 +43,50 @@ function makeUpdateClient(overrides: Partial<AppUpdateClient> = {}): AppUpdateCl
 }
 
 describe("runAppUpdateCheck", () => {
+  it("uses the signed personal preview release path when configured", async () => {
+    const update = {
+      versionCode: 2,
+      versionName: "T3 Code Preview 2",
+      downloadUrl:
+        "https://github.com/Feighery89/t3code/releases/download/mark-mobile-preview-v2/t3-code-preview.apk",
+    };
+    const previewClient: PersonalPreviewUpdateClient = {
+      isEnabled: true,
+      checkForUpdateAsync: vi.fn(async () => update),
+      presentUpdateAsync: vi.fn(async () => true),
+    };
+    const expoClient = makeUpdateClient();
+    const states: AppUpdateCheckState[] = [];
+
+    await runAppUpdateCheck({
+      client: expoClient,
+      previewClient,
+      onStateChange: (state) => states.push(state),
+    });
+
+    expect(previewClient.checkForUpdateAsync).toHaveBeenCalledOnce();
+    expect(previewClient.presentUpdateAsync).toHaveBeenCalledWith(update);
+    expect(expoClient.checkForUpdateAsync).not.toHaveBeenCalled();
+    expect(states).toEqual(["checking", "available", "opening", "idle"]);
+  });
+
+  it("reports a current personal preview without opening a download", async () => {
+    const previewClient: PersonalPreviewUpdateClient = {
+      isEnabled: true,
+      checkForUpdateAsync: vi.fn(async () => null),
+      presentUpdateAsync: vi.fn(async () => true),
+    };
+    const states: AppUpdateCheckState[] = [];
+
+    await runAppUpdateCheck({
+      previewClient,
+      onStateChange: (state) => states.push(state),
+    });
+
+    expect(previewClient.presentUpdateAsync).not.toHaveBeenCalled();
+    expect(states).toEqual(["checking", "current"]);
+  });
+
   it("downloads and restarts when a new update is available", async () => {
     const client = makeUpdateClient({
       checkForUpdateAsync: vi.fn(async () => ({

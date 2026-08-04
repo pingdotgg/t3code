@@ -29,6 +29,13 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
+export function hasVisibleHomeThreadResults(input: {
+  readonly activeResultCount: number;
+  readonly archivedResultCount: number;
+}): boolean {
+  return input.activeResultCount > 0 || input.archivedResultCount > 0;
+}
+
 export interface HomeProjectScope {
   readonly key: string;
   readonly title: string;

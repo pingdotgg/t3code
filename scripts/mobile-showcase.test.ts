@@ -272,6 +272,10 @@ it("seeds a playful multi-environment project spectrum", () => {
   );
   assert.equal(SHOWCASE_THREADS.length, 8);
   assert.equal(new Set(SHOWCASE_THREADS.map((thread) => thread.projectId)).size, 3);
+  assert.equal(
+    SHOWCASE_THREADS.filter((thread) => "archived" in thread && thread.archived).length,
+    1,
+  );
   // Every project contributes to both the active block and the settled tail,
   // so each list scope screenshots with the same two-part structure.
   for (const project of SHOWCASE_PROJECTS) {

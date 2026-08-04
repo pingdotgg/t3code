@@ -15,6 +15,8 @@ const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
+  readonly androidAgentNotificationsEnabled?: boolean;
+  readonly androidAgentNotificationEventIds?: readonly string[];
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -72,6 +74,8 @@ export class MobilePreferencesStore extends Context.Service<
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
+    androidAgentNotificationsEnabled?: boolean;
+    androidAgentNotificationEventIds?: readonly string[];
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -85,6 +89,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.androidAgentNotificationsEnabled === "boolean") {
+    preferences.androidAgentNotificationsEnabled = parsed.androidAgentNotificationsEnabled;
+  }
+  if (Array.isArray(parsed.androidAgentNotificationEventIds)) {
+    preferences.androidAgentNotificationEventIds = parsed.androidAgentNotificationEventIds
+      .filter((eventId): eventId is string => typeof eventId === "string" && eventId.length > 0)
+      .slice(-512);
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {

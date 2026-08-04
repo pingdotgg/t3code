@@ -32,6 +32,7 @@ export function buildArchivedThreadGroups(input: {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly environmentLabels: Readonly<Record<string, string>>;
   readonly environmentId: EnvironmentId | null;
+  readonly projectKeys?: ReadonlySet<string> | null;
   readonly searchQuery: string;
   readonly sortOrder: ArchivedThreadSortOrder;
 }): ReadonlyArray<ArchivedThreadGroup> {
@@ -56,6 +57,10 @@ export function buildArchivedThreadGroups(input: {
 
     for (const rawProject of entry.snapshot.projects) {
       const project = scopeProject(entry.environmentId, rawProject);
+      const projectKey = scopedProjectKey(project.environmentId, project.id);
+      if (input.projectKeys != null && !input.projectKeys.has(projectKey)) {
+        continue;
+      }
       const projectThreads = threadsByProjectId.get(project.id) ?? [];
       const groupMatches =
         query.length === 0 ||
@@ -74,7 +79,7 @@ export function buildArchivedThreadGroups(input: {
 
       const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
       groups.push({
-        key: scopedProjectKey(project.environmentId, project.id),
+        key: projectKey,
         project,
         threads: Arr.sort(
           matchingThreads,

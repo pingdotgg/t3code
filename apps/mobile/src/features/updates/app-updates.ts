@@ -7,8 +7,19 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  createPersonalPreviewUpdateClient,
+  type PersonalPreviewUpdateClient,
+} from "./personal-preview-updates";
 
-export type AppUpdateCheckState = "idle" | "checking" | "downloading" | "restarting" | "current";
+export type AppUpdateCheckState =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "opening"
+  | "restarting"
+  | "current";
 
 export interface AppUpdateClient {
   readonly isEnabled: boolean;
@@ -25,6 +36,7 @@ export interface AppUpdateClient {
 
 interface AppUpdateCheckOptions {
   readonly client?: AppUpdateClient;
+  readonly previewClient?: PersonalPreviewUpdateClient | null;
   readonly onFailure?: (message: string) => void;
   readonly onStateChange?: (state: AppUpdateCheckState) => void;
 }
@@ -73,7 +85,8 @@ export function registerHiddenUpdateTap(count: number): {
 
 export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Promise<void> {
   const client = options.client ?? Updates;
-  if (!client.isEnabled) return;
+  const previewClient = options.previewClient ?? createPersonalPreviewUpdateClient();
+  if (!previewClient?.isEnabled && !client.isEnabled) return;
 
   if (appUpdateCheckInFlight) {
     await observeAppUpdateCheck(appUpdateCheckInFlight, options);
@@ -99,7 +112,7 @@ export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Pr
   // Publish the operation before any state listener can synchronously re-enter.
   appUpdateCheckInFlight = inFlight;
 
-  const execution = performAppUpdateCheck(client, {
+  const progressOptions = {
     onFailure: (message) => {
       progress.failure = message;
       notifyListeners(failureListeners, message);
@@ -108,7 +121,10 @@ export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Pr
       progress.state = state;
       notifyListeners(stateListeners, state);
     },
-  });
+  } satisfies AppUpdateCheckOptions;
+  const execution = previewClient?.isEnabled
+    ? performPersonalPreviewUpdateCheck(previewClient, progressOptions)
+    : performAppUpdateCheck(client, progressOptions);
   void execution.then(deferred.resolve, deferred.reject);
 
   try {
@@ -118,6 +134,34 @@ export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Pr
       appUpdateCheckInFlight = undefined;
     }
   }
+}
+
+async function performPersonalPreviewUpdateCheck(
+  client: PersonalPreviewUpdateClient,
+  options: AppUpdateCheckOptions,
+): Promise<void> {
+  const setState = options.onStateChange ?? (() => {});
+  setState("checking");
+  const check = await settlePromise(() => client.checkForUpdateAsync());
+  if (check._tag === "Failure") {
+    reportUpdateFailure(check, "Could not check for preview updates.", options.onFailure);
+    setState("idle");
+    return;
+  }
+  if (check.value === null) {
+    setState("current");
+    return;
+  }
+
+  setState("available");
+  const presented = await settlePromise(() => client.presentUpdateAsync(check.value));
+  if (presented._tag === "Failure") {
+    reportUpdateFailure(presented, "Could not open the preview update.", options.onFailure);
+    setState("idle");
+    return;
+  }
+  if (presented.value) setState("opening");
+  setState("idle");
 }
 
 function createDeferred(): Deferred {
@@ -215,13 +259,14 @@ function reportUpdateFailure(
 
 export function createAppUpdateLaunchCheck(
   client: AppUpdateClient = Updates,
+  previewClient: PersonalPreviewUpdateClient | null = createPersonalPreviewUpdateClient(),
 ): () => Promise<void> | undefined {
   let started = false;
 
   return () => {
-    if (started || !client.isEnabled) return undefined;
+    if (started || (!previewClient?.isEnabled && !client.isEnabled)) return undefined;
     started = true;
-    return runAppUpdateCheck({ client });
+    return runAppUpdateCheck({ client, previewClient });
   };
 }
 

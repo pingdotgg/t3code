@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildHomeProjectScopes,
   buildHomeThreadGroups,
+  hasVisibleHomeThreadResults,
   sortHomeProjectScopes,
 } from "./homeThreadList";
 
@@ -52,6 +53,21 @@ function makeThread(
 }
 
 const NOW = Date.parse("2026-06-29T00:00:00.000Z");
+
+describe("hasVisibleHomeThreadResults", () => {
+  it.each([
+    { activeResultCount: 0, archivedResultCount: 0, expected: false },
+    { activeResultCount: 1, archivedResultCount: 0, expected: true },
+    { activeResultCount: 0, archivedResultCount: 1, expected: true },
+  ])(
+    "returns $expected for $activeResultCount active and $archivedResultCount archived results",
+    ({ activeResultCount, archivedResultCount, expected }) => {
+      expect(hasVisibleHomeThreadResults({ activeResultCount, archivedResultCount })).toBe(
+        expected,
+      );
+    },
+  );
+});
 
 function buildGroups(
   projects: ReadonlyArray<EnvironmentProject>,

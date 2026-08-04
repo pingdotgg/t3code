@@ -43,10 +43,12 @@ import {
   registerHiddenUpdateTap,
   runAppUpdateCheck,
 } from "../updates/app-updates";
+import { isPersonalPreviewUpdatesEnabled } from "../updates/personal-preview-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { BackgroundConnectionSettingsSection } from "../background-connection/BackgroundConnectionSettingsSection";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -126,6 +128,8 @@ function LocalSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+
+        <BackgroundConnectionSettingsSection />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
@@ -515,6 +519,8 @@ function ConfiguredSettingsRouteScreen() {
 
         <GeneralSettingsSection />
 
+        <BackgroundConnectionSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
@@ -586,8 +592,14 @@ function AppSettingsSection() {
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
   const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
+  const personalPreviewUpdatesEnabled = isPersonalPreviewUpdatesEnabled();
+  const updatesEnabled = Updates.isEnabled || personalPreviewUpdatesEnabled;
   const busy =
-    updateState === "checking" || updateState === "downloading" || updateState === "restarting";
+    updateState === "checking" ||
+    updateState === "available" ||
+    updateState === "downloading" ||
+    updateState === "opening" ||
+    updateState === "restarting";
 
   // "Up to date" is a transient acknowledgement, not a state worth persisting —
   // return the version row to its normal, deliberately quiet state.
@@ -613,24 +625,34 @@ function AppSettingsSection() {
   }, []);
 
   const handleVersionPress = useCallback(() => {
-    if (!Updates.isEnabled || updateInFlight.current) return;
+    if (!updatesEnabled || updateInFlight.current) return;
+    if (personalPreviewUpdatesEnabled) {
+      void checkForUpdate();
+      return;
+    }
     const tap = registerHiddenUpdateTap(hiddenUpdateTapCount.current);
     hiddenUpdateTapCount.current = tap.nextCount;
     if (tap.shouldCheck) {
       void checkForUpdate();
     }
-  }, [checkForUpdate]);
+  }, [checkForUpdate, personalPreviewUpdatesEnabled, updatesEnabled]);
 
   const statusLabel =
     updateState === "checking"
       ? "Checking…"
-      : updateState === "downloading"
-        ? "Downloading…"
-        : updateState === "restarting"
-          ? "Restarting…"
-          : updateState === "current"
-            ? "Up to date"
-            : null;
+      : updateState === "available"
+        ? "Update available"
+        : updateState === "downloading"
+          ? "Downloading…"
+          : updateState === "opening"
+            ? "Opening download…"
+            : updateState === "restarting"
+              ? "Restarting…"
+              : updateState === "current"
+                ? "Up to date"
+                : personalPreviewUpdatesEnabled
+                  ? "Tap to check"
+                  : null;
 
   const versionRow = (
     <View className="flex-row items-center gap-4 p-4">
@@ -655,7 +677,7 @@ function AppSettingsSection() {
     <SettingsSection title="App">
       <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
       <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
-      {Updates.isEnabled ? (
+      {updatesEnabled ? (
         <Pressable
           accessibilityLabel={`Version ${versionLabel}`}
           accessibilityRole="text"

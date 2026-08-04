@@ -12,11 +12,13 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
 import { extractPairingUrlFromQrPayload } from "./pairing";
+import { personalPreviewDefaultEnvironmentHost } from "./personal-preview-environment";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { buildPairingUrl, parsePairingUrl } from "./pairing";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
+  readonly pairingUrl?: string;
 };
 
 export function ConnectionsNewRouteScreen({
@@ -37,16 +39,27 @@ export function ConnectionsNewRouteScreen({
   const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [scannerLocked, setScannerLocked] = useState(false);
+  const defaultEnvironmentHost = personalPreviewDefaultEnvironmentHost();
 
   const headerIconColor = useThemeColor("--color-icon");
 
   const connectDisabled = isSubmitting || hostInput.trim().length === 0;
 
   useEffect(() => {
-    const { host, code } = parsePairingUrl(connectionPairingUrl);
-    setHostInput(host);
+    const routePairingUrl = params.pairingUrl?.trim() ?? "";
+    const pairingUrl = routePairingUrl || connectionPairingUrl;
+    const { host, code } = parsePairingUrl(pairingUrl);
+    setHostInput(host || defaultEnvironmentHost);
     setCodeInput(code);
-  }, [connectionPairingUrl]);
+    if (routePairingUrl && routePairingUrl !== connectionPairingUrl) {
+      onChangeConnectionPairingUrl(routePairingUrl);
+    }
+  }, [
+    connectionPairingUrl,
+    defaultEnvironmentHost,
+    onChangeConnectionPairingUrl,
+    params.pairingUrl,
+  ]);
 
   useEffect(() => {
     if (pairingConnectionError) {

@@ -26,11 +26,15 @@ import { AppState } from "react-native";
 
 import { authClientMetadata } from "../lib/authClientMetadata";
 import * as Runtime from "../lib/runtime";
+import { getBackgroundConnectionStatus } from "../native/backgroundConnection";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
-import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import {
+  type MobileApplicationActiveWakeup,
+  mobileApplicationActiveWakeup,
+} from "./app-state-wakeups";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -87,7 +91,7 @@ const connectivityLayer = Connectivity.layer({
 
 const wakeupsLayer = Wakeups.layer({
   changes: Stream.merge(
-    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
+    Stream.callback<MobileApplicationActiveWakeup>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
           let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
@@ -97,7 +101,14 @@ const wakeupsLayer = Wakeups.layer({
               return;
             }
             if (state === "active") {
-              Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
+              Queue.offerUnsafe(
+                queue,
+                mobileApplicationActiveWakeup(
+                  backgroundedAtMs,
+                  Date.now(),
+                  getBackgroundConnectionStatus(),
+                ),
+              );
               backgroundedAtMs = null;
             }
           });

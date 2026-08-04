@@ -160,6 +160,9 @@ export function HomeRouteScreen() {
           onOpenEnvironments={() =>
             navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
           }
+          onOpenArchivedThreads={() =>
+            navigation.navigate("SettingsSheet", { screen: "SettingsArchive" })
+          }
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
