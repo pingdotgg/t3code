@@ -27,6 +27,10 @@ describe("parseIntegratedBrowserUrlPattern", () => {
       host: "example.com",
       pathPrefix: null,
     });
+    expect(parseIntegratedBrowserUrlPattern("example.com/docs/v1:api")).toEqual({
+      host: "example.com",
+      pathPrefix: "/docs/v1:api",
+    });
   });
 
   it("rejects schemes, ports, whitespace, malformed hosts, and non-leading wildcards", () => {
@@ -38,6 +42,8 @@ describe("parseIntegratedBrowserUrlPattern", () => {
       "git hub.com",
       "/just/a/path",
       "héllo.com",
+      "example.com/docs?view=full",
+      "example.com/docs#anchor",
       "gist*.github.com",
       "*.gist*.github.com",
       "*",

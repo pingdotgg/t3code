@@ -12,8 +12,9 @@ interface IntegratedBrowserLinksSettingProps {
 
 /**
  * Add/remove editor for the URL patterns that make chat links open in the
- * integrated browser panel. Entries are stored and shown in canonical form
- * via `normalizeIntegratedBrowserUrlPattern` (bare domains → `*.domain.com`).
+ * integrated browser panel. New entries are canonicalized on add via
+ * `normalizeIntegratedBrowserUrlPattern` (bare domains → `*.domain.com`);
+ * persisted entries are shown as stored.
  */
 export function IntegratedBrowserLinksSetting({
   patterns,

@@ -2,8 +2,8 @@
 // `ClientSettings.integratedBrowserUrlPatterns`. Patterns are host names with
 // an optional path prefix — `*.github.com`, `docs.example.com/api`. A leading
 // `*.` matches the apex domain and any subdomain; a plain host matches only
-// itself. Bare domains normalize to `*.domain.com` on entry. No schemes, no
-// ports.
+// itself. Bare domains normalize to `*.domain.com` on entry. No schemes,
+// ports, queries, or fragments.
 
 export interface IntegratedBrowserUrlPattern {
   /** Lowercased host pattern with any leading `www.` stripped. */
@@ -20,11 +20,14 @@ function stripWww(host: string): string {
 
 /**
  * Parses a raw user-entered pattern. Returns null when the pattern is invalid
- * (schemes, ports, whitespace, empty host, or illegal host characters).
+ * (schemes, ports, whitespace, queries, fragments, empty host, or illegal
+ * host characters). Matching compares `URL.pathname`, so `?`/`#` in a
+ * pattern could never match and are rejected up front. Schemes and ports are
+ * caught by the host character check — both leave a `:` in the host segment.
  */
 export function parseIntegratedBrowserUrlPattern(raw: string): IntegratedBrowserUrlPattern | null {
   const trimmed = raw.trim();
-  if (trimmed.length === 0 || trimmed.includes(":") || /\s/u.test(trimmed)) {
+  if (trimmed.length === 0 || /[\s?#]/u.test(trimmed)) {
     return null;
   }
 

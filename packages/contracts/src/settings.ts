@@ -144,9 +144,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // disabling restores the platform's heavier default. No effect off macOS.
   fontSmoothing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Host(+path-prefix) patterns for chat links that should open in the
-  // integrated browser panel instead of the system browser. Stored raw;
-  // parsing/validation lives in the web app so an invalid persisted entry
-  // can never break settings decoding.
+  // integrated browser panel instead of the system browser. The schema only
+  // requires non-empty trimmed strings; pattern syntax is parsed in the web
+  // app, and an entry it can't parse simply never matches.
   integratedBrowserUrlPatterns: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
