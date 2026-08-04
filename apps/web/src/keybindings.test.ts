@@ -14,6 +14,7 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  isUnmodifiedEscape,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -42,6 +43,16 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("isUnmodifiedEscape", () => {
+  it("matches bare Escape but not modified Escape", () => {
+    assert.isTrue(isUnmodifiedEscape(event({ key: "Escape" })));
+    assert.isFalse(isUnmodifiedEscape(event({ key: "Escape", metaKey: true })));
+    assert.isFalse(isUnmodifiedEscape(event({ key: "Escape", ctrlKey: true })));
+    assert.isFalse(isUnmodifiedEscape(event({ key: "Escape", altKey: true })));
+    assert.isFalse(isUnmodifiedEscape(event({ key: "Escape", shiftKey: true })));
+  });
+});
 
 function modShortcut(
   key: string,

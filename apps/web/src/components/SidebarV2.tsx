@@ -57,6 +57,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
 import {
+  isUnmodifiedEscape,
   resolveShortcutCommand,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
@@ -622,7 +623,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         event.preventDefault();
         renameCommittedRef.current = true;
         onCommitRename(threadRef, renamingTitle, thread.title);
-      } else if (event.key === "Escape") {
+      } else if (isUnmodifiedEscape(event)) {
         event.preventDefault();
         renameCommittedRef.current = true;
         onCancelRename();

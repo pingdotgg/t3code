@@ -27,6 +27,14 @@ export interface ShortcutModifierStateLike {
   altKey: boolean;
 }
 
+export function isUnmodifiedEscape(
+  event: Pick<ShortcutEventLike, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
+): boolean {
+  return (
+    event.key === "Escape" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+  );
+}
+
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
   terminalOpen: boolean;

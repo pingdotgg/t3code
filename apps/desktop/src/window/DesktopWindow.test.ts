@@ -14,8 +14,23 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
+const { globalShortcutIsRegistered, globalShortcutRegister, globalShortcutUnregister } = vi.hoisted(
+  () => ({
+    globalShortcutIsRegistered: vi.fn<(accelerator: string) => boolean>(() => false),
+    globalShortcutRegister: vi.fn<(accelerator: string, callback: () => void) => boolean>(
+      () => true,
+    ),
+    globalShortcutUnregister: vi.fn<(accelerator: string) => void>(),
+  }),
+);
+
 vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
+  globalShortcut: {
+    isRegistered: globalShortcutIsRegistered,
+    register: globalShortcutRegister,
+    unregister: globalShortcutUnregister,
+  },
   session: {
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
@@ -42,6 +57,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import { NATIVE_KEYBINDING_CAPTURE_CHANNEL } from "../keybindings/NativeKeybindingCapture.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -434,6 +450,50 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+
+        const registrationStart = globalShortcutRegister.mock.calls.length;
+        fakeWindow.windowListeners.get("focus")?.();
+        const registrations = globalShortcutRegister.mock.calls.slice(registrationStart);
+        assert.deepEqual(
+          registrations.map(([accelerator]) => accelerator),
+          [
+            "Command+Escape",
+            "Command+Control+Escape",
+            "Command+Alt+Escape",
+            "Command+Shift+Escape",
+            "Command+Control+Alt+Escape",
+            "Command+Control+Shift+Escape",
+            "Command+Alt+Shift+Escape",
+            "Command+Control+Alt+Shift+Escape",
+          ],
+        );
+        const registration = registrations.find(
+          ([accelerator]) => accelerator === "Command+Alt+Shift+Escape",
+        );
+        if (!registration) {
+          assert.fail("expected Command-Option-Shift-Escape to be registered");
+        }
+        registration[1]();
+        assert.deepEqual(fakeWindow.send.mock.calls, [
+          [
+            NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+            {
+              key: "Escape",
+              metaKey: true,
+              ctrlKey: false,
+              altKey: true,
+              shiftKey: true,
+            },
+          ],
+        ]);
+        const unregisterStart = globalShortcutUnregister.mock.calls.length;
+        fakeWindow.windowListeners.get("blur")?.();
+        assert.deepEqual(
+          globalShortcutUnregister.mock.calls
+            .slice(unregisterStart)
+            .map(([accelerator]) => accelerator),
+          registrations.map(([accelerator]) => accelerator),
+        );
       }).pipe(Effect.provide(layer));
     }),
   );

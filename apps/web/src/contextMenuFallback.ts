@@ -1,4 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { isUnmodifiedEscape } from "./keybindings";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -129,7 +130,7 @@ export function showContextMenuFallback<T extends string>(
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (isUnmodifiedEscape(event)) {
         event.preventDefault();
         cleanup(null);
       }

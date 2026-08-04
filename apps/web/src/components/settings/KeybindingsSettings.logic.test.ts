@@ -64,6 +64,38 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+shift+k");
   });
 
+  it.each([
+    ["MacIntel", { metaKey: true, ctrlKey: false }],
+    ["Win32", { metaKey: false, ctrlKey: true }],
+  ])("captures modified Escape as mod+esc on %s", (platform, modifiers) => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "Escape",
+          ...modifiers,
+          altKey: false,
+          shiftKey: false,
+        },
+        platform,
+      ),
+    ).toBe("mod+esc");
+  });
+
+  it("leaves unmodified Escape available to cancel keybinding capture", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "Escape",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBeNull();
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({

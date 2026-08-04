@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
+import { isUnmodifiedEscape } from "~/keybindings";
 
 interface LocalCommentAnnotationProps {
   kind: "draft" | "comment";
@@ -67,7 +68,7 @@ export function LocalCommentAnnotation({
         aria-label={`Comment on lines ${rangeLabel}`}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (isUnmodifiedEscape(event)) {
             event.preventDefault();
             onCancel();
           }
