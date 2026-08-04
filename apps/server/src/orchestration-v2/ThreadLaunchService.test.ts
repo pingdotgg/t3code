@@ -10,6 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,9 +18,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
@@ -33,6 +36,7 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const projectId = ProjectId.make("project:launch-test");
@@ -94,6 +98,9 @@ function makeHarness(options: HarnessOptions = {}) {
   const generateBranchName = vi.fn(
     options.generateBranchName ?? (() => Effect.succeed({ branch: "generated-branch" })),
   );
+  const generateThreadTitle = vi.fn(
+    options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
+  );
   const externalServices = Layer.mergeAll(
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
@@ -115,8 +122,7 @@ function makeHarness(options: HarnessOptions = {}) {
       runForThread: runSetup,
     }),
     Layer.mock(TextGeneration.TextGeneration)({
-      generateThreadTitle:
-        options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
+      generateThreadTitle,
       generateBranchName,
     }),
     ServerSettings.layerTest(options.serverSettings),
@@ -125,10 +131,31 @@ function makeHarness(options: HarnessOptions = {}) {
   const launch = ThreadLaunch.layer.pipe(
     Layer.provide(Layer.mergeAll(externalServices, threadManagement, receipts, IdAllocator.layer)),
   );
+  const projectedProjects = Layer.mock(ProjectionProjectRepository)({
+    getById: ({ projectId: requestedProjectId }) =>
+      Effect.succeed(
+        requestedProjectId === projectId
+          ? Option.some({
+              projectId,
+              title: project.title,
+              workspaceRoot: project.workspaceRoot,
+              defaultModelSelection: project.defaultModelSelection,
+              scripts: project.scripts,
+              createdAt: project.createdAt,
+              updatedAt: project.updatedAt,
+              deletedAt: project.deletedAt,
+            })
+          : Option.none(),
+      ),
+  });
+  const titleRegeneration = ThreadTitleRegeneration.layer.pipe(
+    Layer.provide(Layer.mergeAll(threadManagement, projectedProjects, externalServices)),
+  );
   return {
-    layer: Layer.mergeAll(launch, threadManagement, outbox, database),
+    layer: Layer.mergeAll(launch, threadManagement, titleRegeneration, outbox, database),
     createWorktree,
     generateBranchName,
+    generateThreadTitle,
     runSetup,
   };
 }
@@ -412,45 +439,191 @@ it.effect(
     }),
 );
 
-it.effect("does not put optional title generation on the provisioning critical path", () =>
+it.effect("arms durable title generation after accepting the first message", () =>
   Effect.gen(function* () {
-    const titleStarted = yield* Deferred.make<void>();
-    const allowTitle = yield* Deferred.make<void>();
-    const setupEntered = yield* Deferred.make<void>();
     const harness = makeHarness({
-      generateTitle: () =>
-        Deferred.succeed(titleStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(allowTitle)),
-          Effect.as({ title: "Generated later" }),
-        ),
-      runSetup: () =>
-        Deferred.succeed(setupEntered, undefined).pipe(Effect.as({ status: "no-script" as const })),
+      generateTitle: (input) =>
+        Effect.succeed({
+          title: input.previousTitle === undefined ? "Generated title" : "Regenerated title",
+        }),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const threads = yield* ThreadManagement.ThreadManagementService;
-      const input = launchInput({
-        command: "command:launch:title-independent",
-        thread: "thread:launch:title-independent",
-        message: "Generate my title slowly",
-      });
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+      const input = {
+        ...launchInput({
+          command: "command:launch:title-generation",
+          thread: "thread:launch:title-generation",
+          message: "Generate my title",
+        }),
+        title: "Generate my title",
+        generateTitle: true,
+      };
       const launched = yield* launches.launch(input);
-      yield* Deferred.await(titleStarted);
-      yield* Deferred.await(setupEntered);
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.runs[0]?.status === "starting")),
+      const generationCommandId = CommandId.make("command:launch:title-generation:initial-message");
+
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.title, "Generate my title");
+      assert.equal(projection.thread.titleRegeneration?.requestId, generationCommandId);
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(generationCommandId)).map((effect) => effect.request),
+        [
+          {
+            type: "thread-title.generate",
+            kind: { type: "initial", messageId: MessageId.make("Generate my title:id") },
+          },
+        ],
       );
+      yield* titleRegeneration.execute({
+        threadId: launched.threadId,
+        requestId: generationCommandId,
+        kind: { type: "initial", messageId: MessageId.make("Generate my title:id") },
+      });
+      const generated = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(generated.thread.title, "Generated title");
+      assert.deepEqual(
+        harness.generateThreadTitle.mock.calls[0]?.[0].modelSelection,
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
+
+      const manualRequestId = CommandId.make("command:title-generation:manual");
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: manualRequestId,
+        threadId: launched.threadId,
+        regenerateTitle: true,
+      });
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(manualRequestId)).map((effect) => effect.request),
+        [{ type: "thread-title.generate", kind: { type: "regenerate" } }],
+      );
+      yield* titleRegeneration.execute({
+        threadId: launched.threadId,
+        requestId: manualRequestId,
+        kind: { type: "regenerate" },
+      });
+      const regenerated = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(regenerated.thread.title, "Regenerated title");
+      assert.equal(harness.generateThreadTitle.mock.calls[1]?.[0].previousTitle, "Generated title");
+
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:title-generation:user-rename"),
+        threadId: launched.threadId,
+        title: "Keep my title",
+      });
+      const renamed = yield* threads.getThreadProjection(launched.threadId);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* threads.dispatch({
+        type: "thread.title.regeneration.complete",
+        commandId: CommandId.make("command:title-generation:stale-completion"),
+        threadId: launched.threadId,
+        requestId: generationCommandId,
+        title: "Stale generated title",
+      });
+      const afterStaleCompletion = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(afterStaleCompletion.thread.title, "Keep my title");
       assert.equal(
-        (yield* threads.getThreadProjection(launched.threadId)).thread.title,
-        "New thread",
+        DateTime.toEpochMillis(afterStaleCompletion.thread.updatedAt),
+        DateTime.toEpochMillis(renamed.thread.updatedAt),
       );
-      yield* Deferred.succeed(allowTitle, undefined);
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.thread.title === "Generated later")),
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("does not update a reused thread title when the initial message is rejected", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:launch:reused-title-failure");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("command:launch:reused-title-failure:create"),
+        threadId,
+        projectId,
+        title: "Original title",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+
+      const commandId = CommandId.make("command:launch:reused-title-failure");
+      const failed = yield* launches
+        .launch({
+          ...launchInput({
+            command: commandId,
+            thread: threadId,
+            message: "Generate a provisional title",
+          }),
+          reuseExistingThread: true,
+          title: "Generate a provisional title",
+          generateTitle: true,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("missing-provider"),
+            model: "missing-model",
+          },
+        })
+        .pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(failed));
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, "Original title");
+      assert.isUndefined(projection.thread.titleRegeneration);
+      assert.isEmpty(projection.messages);
+      assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${commandId}:initial-message`)));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("generates an initial title for an attachment-only message", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+      const messageId = MessageId.make("message:image-only");
+      const input = {
+        ...launchInput({
+          command: "command:launch:image-only",
+          thread: "thread:launch:image-only",
+        }),
+        title: "Image: screenshot.png",
+        generateTitle: true,
+        initialMessage: {
+          messageId,
+          text: "",
+          attachments: [
+            {
+              type: "image" as const,
+              id: "attachment-image-only",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 128,
+            },
+          ],
+        },
+      };
+
+      const launched = yield* launches.launch(input);
+      yield* titleRegeneration.execute({
+        threadId: launched.threadId,
+        requestId: CommandId.make("command:launch:image-only:initial-message"),
+        kind: { type: "initial", messageId },
+      });
+
+      assert.equal(harness.generateThreadTitle.mock.calls[0]?.[0].message, "");
+      assert.equal(
+        harness.generateThreadTitle.mock.calls[0]?.[0].attachments?.[0]?.name,
+        "screenshot.png",
       );
     }).pipe(Effect.provide(harness.layer));
   }),

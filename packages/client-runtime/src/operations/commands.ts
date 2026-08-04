@@ -528,7 +528,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
       projectId: thread.projectId,
-      title: thread.title,
+      title: input.titleSeed ?? thread.title,
+      generateTitle: input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
@@ -587,6 +588,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     messageId: input.message.messageId,
     text: input.message.text,
     attachments,
+    ...(input.titleSeed === undefined || projection.messages.length > 0
+      ? {}
+      : { titleSeed: input.titleSeed }),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
     ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
     dispatchMode,
