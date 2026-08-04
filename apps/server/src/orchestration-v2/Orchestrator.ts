@@ -4882,6 +4882,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     >,
     projection: OrchestrationV2ThreadProjection,
+    runTurnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   ) => {
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const attempt = projection.attempts.find((candidate) => candidate.id === run?.activeAttemptId);
@@ -4889,7 +4890,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const providerThread = projection.providerThreads.find(
       (candidate) => candidate.id === run?.providerThreadId,
     );
-    const preparationItem = projection.turnItems.find(
+    const preparationItem = runTurnItems.find(
       (
         candidate,
       ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }> =>
@@ -4915,7 +4916,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const projection = yield* loadProjectionForCommand(command);
-      const state = preparedRunState(command, projection);
+      const runTurnItems = yield* projectionStore
+        .getRunTurnItems(command.threadId, command.runId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const state = preparedRunState(command, projection, runTurnItems);
       if (state === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -4949,7 +4957,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const projection = yield* loadProjectionForCommand(command);
-      const state = preparedRunState(command, projection);
+      const runTurnItems = yield* projectionStore
+        .getRunTurnItems(command.threadId, command.runId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const state = preparedRunState(command, projection, runTurnItems);
       if (state === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -5033,7 +5048,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const projection = yield* loadProjectionForCommand(command);
-      const state = preparedRunState(command, projection);
+      const runTurnItems = yield* projectionStore
+        .getRunTurnItems(command.threadId, command.runId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const state = preparedRunState(command, projection, runTurnItems);
       if (state === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -5223,7 +5245,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: interruptResultItem,
         });
-        const preparationItem = projection.turnItems.find(
+        const runTurnItems = yield* projectionStore
+          .getRunTurnItems(command.threadId, run.id)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const preparationItem = runTurnItems.find(
           (
             candidate,
           ): candidate is Extract<
