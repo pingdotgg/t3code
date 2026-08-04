@@ -7,6 +7,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import {
+  type ChangeRequestSettlementState,
+  updateChangeRequestSettlementState,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -68,6 +72,7 @@ import {
   ThreadListShowMoreRow,
 } from "./thread-list-items";
 import {
+  ThreadListV2ChangeRequestLookupPool,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -404,23 +409,16 @@ function ThreadNavigationSidebarPane(
 
   // Thread List v2 (beta) support — same model as the compact Home list
   // (HomeScreen.tsx): flat creation-order card block + settled recency tail.
-  // PR states stream in per-row; merged/closed PRs auto-settle their thread
-  // on the next partition.
+  // PR states stream independently of virtualized rows so every branch-backed
+  // thread can reach a definitive state before the partition settles it.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+    ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
-        const next = new Map(current);
-        if (state === null) {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, state);
-        }
-        return next;
-      });
+    (stateKey: string, state: ChangeRequestSettlementState) => {
+      setChangeRequestStateByKey((current) =>
+        updateChangeRequestSettlementState(current, stateKey, state),
+      );
     },
     [],
   );
@@ -1127,6 +1125,16 @@ function ThreadNavigationSidebarPane(
             : "No threads yet"}
     </Text>
   );
+  const changeRequestLookupPool = threadListV2Enabled ? (
+    <ThreadListV2ChangeRequestLookupPool
+      threads={threads}
+      environmentId={options.selectedEnvironmentId}
+      projectRefs={selectedProjectScope?.projectRefs ?? null}
+      projectCwdByKey={projectCwdByKey}
+      settlementEnvironmentIds={settlementEnvironmentIds}
+      onChangeRequestState={handleChangeRequestState}
+    />
+  ) : null;
 
   if (props.nativeChrome) {
     return (
@@ -1155,6 +1163,7 @@ function ThreadNavigationSidebarPane(
           }}
         />
         <View className="flex-1">
+          {changeRequestLookupPool}
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
@@ -1215,6 +1224,7 @@ function ThreadNavigationSidebarPane(
         borderRightWidth: StyleSheet.hairlineWidth,
       }}
     >
+      {changeRequestLookupPool}
       <View className="flex-1" style={{ paddingBottom: insets.bottom }}>
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <GestureDetector gesture={sidebarScrollGesture}>

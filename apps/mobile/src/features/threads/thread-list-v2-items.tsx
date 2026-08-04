@@ -3,7 +3,15 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  type ChangeRequestSettlementState,
+  resolveChangeRequestSettlementState,
+  resolveSnoozePresets,
+  selectChangeRequestLookupWindow,
+  threadChangeRequestStateKey,
+} from "@t3tools/client-runtime/state/thread-settled";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import {
@@ -25,13 +33,17 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { useThreadPr } from "../../state/use-thread-pr";
+import { useThreadPrLookup, useThreadVcsStatus } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
+  buildThreadListV2ChangeRequestLookupTargets,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
+  THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT,
+  THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_WINDOW_MS,
+  type ThreadListV2ChangeRequestLookupTarget,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -300,6 +312,89 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
+const ThreadListV2ChangeRequestLookupReporter = memo(
+  function ThreadListV2ChangeRequestLookupReporter(props: {
+    readonly target: ThreadListV2ChangeRequestLookupTarget;
+    readonly onChangeRequestState: (stateKey: string, state: ChangeRequestSettlementState) => void;
+  }) {
+    const { target, onChangeRequestState } = props;
+    const gitStatus = useThreadVcsStatus(target.environmentId, target.cwd);
+    useEffect(() => {
+      for (const thread of target.threads) {
+        onChangeRequestState(
+          threadChangeRequestStateKey(thread),
+          resolveChangeRequestSettlementState({
+            threadBranch: thread.branch,
+            gitStatus: gitStatus.data,
+            gitStatusError: gitStatus.error,
+          }),
+        );
+      }
+    }, [gitStatus.data, gitStatus.error, onChangeRequestState, target.threads]);
+    return null;
+  },
+);
+
+export const ThreadListV2ChangeRequestLookupPool = memo(
+  function ThreadListV2ChangeRequestLookupPool(props: {
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+    readonly environmentId: EnvironmentId | null;
+    readonly projectRefs?: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly projectId: ProjectId;
+    }> | null;
+    readonly projectCwdByKey: ReadonlyMap<string, string>;
+    readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+    readonly onChangeRequestState: (stateKey: string, state: ChangeRequestSettlementState) => void;
+  }) {
+    const {
+      threads,
+      environmentId,
+      projectRefs,
+      projectCwdByKey,
+      settlementEnvironmentIds,
+      onChangeRequestState,
+    } = props;
+    const targets = useMemo(
+      () =>
+        buildThreadListV2ChangeRequestLookupTargets({
+          threads,
+          environmentId,
+          projectRefs,
+          projectCwdByKey,
+          settlementEnvironmentIds,
+        }),
+      [environmentId, projectCwdByKey, projectRefs, settlementEnvironmentIds, threads],
+    );
+    const [windowIndex, setWindowIndex] = useState(0);
+    useEffect(() => {
+      if (targets.length <= THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT) return;
+      const interval = setInterval(
+        () => setWindowIndex((current) => current + 1),
+        THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_WINDOW_MS,
+      );
+      return () => clearInterval(interval);
+    }, [targets.length]);
+    const activeTargets = useMemo(
+      () =>
+        selectChangeRequestLookupWindow({
+          targets,
+          windowIndex,
+          limit: THREAD_LIST_V2_CHANGE_REQUEST_LOOKUP_LIMIT,
+        }),
+      [targets, windowIndex],
+    );
+
+    return activeTargets.map((target) => (
+      <ThreadListV2ChangeRequestLookupReporter
+        key={target.key}
+        target={target}
+        onChangeRequestState={onChangeRequestState}
+      />
+    ));
+  },
+);
+
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
@@ -344,12 +439,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozeSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  /** Reports this row's live PR state up so the partition can auto-settle
-      merged/closed work (mirrors web's onChangeRequestState). */
-  readonly onChangeRequestState?: (
-    threadKey: string,
-    state: "open" | "closed" | "merged" | null,
-  ) => void;
+  readonly onChangeRequestState?: (stateKey: string, state: ChangeRequestSettlementState) => void;
   readonly projectCwd?: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
@@ -372,12 +462,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
 
-  const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
-  const prState = pr?.state ?? null;
-  const threadKey = `${thread.environmentId}:${thread.id}`;
+  const { changeRequestState, pr } = useThreadPrLookup(
+    thread,
+    props.projectCwd ?? props.project?.workspaceRoot ?? null,
+  );
+  const changeRequestStateKey = threadChangeRequestStateKey(thread);
   useEffect(() => {
-    onChangeRequestState?.(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    onChangeRequestState?.(changeRequestStateKey, changeRequestState);
+  }, [changeRequestState, changeRequestStateKey, onChangeRequestState]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");

@@ -995,7 +995,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
-      Effect.map(({ pr }) => pr),
+      Effect.map(({ pr }) => ({ pr, lookupFailed: false as const })),
       Effect.catch((error) =>
         Effect.logWarning("PR lookup failed; keeping last known PR state.").pipe(
           Effect.annotateLogs({
@@ -1007,14 +1007,15 @@ export const make = Effect.gen(function* () {
                 : typeof error,
           }),
           Effect.andThen(resolveBranchHeadContext(cwd, details)),
-          Effect.map((headContext) =>
-            resolveLastKnownPr(branchKey, {
+          Effect.map((headContext) => ({
+            pr: resolveLastKnownPr(branchKey, {
               upstreamRef: details.upstreamRef,
               headBranch: headContext.headBranch,
               remoteName: headContext.remoteName,
               headRemoteUrlKey: headContext.headRemoteUrlKey,
             }),
-          ),
+            lookupFailed: true as const,
+          })),
         ),
       ),
     );
@@ -1030,21 +1031,22 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const pr =
+    const prLookup =
       details.branch !== null
         ? yield* lookupStatusPr(cwd, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
             isDefaultBranch: details.isDefaultBranch,
           })
-        : null;
+        : { pr: null, lookupFailed: false as const };
 
     return {
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: details.aheadOfDefaultCount,
-      pr,
+      pr: prLookup.pr,
+      ...(prLookup.lookupFailed ? { prLookupFailed: true } : {}),
     } satisfies VcsStatusRemoteResult;
   });
   const remoteStatusResultCache = yield* Cache.makeWith((cwd: string) => readRemoteStatus(cwd), {

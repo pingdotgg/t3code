@@ -1,7 +1,56 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { OrchestrationThreadShell, VcsStatusResult } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
+export type ChangeRequestSettlementState = ChangeRequestStateLike | "none" | "unknown";
+
+export function updateChangeRequestSettlementState(
+  current: ReadonlyMap<string, ChangeRequestSettlementState>,
+  stateKey: string,
+  state: ChangeRequestSettlementState,
+) {
+  if ((current.get(stateKey) ?? "unknown") === state) return current;
+  const next = new Map(current);
+  if (state === "unknown") next.delete(stateKey);
+  else next.set(stateKey, state);
+  return next;
+}
+
+/** Selects a bounded circular window so every lookup target is eventually revisited. */
+export function selectChangeRequestLookupWindow<T>(input: {
+  readonly targets: ReadonlyArray<T>;
+  readonly windowIndex: number;
+  readonly limit: number;
+}): ReadonlyArray<T> {
+  const count = Math.min(input.limit, input.targets.length);
+  if (count === 0) return [];
+  const start = (input.windowIndex * input.limit) % input.targets.length;
+  return Array.from(
+    { length: count },
+    (_, index) => input.targets[(start + index) % input.targets.length]!,
+  );
+}
+
+export function threadChangeRequestStateKey(
+  thread: Pick<OrchestrationThreadShell, "id" | "branch"> & { readonly environmentId: string },
+): string {
+  return `${thread.environmentId}:${thread.id}:${thread.branch ?? ""}`;
+}
+
+export function resolveChangeRequestSettlementState(input: {
+  readonly threadBranch: string | null;
+  readonly gitStatus:
+    | (Pick<VcsStatusResult, "pr" | "refName"> & { readonly remoteLoaded: boolean })
+    | null;
+  readonly gitStatusError: string | null;
+}) {
+  if (input.threadBranch === null) return "none" as const;
+  if (input.gitStatusError !== null) return "unknown" as const;
+  if (input.gitStatus === null) return "unknown" as const;
+  if (input.gitStatus.refName !== input.threadBranch) return "unknown" as const;
+  if (!input.gitStatus.remoteLoaded) return "unknown" as const;
+  return input.gitStatus.pr?.state ?? ("none" as const);
+}
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -232,7 +281,7 @@ export function effectiveSettled(
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
-    readonly changeRequestState?: ChangeRequestStateLike | null;
+    readonly changeRequestState?: ChangeRequestSettlementState | null;
   },
 ): boolean {
   // Blocked work must remain visible even when a user explicitly settled it.
@@ -258,14 +307,19 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
-  if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
+  const changeRequestState =
+    options.changeRequestState ?? (shell.branch === null ? "none" : "unknown");
+  if (changeRequestState === "merged" || changeRequestState === "closed") {
     return true;
   }
   // An open PR is unfinished business regardless of how long the thread has
   // been quiet: review can take days, and hiding the thread would bury the
   // work waiting on it. Only merge/close (above) or an explicit user settle
   // resolves it.
-  if (options.changeRequestState === "open") return false;
+  if (changeRequestState === "open") return false;
+  // A branch may have an open PR whose VCS lookup has not resolved yet.
+  // Keep it visible until the client can distinguish that from no PR.
+  if (changeRequestState === "unknown") return false;
   if (options.autoSettleAfterDays === null) return false;
 
   const lastActivityAt = threadLastActivityAt(shell);

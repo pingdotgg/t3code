@@ -11,6 +11,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import {
+  type ChangeRequestSettlementState,
+  updateChangeRequestSettlementState,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -42,6 +46,7 @@ import {
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
 import {
+  ThreadListV2ChangeRequestLookupPool,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -478,23 +483,16 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
-  // PR states stream in per-row (rows own the VCS subscriptions); a merged or
-  // closed PR auto-settles its thread on the next partition (mirrors web).
+  // PR states stream independently of virtualized rows so every branch-backed
+  // thread can reach a definitive state before the partition settles it.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+    ReadonlyMap<string, ChangeRequestSettlementState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
-        const next = new Map(current);
-        if (state === null) {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, state);
-        }
-        return next;
-      });
+    (stateKey: string, state: ChangeRequestSettlementState) => {
+      setChangeRequestStateByKey((current) =>
+        updateChangeRequestSettlementState(current, stateKey, state),
+      );
     },
     [],
   );
@@ -1047,6 +1045,14 @@ export function HomeScreen(props: HomeScreenProps) {
   if (threadListV2Enabled) {
     return (
       <View className="flex-1 bg-screen">
+        <ThreadListV2ChangeRequestLookupPool
+          threads={props.threads}
+          environmentId={props.selectedEnvironmentId}
+          projectRefs={v2ScopedProjectGroup?.projectRefs ?? null}
+          projectCwdByKey={projectCwdByKey}
+          settlementEnvironmentIds={settlementEnvironmentIds}
+          onChangeRequestState={handleChangeRequestState}
+        />
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <FlatList
             data={threadListV2Items}

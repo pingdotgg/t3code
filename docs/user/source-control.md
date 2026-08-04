@@ -38,6 +38,7 @@ T3 Code works with the platforms your team already uses:
 **Stay on top of open reviews**
 
 - See if your current branch already has an open PR/MR
+- Sidebar v2 keeps review threads active while their PR/MR status is loading
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 

@@ -1,6 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  resolveSnoozePresets,
+  selectChangeRequestLookupWindow,
+  threadChangeRequestStateKey,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -14,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
+  buildThreadListV2ChangeRequestLookupTargets,
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   resolveThreadListV2Enabled,
@@ -455,6 +460,120 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.isLast)).toEqual([false, false, true]);
     expect(layout.settledCount).toBe(2);
     expect(layout.settledShelfHeaderIndex).toBe(1);
+  });
+
+  it("keeps stale branch threads active until their PR state is known", () => {
+    const thread = makeThread({
+      id: ThreadId.make("unknown-pr"),
+      title: "Unknown PR",
+      branch: "feature/unknown-pr",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+    });
+    const unresolved = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(unresolved.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["unknown-pr", "card"],
+    ]);
+    expect(unresolved.settledCount).toBe(0);
+
+    const confirmedNoPr = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[threadChangeRequestStateKey(thread), "none"]]),
+      now: NOW,
+    });
+
+    expect(confirmedNoPr.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["unknown-pr", "slim"],
+    ]);
+    expect(confirmedNoPr.settledCount).toBe(1);
+  });
+
+  it("does not reuse a PR state after a thread branch changes", () => {
+    const previous = makeThread({
+      id: ThreadId.make("changed-branch"),
+      title: "Changed branch",
+      branch: "feature/previous",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+    });
+    const current = { ...previous, branch: "feature/current" };
+    const layout = buildThreadListV2Items({
+      threads: [current],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[threadChangeRequestStateKey(previous), "none"]]),
+      now: NOW,
+    });
+
+    expect(threadChangeRequestStateKey(current)).not.toBe(threadChangeRequestStateKey(previous));
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["changed-branch", "card"],
+    ]);
+    expect(layout.settledCount).toBe(0);
+  });
+
+  it("bounds and fairly advances off-screen PR lookup targets", () => {
+    const threads = Array.from({ length: 18 }, (_, index) =>
+      makeThread({
+        id: ThreadId.make(`lookup-${index}`),
+        title: `Lookup ${index}`,
+        branch: `feature/lookup-${index}`,
+        worktreePath: `/repo/worktrees/${index}`,
+      }),
+    );
+    const targets = buildThreadListV2ChangeRequestLookupTargets({
+      threads,
+      environmentId: null,
+      projectCwdByKey: new Map(),
+      settlementEnvironmentIds: new Set([environmentId]),
+    });
+    const firstBatch = selectChangeRequestLookupWindow({
+      targets,
+      windowIndex: 0,
+      limit: 16,
+    });
+
+    expect(firstBatch).toHaveLength(16);
+    const secondBatch = selectChangeRequestLookupWindow({
+      targets,
+      windowIndex: 1,
+      limit: 16,
+    });
+    expect(secondBatch.slice(0, 2).map((target) => target.key)).toEqual(
+      targets.slice(16).map((target) => target.key),
+    );
+    expect(new Set([...firstBatch, ...secondBatch].map((target) => target.key)).size).toBe(18);
+  });
+
+  it("deduplicates off-screen PR lookups by environment and cwd", () => {
+    const targets = buildThreadListV2ChangeRequestLookupTargets({
+      threads: [
+        makeThread({
+          id: ThreadId.make("shared-cwd-a"),
+          title: "Shared cwd A",
+          branch: "feature/shared-a",
+          worktreePath: "/repo/shared",
+        }),
+        makeThread({
+          id: ThreadId.make("shared-cwd-b"),
+          title: "Shared cwd B",
+          branch: "feature/shared-b",
+          worktreePath: "/repo/shared",
+        }),
+      ],
+      environmentId: null,
+      projectCwdByKey: new Map(),
+      settlementEnvironmentIds: new Set([environmentId]),
+    });
+
+    expect(targets).toHaveLength(1);
+    expect(targets[0]?.threads).toHaveLength(2);
   });
 
   it("collapses settled threads to a counted shelf header", () => {

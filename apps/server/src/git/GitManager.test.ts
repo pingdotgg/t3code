@@ -1315,6 +1315,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
+      expect(status.prLookupFailed).toBe(true);
     }),
   );
 
@@ -1356,6 +1357,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* manager.invalidateStatus(repoDir);
       const second = yield* manager.status({ cwd: repoDir });
       expect(second.pr?.number).toBe(214);
+      expect(second.prLookupFailed).toBe(true);
     }),
   );
 
