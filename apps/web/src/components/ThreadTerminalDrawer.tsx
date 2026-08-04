@@ -511,7 +511,10 @@ export function TerminalViewport({
           // The surface owns the read so it can claim the paste race before it
           // starts: a paste shortcut fired while the menu read is in flight
           // supersedes this paste instead of landing alongside it.
-          await activeTerminal.pasteFromClipboard(() => readTextFromClipboard("terminal input"));
+          await activeTerminal.pasteFromClipboard(
+            () => readTextFromClipboard("terminal input"),
+            () => requestId === selectionActionRequestIdRef.current,
+          );
         } catch (error) {
           if (requestId !== selectionActionRequestIdRef.current) {
             return;

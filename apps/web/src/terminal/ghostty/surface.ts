@@ -659,10 +659,13 @@ export class GhosttyTerminalSurface {
    * a shortcut or native paste arriving during the read supersedes this one
    * instead of both reaching the shell.
    */
-  async pasteFromClipboard(readText: () => Promise<string>): Promise<void> {
+  async pasteFromClipboard(
+    readText: () => Promise<string>,
+    isCurrent: () => boolean = () => true,
+  ): Promise<void> {
     const token = ++this.pasteShortcutToken;
     const text = await readText();
-    if (this.disposed || this.pasteShortcutToken !== token) return;
+    if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
