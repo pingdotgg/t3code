@@ -4,7 +4,7 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
-import { assert, describe, it } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -12,6 +12,36 @@ import { ServerConfig } from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
 describe("ResourceMonitorBinary", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.effect("skips Linux libc detection on Windows", () =>
+    Effect.gen(function* () {
+      const getReport = vi.spyOn(process.report, "getReport").mockImplementation(() => {
+        throw new Error("Linux libc detection must not run on Windows");
+      });
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-resource-monitor-binary-",
+      });
+      const binaryPath = `${baseDir}/t3-resource-monitor.exe`;
+      yield* fileSystem.writeFileString(binaryPath, "binary");
+
+      const service = yield* ResourceMonitorBinary.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessArchitecture, "arm64"),
+        Effect.provideService(HostProcessEnvironment, {
+          T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
+        }),
+      );
+
+      assert.equal(yield* service.resolve, binaryPath);
+      expect(getReport).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolves an executable override", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
