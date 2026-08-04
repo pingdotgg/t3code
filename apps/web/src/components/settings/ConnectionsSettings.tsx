@@ -593,10 +593,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       : isLoopbackHostname(window.location.hostname)
         ? null
         : currentOriginPairingUrl);
-  // Last value a copy was attempted for. The clipboard-failure reveal dialog
-  // must show exactly what failed to copy, not the row's default URL.
-  const [lastCopyAttemptValue, setLastCopyAttemptValue] = useState<string | null>(null);
-  const revealValue = lastCopyAttemptValue ?? shareablePairingUrl ?? pairingLink.credential;
+  // Value of the copy attempt that last failed. The clipboard-failure reveal
+  // dialog must show exactly what failed to copy, not the row's default URL.
+  const [failedCopyValue, setFailedCopyValue] = useState<string | null>(null);
+  const revealValue = failedCopyValue ?? shareablePairingUrl ?? pairingLink.credential;
   const isRevealValueUrl = revealValue !== pairingLink.credential;
   const isRevealValueHostedAppPairingUrl = isRevealValueUrl && isHostedAppPairingUrl(revealValue);
   // Never render a QR for a loopback URL, even in the manual-copy fallback.
@@ -607,8 +607,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     window.isSecureContext &&
     navigator.clipboard?.writeText != null;
 
-  const { copyToClipboard } = useCopyToClipboard<"code" | "hosted-link" | "link">({
-    onCopy: (kind) => {
+  const { copyToClipboard } = useCopyToClipboard<{
+    value: string;
+    kind: "code" | "hosted-link" | "link";
+  }>({
+    onCopy: ({ kind }) => {
       toastManager.add({
         type: "success",
         title:
@@ -625,7 +628,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               : "Paste it into another client to finish pairing.",
       });
     },
-    onError: (error, kind) => {
+    onError: (error, { value, kind }) => {
+      // Captured per attempt so concurrent copies cannot make the dialog
+      // reveal a different value than the one that failed.
+      setFailedCopyValue(value);
       setIsRevealDialogOpen(true);
       toastManager.add(
         stackedThreadToast({
@@ -645,8 +651,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 
   const copyPairingValue = useCallback(
     (value: string, kind: "code" | "hosted-link" | "link") => {
-      setLastCopyAttemptValue(kind === "code" ? null : value);
-      copyToClipboard(value, kind);
+      copyToClipboard(value, { value, kind });
     },
     [copyToClipboard],
   );
@@ -712,7 +717,13 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               Share
             </Button>
           ) : null}
-          <Dialog open={isRevealDialogOpen} onOpenChange={setIsRevealDialogOpen}>
+          <Dialog
+            open={isRevealDialogOpen}
+            onOpenChange={(open) => {
+              setIsRevealDialogOpen(open);
+              if (!open) setFailedCopyValue(null);
+            }}
+          >
             {canCopyToClipboard ? (
               shareablePairingUrl ? null : (
                 <Button size="xs" variant="outline" onClick={handleCopyCode}>
