@@ -1400,6 +1400,8 @@ it.layer(
           OWD: "/home/user/project",
           PATH: `${appDir}/usr/bin:${appDir}:/usr/local/bin:/usr/bin:/bin`,
           LD_LIBRARY_PATH: `${appDir}/usr/lib:/home/user/.local/lib`,
+          XDG_DATA_DIRS: `${appDir}/usr/share:/usr/local/share:/usr/share`,
+          GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
           TEST_TERMINAL_KEEP: "keep-me",
         },
       });
@@ -1419,6 +1421,11 @@ it.layer(
       // mount segments that the runtime prepended.
       expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
       expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
+      // XDG_DATA_DIRS keeps the host entries but drops the AppImage share dir.
+      expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
+      // GSETTINGS_SCHEMA_DIR pointed only at the mount, so it is removed and
+      // gsettings falls back to the host schema location.
+      expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
       // Unrelated host vars still pass through untouched.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),
