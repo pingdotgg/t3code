@@ -10,7 +10,7 @@ import * as AcpError from "./errors.ts";
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
   Schema.Struct({ profile: Schema.Struct({ token: Schema.Number }) }),
 );
-const encodeUnknownJson = Schema.encodeSync(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("effect-acp errors", () => {
   it.effect("retains RPC method and cause without deriving the message from the cause", () => {

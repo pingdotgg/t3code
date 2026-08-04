@@ -91,8 +91,8 @@ function isIncomingResponse(value: unknown): value is typeof JsonRpcResponseEnve
   return isJsonRpcResponseEnvelope(value);
 }
 
-const encodeJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
-const decodeJsonString = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const encodeJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonString = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const encodeWireMessage = (
   message: Record<string, unknown>,
