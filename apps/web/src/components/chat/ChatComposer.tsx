@@ -107,6 +107,8 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import { useVoiceTranscription } from "../../hooks/useVoiceTranscription";
+import { VoiceTranscriptionPanel } from "./VoiceTranscriptionPanel";
 
 function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
   const [position, setPosition] = useState<{
@@ -179,6 +181,8 @@ import {
   LockOpenIcon,
   PenLineIcon,
   SparklesIcon,
+  MicIcon,
+  SquareIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -1268,6 +1272,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [composerDraftTarget, setComposerDraftPrompt],
   );
+
+  const appendVoiceTranscript = useCallback(
+    (transcript: string) => {
+      const currentPrompt = promptRef.current;
+      const boundary = currentPrompt.length > 0 && !/\s$/.test(currentPrompt) ? " " : "";
+      const nextPrompt = `${currentPrompt}${boundary}${transcript}`;
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(null);
+      scheduleComposerFocus();
+    },
+    [promptRef, scheduleComposerFocus, setPrompt],
+  );
+  const voiceTranscription = useVoiceTranscription({
+    config: {
+      provider: settings.voiceTranscriptionProvider,
+      apiKey: settings.voiceTranscriptionApiKey,
+      model: settings.voiceTranscriptionModel,
+    },
+    onTranscript: appendVoiceTranscript,
+  });
 
   const addComposerImage = useCallback(
     (image: ComposerImageAttachment) => {
@@ -3102,6 +3129,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             </div>
           </div>
 
+          {voiceTranscription.status === "idle" &&
+          settings.voiceTranscriptionEnabled &&
+          voiceTranscription.error ? (
+            <p className="mx-4 mb-2 text-xs text-destructive" role="alert">
+              {voiceTranscription.error}
+            </p>
+          ) : null}
+
           {/* Bottom toolbar */}
           {isComposerCollapsedMobile ? null : activePendingApproval ? (
             <div className="flex items-center justify-end gap-2 px-3 pb-3 sm:px-4 sm:pb-4">
@@ -3122,7 +3157,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 showMobilePendingAnswerActions && "hidden sm:flex",
               )}
             >
-              <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {voiceTranscription.status !== "idle" ? (
+                <VoiceTranscriptionPanel
+                  status={voiceTranscription.status}
+                  elapsedMs={voiceTranscription.elapsedMs}
+                  levels={voiceTranscription.levels}
+                />
+              ) : null}
+              <div
+                className={
+                  voiceTranscription.status === "idle"
+                    ? "-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                    : "hidden"
+                }
+              >
                 {noProviderAvailable ? (
                   <Button
                     type="button"
@@ -3206,6 +3254,45 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                {settings.voiceTranscriptionEnabled &&
+                !isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                voiceTranscription.status !== "transcribing" ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="ghost"
+                          disabled={isConnecting || projectSelectionRequired}
+                          className="rounded-full text-muted-foreground"
+                          onClick={() =>
+                            voiceTranscription.status === "recording"
+                              ? voiceTranscription.stop()
+                              : void voiceTranscription.start()
+                          }
+                          aria-label={
+                            voiceTranscription.status === "recording"
+                              ? "Stop dictation"
+                              : "Start dictation"
+                          }
+                        >
+                          {voiceTranscription.status === "recording" ? (
+                            <SquareIcon className="size-3 fill-current" />
+                          ) : (
+                            <MicIcon className="size-4" />
+                          )}
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup side="top">
+                      {voiceTranscription.status === "recording"
+                        ? "Stop dictation"
+                        : "Start dictation"}
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : null}
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}

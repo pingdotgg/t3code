@@ -111,6 +111,22 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings voice transcription", () => {
+  it("defaults to OpenAI and accepts Groq", () => {
+    const settings = decodeClientSettings({});
+
+    expect(settings.voiceTranscriptionProvider).toBe("openai");
+    expect(settings.voiceTranscriptionModel).toBe("");
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptionProvider: "groq" }).voiceTranscriptionProvider,
+    ).toBe("groq");
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptionModel: " whisper-large-v3 " })
+        .voiceTranscriptionModel,
+    ).toBe("whisper-large-v3");
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

@@ -62,6 +62,9 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+export const VoiceTranscriptionProvider = Schema.Literals(["openai", "groq"]);
+export type VoiceTranscriptionProvider = typeof VoiceTranscriptionProvider.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -130,6 +133,12 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  voiceTranscriptionEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  voiceTranscriptionProvider: VoiceTranscriptionProvider.pipe(
+    Schema.withDecodingDefault(Effect.succeed("openai" as const)),
+  ),
+  voiceTranscriptionApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  voiceTranscriptionModel: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -712,6 +721,10 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   sidebarV2ConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  voiceTranscriptionEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceTranscriptionProvider: Schema.optionalKey(VoiceTranscriptionProvider),
+  voiceTranscriptionApiKey: Schema.optionalKey(TrimmedString),
+  voiceTranscriptionModel: Schema.optionalKey(TrimmedString),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

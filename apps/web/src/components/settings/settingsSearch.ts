@@ -158,6 +158,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "sidebar-v2",
   },
   {
+    id: "voice-dictation",
+    title: "Voice dictation",
+    to: "/settings/beta",
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",

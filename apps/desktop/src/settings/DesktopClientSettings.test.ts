@@ -33,6 +33,10 @@ const clientSettings: ClientSettings = {
   sidebarV2Enabled: false,
   sidebarV2ConfiguredByUser: false,
   timestampFormat: "24-hour",
+  voiceTranscriptionEnabled: true,
+  voiceTranscriptionProvider: "openai",
+  voiceTranscriptionApiKey: "",
+  voiceTranscriptionModel: "",
   wordWrap: true,
 };
 
