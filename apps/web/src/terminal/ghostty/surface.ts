@@ -31,6 +31,8 @@ export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", "JetBrains Mono", ' + TERMINAL_GLYPH_FALLBACKS;
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
+/** Half a blink cycle: the visible and hidden phases are equally long. */
+const CURSOR_BLINK_INTERVAL_MS = 500;
 
 /** Requested terminal font; omitted fields fall back to the defaults. */
 export interface GhosttyTerminalFont {
@@ -69,6 +71,20 @@ export function terminalFontFamily(family?: string): string {
 export function terminalFontSize(size?: number): number {
   if (size === undefined || !Number.isFinite(size)) return DEFAULT_TERMINAL_FONT_SIZE;
   return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.round(size)));
+}
+
+/**
+ * Whether the cursor should keep toggling. An unfocused surface draws a steady
+ * hollow cursor instead of blinking, and a reduced-motion reader gets a steady
+ * cursor too rather than a permanently animating element.
+ */
+export function shouldBlinkTerminalCursor(state: {
+  readonly focused: boolean;
+  readonly cursorBlinking: boolean;
+  readonly cursorVisible: boolean;
+  readonly reducedMotion: boolean;
+}): boolean {
+  return state.focused && state.cursorBlinking && state.cursorVisible && !state.reducedMotion;
 }
 
 /**
@@ -380,6 +396,9 @@ export class GhosttyTerminalSurface {
   private pasteShortcutToken = 0;
   private wheelRemainder = 0;
   private dprMedia: MediaQueryList | null = null;
+  // Read live on every blink decision, and watched so that dropping the
+  // preference restarts a blink cycle that has no timer left to notice it.
+  private readonly reducedMotionMedia = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   private inputLeft = -1;
   private inputTop = -1;
 
@@ -409,6 +428,7 @@ export class GhosttyTerminalSurface {
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.installEvents();
     this.watchDevicePixelRatio();
+    this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
     this.resizeObserver.observe(mount);
   }
@@ -494,6 +514,9 @@ export class GhosttyTerminalSurface {
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.core.resetAndWrite(data);
+    // A replayed session starts from the visible phase like any other write:
+    // reattaching mid-blink must not open on an invisible cursor.
+    this.cursorOn = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
@@ -536,6 +559,14 @@ export class GhosttyTerminalSurface {
     this.fit();
     this.requestRender();
   }
+
+  private readonly onReducedMotionChange = () => {
+    if (this.disposed) return;
+    // Nothing else wakes an idle steady cursor: the blink timer only reschedules
+    // from a render, and reduced motion is exactly the state that stopped it.
+    this.cursorOn = true;
+    this.requestRender();
+  };
 
   private readonly onFontsLoaded = () => {
     if (this.disposed) return;
@@ -679,6 +710,7 @@ export class GhosttyTerminalSurface {
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
+    this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
     if (this.resizeNotifyTimer !== null) {
       window.clearTimeout(this.resizeNotifyTimer);
@@ -1249,7 +1281,9 @@ export class GhosttyTerminalSurface {
       this.frame = 0;
     }
     this.snapshot = this.core.snapshot();
-    if (!this.snapshot.cursorBlinking) this.cursorOn = true;
+    // A cursor that is not blinking right now must be drawn, never caught in an
+    // off phase left behind by a blink that has since been turned off.
+    if (!this.blinkEnabled()) this.cursorOn = true;
     // The origin only moves together with a forced full repaint: partial
     // dirty-row redraws must never composite rows at a shifted origin over
     // rows painted at the previous one. Bottom anchoring starts once
@@ -1299,13 +1333,23 @@ export class GhosttyTerminalSurface {
   private scheduleCursorBlink(): void {
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     this.cursorTimer = null;
-    // An unfocused surface shows a steady hollow cursor instead of blinking.
-    if (!this.focused || !this.snapshot?.cursorBlinking || !this.snapshot.cursorVisible) return;
+    if (!this.blinkEnabled()) return;
     this.cursorTimer = window.setTimeout(() => {
       this.cursorTimer = null;
       this.cursorOn = !this.cursorOn;
       this.requestRender();
-    }, 500);
+    }, CURSOR_BLINK_INTERVAL_MS);
+  }
+
+  private blinkEnabled(): boolean {
+    const snapshot = this.snapshot;
+    if (!snapshot) return false;
+    return shouldBlinkTerminalCursor({
+      focused: this.focused,
+      cursorBlinking: snapshot.cursorBlinking,
+      cursorVisible: snapshot.cursorVisible,
+      reducedMotion: this.reducedMotionMedia?.matches ?? false,
+    });
   }
 
   private positionInput(): void {

@@ -120,6 +120,60 @@ describe("renderGhosttySnapshot", () => {
     ]);
   });
 
+  it("repaints the cell without an overlay during the blink off phase", () => {
+    const fillTextCalls: unknown[][] = [];
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: () => {},
+      fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: 2,
+      cursorY: 0,
+      cursorVisible: true,
+      cursorBlinking: true,
+      cursorStyle: 1,
+      dirtyRows: new Set(),
+      rowData: [
+        {
+          cells: [cell("a"), cell("b"), cell("x")],
+          text: "abx",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 7.2, height: 16, baseline: 11 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: false,
+    });
+
+    // The cursor row still repaints so the block disappears, but the inverted
+    // glyph the on phase draws over the cell is gone.
+    expect(fillTextCalls).toEqual([["abx", 4, 15, 21.6]]);
+  });
+
   it("repaints the previous cursor row after the cursor moves", () => {
     const clearedRows: number[] = [];
     const context = {

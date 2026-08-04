@@ -11,6 +11,7 @@ import {
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
@@ -51,6 +52,29 @@ describe("isTerminalAltGraphText", () => {
         getModifierState: (modifier) => modifier === "AltGraph",
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldBlinkTerminalCursor", () => {
+  const blinking = {
+    focused: true,
+    cursorBlinking: true,
+    cursorVisible: true,
+    reducedMotion: false,
+  };
+
+  it("blinks a focused visible cursor the terminal asked to blink", () => {
+    expect(shouldBlinkTerminalCursor(blinking)).toBe(true);
+  });
+
+  it("holds the cursor steady when blinking would be unwanted", () => {
+    // Unfocused surfaces draw a steady hollow cursor, DECSCUSR steady styles and
+    // DEC mode 12 turn blinking off, a hidden cursor has nothing to toggle, and
+    // reduced-motion readers get no permanently animating element.
+    expect(shouldBlinkTerminalCursor({ ...blinking, focused: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, cursorBlinking: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, cursorVisible: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, reducedMotion: true })).toBe(false);
   });
 });
 
