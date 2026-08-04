@@ -253,6 +253,23 @@ export const makeProvider = (kind: GitHubProviderKind) =>
         return Effect.succeed(repository);
       }
 
+      // Without a host `gh search repos` answers for github.com, so a bare name
+      // meant for an enterprise instance would quietly resolve against public
+      // GitHub. The repository service already refuses this, but the provider
+      // is reachable on its own.
+      if (!input.host) {
+        return Effect.fail(
+          new SourceControlProviderError({
+            provider: kind,
+            operation: "getRepositoryCloneUrls",
+            command: "gh",
+            cwd: input.cwd,
+            repository: SourceControlProvider.transportSafeSourceControlErrorValue(repository),
+            detail: "Choose a GitHub Enterprise host before resolving a bare repository name.",
+          }),
+        );
+      }
+
       return github
         .searchRepositories({
           cwd: input.cwd,

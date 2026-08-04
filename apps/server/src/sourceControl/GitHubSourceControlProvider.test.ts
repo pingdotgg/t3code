@@ -750,6 +750,32 @@ describe("getRepositoryCloneUrls bare name resolution", () => {
     }),
   );
 
+  it.effect("never searches for a bare enterprise name without a host", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([{ fullName: "Sollit/core" }]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({ cwd: "/repo", repository: "core" })
+        .pipe(Effect.flip);
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("host");
+    }),
+  );
+
   it.effect("never calls search for an owner/repo reference on enterprise", () =>
     Effect.gen(function* () {
       const searchRepositories = vi.fn(() => Effect.succeed([]));
