@@ -79,6 +79,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --app-scrollbar-width: 6px;
   --app-scrollbar-thumb: rgb(217 217 217);
   --app-scrollbar-thumb-hover: rgb(191 191 191);
+  /*
+   * Compact UI geometry. Keep these values semantic so sidebar, palette,
+   * tooltip, and toolbar controls cannot quietly drift apart.
+   */
+  --control-radius: 0.5rem;
+  --sidebar-content-inset: 0.5rem;
+  --sidebar-control-gap: 0.5rem;
+  --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+  --sidebar-row-content-inset: 0.625rem;
+  --command-shell-inset: 0.5rem;
+  --command-content-inset: 1rem;
+  --floating-content-inset: 0.75rem;
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
@@ -356,6 +368,28 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       100% var(--topbar-scroll-fade-height),
       100% calc(100% - var(--topbar-scroll-fade-height)),
       var(--app-scrollbar-width) 100%;
+  }
+
+  @keyframes settings-search-target-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
+    }
+  }
+
+  .settings-page-scroll-fade div.settings-search-target-pulse,
+  .settings-page-scroll-fade section.settings-search-target-pulse > div:first-child {
+    animation: settings-search-target-pulse 650ms ease-in-out 2;
+    border-radius: 0.75rem;
+  }
+
+  /* The pulse is the destination indicator; without it (reduced motion), the
+     focus outline takes over, so exactly one indicator shows at a time. */
+  .settings-page-scroll-fade .settings-search-target-pulse:focus {
+    outline: none;
   }
 
   .workspace-titlebar-controls {
@@ -1381,9 +1415,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown .chat-markdown-codeblock {
   margin: 0.65rem 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+  border-radius: var(--radius);
 }
 
 .chat-markdown .chat-markdown-codeblock-header {
@@ -1391,10 +1423,8 @@ label:has(> select#reasoning-effort) select {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--muted);
-  padding: 0.25rem 0.375rem 0.25rem 0.7rem;
-  color: var(--muted-foreground);
+  padding: 0.375rem 0.375rem 0 0.75rem;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock-title {
@@ -1407,7 +1437,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-chrome-action {
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
 .chat-markdown .chat-markdown-chrome-action:hover {

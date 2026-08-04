@@ -41,7 +41,12 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
-import { ThreadListV2PendingRow, ThreadListV2Row } from "../threads/thread-list-v2-items";
+import {
+  ThreadListV2PendingRow,
+  ThreadListV2Row,
+  ThreadListV2SettledShelfHeader,
+  ThreadListV2SnoozedShelfHeader,
+} from "../threads/thread-list-v2-items";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -100,6 +105,11 @@ interface HomeScreenProps {
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   /** Resolves true iff the settle was dispatched and succeeded. */
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onSnoozeThread: (
+    thread: EnvironmentThreadShell,
+    snoozedUntil: string,
+  ) => Promise<boolean>;
+  readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -494,6 +504,18 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [props.onSettleThread],
   );
+  const handleSnoozeThread = useCallback(
+    (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+      void props.onSnoozeThread(thread, snoozedUntil);
+    },
+    [props.onSnoozeThread],
+  );
+  const handleUnsnoozeThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void props.onUnsnoozeThread(thread);
+    },
+    [props.onUnsnoozeThread],
+  );
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
   // The settled tail renders in pages; expansion resets when the filter
@@ -511,6 +533,10 @@ export function HomeScreen(props: HomeScreenProps) {
     () => setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT),
     [],
   );
+  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
+  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
+  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
+  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
   // now is quantized to the minute and ticks so the inactivity auto-settle
   // boundary is actually crossed while the app stays open (mirrors web);
   // without a clock dependency the partition memoizes a frozen "now".
@@ -551,7 +577,15 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
-      return { items: [], hiddenSettledCount: 0, snoozedCount: 0, nextSnoozeWakeAt: null };
+      return {
+        items: [],
+        hiddenSettledCount: 0,
+        snoozedCount: 0,
+        snoozedShelfHeaderIndex: null,
+        settledCount: 0,
+        settledShelfHeaderIndex: null,
+        nextSnoozeWakeAt: null,
+      };
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
@@ -566,11 +600,16 @@ export function HomeScreen(props: HomeScreenProps) {
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
+      snoozedShelfExpanded,
+      settledShelfExpanded,
+      selectedThreadKey: null,
     });
   }, [
     changeRequestStateByKey,
     nowMinute,
     snoozeWakeTick,
+    snoozedShelfExpanded,
+    settledShelfExpanded,
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
@@ -620,8 +659,15 @@ export function HomeScreen(props: HomeScreenProps) {
       buildThreadListV2ListItems({
         items: threadListV2Layout.items,
         pendingTasks: v2PendingTasks,
+        snoozedCount: threadListV2Layout.snoozedCount,
+        snoozedShelfExpanded,
+        snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+        settledCount: threadListV2Layout.settledCount,
+        settledShelfExpanded,
+        settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
+        snoozeLabelNow: `${nowMinute}:00.000Z`,
       }),
-    [threadListV2Layout.items, v2PendingTasks],
+    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
   );
 
   const renderV2Item = useCallback(
@@ -648,12 +694,32 @@ export function HomeScreen(props: HomeScreenProps) {
           />
         );
       }
+      if (item.type === "v2-snoozed-shelf") {
+        return (
+          <ThreadListV2SnoozedShelfHeader
+            count={item.count}
+            expanded={item.expanded}
+            onToggle={toggleSnoozedShelf}
+          />
+        );
+      }
+      if (item.type === "v2-settled-shelf") {
+        return (
+          <ThreadListV2SettledShelfHeader
+            count={item.count}
+            expanded={item.expanded}
+            onToggle={toggleSettledShelf}
+          />
+        );
+      }
       const thread = item.item.thread;
       return (
         <ThreadListV2Row
           thread={thread}
           variant={item.item.variant}
-          showSettledDivider={item.item.showSettledDivider}
+          snoozed={item.item.snoozed}
+          snoozePresetMinute={nowMinute}
+          snoozeWakeLabelText={item.snoozeWakeLabelText}
           project={
             projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
           }
@@ -686,6 +752,9 @@ export function HomeScreen(props: HomeScreenProps) {
           onArchiveThread={props.onArchiveThread}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
+          snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+          onSnoozeThread={handleSnoozeThread}
+          onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
           onChangeRequestState={handleChangeRequestState}
           projectCwd={
@@ -700,6 +769,8 @@ export function HomeScreen(props: HomeScreenProps) {
       handleChangeRequestState,
       handleDeleteThread,
       handleSettleThread,
+      handleSnoozeThread,
+      handleUnsnoozeThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
       handleUnsettleThread,
@@ -712,9 +783,13 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       threadSearchMatchByKey,
+      toggleSettledShelf,
+      toggleSnoozedShelf,
       v2ProjectTitleByProjectKey,
       props.searchQuery,
+      nowMinute,
     ],
   );
   const v2KeyExtractor = useCallback((item: ThreadListV2ListItem) => item.key, []);
@@ -730,6 +805,7 @@ export function HomeScreen(props: HomeScreenProps) {
       serverConfigs,
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
+      snoozePresetMinute: nowMinute,
       threadSearchMatchByKey,
     }),
     [
@@ -738,6 +814,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.searchQuery,
       props.savedConnectionsById,
       serverConfigs,
+      nowMinute,
       threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
     ],
@@ -953,31 +1030,11 @@ export function HomeScreen(props: HomeScreenProps) {
   ) : null;
   // Self-contained: v1's listEmpty keys off projectGroups, which ignores the
   // v2 project scope, so it can be null (results elsewhere) while this list
-  // is empty. Search outranks the scope — "No results" names the actionable
-  // fact when a query is active. Snoozed threads outrank the rest: "No
-  // threads yet" over an inbox that is merely all-snoozed reads as data
-  // loss.
-  const v2SnoozedCount = threadListV2Layout.snoozedCount;
+  // is empty. Snoozed threads need no special empty state: their shelf header
+  // is a list row even while collapsed.
   const v2ListEmpty =
-    hasSearchQuery && threadSearch.isPending && v2SnoozedCount === 0 ? null : hasSearchQuery ? (
-      v2SnoozedCount > 0 ? (
-        // The snoozed threads already passed this search filter: "No
-        // results" would claim nothing matched when matches are merely
-        // parked.
-        <EmptyState
-          title={
-            v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`
-          }
-          detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
-        />
-      ) : (
-        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-      )
-    ) : v2SnoozedCount > 0 ? (
-      <EmptyState
-        title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
-        detail="Snoozed threads return when their wake time passes."
-      />
+    hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
+      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}
@@ -998,7 +1055,7 @@ export function HomeScreen(props: HomeScreenProps) {
             extraData={v2ExtraData}
             ListHeaderComponent={v2ListHeader}
             ListFooterComponent={
-              threadListV2Layout.hiddenSettledCount > 0 ? (
+              settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}

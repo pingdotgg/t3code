@@ -68,6 +68,7 @@ export const ServerProviderModel = Schema.Struct({
   subProvider: Schema.optional(TrimmedNonEmptyString),
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
+  isLegacy: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -212,7 +213,11 @@ export const ServerProvider = Schema.Struct({
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
-export const ServerProviders = Schema.Array(ServerProvider);
+// Provider status kinds grow over time (ServerProviderState,
+// ServerProviderAuthStatus, ServerProviderVersionAdvisoryStatus,
+// ServerProviderUpdateStatus); an older client must not fail the whole config
+// decode over one provider it cannot render.
+export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
 
 /**
@@ -545,9 +550,21 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
+/** Terminal selection recorded by the service launcher for one update. */
+export const ServerSelfUpdateOutcome = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  fromVersion: TrimmedNonEmptyString,
+  targetVersion: TrimmedNonEmptyString,
+  status: Schema.Literals(["committed", "rolled-back", "failed"]),
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
+
 export const ServerLifecycleReadyPayload = Schema.Struct({
   at: IsoDateTime,
   environment: ExecutionEnvironmentDescriptor,
+  /** Present when this process resumed a launcher-managed update. */
+  updateOutcome: Schema.optionalKey(ServerSelfUpdateOutcome),
 });
 export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
 
@@ -653,6 +670,8 @@ export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 export const ServerSelfUpdateResult = Schema.Struct({
   targetVersion: TrimmedNonEmptyString,
   method: ServerSelfUpdateMethod,
+  /** Launcher-generated correlation ID. Absent when talking to older servers. */
+  updateId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;
 

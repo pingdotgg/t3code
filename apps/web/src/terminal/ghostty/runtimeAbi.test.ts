@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import wasmDataUrl from "./vendor/ghostty-vt.wasm?inline";
 import writePtyWasmDataUrl from "./vendor/ghostty-write-pty.wasm?inline";
-import mobileVersion from "../../../../mobile/modules/t3-terminal/Vendor/libghostty-vt/VERSION?raw";
+import pinnedVersion from "../../../../../native/libghostty-vt/VERSION?raw";
 import { ghosttyKeyForCode } from "./keyCodes";
 
 type WasmFunction = (...args: number[]) => number;
@@ -14,13 +14,13 @@ function decodeWasmDataUrl(dataUrl: string): Uint8Array {
 }
 
 describe("vendored libghostty-vt WebAssembly", () => {
-  it("stays pinned to mobile's canonical revision and size budget", async () => {
+  it("stays pinned to the canonical revision and size budget", async () => {
     const wasm = decodeWasmDataUrl(wasmDataUrl);
     expect(wasm.byteLength).toBeLessThan(750_000);
 
     // The artifact carries its own provenance: the build embeds the pinned
-    // revision as semver build metadata, so mobile's VERSION file is the
-    // single source of truth and drift is caught here without a copy.
+    // revision as semver build metadata, so the repository's canonical VERSION
+    // file is the single source of truth and drift is caught here without a copy.
     const result = await WebAssembly.instantiate(wasm.buffer as ArrayBuffer, {
       env: { log: () => {} },
     });
@@ -35,7 +35,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
       new Uint8Array(memory.buffer, view.getUint32(0, true), view.getUint32(4, true)),
     );
     call("ghostty_wasm_free_u8_array", out, 8);
-    expect(embeddedRevision).toBe(mobileVersion.trim());
+    expect(embeddedRevision).toBe(pinnedVersion.trim());
   });
 
   it("creates, writes multi-codepoint graphemes, and frees repeated terminals", async () => {
@@ -81,6 +81,79 @@ describe("vendored libghostty-vt WebAssembly", () => {
       call("ghostty_wasm_free_opaque", terminalSlot);
       call("ghostty_wasm_free_u8_array", options, optionsSize);
     }
+  });
+
+  it("blinks the default cursor until a program asks for a steady one", async () => {
+    const result = await WebAssembly.instantiate(
+      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
+      { env: { log: () => {} } },
+    );
+    const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+    const memory = instance.exports.memory as WebAssembly.Memory;
+    const call = (name: string, ...args: number[]) =>
+      (instance.exports[name] as WasmFunction)(...args);
+    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
+    const options = alloc(8);
+    const optionsView = new DataView(memory.buffer, options, 8);
+    optionsView.setUint16(0, 80, true);
+    optionsView.setUint16(2, 24, true);
+    const terminalSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+    const renderStateSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_render_state_new", 0, renderStateSlot)).toBe(0);
+    const renderState = new DataView(memory.buffer).getUint32(renderStateSlot, true);
+    const scratch = alloc(4);
+
+    const blinking = () => {
+      expect(call("ghostty_render_state_update", renderState, terminal)).toBe(0);
+      expect(call("ghostty_render_state_get", renderState, 12, scratch)).toBe(0);
+      return new DataView(memory.buffer, scratch, 4).getUint8(0) !== 0;
+    };
+    const write = (data: string) => {
+      const bytes = new TextEncoder().encode(data);
+      const pointer = alloc(bytes.length);
+      new Uint8Array(memory.buffer, pointer, bytes.length).set(bytes);
+      call("ghostty_terminal_vt_write", terminal, pointer, bytes.length);
+      call("ghostty_wasm_free_u8_array", pointer, bytes.length);
+    };
+    const setDefaultCursorBlink = (blink: boolean) => {
+      const value = alloc(1);
+      new Uint8Array(memory.buffer, value, 1)[0] = blink ? 1 : 0;
+      expect(call("ghostty_terminal_set", terminal, 23, value)).toBe(0);
+      call("ghostty_wasm_free_u8_array", value, 1);
+    };
+
+    // Ghostty's own default is a steady cursor, so the blink the web terminal
+    // inherited from xterm.js only exists because option 23 asks for it.
+    expect(blinking()).toBe(false);
+    setDefaultCursorBlink(true);
+    expect(blinking()).toBe(true);
+
+    // Programs still own the cursor: DECSCUSR steady block and DEC mode 12 both
+    // stop the blink, and DECSCUSR reset returns to the embedder default.
+    write("\u001b[2 q");
+    expect(blinking()).toBe(false);
+    write("\u001b[0 q");
+    expect(blinking()).toBe(true);
+    write("\u001b[?12l");
+    expect(blinking()).toBe(false);
+    write("\u001b[?12h");
+    expect(blinking()).toBe(true);
+
+    // RIS restores Ghostty's built-in steady default rather than the embedder's,
+    // which is why the core reapplies the option around a session replay.
+    call("ghostty_terminal_reset", terminal);
+    expect(blinking()).toBe(false);
+    setDefaultCursorBlink(true);
+    expect(blinking()).toBe(true);
+
+    call("ghostty_wasm_free_u8_array", scratch, 4);
+    call("ghostty_render_state_free", renderState);
+    call("ghostty_wasm_free_opaque", renderStateSlot);
+    call("ghostty_terminal_free", terminal);
+    call("ghostty_wasm_free_opaque", terminalSlot);
+    call("ghostty_wasm_free_u8_array", options, 8);
   });
 
   it("reports and scrolls the viewport with Ghostty's scrollbar state", async () => {
