@@ -3,6 +3,7 @@ import type {
   ThreadPendingUserInput,
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import {
   resolveT3McpToolPresentation,
   type T3McpToolLogo,
@@ -683,6 +684,12 @@ export function buildThreadFeed(
   const entries: RawThreadFeedEntry[] = [];
   for (const row of visibleTurnItems) {
     const item = row.item;
+    if (turnItemIsWorkspacePreparation(item)) continue;
+    // Match the web timeline: only the terminal interrupt result is useful to
+    // users; the preceding request is transient bookkeeping.
+    if (item.type === "run_interrupt_request") {
+      continue;
+    }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
     if (item.type === "user_message" || item.type === "assistant_message") {
       const updatedAt = DateTime.formatIso(item.updatedAt);

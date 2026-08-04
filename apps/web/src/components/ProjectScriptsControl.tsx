@@ -294,26 +294,78 @@ export default function ProjectScriptsControl({
           </Menu>
         </ActionGroup>
       ) : importableScripts.length > 0 ? (
-        <Menu
-          highlightItemOnHover={false}
-          open={actionsMenuOpen.imports}
-          onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
-        >
-          <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
-            <PlusIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
-            </span>
-            <ChevronDownIcon className="size-3.5" />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            {importMenuItems}
-            <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
-              <PlusIcon className="size-4" />
-              Add action
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
+        isPanel ? (
+          <div
+            role="group"
+            aria-label="Project actions"
+            className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}
+            ref={panelAnchorRef}
+          >
+            <Button
+              size="sm"
+              variant="ghost"
+              className={THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS}
+              aria-label="Project actions"
+              onClick={() => setActionsMenuOpen({ scripts: false, imports: true })}
+            >
+              <WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+              <span className="ml-0.5 min-w-0 truncate">Actions</span>
+            </Button>
+            <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+            <Menu
+              highlightItemOnHover={false}
+              open={actionsMenuOpen.imports}
+              onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
+            >
+              <MenuTrigger
+                render={
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS}
+                    aria-label="Choose project action"
+                  />
+                }
+              >
+                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+              </MenuTrigger>
+              <MenuPopup
+                align="end"
+                anchor={panelAnchorRef}
+                className={THREAD_DETAILS_PANEL_ROW_POPUP_CLASS}
+              >
+                {importMenuItems}
+                <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+                  <PlusIcon className="size-4" />
+                  Add action
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          </div>
+        ) : (
+          <Menu
+            highlightItemOnHover={false}
+            open={actionsMenuOpen.imports}
+            onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
+          >
+            <MenuTrigger
+              render={<Button size="xs" variant="outline" aria-label="Project actions" />}
+            >
+              <WrenchIcon className="size-3.5" />
+              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                Actions
+              </span>
+              <ChevronDownIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              {importMenuItems}
+              <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+                <PlusIcon className="size-4" />
+                Add action
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        )
       ) : (
         <Tooltip>
           <TooltipTrigger
