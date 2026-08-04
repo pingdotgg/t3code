@@ -572,6 +572,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     setPublishAdvancedOpen(false);
     setPublishError(null);
     setPublishResult(null);
+    setSelectedPublishProviderId(null);
+    setSelectedEnterpriseHost(null);
   }, []);
 
   const handleOpenChange = useCallback(
