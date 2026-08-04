@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -175,4 +176,61 @@ export function immediateThreadRelationships(
   }
 
   return rows;
+}
+
+/** True when `edge` reaches `currentThreadId` from its parent or owning agent. */
+export function isParentThreadRelationship(
+  edge: ThreadRelationshipEdge,
+  currentThreadId: ThreadId,
+): boolean {
+  return edge.kind !== "transfer" && edge.targetThreadId === currentThreadId;
+}
+
+function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number | null {
+  // `createdAt` is typed as a DateTime, but the value reaches here from a
+  // decoded shell that may be missing (a related thread we have no shell for).
+  const createdAt: unknown = node?.thread?.createdAt;
+  if (!DateTime.isDateTime(createdAt)) return null;
+  const millis = DateTime.toEpochMillis(createdAt);
+  return Number.isFinite(millis) ? millis : null;
+}
+
+/**
+ * Orders the web thread-details Lineage rows for display.
+ *
+ * Web-specific by design: the panel pins the parent row first and a distinct
+ * merge-back target second so their actions stay where the user expects, and
+ * only then falls back to newest-created-first. Mobile does not share that
+ * exception, so this is not the canonical relationship order and should not be
+ * reused as one.
+ *
+ * Ordering below the pins is `createdAt` descending, which is immutable, so
+ * rows never move when messages or status changes arrive on a related thread.
+ * Threads whose shell is missing (or whose `createdAt` did not decode) sink to
+ * the bottom. Ties break by thread id ascending so the order is total.
+ */
+export function orderWebThreadLineageRows(input: {
+  readonly graph: ThreadRelationshipGraph;
+  readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
+  readonly currentThreadId: ThreadId;
+  readonly mergeTargetThreadId: ThreadId | null;
+}): ReadonlyArray<ThreadRelationshipWalkRow> {
+  const pinRank = (row: ThreadRelationshipWalkRow): number => {
+    if (isParentThreadRelationship(row.edge, input.currentThreadId)) return 0;
+    if (row.threadId === input.mergeTargetThreadId) return 1;
+    return 2;
+  };
+
+  return input.rows.toSorted((left, right) => {
+    const rankDelta = pinRank(left) - pinRank(right);
+    if (rankDelta !== 0) return rankDelta;
+    const leftCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(left.threadId));
+    const rightCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(right.threadId));
+    if (leftCreatedAt !== rightCreatedAt) {
+      if (leftCreatedAt === null) return 1;
+      if (rightCreatedAt === null) return -1;
+      return rightCreatedAt - leftCreatedAt;
+    }
+    return left.threadId < right.threadId ? -1 : left.threadId > right.threadId ? 1 : 0;
+  });
 }
