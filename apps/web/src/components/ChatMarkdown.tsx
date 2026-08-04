@@ -1460,14 +1460,16 @@ function ChatMarkdown({
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
-          const openInPreviewReportingFailure = async (target: string) => {
+          const openInPreviewReportingFailure = async (target: string): Promise<boolean> => {
             const result = await openExternalLinkInPreview(target);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              reportMarkdownActionFailure(
-                { operation: "open-link-in-preview", target },
-                result.cause,
-              );
+            if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) {
+              return true;
             }
+            reportMarkdownActionFailure(
+              { operation: "open-link-in-preview", target },
+              result.cause,
+            );
+            return false;
           };
           const link = (
             <a
@@ -1500,7 +1502,22 @@ function ChatMarkdown({
                   return;
                 }
                 event.preventDefault();
-                void openInPreviewReportingFailure(href);
+                void openInPreviewReportingFailure(href).then((opened) => {
+                  // Default navigation was prevented, so a failed preview
+                  // open must fall back to the system browser.
+                  if (opened) return;
+                  const api = readLocalApi();
+                  if (api) {
+                    void api.shell.openExternal(href).catch((cause: unknown) => {
+                      reportMarkdownActionFailure(
+                        { operation: "open-link-external", target: href },
+                        cause,
+                      );
+                    });
+                  } else {
+                    window.open(href, "_blank", "noopener,noreferrer");
+                  }
+                });
               }}
               onContextMenu={(event) => {
                 if (!canOpenInPreview || !href || !faviconHost) return;
@@ -1512,7 +1529,9 @@ function ChatMarkdown({
                   href,
                   position: { x: event.clientX, y: event.clientY },
                   showContextMenu: (items, position) => api.contextMenu.show(items, position),
-                  openInPreview: openInPreviewReportingFailure,
+                  openInPreview: async (target) => {
+                    await openInPreviewReportingFailure(target);
+                  },
                   openExternal: (target) => api.shell.openExternal(target),
                   copyLink: (target) => writeTextToClipboard(target, "link"),
                   reportFailure: (operation, cause) => {
