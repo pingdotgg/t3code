@@ -7,6 +7,7 @@ import {
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
@@ -237,6 +238,100 @@ describe("orchestration projector", () => {
     expect(next.updatedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(next.threads).toEqual([]);
   });
+
+  effectIt.effect("settles a usage-limited turn as interrupted rather than completed", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-02-23T08:00:00.000Z";
+      const startedAt = "2026-02-23T08:00:05.000Z";
+      const settledAt = "2026-02-23T08:01:00.000Z";
+
+      const afterCreate = yield* projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5.3-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+
+      const afterRunning = yield* projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: startedAt,
+          commandId: "cmd-running",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: startedAt,
+            },
+          },
+        }),
+      );
+
+      const afterLimit = yield* projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: settledAt,
+          commandId: "cmd-usage-limit",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              usageLimit: {
+                windowType: "five_hour",
+                resetsAt: 1_800_000_000_000,
+                message: "5-hour usage limit reached.",
+                provider: "codex",
+              },
+              updatedAt: settledAt,
+            },
+          },
+        }),
+      );
+
+      const thread = afterLimit.threads[0];
+      expect(thread?.session?.usageLimit?.windowType).toBe("five_hour");
+      // The run did not finish, it ran out of usage.
+      expect(thread?.latestTurn?.state).toBe("interrupted");
+      expect(thread?.latestTurn?.completedAt).toBe(settledAt);
+    }),
+  );
 
   it("tracks latest turn id from session lifecycle events", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";

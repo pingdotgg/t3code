@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
+  type RuntimeRateLimitStatus,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   RuntimeItemId,
@@ -38,6 +39,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { normalizeUsageLimitResetsAt } from "@t3tools/shared/usageLimit";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
@@ -145,6 +147,49 @@ function readPayload<A>(
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Codex reports window length in minutes rather than a named window; map the
+ * common ones onto the same vocabulary the Claude SDK uses so downstream
+ * consumers stay provider-agnostic.
+ */
+function codexWindowType(windowDurationMins: number | null | undefined): string | undefined {
+  if (typeof windowDurationMins !== "number" || !Number.isFinite(windowDurationMins)) {
+    return undefined;
+  }
+  if (windowDurationMins <= 60 * 8) {
+    return "five_hour";
+  }
+  return "seven_day";
+}
+
+/**
+ * Normalize Codex's rate-limit snapshot onto the shared
+ * `account.rate-limits.updated` fields.
+ *
+ * `rateLimitReachedType` is Codex's authoritative "this account is blocked"
+ * flag; anything else is treated as an open window.
+ */
+function normalizeCodexRateLimitSnapshot(
+  snapshot: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification["rateLimits"],
+): {
+  readonly status?: RuntimeRateLimitStatus;
+  readonly windowType?: string;
+  readonly resetsAt?: number;
+} {
+  const reached = snapshot.rateLimitReachedType ?? null;
+  if (reached === null) {
+    return { status: "allowed" };
+  }
+  const window = snapshot.primary ?? snapshot.secondary ?? null;
+  const windowType = codexWindowType(window?.windowDurationMins);
+  const resetsAt = normalizeUsageLimitResetsAt(window?.resetsAt);
+  return {
+    status: "rejected",
+    ...(windowType ? { windowType } : {}),
+    ...(resetsAt !== undefined ? { resetsAt } : {}),
+  };
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -1125,7 +1170,11 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const rateLimitsPayload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    if (!rateLimitsPayload) {
       return [];
     }
     return [
@@ -1134,6 +1183,7 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           rateLimits: event.payload ?? {},
+          ...normalizeCodexRateLimitSnapshot(rateLimitsPayload.rateLimits),
         },
       },
     ];

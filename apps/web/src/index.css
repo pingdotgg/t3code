@@ -539,6 +539,45 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     content: "";
   }
 
+  /*
+   * Vertical mirror of .chat-composer-context-strip: a slim notice docked to
+   * the composer's top edge instead of its bottom. The mask ends the outline
+   * exactly where the composer's 22px top curve reaches its tangent, so the
+   * two outlines read as one continuous piece of composer chrome.
+   *
+   * Unlike the context strip this sits outside .chat-composer-glass-shell (the
+   * shell's clip-path only extends downward), so it restates the shell's
+   * outline token and paints its own opaque surface instead of inheriting the
+   * shared glass layer.
+   */
+  .chat-composer-notice-strip {
+    --chat-composer-outline: rgb(0 0 0 / 8%);
+
+    position: relative;
+    isolation: isolate;
+  }
+
+  .dark .chat-composer-notice-strip {
+    --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
+  }
+
+  .chat-composer-notice-strip::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: 16px 16px 0 0;
+    background: color-mix(in srgb, var(--warning) 7%, var(--background));
+    -webkit-mask-image: linear-gradient(to top, transparent 0 1rem, black 1rem);
+    mask-image: linear-gradient(to top, transparent 0 1rem, black 1rem);
+    content: "";
+  }
+
+  .dark .chat-composer-notice-strip::before {
+    border-color: rgb(255 255 255 / 7%);
+    background: color-mix(in srgb, var(--warning) 10%, var(--background));
+  }
+
   .dark .chat-composer-glass-shell {
     --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
     --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);

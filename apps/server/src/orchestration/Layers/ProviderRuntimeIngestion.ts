@@ -16,6 +16,10 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type AccountRateLimitsUpdatedPayload,
+  type OrchestrationSessionUsageLimit,
+  type RuntimeRateLimitStatus,
+  type RuntimeUsageLimit,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -26,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { buildUsageLimitMessage, normalizeUsageLimitResetsAt } from "@t3tools/shared/usageLimit";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -307,6 +312,87 @@ function requestKindFromCanonicalRequestType(
   }
 }
 
+/**
+ * Provider-agnostic read of an `account.rate-limits.updated` payload.
+ *
+ * Adapters normalize onto the `status`/`windowType`/`resetsAt` fields, but the
+ * raw provider snapshot is tolerated as a fallback so an emitter that hasn't
+ * been updated (or a replayed historical event) still parses instead of
+ * throwing. Returns `undefined` when no window state can be determined.
+ */
+export function readRuntimeRateLimitSnapshot(payload: AccountRateLimitsUpdatedPayload): {
+  readonly status: RuntimeRateLimitStatus;
+  readonly windowType?: string;
+  readonly resetsAt?: number;
+} | null {
+  const fallback = (() => {
+    const raw = payload.rateLimits;
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    const info = (raw as Record<string, unknown>).rate_limit_info;
+    if (!info || typeof info !== "object") {
+      return null;
+    }
+    const record = info as Record<string, unknown>;
+    const status =
+      record.status === "rejected"
+        ? ("rejected" as const)
+        : record.status === "allowed_warning"
+          ? ("warning" as const)
+          : record.status === "allowed"
+            ? ("allowed" as const)
+            : null;
+    if (status === null) {
+      return null;
+    }
+    return {
+      status,
+      ...(typeof record.rateLimitType === "string" ? { windowType: record.rateLimitType } : {}),
+      ...(normalizeUsageLimitResetsAt(record.resetsAt) !== undefined
+        ? { resetsAt: normalizeUsageLimitResetsAt(record.resetsAt) as number }
+        : {}),
+    };
+  })();
+
+  if (payload.status === undefined) {
+    return fallback;
+  }
+  const windowType = payload.windowType ?? fallback?.windowType;
+  const resetsAt = payload.resetsAt ?? fallback?.resetsAt;
+  return {
+    status: payload.status,
+    ...(windowType ? { windowType } : {}),
+    ...(resetsAt !== undefined ? { resetsAt } : {}),
+  };
+}
+
+/**
+ * Field-wise equality so repeated rate-limit notifications for an unchanged
+ * window don't churn the session projection.
+ */
+function sameUsageLimit(
+  left: OrchestrationSessionUsageLimit | null,
+  right: OrchestrationSessionUsageLimit | null,
+): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return (
+    left.message === right.message &&
+    left.windowType === right.windowType &&
+    left.resetsAt === right.resetsAt &&
+    left.provider === right.provider
+  );
+}
+
+/**
+ * Usage-limit marker carried by a `turn.completed` event, if any.
+ */
+function usageLimitFromTurnCompleted(event: ProviderRuntimeEvent): RuntimeUsageLimit | null {
+  return event.type === "turn.completed" ? (event.payload.usageLimit ?? null) : null;
+}
+
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
@@ -383,6 +469,34 @@ export function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    // Emitted at the point the run stopped, so the work log shows the reason
+    // inline. Deliberately sourced from `turn.completed` rather than from
+    // `account.rate-limits.updated`: a rejected window can be announced
+    // repeatedly (and while idle), but only one of those actually halts a run.
+    case "turn.completed": {
+      const usageLimit = event.payload.usageLimit;
+      if (!usageLimit) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "usage-limit.reached",
+          summary: "Usage limit reached",
+          payload: {
+            message: usageLimit.message,
+            ...(usageLimit.windowType ? { windowType: usageLimit.windowType } : {}),
+            ...(usageLimit.resetsAt !== undefined ? { resetsAt: usageLimit.resetsAt } : {}),
+            provider: event.provider,
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1381,7 +1495,10 @@ const make = Effect.gen(function* () {
             case "session.exited":
               return "stopped";
             case "turn.completed":
-              return normalizeRuntimeTurnState(event.payload.state) === "failed"
+              // A usage-limit stop is an expected pause, never an error
+              // status: the banner (session.usageLimit) carries the meaning.
+              return normalizeRuntimeTurnState(event.payload.state) === "failed" &&
+                event.payload.usageLimit === undefined
                 ? "error"
                 : "ready";
             case "session.started":
@@ -1402,15 +1519,34 @@ const make = Effect.gen(function* () {
                   )
                 ? null
                 : activeTurnId;
+        const turnUsageLimit = usageLimitFromTurnCompleted(event);
         const lastError =
-          event.type === "session.state.changed" && event.payload.state === "error"
-            ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
-            : event.type === "turn.completed" &&
-                normalizeRuntimeTurnState(event.payload.state) === "failed"
-              ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready"
-                ? null
-                : (thread.session?.lastError ?? null);
+          turnUsageLimit !== null
+            ? null
+            : event.type === "session.state.changed" && event.payload.state === "error"
+              ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
+              : event.type === "turn.completed" &&
+                  normalizeRuntimeTurnState(event.payload.state) === "failed"
+                ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
+                : status === "ready"
+                  ? null
+                  : (thread.session?.lastError ?? null);
+        // A new turn means usage was available again; anything else carries
+        // the previously observed limit forward until it is explicitly
+        // cleared by a turn start or an "allowed" rate-limit event.
+        const usageLimit =
+          turnUsageLimit !== null
+            ? {
+                ...(turnUsageLimit.windowType ? { windowType: turnUsageLimit.windowType } : {}),
+                ...(turnUsageLimit.resetsAt !== undefined
+                  ? { resetsAt: turnUsageLimit.resetsAt }
+                  : {}),
+                message: turnUsageLimit.message,
+                provider: event.provider,
+              }
+            : event.type === "turn.started"
+              ? null
+              : (thread.session?.usageLimit ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1447,6 +1583,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              usageLimit,
               updatedAt: now,
             },
             createdAt: now,
@@ -1675,6 +1812,40 @@ const make = Effect.gen(function* () {
         yield* clearTurnStateForSession(thread.id);
       }
 
+      // A rejected window sets (and an open window clears) the session-level
+      // usage-limit banner without touching lifecycle status: being out of
+      // usage is not a session malfunction.
+      if (event.type === "account.rate-limits.updated") {
+        const snapshot = readRuntimeRateLimitSnapshot(event.payload);
+        const nextUsageLimit =
+          snapshot === null
+            ? undefined
+            : snapshot.status === "rejected"
+              ? {
+                  ...(snapshot.windowType ? { windowType: snapshot.windowType } : {}),
+                  ...(snapshot.resetsAt !== undefined ? { resetsAt: snapshot.resetsAt } : {}),
+                  message: buildUsageLimitMessage(snapshot),
+                  provider: event.provider,
+                }
+              : null;
+        const currentUsageLimit = thread.session?.usageLimit ?? null;
+        const changed =
+          nextUsageLimit !== undefined && !sameUsageLimit(nextUsageLimit, currentUsageLimit);
+        if (changed && thread.session) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: yield* providerCommandId(event, "rate-limits-session-set"),
+            threadId: thread.id,
+            session: {
+              ...thread.session,
+              usageLimit: nextUsageLimit ?? null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
+      }
+
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = event.payload.message;
 
@@ -1697,6 +1868,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              usageLimit: thread.session?.usageLimit ?? null,
               updatedAt: now,
             },
             createdAt: now,

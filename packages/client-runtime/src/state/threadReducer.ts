@@ -348,7 +348,12 @@ export function applyThreadDetailEvent(
     case "thread.session-set": {
       // Leaving the "running" session status is the turn-end signal: settle a
       // still-running latest turn so its duration reflects the whole turn.
-      const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
+      // A usage-limit stop settles as "interrupted", not "completed":
+      // the run did not finish, it ran out of usage.
+      const settledTurnState =
+        event.payload.session.usageLimit != null
+          ? ("interrupted" as const)
+          : settledTurnStateForSessionStatus(event.payload.session.status);
       const latestTurn: OrchestrationLatestTurn | null =
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
           ? {
