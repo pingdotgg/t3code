@@ -113,6 +113,65 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("inserts a destructive separator when the first destructive item starts the menu", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          options.callback?.();
+        },
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          { id: "delete-draft", label: "Delete draft", destructive: true },
+          { id: "copy", label: "Copy" },
+          { id: "delete-file", label: "Delete file", destructive: true },
+        ],
+        position: Option.none(),
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.deepEqual(
+        template?.map((item) => item.type ?? item.label),
+        ["Delete draft", "Copy", "separator", "Delete file"],
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("keeps destructive items grouped after an explicit separator", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          options.callback?.();
+        },
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          { id: "copy", label: "Copy" },
+          { id: "separator", label: "", separator: true },
+          { id: "discard", label: "Discard", destructive: true },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position: Option.none(),
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.deepEqual(
+        template?.map((item) => item.type ?? item.label),
+        ["Copy", "separator", "Discard", "Delete"],
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("defers popupTemplate side effects until the returned Effect runs", () =>
     Effect.gen(function* () {
       const popupMock = vi.fn();

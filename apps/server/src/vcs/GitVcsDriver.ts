@@ -29,6 +29,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
+import { resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -228,6 +229,7 @@ export class GitVcsDriver extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly invalidateRefs: (cwd: string) => Effect.Effect<void>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
@@ -384,7 +386,7 @@ const gitCommand = (
     ...(options?.allowNonZeroExit !== undefined
       ? { allowNonZeroExit: options.allowNonZeroExit }
       : {}),
-    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    timeoutMs: resolveGitCommandTimeoutMs(args, options?.timeoutMs),
     ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
     ...(options?.appendTruncationMarker !== undefined
       ? { appendTruncationMarker: options.appendTruncationMarker }

@@ -121,6 +121,178 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
   }),
 );
 
+it.effect("sanitizes GitLab list-MR errors before transport", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      listMergeRequests: () =>
+        Effect.fail(
+          new GitLabCli.GitLabCliCommandError({
+            operation: "execute",
+            command: "glab",
+            cwd: "/repo",
+            cause: new Error(
+              "raw upstream https://secret:token@gitlab.example.test/group/repo?access_token=secret",
+            ),
+          }),
+        ),
+    });
+
+    const error = yield* provider
+      .listChangeRequests({
+        cwd: "/repo",
+        headSelector:
+          "https://user:token@gitlab.example.test/group/repo?access_token=secret#fragment",
+        state: "open",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error.provider, "gitlab");
+    assert.equal(error.operation, "listChangeRequests");
+    assert.equal(error.command, "glab");
+    assert.equal(error.reference, "https://gitlab.example.test/group/repo");
+    assert.equal(error.detail, "GitLab CLI command failed.");
+    assert.deepStrictEqual(error.cause, {
+      _tag: "GitLabCliCommandError",
+      name: "GitLabCliCommandError",
+      command: "glab",
+      operation: "execute",
+      detail: "GitLab CLI command failed.",
+      message: "GitLab CLI failed in execute: GitLab CLI command failed.",
+    });
+  }),
+);
+
+it.effect("lists GitLab MRs against the requested remote repository context", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      listMergeRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "gitlab",
+          name: "GitLab Self-Hosted",
+          baseUrl: "https://gitlab.example.test",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://gitlab.example.test/group/subgroup/repo.git",
+      },
+      headSelector: "feature/provider",
+      state: "all",
+      limit: 10,
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "https://gitlab.example.test/group/subgroup/repo",
+      state: "all",
+      limit: 10,
+    });
+  }),
+);
+
+it.effect("does not duplicate a self-hosted GitLab base path", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      listMergeRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "gitlab",
+          name: "GitLab Self-Hosted",
+          baseUrl: "https://gitlab.example.test/gitlab",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://gitlab.example.test/gitlab/group/repo.git",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "https://gitlab.example.test/gitlab/group/repo",
+      state: "open",
+    });
+  }),
+);
+
+it.effect("uses GitLab Avatar API results for commit author avatars", () =>
+  Effect.gen(function* () {
+    let avatarInput: Parameters<GitLabCli.GitLabCli["Service"]["getCommitAvatarUrl"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      getCommitAvatarUrl: (input) => {
+        avatarInput = input;
+        return Effect.succeed(
+          "https://gitlab.example.test/uploads/-/system/user/avatar/123/avatar.png",
+        );
+      },
+    });
+
+    const avatarUrl = yield* provider.getCommitAvatarUrl({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "gitlab",
+          name: "GitLab Self-Hosted",
+          baseUrl: "https://gitlab.example.test",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://gitlab.example.test/group/subgroup/repo.git",
+      },
+      sha: "abc123",
+      authorEmail: "author@example.test",
+    });
+
+    assert.strictEqual(
+      avatarUrl,
+      "https://gitlab.example.test/uploads/-/system/user/avatar/123/avatar.png",
+    );
+    assert.deepStrictEqual(avatarInput, {
+      cwd: "/repo",
+      email: "author@example.test",
+      providerBaseUrl: "https://gitlab.example.test",
+    });
+  }),
+);
+
+it.effect("does not call the GitLab Avatar API without a commit author email", () =>
+  Effect.gen(function* () {
+    let avatarLookupCount = 0;
+    const provider = yield* makeProvider({
+      getCommitAvatarUrl: () => {
+        avatarLookupCount += 1;
+        return Effect.succeed("https://gitlab.example.test/avatar.png");
+      },
+    });
+
+    const avatarUrl = yield* provider.getCommitAvatarUrl({
+      cwd: "/repo",
+      sha: "abc123",
+      authorEmail: null,
+    });
+
+    assert.strictEqual(avatarUrl, null);
+    assert.strictEqual(avatarLookupCount, 0);
+  }),
+);
+
 it.effect("creates GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<GitLabCli.GitLabCli["Service"]["createMergeRequest"]>[0] | null =

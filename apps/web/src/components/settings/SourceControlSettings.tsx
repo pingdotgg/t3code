@@ -11,6 +11,7 @@ import type {
   VcsDriverKind,
   VcsDiscoveryItem,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   getBackgroundActivityPresetSettings,
@@ -68,6 +69,32 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
 };
+
+type SourceControlAvatarProviderKind = "github" | "gitlab" | "azure-devops" | "bitbucket";
+
+const SOURCE_CONTROL_AVATAR_PROVIDER_KINDS = new Set<SourceControlAvatarProviderKind>([
+  "github",
+  "gitlab",
+  "azure-devops",
+  "bitbucket",
+]);
+
+const SOURCE_CONTROL_AVATAR_PROVIDER_DESCRIPTIONS: Record<SourceControlAvatarProviderKind, string> =
+  {
+    github: "Fetch GitHub account avatars for commit rows from the configured GitHub remote.",
+    gitlab:
+      "Fetch GitLab account avatars for commit rows using GitLab's official Avatar API. GitLab may return external avatar-service URLs such as Gravatar or Libravatar.",
+    "azure-devops":
+      "Fetch Azure DevOps account avatars for commit rows from the configured Azure DevOps remote.",
+    bitbucket:
+      "Fetch Bitbucket account avatars for commit rows from the configured Bitbucket remote.",
+  };
+
+function isSourceControlAvatarProviderKind(
+  provider: SourceControlProviderKind,
+): provider is SourceControlAvatarProviderKind {
+  return SOURCE_CONTROL_AVATAR_PROVIDER_KINDS.has(provider as SourceControlAvatarProviderKind);
+}
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
   git: GitIcon,
@@ -366,7 +393,9 @@ function GitFetchIntervalSettings() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
-            <span className="text-xs font-medium text-foreground">Fetch interval</span>
+            <span className="text-xs font-medium text-foreground">
+              {searchableSetting("git-fetch-interval").title}
+            </span>
             <BackgroundPolicyTooltip>
               This interval is configured for Git only. The shared Background activity policy still
               decides whether Git refreshes may run when the timer fires. Custom intervals appear as
@@ -421,6 +450,84 @@ function GitFetchIntervalSettings() {
           </NumberField>
           <span className="text-xs text-muted-foreground">seconds</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SourceControlProviderOptions({
+  provider,
+}: {
+  readonly provider: SourceControlAvatarProviderKind;
+}) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const providerSettings = settings.sourceControl.providers[provider];
+  const defaultProviderSettings = DEFAULT_UNIFIED_SETTINGS.sourceControl.providers[provider];
+  if (
+    providerSettings === undefined ||
+    defaultProviderSettings === undefined ||
+    !SOURCE_CONTROL_AVATAR_PROVIDER_KINDS.has(provider)
+  ) {
+    return null;
+  }
+
+  const showCommitAuthorAvatar = providerSettings.showCommitAuthorAvatar === true;
+  const canReset = showCommitAuthorAvatar !== defaultProviderSettings.showCommitAuthorAvatar;
+  const description = SOURCE_CONTROL_AVATAR_PROVIDER_DESCRIPTIONS[provider];
+
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 items-center gap-1">
+            <span className="text-xs font-medium text-foreground">
+              {searchableSetting("commit-author-avatars").title}
+            </span>
+            <span
+              className={cn(
+                "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
+                canReset ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-hidden={!canReset}
+            >
+              {canReset ? (
+                <SettingResetButton
+                  label="commit author avatars"
+                  onClick={() =>
+                    updateSettings({
+                      sourceControl: {
+                        providers: {
+                          ...settings.sourceControl.providers,
+                          [provider]: {
+                            showCommitAuthorAvatar: defaultProviderSettings.showCommitAuthorAvatar,
+                          },
+                        },
+                      },
+                    })
+                  }
+                />
+              ) : null}
+            </span>
+          </div>
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">{description}</p>
+        </div>
+        <Switch
+          checked={showCommitAuthorAvatar}
+          onCheckedChange={(checked) =>
+            updateSettings({
+              sourceControl: {
+                providers: {
+                  ...settings.sourceControl.providers,
+                  [provider]: {
+                    showCommitAuthorAvatar: Boolean(checked),
+                  },
+                },
+              },
+            })
+          }
+          aria-label="Show commit author avatars"
+        />
       </div>
     </div>
   );
@@ -574,7 +681,11 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {isSourceControlAvatarProviderKind(item.kind) ? (
+                    <SourceControlProviderOptions provider={item.kind} />
+                  ) : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}

@@ -1,4 +1,5 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
+import { useRef } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -6,11 +7,62 @@ const TooltipCreateHandle = TooltipPrimitive.createHandle;
 
 const TooltipProvider = TooltipPrimitive.Provider;
 
-const Tooltip = TooltipPrimitive.Root;
+type TooltipProps = TooltipPrimitive.Root.Props & {
+  preserveOnNestedTriggerHover?: boolean;
+};
+
+function hasHoveredNestedTooltipTrigger(parentTrigger: Element | null, target: EventTarget | null) {
+  if (!parentTrigger) return false;
+  if (!target || typeof (target as Element).closest !== "function") {
+    return parentTrigger.querySelector('[data-slot="tooltip-trigger"]:hover') !== null;
+  }
+  const nestedTrigger = (target as Element).closest<HTMLElement>('[data-slot="tooltip-trigger"]');
+  return (
+    nestedTrigger !== null &&
+    nestedTrigger !== parentTrigger &&
+    parentTrigger.contains(nestedTrigger) &&
+    nestedTrigger.matches(":hover")
+  );
+}
+
+function Tooltip({ preserveOnNestedTriggerHover = false, onOpenChange, ...props }: TooltipProps) {
+  const triggerRef = useRef<Element | null>(null);
+
+  return (
+    <TooltipPrimitive.Root
+      onOpenChange={(open, eventDetails) => {
+        if (open && eventDetails.trigger) {
+          triggerRef.current = eventDetails.trigger;
+        }
+        if (
+          !open &&
+          preserveOnNestedTriggerHover &&
+          hasHoveredNestedTooltipTrigger(triggerRef.current, eventDetails.event.target)
+        ) {
+          eventDetails.cancel();
+          return;
+        }
+        onOpenChange?.(open, eventDetails);
+        if (!open && !eventDetails.isCanceled) {
+          triggerRef.current = null;
+        }
+      }}
+      {...props}
+    />
+  );
+}
 
 function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
 }
+
+type TooltipPopupProps = TooltipPrimitive.Popup.Props & {
+  align?: TooltipPrimitive.Positioner.Props["align"];
+  side?: TooltipPrimitive.Positioner.Props["side"];
+  sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
+  variant?: "default" | "glass";
+  anchor?: TooltipPrimitive.Positioner.Props["anchor"];
+};
 
 function TooltipPopup({
   className,
@@ -21,13 +73,7 @@ function TooltipPopup({
   anchor,
   children,
   ...props
-}: TooltipPrimitive.Popup.Props & {
-  align?: TooltipPrimitive.Positioner.Props["align"];
-  side?: TooltipPrimitive.Positioner.Props["side"];
-  sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
-  variant?: "default" | "glass";
-  anchor?: TooltipPrimitive.Positioner.Props["anchor"];
-}) {
+}: TooltipPopupProps) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner
@@ -61,4 +107,30 @@ function TooltipPopup({
   );
 }
 
-export { TooltipCreateHandle, TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup };
+function TooltipCardPopup({ className, sideOffset = 8, style, ...props }: TooltipPopupProps) {
+  return (
+    <TooltipPopup
+      className={cn(
+        "dropdown-glass max-w-80 border-0! text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none",
+        className,
+      )}
+      sideOffset={sideOffset}
+      style={{
+        background:
+          "color-mix(in srgb, var(--popover) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
+        ...style,
+      }}
+      {...props}
+    />
+  );
+}
+
+export {
+  TooltipCreateHandle,
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipCardPopup,
+  hasHoveredNestedTooltipTrigger,
+};

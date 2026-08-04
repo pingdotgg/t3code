@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
+import type { ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -72,6 +72,63 @@ function toChangeRequest(summary: {
   };
 }
 
+function azureRepositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+):
+  | {
+      readonly organization: string;
+      readonly repository: string;
+      readonly project?: string;
+    }
+  | undefined {
+  if (!context) return undefined;
+  const path = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!path) return undefined;
+  const parts = path
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const organization = (() => {
+    try {
+      const url = new URL(context.remoteUrl);
+      const hostname = url.hostname.toLowerCase();
+      if (hostname === "dev.azure.com") {
+        const name = parts[0];
+        return name ? `${url.origin}/${encodeURIComponent(name)}` : undefined;
+      }
+      if (hostname.endsWith(".visualstudio.com")) {
+        return url.origin;
+      }
+    } catch {
+      if (parts[0]?.toLowerCase() === "v3" && parts[1]) {
+        return `https://dev.azure.com/${encodeURIComponent(parts[1])}`;
+      }
+    }
+    return undefined;
+  })();
+  if (!organization) return undefined;
+  const gitIndex = parts.findIndex((part) => part.toLowerCase() === "_git");
+  const gitProject = parts[gitIndex - 1];
+  const gitRepository = parts[gitIndex + 1];
+  if (gitIndex >= 1 && gitProject && gitRepository) {
+    return { organization, project: gitProject, repository: gitRepository };
+  }
+  const sshProject = parts[2];
+  const sshRepository = parts[3];
+  if (parts[0]?.toLowerCase() === "v3" && sshProject && sshRepository) {
+    return { organization, project: sshProject, repository: sshRepository };
+  }
+  const fallbackProject = parts.at(-2);
+  const repository = parts.at(-1);
+  return repository
+    ? {
+        organization,
+        repository,
+        ...(fallbackProject ? { project: fallbackProject } : {}),
+      }
+    : undefined;
+}
+
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
@@ -79,48 +136,46 @@ export const make = Effect.gen(function* () {
     kind: "azure-devops",
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const repository = azureRepositoryFromContext(input.context);
       return azure
         .listPullRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source !== undefined ? { source } : {}),
+          ...(repository !== undefined
+            ? {
+                organization: repository.organization,
+                repository: repository.repository,
+                ...(repository.project !== undefined ? { project: repository.project } : {}),
+              }
+            : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "azure-devops",
-                operation: "listChangeRequests",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "azure-devops",
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              error,
+            }),
           ),
         );
     },
     getChangeRequest: (input) =>
       azure.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "azure-devops",
-              operation: "getChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "azure-devops",
+            operation: "getChangeRequest",
+            cwd: input.cwd,
+            reference: input.reference,
+            error,
+          }),
         ),
       ),
     createChangeRequest: (input) => {
@@ -136,68 +191,73 @@ export const make = Effect.gen(function* () {
           bodyFile: input.bodyFile,
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "azure-devops",
-                operation: "createChangeRequest",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "azure-devops",
+              operation: "createChangeRequest",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              error,
+            }),
           ),
         );
     },
     getRepositoryCloneUrls: (input) =>
       azure.getRepositoryCloneUrls(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "azure-devops",
-              operation: "getRepositoryCloneUrls",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "azure-devops",
+            operation: "getRepositoryCloneUrls",
+            cwd: input.cwd,
+            repository: input.repository,
+            error,
+          }),
         ),
       ),
+    getCommitAvatarUrl: (input) => {
+      const repository = azureRepositoryFromContext(input.context);
+      if (!repository) {
+        return Effect.succeed(null);
+      }
+      return azure
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          ...repository,
+          sha: input.sha,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "azure-devops",
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              error,
+            }),
+          ),
+        );
+    },
     createRepository: (input) =>
       azure.createRepository(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "azure-devops",
-              operation: "createRepository",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "azure-devops",
+            operation: "createRepository",
+            cwd: input.cwd,
+            repository: input.repository,
+            error,
+          }),
         ),
       ),
     getDefaultBranch: (input) =>
       azure.getDefaultBranch({ cwd: input.cwd }).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "azure-devops",
-              operation: "getDefaultBranch",
-              command: error.command,
-              cwd: input.cwd,
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "azure-devops",
+            operation: "getDefaultBranch",
+            cwd: input.cwd,
+            error,
+          }),
         ),
       ),
     checkoutChangeRequest: (input) =>
@@ -208,19 +268,14 @@ export const make = Effect.gen(function* () {
           ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "azure-devops",
-                operation: "checkoutChangeRequest",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.reference,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "azure-devops",
+              operation: "checkoutChangeRequest",
+              cwd: input.cwd,
+              reference: input.reference,
+              error,
+            }),
           ),
         ),
   });

@@ -160,7 +160,13 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import {
+  Tooltip,
+  TooltipCardPopup,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
@@ -256,11 +262,10 @@ function SidebarV2ThreadTooltip({
   terminalProcessCount: number;
 }) {
   return (
-    <TooltipPopup
+    <TooltipCardPopup
       side="right"
       align="start"
       sideOffset={4}
-      variant="glass"
       className="max-w-80 text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
     >
       <div className="flex min-w-0 max-w-80 flex-col gap-2 p-[var(--floating-content-inset)]">
@@ -327,7 +332,7 @@ function SidebarV2ThreadTooltip({
           ) : null}
         </div>
       </div>
-    </TooltipPopup>
+    </TooltipCardPopup>
   );
 }
 

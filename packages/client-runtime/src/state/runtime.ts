@@ -72,6 +72,7 @@ export interface AtomCommandOptions {
   readonly label?: string;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
+  readonly forceRefresh?: boolean;
 }
 
 export interface AtomCommandReporter {
@@ -332,9 +333,13 @@ export async function executeAtomQuery<A, E>(
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
+  const hasCachedNode = options.forceRefresh ? registry.getNodes().has(atom) : false;
   const query = Effect.scoped(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
+      if (hasCachedNode) {
+        yield* Effect.sync(() => registry.refresh(atom));
+      }
       return yield* AtomRegistry.getResult(registry, atom, {
         suspendOnWaiting: true,
       });

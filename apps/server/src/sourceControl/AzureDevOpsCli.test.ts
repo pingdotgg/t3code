@@ -188,6 +188,51 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("lists pull requests against an explicit Azure organization", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({
+        cwd: "/repo",
+        headSelector: "feature/provider",
+        organization: "https://dev.azure.com/acme",
+        repository: "repo",
+        project: "project",
+        state: "open",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "pr",
+          "list",
+          "--detect",
+          "true",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--repository",
+          "repo",
+          "--project",
+          "project",
+          "--source-branch",
+          "feature/provider",
+          "--status",
+          "active",
+          "--top",
+          "20",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -217,6 +262,62 @@ describe("AzureDevOpsCli.layer", () => {
         nameWithOwner: "project/repo",
         url: "https://dev.azure.com/acme/project/_git/repo",
         sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("requests commit avatars from the explicit Azure organization", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              author: {
+                imageUrl: "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getCommitAvatarUrl({
+        cwd: "/repo",
+        organization: "https://dev.azure.com/acme",
+        project: "project",
+        repository: "repo",
+        sha: "abc123",
+      });
+
+      assert.strictEqual(
+        result,
+        "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+      );
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "devops",
+          "invoke",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--area",
+          "git",
+          "--resource",
+          "commits",
+          "--route-parameters",
+          "project=project",
+          "repositoryId=repo",
+          "commitId=abc123",
+          "--api-version",
+          "7.1",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
       });
     }).pipe(Effect.provide(layer)),
   );

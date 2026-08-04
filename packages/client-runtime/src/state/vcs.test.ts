@@ -344,6 +344,112 @@ describe("cached VCS refs", () => {
     ),
   );
 
+  it.effect(
+    "invalidates panel ref mutations on success and failure but excludes working-tree and stash actions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const expectedError = new EnvironmentRpcUnavailableError({
+            environmentId: TARGET.environmentId,
+            message: "fetch failed after updating a remote ref",
+          });
+          const client = {
+            [WS_METHODS.vcsPanelCreateBranchFromCommit]: () =>
+              Effect.succeed({ refName: "feature/panel-cache" }),
+            [WS_METHODS.vcsPanelFetchRemote]: () => Effect.fail(expectedError),
+            [WS_METHODS.vcsPanelFetchAllRemotes]: () => Effect.void,
+            [WS_METHODS.vcsPanelStageFiles]: () => Effect.void,
+            [WS_METHODS.vcsPanelCreateStash]: () => Effect.void,
+          } as unknown as WsRpcProtocolClient;
+          const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+            target: TARGET,
+            state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+            session: yield* SubscriptionRef.make(Option.some(session(client))),
+            prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+            connect: Effect.void,
+            disconnect: Effect.void,
+            retryNow: Effect.void,
+          } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+          const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+            _environmentId,
+            effect,
+          ) =>
+            Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+          const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+            run,
+          } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+          const clears = yield* Ref.make(0);
+          const runtime = Atom.runtime(
+            Layer.merge(
+              Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+              Layer.succeed(
+                Persistence.EnvironmentCacheStore,
+                cacheWithRefs(Option.none(), {
+                  clearVcsRefs: () => Ref.update(clears, (count) => count + 1),
+                }),
+              ),
+            ),
+          );
+          const atoms = createVcsEnvironmentAtoms(runtime);
+          const registry = yield* Effect.acquireRelease(
+            Effect.sync(AtomRegistry.make),
+            (registry) => Effect.sync(() => registry.dispose()),
+          );
+
+          const created = yield* Effect.promise(() =>
+            atoms.panelCreateBranchFromCommit.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: {
+                cwd: "/repo",
+                sha: "abc123",
+                branchName: "feature/panel-cache",
+              },
+            }),
+          );
+          expect(AsyncResult.isSuccess(created)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(1);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(1);
+
+          const fetched = yield* Effect.promise(() =>
+            atoms.panelFetchRemote.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo", remoteName: "origin" },
+            }),
+          );
+          expect(AsyncResult.isFailure(fetched)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(2);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+
+          const fetchedAll = yield* Effect.promise(() =>
+            atoms.panelFetchAllRemotes.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo" },
+            }),
+          );
+          expect(AsyncResult.isSuccess(fetchedAll)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(3);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+
+          const staged = yield* Effect.promise(() =>
+            atoms.panelStageFiles.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo", paths: ["file.ts"] },
+            }),
+          );
+          const stashed = yield* Effect.promise(() =>
+            atoms.panelCreateStash.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo", message: "test stash" },
+            }),
+          );
+          expect(AsyncResult.isSuccess(staged)).toBe(true);
+          expect(AsyncResult.isSuccess(stashed)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(3);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+        }),
+      ),
+  );
+
   it.effect("suppresses persisted snapshots after an environment-wide clear fails", () =>
     Effect.scoped(
       Effect.gen(function* () {

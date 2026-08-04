@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  clearThreadErrorRecord,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -24,8 +25,10 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  retainThreadKeyRecord,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  shouldApplySourceControlMetadataUpdateResult,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -492,6 +495,80 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
         activeServerThread: null,
         routeThreadRef,
         targetThreadId: threadId,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("clearThreadErrorRecord", () => {
+  it("clears only the selected thread error", () => {
+    expect(
+      clearThreadErrorRecord(
+        {
+          "environment-local:thread-1": "metadata failed",
+          "environment-local:thread-2": "send failed",
+        },
+        "environment-local:thread-1",
+      ),
+    ).toEqual({
+      "environment-local:thread-1": null,
+      "environment-local:thread-2": "send failed",
+    });
+  });
+
+  it("keeps the same object when the selected thread has no error", () => {
+    const existing = {
+      "environment-local:thread-1": null,
+      "environment-local:thread-2": "send failed",
+    };
+
+    expect(clearThreadErrorRecord(existing, "environment-local:thread-1")).toBe(existing);
+    expect(clearThreadErrorRecord(existing, "environment-local:thread-3")).toBe(existing);
+  });
+});
+
+describe("retainThreadKeyRecord", () => {
+  it("drops stale thread keys", () => {
+    expect(
+      retainThreadKeyRecord(
+        {
+          "environment-local:thread-1": "send failed",
+          "environment-local:thread-2": null,
+        },
+        new Set(["environment-local:thread-1"]),
+      ),
+    ).toEqual({
+      "environment-local:thread-1": "send failed",
+    });
+  });
+
+  it("preserves reference identity when no keys are pruned", () => {
+    const existing = {
+      "environment-local:thread-1": "send failed",
+    };
+
+    expect(retainThreadKeyRecord(existing, new Set(["environment-local:thread-1"]))).toBe(existing);
+  });
+});
+
+describe("shouldApplySourceControlMetadataUpdateResult", () => {
+  it("allows only the latest metadata update result for a thread", () => {
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: 2,
+        requestSequence: 2,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: 2,
+        requestSequence: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: undefined,
+        requestSequence: 1,
       }),
     ).toBe(false);
   });

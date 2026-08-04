@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -46,6 +47,49 @@ describe("ClientSettings glass opacity", () => {
   it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+  });
+});
+
+describe("ServerSettings background activity defaults", () => {
+  it("keeps the customized conservative Git fetch cadence as a balanced override", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "balanced",
+      overrides: {
+        automaticGitFetchInterval: Duration.minutes(5),
+      },
+    });
+    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(300_000);
+  });
+
+  it("preserves an explicitly selected upstream balanced profile", () => {
+    expect(
+      decodeServerSettings({
+        backgroundActivity: {
+          profile: "balanced",
+        },
+      }).backgroundActivity,
+    ).toEqual({
+      schemaVersion: 1,
+      profile: "balanced",
+      overrides: {},
+    });
+  });
+
+  it("preserves upstream's empty-object background activity defaults", () => {
+    const settings = decodeServerSettings({
+      backgroundActivity: {},
+    });
+
+    expect(settings.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "balanced",
+      overrides: {},
+    });
+    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(300_000);
   });
 });
 
@@ -176,6 +220,35 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
+  });
+});
+
+describe("ServerSettings source control provider options", () => {
+  it("defaults provider avatar lookups off for legacy configs", () => {
+    const decoded = decodeServerSettings({});
+
+    expect(decoded.sourceControl.providers.github.showCommitAuthorAvatar).toBe(false);
+    expect(decoded.sourceControl.providers["azure-devops"].showCommitAuthorAvatar).toBe(false);
+    expect(decoded.sourceControl.providers.bitbucket.showCommitAuthorAvatar).toBe(false);
+    expect(decoded.sourceControl.providers.gitlab.showCommitAuthorAvatar).toBe(false);
+  });
+
+  it("accepts provider-scoped commit author avatar opt-in patches", () => {
+    const patch = decodeServerSettingsPatch({
+      sourceControl: {
+        providers: {
+          github: { showCommitAuthorAvatar: true },
+          gitlab: { showCommitAuthorAvatar: true },
+          "azure-devops": { showCommitAuthorAvatar: true },
+          bitbucket: { showCommitAuthorAvatar: true },
+        },
+      },
+    });
+
+    expect(patch.sourceControl?.providers?.github?.showCommitAuthorAvatar).toBe(true);
+    expect(patch.sourceControl?.providers?.gitlab?.showCommitAuthorAvatar).toBe(true);
+    expect(patch.sourceControl?.providers?.["azure-devops"]?.showCommitAuthorAvatar).toBe(true);
+    expect(patch.sourceControl?.providers?.bitbucket?.showCommitAuthorAvatar).toBe(true);
   });
 });
 
