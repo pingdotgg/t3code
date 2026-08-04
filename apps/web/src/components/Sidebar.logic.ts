@@ -19,6 +19,19 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 
+export function shouldRenderSidebarV2ArchiveAll(input: {
+  archivableCount: number;
+  isArchiving: boolean;
+}): boolean {
+  return input.archivableCount > 0 || input.isArchiving;
+}
+
+export function formatArchiveSkippedDescription(skippedCount: number): string {
+  return skippedCount === 1
+    ? "1 thread was no longer eligible for this archive action and was skipped."
+    : `${skippedCount} threads were no longer eligible for this archive action and were skipped.`;
+}
+
 type SidebarProject = {
   id: string;
   title: string;
@@ -52,18 +65,30 @@ export async function archiveSelectedThreadEntries<
 >(input: {
   entries: readonly TEntry[];
   archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
+  canArchive?: (entry: TEntry) => boolean;
+  onArchived?: (entry: TEntry) => void;
+  onSkipped?: (entry: TEntry) => void;
 }): Promise<{
   archivedThreadKeys: readonly string[];
+  skippedThreadKeys: readonly string[];
   mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
   followupFailures: readonly Extract<TResult, { readonly _tag: "Failure" }>[];
 }> {
   const archivedThreadKeys: string[] = [];
+  const skippedThreadKeys: string[] = [];
   const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
 
   for (const entry of input.entries) {
+    if (input.canArchive && !input.canArchive(entry)) {
+      skippedThreadKeys.push(entry.threadKey);
+      input.onSkipped?.(entry);
+      continue;
+    }
     let didArchive = false;
     const result = await input.archive(entry, () => {
+      if (didArchive) return;
       didArchive = true;
+      input.onArchived?.(entry);
     });
     if (didArchive || result._tag === "Success") {
       archivedThreadKeys.push(entry.threadKey);
@@ -74,10 +99,87 @@ export async function archiveSelectedThreadEntries<
       followupFailures.push(failure);
       continue;
     }
-    return { archivedThreadKeys, mutationFailure: failure, followupFailures };
+    return { archivedThreadKeys, skippedThreadKeys, mutationFailure: failure, followupFailures };
   }
 
-  return { archivedThreadKeys, mutationFailure: null, followupFailures };
+  return { archivedThreadKeys, skippedThreadKeys, mutationFailure: null, followupFailures };
+}
+
+export function getCompletedArchiveThreadKeys(input: {
+  archivedThreadKeys: readonly string[];
+  skippedThreadKeys: readonly string[];
+}): readonly string[] {
+  return [...input.archivedThreadKeys, ...input.skippedThreadKeys];
+}
+
+export async function withCoordinatedThreadArchiveEntries<
+  TEntry extends { readonly threadKey: string },
+>(input: {
+  entries: readonly TEntry[];
+  reservations: Map<string, Promise<ReadonlySet<string>>>;
+  run: (
+    entries: readonly TEntry[],
+    onCompleted: (threadKey: string) => void,
+  ) => Promise<readonly string[]>;
+}): Promise<readonly string[]> {
+  const uniqueEntries: TEntry[] = [];
+  const uniqueThreadKeys = new Set<string>();
+  for (const entry of input.entries) {
+    if (uniqueThreadKeys.has(entry.threadKey)) continue;
+    uniqueThreadKeys.add(entry.threadKey);
+    uniqueEntries.push(entry);
+  }
+  let resolveReservation: (completedThreadKeys: ReadonlySet<string>) => void = () => undefined;
+  const reservation = new Promise<ReadonlySet<string>>((resolve) => {
+    resolveReservation = resolve;
+  });
+  const ownedThreadKeys = new Set<string>();
+  const completedThreadKeys = new Set<string>();
+  let pendingEntries = uniqueEntries;
+
+  try {
+    while (pendingEntries.length > 0) {
+      const activeReservations = new Set<Promise<ReadonlySet<string>>>();
+      for (const entry of pendingEntries) {
+        const activeReservation = input.reservations.get(entry.threadKey);
+        if (activeReservation && activeReservation !== reservation) {
+          activeReservations.add(activeReservation);
+          continue;
+        }
+        input.reservations.set(entry.threadKey, reservation);
+        ownedThreadKeys.add(entry.threadKey);
+      }
+      if (activeReservations.size === 0) break;
+
+      const completedByOwners = new Set(
+        (await Promise.all(activeReservations)).flatMap((threadKeys) => [...threadKeys]),
+      );
+      pendingEntries = pendingEntries.filter((entry) => !completedByOwners.has(entry.threadKey));
+    }
+
+    if (pendingEntries.length === 0) {
+      resolveReservation(completedThreadKeys);
+      return [];
+    }
+
+    const completedByRun = await input.run(pendingEntries, (threadKey) => {
+      if (ownedThreadKeys.has(threadKey)) completedThreadKeys.add(threadKey);
+    });
+    for (const threadKey of completedByRun) {
+      if (ownedThreadKeys.has(threadKey)) completedThreadKeys.add(threadKey);
+    }
+    resolveReservation(completedThreadKeys);
+    return completedByRun;
+  } catch (error) {
+    resolveReservation(completedThreadKeys);
+    throw error;
+  } finally {
+    for (const threadKey of ownedThreadKeys) {
+      if (input.reservations.get(threadKey) === reservation) {
+        input.reservations.delete(threadKey);
+      }
+    }
+  }
 }
 
 export function buildMultiSelectThreadContextMenuItems(input: {
@@ -93,6 +195,91 @@ export function buildMultiSelectThreadContextMenuItems(input: {
     },
     { id: "delete", label: `Delete (${input.count})`, destructive: true },
   ];
+}
+
+export interface SidebarV2ThreadContextMenuSlots {
+  lifecycleItems: readonly ContextMenuItem<"settle" | "unsettle" | "archive">[];
+  renameItem: ContextMenuItem<"rename">;
+  markUnreadItem: ContextMenuItem<"mark-unread">;
+  destructiveItems: readonly ContextMenuItem<"delete">[];
+}
+
+export function buildSidebarV2ThreadContextMenuSlots(input: {
+  canUseLifecycleActions: boolean;
+  supportsSettlement: boolean;
+  isSettled: boolean;
+  isRunning: boolean;
+}): SidebarV2ThreadContextMenuSlots {
+  return {
+    lifecycleItems: [
+      ...(input.supportsSettlement
+        ? [
+            input.isSettled
+              ? ({ id: "unsettle", label: "Un-settle thread" } as const)
+              : ({ id: "settle", label: "Settle thread" } as const),
+          ]
+        : []),
+      ...(input.canUseLifecycleActions
+        ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isRunning }]
+        : []),
+    ],
+    renameItem: { id: "rename", label: "Rename thread" },
+    markUnreadItem: { id: "mark-unread", label: "Mark unread" },
+    destructiveItems: input.canUseLifecycleActions
+      ? [
+          {
+            id: "delete" as const,
+            label: "Delete",
+            destructive: true,
+            icon: "trash" as const,
+          },
+        ]
+      : [],
+  };
+}
+
+export function composeSidebarV2ThreadContextMenuItems(input: {
+  slots: SidebarV2ThreadContextMenuSlots;
+  leadingItems: readonly ContextMenuItem<string>[];
+  snoozeItems: readonly ContextMenuItem<string>[];
+  titleRegenerationItems: readonly ContextMenuItem<string>[];
+  copyItems: readonly ContextMenuItem<string>[];
+}): readonly ContextMenuItem<string>[] {
+  return [
+    ...input.leadingItems,
+    ...input.slots.lifecycleItems,
+    ...input.snoozeItems,
+    input.slots.renameItem,
+    ...input.titleRegenerationItems,
+    input.slots.markUnreadItem,
+    ...input.copyItems,
+    ...input.slots.destructiveItems,
+  ];
+}
+
+export function isThreadSessionRunning(
+  session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined,
+): boolean {
+  return session?.status === "running" && session.activeTurnId != null;
+}
+
+export function canArchiveSettledSidebarThread(input: {
+  readonly threadKey: string;
+  readonly settledThreadKeys: ReadonlySet<string>;
+  readonly session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined;
+}): boolean {
+  return input.settledThreadKeys.has(input.threadKey) && !isThreadSessionRunning(input.session);
+}
+
+export function filterArchivableSidebarThreads<
+  T extends {
+    readonly session?:
+      | { readonly status: string; readonly activeTurnId?: unknown }
+      | null
+      | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  return threads.filter((thread) => !isThreadSessionRunning(thread.session));
 }
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {

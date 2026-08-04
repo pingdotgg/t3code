@@ -3,7 +3,13 @@ import {
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  buildSidebarV2ThreadContextMenuSlots,
+  canArchiveSettledSidebarThread,
+  composeSidebarV2ThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  filterArchivableSidebarThreads,
+  formatArchiveSkippedDescription,
+  getCompletedArchiveThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -12,6 +18,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isThreadSessionRunning,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -24,12 +31,14 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldRenderSidebarV2ArchiveAll,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  withCoordinatedThreadArchiveEntries,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -47,6 +56,20 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("formatArchiveSkippedDescription", () => {
+  it("describes a single eligibility skip without assuming why it happened", () => {
+    expect(formatArchiveSkippedDescription(1)).toBe(
+      "1 thread was no longer eligible for this archive action and was skipped.",
+    );
+  });
+
+  it("describes multiple eligibility skips without assuming why they happened", () => {
+    expect(formatArchiveSkippedDescription(2)).toBe(
+      "2 threads were no longer eligible for this archive action and were skipped.",
+    );
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -114,6 +137,7 @@ describe("archiveSelectedThreadEntries", () => {
 
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      skippedThreadKeys: [],
       mutationFailure: null,
       followupFailures: [],
     });
@@ -130,6 +154,7 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenCalledTimes(2);
     expect(outcome).toEqual({
       archivedThreadKeys: ["one"],
+      skippedThreadKeys: [],
       mutationFailure: failure,
       followupFailures: [],
     });
@@ -145,9 +170,291 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenCalledTimes(3);
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      skippedThreadKeys: [],
       mutationFailure: null,
       followupFailures: [failure],
     });
+  });
+
+  it("reports completed entries before a later archive throws", async () => {
+    const onArchived = vi.fn();
+
+    await expect(
+      archiveSelectedThreadEntries({
+        entries,
+        archive: async (entry, markArchived) => {
+          if (entry.threadKey === "two") throw new Error("archive failed");
+          markArchived();
+          return success;
+        },
+        onArchived,
+      }),
+    ).rejects.toThrow("archive failed");
+
+    expect(onArchived).toHaveBeenCalledTimes(1);
+    expect(onArchived).toHaveBeenCalledWith(entries[0]);
+  });
+
+  it("re-checks eligibility before each batch mutation", async () => {
+    const archive = vi.fn(async (_entry, markArchived: () => void) => {
+      markArchived();
+      return success;
+    });
+    const outcome = await archiveSelectedThreadEntries({
+      entries,
+      archive,
+      canArchive: (entry) => entry.threadKey !== "two",
+    });
+
+    expect(archive).toHaveBeenCalledTimes(2);
+    expect(archive).toHaveBeenNthCalledWith(1, entries[0], expect.any(Function));
+    expect(archive).toHaveBeenNthCalledWith(2, entries[2], expect.any(Function));
+    expect(outcome.archivedThreadKeys).toEqual(["one", "three"]);
+    expect(outcome.skippedThreadKeys).toEqual(["two"]);
+  });
+
+  it("reports when every entry becomes ineligible before mutation", async () => {
+    const archive = vi.fn(async (_entry, markArchived: () => void) => {
+      markArchived();
+      return success;
+    });
+    const outcome = await archiveSelectedThreadEntries({
+      entries,
+      archive,
+      canArchive: () => false,
+    });
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      archivedThreadKeys: [],
+      skippedThreadKeys: ["one", "two", "three"],
+      mutationFailure: null,
+      followupFailures: [],
+    });
+  });
+});
+
+describe("withCoordinatedThreadArchiveEntries", () => {
+  const entries = [{ threadKey: "one" }, { threadKey: "two" }] as const;
+
+  it("waits for owners and omits entries they successfully archived", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let finishFirstFlow: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[0]],
+      reservations,
+      run: async () =>
+        new Promise<readonly string[]>((resolve) => {
+          finishFirstFlow = () => resolve(["one"]);
+        }),
+    });
+
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    await Promise.resolve();
+    expect(secondRun).not.toHaveBeenCalled();
+
+    finishFirstFlow?.();
+    await expect(firstFlow).resolves.toEqual(["one"]);
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
+    expect(reservations.size).toBe(0);
+  });
+
+  it("retries entries when their owner cancels without archiving", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let cancelFirstFlow: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[0]],
+      reservations,
+      run: async () =>
+        new Promise<readonly string[]>((resolve) => {
+          cancelFirstFlow = () => resolve([]);
+        }),
+    });
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+    const secondRun = vi.fn(async () => ["one", "two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+
+    cancelFirstFlow?.();
+    await expect(firstFlow).resolves.toEqual([]);
+    await expect(secondFlow).resolves.toEqual(["one", "two"]);
+    expect(secondRun).toHaveBeenCalledWith(entries, expect.any(Function));
+    expect(reservations.size).toBe(0);
+  });
+
+  it("releases reservations when the archive flow fails", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+
+    await expect(
+      withCoordinatedThreadArchiveEntries({
+        entries,
+        reservations,
+        run: async () => {
+          throw new Error("archive failed");
+        },
+      }),
+    ).rejects.toThrow("archive failed");
+    expect(reservations.size).toBe(0);
+  });
+
+  it("reserves uncontested siblings while waiting for an owner", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let finishFirstFlow: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[0]],
+      reservations,
+      run: async () =>
+        new Promise<readonly string[]>((resolve) => {
+          finishFirstFlow = () => resolve(["one"]);
+        }),
+    });
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+
+    let finishSecondFlow: (() => void) | undefined;
+    const secondRun = vi.fn(
+      async () =>
+        new Promise<readonly string[]>((resolve) => {
+          finishSecondFlow = () => resolve(["two"]);
+        }),
+    );
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    await vi.waitFor(() => expect(reservations.has("two")).toBe(true));
+
+    const thirdRun = vi.fn(async () => ["two"]);
+    const thirdFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[1]],
+      reservations,
+      run: thirdRun,
+    });
+    await Promise.resolve();
+    expect(thirdRun).not.toHaveBeenCalled();
+
+    finishFirstFlow?.();
+    await expect(firstFlow).resolves.toEqual(["one"]);
+    await vi.waitFor(() =>
+      expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function)),
+    );
+    expect(thirdRun).not.toHaveBeenCalled();
+
+    finishSecondFlow?.();
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    await expect(thirdFlow).resolves.toEqual([]);
+    expect(thirdRun).not.toHaveBeenCalled();
+    expect(reservations.size).toBe(0);
+  });
+
+  it("publishes completed archives when a flow later throws", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let failFirstFlow: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: async (_ownedEntries, onArchived) => {
+        onArchived("one");
+        await new Promise<void>((_resolve, reject) => {
+          failFirstFlow = () => reject(new Error("archive failed"));
+        });
+        return [];
+      },
+    });
+    await vi.waitFor(() => expect(reservations.size).toBe(2));
+
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    failFirstFlow?.();
+
+    await expect(firstFlow).rejects.toThrow("archive failed");
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
+    expect(reservations.size).toBe(0);
+  });
+
+  it("publishes intentional skips when a later archive throws", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let failArchive: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: async (ownedEntries, onCompleted) => {
+        const outcome = await archiveSelectedThreadEntries({
+          entries: ownedEntries,
+          canArchive: (entry) => entry.threadKey !== "one",
+          archive: async () =>
+            new Promise<never>((_resolve, reject) => {
+              failArchive = () => reject(new Error("archive failed"));
+            }),
+          onArchived: (entry) => onCompleted(entry.threadKey),
+          onSkipped: (entry) => onCompleted(entry.threadKey),
+        });
+        return getCompletedArchiveThreadKeys(outcome);
+      },
+    });
+    await vi.waitFor(() => expect(reservations.size).toBe(2));
+
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    failArchive?.();
+
+    await expect(firstFlow).rejects.toThrow("archive failed");
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
+    expect(reservations.size).toBe(0);
+  });
+
+  it("does not retry entries an owner intentionally skipped", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let finishEligibilityCheck: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[0]],
+      reservations,
+      run: async (ownedEntries) => {
+        await new Promise<void>((resolve) => {
+          finishEligibilityCheck = resolve;
+        });
+        const outcome = await archiveSelectedThreadEntries({
+          entries: ownedEntries,
+          archive: vi.fn(async () => ({ _tag: "Success" }) as const),
+          canArchive: () => false,
+        });
+        return getCompletedArchiveThreadKeys(outcome);
+      },
+    });
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    finishEligibilityCheck?.();
+
+    await expect(firstFlow).resolves.toEqual(["one"]);
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
+    expect(reservations.size).toBe(0);
   });
 });
 
@@ -198,6 +505,150 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("buildSidebarV2ThreadContextMenuSlots", () => {
+  it("offers archive for active and settled threads", () => {
+    const activeSlots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: false,
+      isRunning: false,
+    });
+    const settledSlots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: true,
+      isRunning: false,
+    });
+
+    expect(activeSlots.lifecycleItems.map((item) => item.id)).toEqual(["settle", "archive"]);
+    expect(settledSlots.lifecycleItems.map((item) => item.id)).toEqual(["unsettle", "archive"]);
+    expect(activeSlots.renameItem.id).toBe("rename");
+    expect(activeSlots.markUnreadItem.id).toBe("mark-unread");
+    expect(activeSlots.destructiveItems).toEqual([
+      { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+    ]);
+  });
+
+  it("keeps archive visible but disabled while a thread is running", () => {
+    const slots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: false,
+      isRunning: true,
+    });
+
+    expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
+      disabled: true,
+    });
+  });
+
+  it("leaves capability-gated slots empty", () => {
+    const slots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: false,
+      supportsSettlement: false,
+      isSettled: false,
+      isRunning: false,
+    });
+
+    expect(slots.lifecycleItems).toEqual([]);
+    expect(slots.renameItem).toEqual({ id: "rename", label: "Rename thread" });
+    expect(slots.markUnreadItem).toEqual({ id: "mark-unread", label: "Mark unread" });
+    expect(slots.destructiveItems).toEqual([]);
+  });
+
+  it("composes upstream actions around the fork-owned slots", () => {
+    const slots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: false,
+      isRunning: false,
+    });
+
+    const items = composeSidebarV2ThreadContextMenuItems({
+      slots,
+      leadingItems: [{ id: "new-thread-on-branch", label: "New thread on branch" }],
+      snoozeItems: [{ id: "snooze", label: "Snooze" }],
+      titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
+      copyItems: [
+        { id: "copy-path", label: "Copy path" },
+        { id: "copy-branch", label: "Copy branch" },
+      ],
+    });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "new-thread-on-branch",
+      "settle",
+      "archive",
+      "snooze",
+      "rename",
+      "regenerate-title",
+      "mark-unread",
+      "copy-path",
+      "copy-branch",
+      "delete",
+    ]);
+  });
+});
+
+describe("shouldRenderSidebarV2ArchiveAll", () => {
+  it("keeps the archive-all affordance mounted while a batch is in flight", () => {
+    expect(
+      shouldRenderSidebarV2ArchiveAll({
+        archivableCount: 0,
+        isArchiving: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the archive-all affordance when there is no work or active batch", () => {
+    expect(
+      shouldRenderSidebarV2ArchiveAll({
+        archivableCount: 0,
+        isArchiving: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("archive lifecycle guards", () => {
+  it("filters running threads from archive batches", () => {
+    const ready = { id: "ready", session: null };
+    const running = {
+      id: "running",
+      session: { status: "running", activeTurnId: "turn-running" },
+    };
+
+    expect(isThreadSessionRunning(running.session)).toBe(true);
+    expect(filterArchivableSidebarThreads([ready, running])).toEqual([ready]);
+  });
+
+  it("re-checks settled membership before a settled-partition archive", () => {
+    const settledThreadKeys = new Set(["ready", "running"]);
+
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "ready",
+        settledThreadKeys,
+        session: null,
+      }),
+    ).toBe(true);
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "running",
+        settledThreadKeys,
+        session: { status: "running", activeTurnId: "turn-running" },
+      }),
+    ).toBe(false);
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "unsettled",
+        settledThreadKeys,
+        session: null,
+      }),
+    ).toBe(false);
   });
 });
 
