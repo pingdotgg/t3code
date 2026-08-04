@@ -1001,6 +1001,19 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
       continue;
     }
 
+    if (entry.activity.githubActions) {
+      grouped.push({
+        type: "activity-group",
+        id: entry.id,
+        createdAt: entry.createdAt,
+        turnId: entry.turnId,
+        activities: [entry.activity],
+      });
+      openGroupActivities = null;
+      openGroupTurnId = null;
+      continue;
+    }
+
     if (openGroupActivities !== null && openGroupTurnId === entry.turnId) {
       openGroupActivities.push(entry.activity);
       continue;
@@ -1225,7 +1238,7 @@ function appendPresentedFeedEntry(
   }
 
   const activities = entry.activities.filter(
-    (activity) => !(activity.toolLike && activity.status === "neutral"),
+    (activity) => !(activity.toolLike && activity.status === "neutral" && !activity.githubActions),
   );
   if (activities.length === 0) {
     return;

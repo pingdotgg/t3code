@@ -124,6 +124,84 @@ describe("buildThreadFeed", () => {
     expect(collapsed.map((entry) => entry.id)).toContain("github-completed");
   });
 
+  it("shows started GitHub Actions progress while folding adjacent tools", () => {
+    const turnId = TurnId.make("turn-github-started");
+    const thread = makeThread({
+      id: ThreadId.make("thread-github-started"),
+      projectId: ProjectId.make("project-1"),
+      title: "GitHub Actions started",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:10.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "Still watching.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:09.000Z",
+          updatedAt: "2026-04-01T00:00:10.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-before"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: { itemType: "command_execution", status: "completed" },
+        }),
+        makeActivity({
+          id: EventId.make("github-started"),
+          kind: "tool.started",
+          tone: "tool",
+          summary: "Watching checks",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            status: "inProgress",
+            data: {
+              githubActions: {
+                kind: "pr-checks",
+                watching: true,
+                checks: [{ name: "Test", bucket: "pending" }],
+              },
+            },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("tool-after"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read logs",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          turnId,
+          payload: { itemType: "command_execution", status: "completed" },
+        }),
+      ],
+    });
+
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+    const ids = presented.map((entry) => entry.id);
+    expect(ids).toContain("github-started");
+    expect(ids).not.toContain("tool-before");
+    expect(ids).not.toContain("tool-after");
+    expect(ids.some((id) => id.startsWith("work-toggle:"))).toBe(false);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

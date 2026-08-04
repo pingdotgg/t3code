@@ -5,6 +5,8 @@ describe("GitHub Actions snapshots", () => {
   it("recognizes direct and shell-wrapped PR check commands", () => {
     expect(isGitHubPrChecksCommand("gh pr checks 42 --watch")).toBe(true);
     expect(isGitHubPrChecksCommand(["/bin/zsh", "-lc", "gh pr checks --watch"])).toBe(true);
+    expect(isGitHubPrChecksCommand("echo gh pr checks 42 --watch")).toBe(false);
+    expect(isGitHubPrChecksCommand("grep 'gh pr checks' commands.txt")).toBe(false);
     expect(isGitHubPrChecksCommand("gh run list")).toBe(false);
   });
 

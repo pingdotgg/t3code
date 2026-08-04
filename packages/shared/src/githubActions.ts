@@ -97,16 +97,27 @@ export function summarizeGitHubActions(snapshot: GitHubActionsSnapshot): GitHubA
 }
 
 function commandText(command: unknown): string | null {
-  if (typeof command === "string") return command;
+  if (typeof command === "string") return command.trim() || null;
   if (!Array.isArray(command)) return null;
   const parts = command.filter((part): part is string => typeof part === "string");
-  return parts.length > 0 ? parts.join(" ") : null;
+  if (parts.length === 0) return null;
+
+  const executable = parts[0]
+    ?.replace(/^['"]|['"]$/g, "")
+    .split(/[\\/]/)
+    .at(-1);
+  if (executable && /^(?:ba|z|k)?sh$/i.test(executable)) {
+    const commandFlagIndex = parts.findIndex((part) => /^-[a-z]*c[a-z]*$/i.test(part));
+    const script = commandFlagIndex >= 0 ? parts[commandFlagIndex + 1]?.trim() : undefined;
+    if (script) return script;
+  }
+  return parts.join(" ").trim() || null;
 }
 
 export function isGitHubPrChecksCommand(command: unknown): boolean {
   const value = commandText(command);
   if (!value) return false;
-  return /(?:^|[\s;&|])(?:["'][^"']*[\\/])?gh["']?\s+pr\s+checks(?:\s|$)/i.test(value);
+  return /^(?:["']?[^"'\s]*[\\/])?gh["']?\s+pr\s+checks(?:\s|$)/i.test(value);
 }
 
 function parseJsonChecks(output: string): GitHubCheck[] | null {
