@@ -634,11 +634,8 @@ export class GhosttyTerminalSurface {
     if (this.disposed || this.pasteShortcutToken !== token) return;
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
-    // Keep the space outside Ghostty's bracketed-paste delimiters. This lets
-    // shells highlight exactly the pasted text while leaving the cursor ready
-    // for the next argument, matching the terminal's context-menu behavior.
     const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(`${encoded} `);
+    if (encoded.length > 0) this.options.onData(encoded);
   }
 
   hasSelection(): boolean {
