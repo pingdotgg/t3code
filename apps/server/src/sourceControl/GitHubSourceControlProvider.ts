@@ -243,6 +243,31 @@ export const makeProvider = (kind: GitHubProviderKind) =>
   Effect.gen(function* () {
     const github = yield* GitHubCli.GitHubCli;
 
+    // Every repo-less `gh` call falls back to github.com without `GH_HOST`, so
+    // an enterprise operation missing its host does not fail — it quietly
+    // answers for public GitHub. The repository service already refuses this,
+    // but the provider is reachable on its own.
+    const ensureEnterpriseHost = (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host?: string;
+      readonly operation: string;
+    }): Effect.Effect<void, SourceControlProviderError> =>
+      kind === "github-enterprise" && !input.host
+        ? Effect.fail(
+            new SourceControlProviderError({
+              provider: kind,
+              operation: input.operation,
+              command: "gh",
+              cwd: input.cwd,
+              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.repository,
+              ),
+              detail: "Choose a GitHub Enterprise host before continuing.",
+            }),
+          )
+        : Effect.void;
+
     const resolveRepositoryReference = (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -251,23 +276,6 @@ export const makeProvider = (kind: GitHubProviderKind) =>
       const repository = input.repository.trim();
       if (kind !== "github-enterprise" || !isBareRepositoryName(repository)) {
         return Effect.succeed(repository);
-      }
-
-      // Without a host `gh search repos` answers for github.com, so a bare name
-      // meant for an enterprise instance would quietly resolve against public
-      // GitHub. The repository service already refuses this, but the provider
-      // is reachable on its own.
-      if (!input.host) {
-        return Effect.fail(
-          new SourceControlProviderError({
-            provider: kind,
-            operation: "getRepositoryCloneUrls",
-            command: "gh",
-            cwd: input.cwd,
-            repository: SourceControlProvider.transportSafeSourceControlErrorValue(repository),
-            detail: "Choose a GitHub Enterprise host before resolving a bare repository name.",
-          }),
-        );
       }
 
       return github
@@ -297,7 +305,9 @@ export const makeProvider = (kind: GitHubProviderKind) =>
 
             const safeRepository =
               SourceControlProvider.transportSafeSourceControlErrorValue(repository);
-            const hostLabel = input.host ?? "the configured host";
+            const hostLabel = input.host
+              ? SourceControlProvider.transportSafeSourceControlErrorValue(input.host)
+              : "the configured host";
             return Effect.fail(
               new SourceControlProviderError({
                 provider: kind,
@@ -454,7 +464,8 @@ export const makeProvider = (kind: GitHubProviderKind) =>
             ),
           ),
       getRepositoryCloneUrls: (input) =>
-        resolveRepositoryReference(input).pipe(
+        ensureEnterpriseHost({ ...input, operation: "getRepositoryCloneUrls" }).pipe(
+          Effect.andThen(() => resolveRepositoryReference(input)),
           Effect.flatMap((repository) =>
             github
               .getRepositoryCloneUrls({
@@ -481,29 +492,33 @@ export const makeProvider = (kind: GitHubProviderKind) =>
           ),
         ),
       createRepository: (input) =>
-        github
-          .createRepository({
-            cwd: input.cwd,
-            repository: input.repository,
-            visibility: input.visibility,
-            ...(input.host ? { host: input.host } : {}),
-          })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
-                  provider: kind,
-                  operation: "createRepository",
-                  command: error.command,
-                  cwd: input.cwd,
-                  repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                    input.repository,
-                  ),
-                  detail: error.detail,
-                  cause: error,
-                }),
-            ),
+        ensureEnterpriseHost({ ...input, operation: "createRepository" }).pipe(
+          Effect.andThen(() =>
+            github
+              .createRepository({
+                cwd: input.cwd,
+                repository: input.repository,
+                visibility: input.visibility,
+                ...(input.host ? { host: input.host } : {}),
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new SourceControlProviderError({
+                      provider: kind,
+                      operation: "createRepository",
+                      command: error.command,
+                      cwd: input.cwd,
+                      repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                        input.repository,
+                      ),
+                      detail: error.detail,
+                      cause: error,
+                    }),
+                ),
+              ),
           ),
+        ),
       getDefaultBranch: (input) =>
         github.getDefaultBranch(input).pipe(
           Effect.mapError(

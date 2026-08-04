@@ -750,28 +750,51 @@ describe("getRepositoryCloneUrls bare name resolution", () => {
     }),
   );
 
-  it.effect("never searches for a bare enterprise name without a host", () =>
+  it.effect.each(["core", "Sollit/core"])(
+    "refuses %s on enterprise without a host rather than answering for github.com",
+    (repository) =>
+      Effect.gen(function* () {
+        const searchRepositories = vi.fn(() => Effect.succeed([{ fullName: "Sollit/core" }]));
+        const getRepositoryCloneUrls = vi.fn(() =>
+          Effect.succeed({
+            nameWithOwner: "Sollit/core",
+            url: "https://sollit.ghe.com/Sollit/core",
+            sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+          }),
+        );
+
+        const provider = yield* makeProviderOfKind("github-enterprise", {
+          searchRepositories,
+          getRepositoryCloneUrls,
+        });
+
+        const error = yield* provider
+          .getRepositoryCloneUrls({ cwd: "/repo", repository })
+          .pipe(Effect.flip);
+
+        expect(searchRepositories).not.toHaveBeenCalled();
+        expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+        expect(error.detail).toContain("host");
+      }),
+  );
+
+  it.effect("refuses to create an enterprise repository without a host", () =>
     Effect.gen(function* () {
-      const searchRepositories = vi.fn(() => Effect.succeed([{ fullName: "Sollit/core" }]));
-      const getRepositoryCloneUrls = vi.fn(() =>
+      const createRepository = vi.fn(() =>
         Effect.succeed({
           nameWithOwner: "Sollit/core",
-          url: "https://sollit.ghe.com/Sollit/core",
-          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+          url: "https://github.com/Sollit/core",
+          sshUrl: "git@github.com:Sollit/core.git",
         }),
       );
 
-      const provider = yield* makeProviderOfKind("github-enterprise", {
-        searchRepositories,
-        getRepositoryCloneUrls,
-      });
+      const provider = yield* makeProviderOfKind("github-enterprise", { createRepository });
 
       const error = yield* provider
-        .getRepositoryCloneUrls({ cwd: "/repo", repository: "core" })
+        .createRepository({ cwd: "/repo", repository: "Sollit/core", visibility: "private" })
         .pipe(Effect.flip);
 
-      expect(searchRepositories).not.toHaveBeenCalled();
-      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(createRepository).not.toHaveBeenCalled();
       expect(error.detail).toContain("host");
     }),
   );
