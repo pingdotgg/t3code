@@ -284,7 +284,7 @@ jobs:
           - arch: x64
             runner: blacksmith-8vcpu-ubuntu-2404
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-8vcpu-ubuntu-2404-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v6
