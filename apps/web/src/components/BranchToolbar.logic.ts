@@ -1,4 +1,5 @@
 import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
@@ -13,8 +14,49 @@ export interface EnvironmentOption {
   isPrimary: boolean;
 }
 
+export interface CheckoutOption {
+  projectId: ProjectId;
+  title: string;
+  workspaceRoot: string;
+}
+
+export interface CheckoutWorkspaceChoice {
+  projectId: ProjectId;
+  mode: EnvMode;
+  value: string;
+}
+
+export function dedupeCheckoutOptions(
+  checkouts: readonly CheckoutOption[],
+  activeProjectId: ProjectId,
+): CheckoutOption[] {
+  const activeCheckout = checkouts.find((checkout) => checkout.projectId === activeProjectId);
+  const orderedCheckouts = activeCheckout
+    ? [activeCheckout, ...checkouts.filter((checkout) => checkout.projectId !== activeProjectId)]
+    : checkouts;
+  const seenWorkspaceRoots = new Set<string>();
+  return orderedCheckouts.filter((checkout) => {
+    const workspaceRoot = normalizeProjectPathForComparison(checkout.workspaceRoot);
+    if (seenWorkspaceRoots.has(workspaceRoot)) return false;
+    seenWorkspaceRoots.add(workspaceRoot);
+    return true;
+  });
+}
+
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
+
+export function buildCheckoutWorkspaceChoices(
+  checkouts: readonly CheckoutOption[],
+): CheckoutWorkspaceChoice[] {
+  return checkouts.flatMap((checkout) =>
+    (["local", "worktree"] as const).map((mode) => ({
+      projectId: checkout.projectId,
+      mode,
+      value: JSON.stringify([checkout.projectId, mode]),
+    })),
+  );
+}
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 

@@ -1,6 +1,8 @@
-import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildCheckoutWorkspaceChoices,
+  dedupeCheckoutOptions,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
@@ -105,6 +107,90 @@ describe("resolvePreviousWorktreeLabel", () => {
     expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
       "Previous worktree",
     );
+  });
+});
+
+describe("buildCheckoutWorkspaceChoices", () => {
+  it("keeps every same-repository clone selectable as a checkout or worktree base", () => {
+    const firstProjectId = ProjectId.make("project-first-clone");
+    const secondProjectId = ProjectId.make("project-second-clone");
+
+    expect(
+      buildCheckoutWorkspaceChoices([
+        {
+          projectId: firstProjectId,
+          title: "t3code",
+          workspaceRoot: "/src/t3code",
+        },
+        {
+          projectId: secondProjectId,
+          title: "t3code-3",
+          workspaceRoot: "/src/t3code-3",
+        },
+      ]).map(({ projectId, mode }) => ({ projectId, mode })),
+    ).toEqual([
+      { projectId: firstProjectId, mode: "local" },
+      { projectId: firstProjectId, mode: "worktree" },
+      { projectId: secondProjectId, mode: "local" },
+      { projectId: secondProjectId, mode: "worktree" },
+    ]);
+  });
+});
+
+describe("dedupeCheckoutOptions", () => {
+  it("keeps the active project when duplicate normalized roots exist", () => {
+    const staleProjectId = ProjectId.make("project-stale");
+    const activeProjectId = ProjectId.make("project-active");
+
+    expect(
+      dedupeCheckoutOptions(
+        [
+          {
+            projectId: staleProjectId,
+            title: "Stale checkout",
+            workspaceRoot: "C:\\src\\t3code",
+          },
+          {
+            projectId: activeProjectId,
+            title: "Active checkout",
+            workspaceRoot: "C:/src/t3code",
+          },
+        ],
+        activeProjectId,
+      ),
+    ).toEqual([
+      {
+        projectId: activeProjectId,
+        title: "Active checkout",
+        workspaceRoot: "C:/src/t3code",
+      },
+    ]);
+  });
+
+  it("preserves checkouts that differ only by path casing", () => {
+    const lowerProjectId = ProjectId.make("project-lower");
+    const upperProjectId = ProjectId.make("project-upper");
+    const checkouts = [
+      { projectId: lowerProjectId, title: "Lowercase", workspaceRoot: "/src/t3code" },
+      { projectId: upperProjectId, title: "Uppercase", workspaceRoot: "/src/T3Code" },
+    ];
+
+    expect(dedupeCheckoutOptions(checkouts, lowerProjectId)).toEqual(checkouts);
+  });
+
+  it("deduplicates paths that differ only by trailing separators", () => {
+    const staleProjectId = ProjectId.make("project-trailing-slash");
+    const activeProjectId = ProjectId.make("project-no-trailing-slash");
+
+    expect(
+      dedupeCheckoutOptions(
+        [
+          { projectId: staleProjectId, title: "Stale", workspaceRoot: "/src/t3code/" },
+          { projectId: activeProjectId, title: "Active", workspaceRoot: "/src/t3code" },
+        ],
+        activeProjectId,
+      ).map((checkout) => checkout.projectId),
+    ).toEqual([activeProjectId]);
   });
 });
 

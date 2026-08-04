@@ -15,6 +15,7 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import {
+  type CheckoutOption,
   type EnvMode,
   type EnvironmentOption,
   resolveCurrentWorkspaceLabel,
@@ -56,6 +57,8 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  availableCheckouts?: readonly CheckoutOption[];
+  onWorkspaceChange?: (projectId: CheckoutOption["projectId"], mode: EnvMode) => void;
 }
 
 interface MobileRunContextSelectorProps {
@@ -229,6 +232,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  availableCheckouts,
+  onWorkspaceChange,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -340,6 +345,9 @@ export const BranchToolbar = memo(function BranchToolbar({
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            activeProjectId={activeProject.id}
+            availableCheckouts={availableCheckouts ?? []}
+            {...(onWorkspaceChange ? { onWorkspaceChange } : {})}
           />
         </div>
       )}
