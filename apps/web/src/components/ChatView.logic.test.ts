@@ -115,22 +115,32 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
 });
 
 describe("shouldShowComposerContextStrip", () => {
-  it("shows git context on a draft with an active project", () => {
+  it("shows git context while composing a new thread", () => {
     expect(
       shouldShowComposerContextStrip({
-        routeKind: "draft",
+        isDraftHeroState: true,
         isGitRepo: true,
         hasActiveProject: true,
+        persistInActiveThreads: false,
       }),
     ).toBe(true);
   });
 
-  it("hides git context after the draft becomes a thread", () => {
+  it("keeps git context in an active thread only when requested", () => {
     expect(
       shouldShowComposerContextStrip({
-        routeKind: "server",
+        isDraftHeroState: false,
         isGitRepo: true,
         hasActiveProject: true,
+        persistInActiveThreads: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowComposerContextStrip({
+        isDraftHeroState: false,
+        isGitRepo: true,
+        hasActiveProject: true,
+        persistInActiveThreads: false,
       }),
     ).toBe(false);
   });
@@ -138,16 +148,18 @@ describe("shouldShowComposerContextStrip", () => {
   it("hides git context without a git-backed project", () => {
     expect(
       shouldShowComposerContextStrip({
-        routeKind: "draft",
+        isDraftHeroState: true,
         isGitRepo: false,
         hasActiveProject: true,
+        persistInActiveThreads: true,
       }),
     ).toBe(false);
     expect(
       shouldShowComposerContextStrip({
-        routeKind: "draft",
+        isDraftHeroState: true,
         isGitRepo: true,
         hasActiveProject: false,
+        persistInActiveThreads: true,
       }),
     ).toBe(false);
   });

@@ -236,11 +236,16 @@ export function resolveSendEnvMode(input: {
 }
 
 export function shouldShowComposerContextStrip(input: {
-  routeKind: "draft" | "server";
+  isDraftHeroState: boolean;
   isGitRepo: boolean;
   hasActiveProject: boolean;
+  persistInActiveThreads: boolean;
 }): boolean {
-  return input.routeKind === "draft" && input.isGitRepo && input.hasActiveProject;
+  return (
+    input.isGitRepo &&
+    input.hasActiveProject &&
+    (input.isDraftHeroState || input.persistInActiveThreads)
+  );
 }
 
 export function cloneComposerImageForRetry(

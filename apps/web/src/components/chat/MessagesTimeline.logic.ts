@@ -528,6 +528,15 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    // The terminal interrupt result is the useful timeline marker. The
+    // preceding request is transient bookkeeping and duplicates that marker.
+    if (
+      timelineEntry.kind === "event" &&
+      timelineEntry.projectedItem.item.type === "run_interrupt_request"
+    ) {
+      continue;
+    }
+
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
       nextRows.push({

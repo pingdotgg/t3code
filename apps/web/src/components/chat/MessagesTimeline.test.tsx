@@ -493,7 +493,55 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Steered the active turn");
-    expect(markup).toContain(">steer<");
+    expect(markup).toContain("lucide-redo-2");
+    expect(markup).toContain('data-user-message-intent="steer"');
+    expect(markup).toContain("items-center justify-end gap-1");
+    expect(markup).toContain("gap-1 text-xs leading-none text-muted-foreground");
+    expect(markup.indexOf("Steer")).toBeLessThan(markup.indexOf("Adjust the current turn"));
+  });
+
+  it("does not add redundant space below a collapsed turn divider", () => {
+    const runId = RunId.make("run-collapsed-spacing");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("Investigate spacing"),
+          {
+            id: "assistant-commentary-spacing",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            message: {
+              id: MessageId.make("assistant-commentary-spacing"),
+              role: "assistant",
+              text: "Checking the layout.",
+              runId,
+              createdAt: "2026-03-17T19:12:30.000Z",
+              updatedAt: "2026-03-17T19:12:31.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "assistant-final-spacing",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:32.000Z",
+            message: {
+              id: MessageId.make("assistant-final-spacing"),
+              role: "assistant",
+              text: "Spacing fixed.",
+              runId,
+              createdAt: "2026-03-17T19:12:32.000Z",
+              updatedAt: "2026-03-17T19:12:33.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('class="pb-0" data-timeline-row-id="turn-fold:');
+    expect(markup).toContain('data-timeline-row-kind="turn-fold"');
+    expect(markup).not.toContain("border-b border-border/60");
   });
 
   it("shows a collapsed disclosure for superseded attempt output", async () => {
@@ -710,7 +758,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
-  it("renders V2 interruption lifecycle entries as standalone rows", async () => {
+  it("does not render the transient V2 interruption request", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -749,9 +797,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-v2-item-type="run_interrupt_request"');
-    expect(markup).toContain("Interrupt requested");
-    expect(markup).toContain("Waiting for the provider to stop.");
+    expect(markup).not.toContain('data-v2-item-type="run_interrupt_request"');
+    expect(markup).not.toContain("Interrupt requested");
+    expect(markup).not.toContain("Waiting for the provider to stop.");
     expect(markup).not.toContain("Structured details");
   });
 
@@ -841,6 +889,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("GPT 5.6 Sol");
     expect(markup).toContain("Claude Fable 5");
     expect(markup).not.toContain("Full conversation context");
+    expect(markup).not.toContain("·");
 
     // Items persisted before models were stamped recover them from the
     // projection runs: the handoff's run is the target, the newest earlier
@@ -1307,6 +1356,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-v2-item-type="error"');
+    expect(markup).toContain('data-v2-event-disclosure="true"');
+    expect(markup).toContain("<summary");
     expect(markup).toContain("Provider error");
     expect(markup).toContain("Invalid reasoning effort.");
   });

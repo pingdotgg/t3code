@@ -2660,10 +2660,15 @@ function ChatViewContent(props: ChatViewProps) {
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const showComposerContextStrip = shouldShowComposerContextStrip({
-    routeKind,
+    isDraftHeroState,
     isGitRepo,
     hasActiveProject: activeProject !== null,
+    persistInActiveThreads: settings.persistComposerContextStrip,
   });
+  const renderComposerContextStrip =
+    isGitRepo &&
+    activeProject !== null &&
+    (routeKind === "draft" || settings.persistComposerContextStrip);
   const initialDiffPanelGitScope =
     gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
   const diffPanelGitStatusResolutionKey = gitStatusQuery.data ? "resolved" : "pending";
@@ -6175,7 +6180,6 @@ function ChatViewContent(props: ChatViewProps) {
       ref={workspaceLayoutRef}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -6188,10 +6192,10 @@ function ChatViewContent(props: ChatViewProps) {
           ref={threadPanelPopoverAnchorRef}
           data-chat-header
           className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "relative bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
+                  "workspace-topbar drag-region px-3 sm:px-5",
                   reserveTitleBarControlInset &&
                     !inlineRightPanelOwnsTitleBar &&
                     "wco:pr-[var(--workspace-native-controls-inset)]",
@@ -6434,40 +6438,58 @@ function ChatViewContent(props: ChatViewProps) {
                           />
                         </div>
                       </div>
-                      <div className="min-h-0">
-                        <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                          className="relative z-0"
-                        >
-                          {showComposerContextStrip && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
-                                    }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
-                            </div>
-                          )}
+                      <div
+                        aria-hidden={!showComposerContextStrip}
+                        className={cn(
+                          "grid transition-[grid-template-rows,opacity,transform] motion-reduce:transition-none",
+                          showComposerContextStrip
+                            ? "grid-rows-[1fr] translate-y-0 opacity-100"
+                            : "pointer-events-none grid-rows-[0fr] -translate-y-1 opacity-0",
+                        )}
+                        data-composer-context-strip={
+                          showComposerContextStrip ? "expanded" : "collapsed"
+                        }
+                        inert={showComposerContextStrip ? undefined : true}
+                        style={{
+                          transitionDuration: `${DRAFT_HERO_TRANSITION_DURATION_MS}ms`,
+                          transitionTimingFunction: DRAFT_HERO_TRANSITION_EASING,
+                        }}
+                      >
+                        <div className="min-h-0 overflow-hidden">
+                          <div
+                            data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
+                            className="relative z-0"
+                          >
+                            {renderComposerContextStrip && (
+                              <div className="pointer-events-auto">
+                                <BranchToolbar
+                                  environmentId={activeThread.environmentId}
+                                  threadId={activeThread.id}
+                                  {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                                  onEnvModeChange={onEnvModeChange}
+                                  startFromOrigin={startFromOrigin}
+                                  onStartFromOriginChange={onStartFromOriginChange}
+                                  {...(canOverrideServerThreadEnvMode
+                                    ? { effectiveEnvModeOverride: envMode }
+                                    : {})}
+                                  {...(canOverrideServerThreadEnvMode
+                                    ? {
+                                        activeThreadBranchOverride: activeThreadBranch,
+                                        onActiveThreadBranchOverrideChange:
+                                          setPendingServerThreadBranch,
+                                      }
+                                    : {})}
+                                  envLocked={envLocked}
+                                  onComposerFocusRequest={scheduleComposerFocus}
+                                  {...(canCheckoutPullRequestIntoThread
+                                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                                    : {})}
+                                  {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                  availableEnvironments={logicalProjectEnvironments}
+                                />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -6568,6 +6590,7 @@ function ChatViewContent(props: ChatViewProps) {
           mode="inline"
           maximized={rightPanelMaximized}
           inlineSize={previewPanelInlineSize}
+          layoutControls={panelLayoutControls}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}

@@ -163,6 +163,10 @@
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
     },
+    "./state/turn-item-presentation": {
+      "types": "./src/state/turnItemPresentation.ts",
+      "default": "./src/state/turnItemPresentation.ts"
+    },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"

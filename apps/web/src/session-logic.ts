@@ -16,6 +16,7 @@ import type {
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
+import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 
 import type { ChatMessage, ProposedPlan, SessionPhase, TurnDiffSummary } from "./types";
 import * as DateTime from "effect/DateTime";
@@ -553,6 +554,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
 
   for (const row of input.visibleTurnItems) {
     const { item } = row;
+    if (turnItemIsWorkspacePreparation(item)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };

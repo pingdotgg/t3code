@@ -21,6 +21,7 @@ const clientSettings: ClientSettings = {
   environmentIdentificationMode: "artwork",
   favorites: [],
   glassOpacity: 80,
+  persistComposerContextStrip: true,
   providerModelPreferences: {},
   sidebarAutoSettleAfterDays: 3,
   sidebarProjectGroupingMode: "repository_path",

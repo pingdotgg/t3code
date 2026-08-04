@@ -939,7 +939,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("keeps interruption request, intervening work, and result visible in order", () => {
+  it("hides the interruption request while keeping intervening work and the result", () => {
     const runId = "turn-1" as never;
     const interruptEvent = (type: "run_interrupt_request" | "run_interrupt_result") => ({
       position: type === "run_interrupt_request" ? 0 : 2,
@@ -1004,11 +1004,7 @@ describe("deriveMessagesTimelineRows", () => {
       revertTurnCountByUserMessageId: new Map(),
     });
 
-    expect(rows.map((row) => row.id)).toEqual([
-      "interrupt-request",
-      "work-entry",
-      "interrupt-result",
-    ]);
+    expect(rows.map((row) => row.id)).toEqual(["work-entry", "interrupt-result"]);
     expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
   });
 

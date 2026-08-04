@@ -59,6 +59,7 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
+  Redo2Icon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -916,12 +917,16 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
-          row.kind === "work" ||
-          row.kind === "event" ||
-          row.kind === "attempt-fold"
-          ? "pb-2"
-          : "pb-4",
+        row.kind === "turn-fold"
+          ? "pb-0"
+          : (row.kind === "message" &&
+                row.message.role === "assistant" &&
+                !row.showAssistantMeta) ||
+              row.kind === "work" ||
+              row.kind === "event" ||
+              row.kind === "attempt-fold"
+            ? "pb-2"
+            : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -974,6 +979,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         >
           Sent by another agent
         </p>
+      ) : null}
+      {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
+        <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
         {regularImages.length > 0 && (
@@ -1033,23 +1041,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      {(row.message.inputIntent && row.message.inputIntent !== "turn_start") ||
-      (row.projectedItem &&
-        row.projectedItem.item.status !== "completed" &&
-        row.projectedItem.item.status !== "pending" &&
-        row.projectedItem.item.status !== "waiting") ? (
+      {row.projectedItem &&
+      row.projectedItem.item.status !== "completed" &&
+      row.projectedItem.item.status !== "pending" &&
+      row.projectedItem.item.status !== "waiting" ? (
         <div className="me-1 flex items-center gap-1.5">
-          {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
-            <UserMessageIntentBadge intent={row.message.inputIntent} />
-          ) : null}
-          {row.projectedItem &&
-          row.projectedItem.item.status !== "completed" &&
-          row.projectedItem.item.status !== "pending" &&
-          row.projectedItem.item.status !== "waiting" ? (
-            <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-              {row.projectedItem.item.status}
-            </span>
-          ) : null}
+          <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+            {row.projectedItem.item.status}
+          </span>
         </div>
       ) : null}
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -1074,26 +1073,31 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 }
 
-function UserMessageIntentBadge({
+function UserMessageIntentMarker({
   intent,
 }: {
   readonly intent: NonNullable<TimelineMessage["inputIntent"]>;
 }) {
   const presentation =
     intent === "queued_turn"
-      ? { label: "queued", className: "border-amber-500/25 bg-amber-500/8 text-amber-700" }
+      ? {
+          label: "Queued",
+          icon: null,
+        }
       : intent === "promoted_queued_to_steer"
         ? {
-            label: "queued → steer",
-            className: "border-sky-500/25 bg-sky-500/8 text-sky-700",
+            label: "Steer",
+            icon: Redo2Icon,
           }
-        : { label: "steer", className: "border-sky-500/25 bg-sky-500/8 text-sky-700" };
+        : {
+            label: "Steer",
+            icon: Redo2Icon,
+          };
+  const IntentIcon = presentation.icon;
   return (
-    <span
-      className={cn(
-        "me-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wide",
-        presentation.className,
-      )}
+    <div
+      className="me-1 flex items-center justify-end gap-1 text-xs leading-none text-muted-foreground"
+      data-user-message-intent={intent}
       title={
         intent === "queued_turn"
           ? "Queued behind the active turn"
@@ -1102,8 +1106,9 @@ function UserMessageIntentBadge({
             : "Steered the active turn"
       }
     >
+      {IntentIcon ? <IntentIcon aria-hidden="true" className="size-3" /> : null}
       {presentation.label}
-    </span>
+    </div>
   );
 }
 
@@ -1137,7 +1142,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
+    <div className="pb-2 pt-1">
       <button
         type="button"
         aria-expanded={row.expanded}
@@ -1416,6 +1421,85 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
   }
   const presentation = v2EventPresentation(item);
   const Icon = presentation.icon;
+  if (item.type === "error") {
+    return (
+      <details
+        className={cn(
+          "group rounded-md border",
+          presentation.tone === "warning" && "border-amber-500/25 bg-amber-500/5",
+          presentation.tone === "danger" && "border-destructive/25 bg-destructive/5",
+          presentation.tone === "success" && "border-emerald-500/20 bg-emerald-500/5",
+        )}
+        data-v2-item-type={item.type}
+        data-v2-item-visibility={visibility}
+        data-v2-event-disclosure="true"
+      >
+        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-xs [&::-webkit-details-marker]:hidden">
+          <Icon
+            className={cn(
+              "size-3.5 shrink-0",
+              presentation.tone === "warning" && "text-amber-600 dark:text-amber-400",
+              presentation.tone === "danger" && "text-destructive",
+              presentation.tone === "success" && "text-emerald-600 dark:text-emerald-400",
+            )}
+          />
+          <span className="shrink-0 font-medium text-foreground/90">{presentation.label}</span>
+          {item.status !== "completed" ? (
+            <span
+              className={cn(
+                "shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-[10px]",
+                item.status === "failed"
+                  ? "border-destructive/40 text-destructive"
+                  : "border-border/70 text-muted-foreground",
+              )}
+            >
+              {item.status}
+            </span>
+          ) : null}
+          {presentation.detail ? (
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/65">
+              {presentation.detail}
+            </span>
+          ) : null}
+          {visibility !== "local" ? (
+            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {visibility === "inherited" ? "Inherited" : "Synthetic"}
+            </span>
+          ) : null}
+          <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground/60 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-border/45 px-3 py-2 ps-8">
+          {presentation.detail ? (
+            <div className="text-xs leading-relaxed text-muted-foreground">
+              <ChatMarkdown
+                text={presentation.detail}
+                cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
+                skills={ctx.skills}
+                lineBreaks
+              />
+            </div>
+          ) : null}
+          {visibility === "inherited" ? (
+            <p className="mt-1 font-mono text-[10px] text-muted-foreground/65">
+              From {sourceThreadId}
+            </p>
+          ) : null}
+          <div className={presentation.detail ? "mt-2" : undefined}>
+            <V2ItemInspector
+              projectedItem={row.projectedItem}
+              environmentId={ctx.activeThreadEnvironmentId}
+              cwd={ctx.markdownCwd}
+              workspaceRoot={ctx.workspaceRoot}
+              onOpenThread={ctx.onOpenThread}
+              onOpenTurnDiff={ctx.onOpenTurnDiff}
+              onRollbackCheckpoint={ctx.onRollbackCheckpoint}
+            />
+          </div>
+        </div>
+      </details>
+    );
+  }
   return (
     <section
       className={cn(
