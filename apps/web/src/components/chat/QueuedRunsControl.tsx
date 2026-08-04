@@ -39,6 +39,11 @@ export function QueuedRunsControl(props: {
   );
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
+  const automaticCompletionMessageIds = new Set(
+    projection?.messages
+      .filter((message) => message.delegatedCompletion !== undefined)
+      .map((message) => message.id) ?? [],
+  );
   const committedQueuedMessageIds = new Set(queued.map(({ run }) => run.userMessageId));
   const optimisticQueued = props.optimisticMessages.filter(
     (message) =>
@@ -51,6 +56,7 @@ export function QueuedRunsControl(props: {
       serverIndex,
       text,
       pending: false,
+      automaticCompletion: automaticCompletionMessageIds.has(run.userMessageId),
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
@@ -58,6 +64,7 @@ export function QueuedRunsControl(props: {
       serverIndex: null,
       text: message.text,
       pending: true,
+      automaticCompletion: false,
     })),
   ];
 
@@ -202,16 +209,18 @@ export function QueuedRunsControl(props: {
               ) : (
                 <>
                   <span className="min-w-0 flex-1 truncate text-xs" title={item.text}>
-                    {item.text}
+                    {item.automaticCompletion ? "Automatic completion delivery" : item.text}
                   </span>
                   <Button
                     size="icon-xs"
                     variant="ghost"
                     aria-label="Edit queued message"
                     className="size-6 text-muted-foreground"
-                    disabled={item.runId === null || busyRunId !== null}
+                    disabled={item.runId === null || item.automaticCompletion || busyRunId !== null}
                     onClick={() => {
-                      if (item.runId !== null) setEditing({ runId: item.runId, draft: item.text });
+                      if (item.runId !== null && !item.automaticCompletion) {
+                        setEditing({ runId: item.runId, draft: item.text });
+                      }
                     }}
                   >
                     <PencilIcon className="size-3" />
@@ -223,13 +232,20 @@ export function QueuedRunsControl(props: {
                     className="size-6 text-muted-foreground"
                     disabled={
                       item.runId === null ||
+                      item.automaticCompletion ||
                       item.serverIndex === null ||
                       busyRunId !== null ||
                       !workflow?.canReorder ||
                       item.serverIndex === 0
                     }
                     onClick={() => {
-                      if (item.runId === null || item.serverIndex === null) return;
+                      if (
+                        item.runId === null ||
+                        item.serverIndex === null ||
+                        item.automaticCompletion
+                      ) {
+                        return;
+                      }
                       void move(item.runId, queued[item.serverIndex - 1]?.run.id ?? null);
                     }}
                   >
@@ -242,13 +258,20 @@ export function QueuedRunsControl(props: {
                     className="size-6 text-muted-foreground"
                     disabled={
                       item.runId === null ||
+                      item.automaticCompletion ||
                       item.serverIndex === null ||
                       busyRunId !== null ||
                       !workflow?.canReorder ||
                       item.serverIndex === queued.length - 1
                     }
                     onClick={() => {
-                      if (item.runId === null || item.serverIndex === null) return;
+                      if (
+                        item.runId === null ||
+                        item.serverIndex === null ||
+                        item.automaticCompletion
+                      ) {
+                        return;
+                      }
                       void move(item.runId, queued[item.serverIndex + 2]?.run.id ?? null);
                     }}
                   >
@@ -259,15 +282,22 @@ export function QueuedRunsControl(props: {
                     variant="ghost"
                     className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
                     disabled={
-                      item.runId === null || busyRunId !== null || !workflow?.canPromoteToSteer
+                      item.runId === null ||
+                      item.automaticCompletion ||
+                      busyRunId !== null ||
+                      !workflow?.canPromoteToSteer
                     }
                     title={
-                      activeRun === null
-                        ? "There is no active run to steer"
-                        : "Send as a steer instead"
+                      item.automaticCompletion
+                        ? "Automatic completion deliveries are always queued"
+                        : activeRun === null
+                          ? "There is no active run to steer"
+                          : "Send as a steer instead"
                     }
                     onClick={() => {
-                      if (item.runId !== null) void steer(item.runId);
+                      if (item.runId !== null && !item.automaticCompletion) {
+                        void steer(item.runId);
+                      }
                     }}
                   >
                     <CornerUpRightIcon className="size-3" />
@@ -276,10 +306,18 @@ export function QueuedRunsControl(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label="Remove queued message"
+                    aria-label={
+                      item.automaticCompletion
+                        ? "Dismiss automatic completion delivery"
+                        : "Remove queued message"
+                    }
                     className="size-6 text-muted-foreground"
                     disabled={item.runId === null || busyRunId !== null}
-                    title="Remove from queue"
+                    title={
+                      item.automaticCompletion
+                        ? "Dismiss automatic completion delivery"
+                        : "Remove from queue"
+                    }
                     onClick={() => {
                       if (item.runId !== null) void remove(item.runId);
                     }}
