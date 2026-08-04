@@ -1,11 +1,10 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
-import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useState } from "react";
 

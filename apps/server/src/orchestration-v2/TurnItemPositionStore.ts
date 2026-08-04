@@ -14,6 +14,8 @@ export class TurnItemPositionStoreError extends Schema.TaggedErrorClass<TurnItem
   },
 ) {}
 
+const isTurnItemPositionStoreError = Schema.is(TurnItemPositionStoreError);
+
 export interface TurnItemPositionStoreV2Shape {
   readonly allocate: (input: {
     readonly threadId: ThreadId;
@@ -85,7 +87,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
         return ordinal;
       }).pipe(
         Effect.mapError((cause) =>
-          Schema.is(TurnItemPositionStoreError)(cause)
+          isTurnItemPositionStoreError(cause)
             ? cause
             : new TurnItemPositionStoreError({ threadId, turnItemId, cause }),
         ),
