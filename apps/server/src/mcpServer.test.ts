@@ -104,6 +104,27 @@ describe("MCP Streamable HTTP server", () => {
 });
 
 describe("create_nested_thread MCP tool", () => {
+  it("accepts any Copilot model slug and makes reasoning optional", () => {
+    expect(__testing.availableTools(new Set(["create_nested_thread"]))).toEqual([
+      expect.objectContaining({
+        name: "create_nested_thread",
+        inputSchema: expect.objectContaining({
+          type: "object",
+          properties: expect.objectContaining({
+            model: expect.objectContaining({
+              type: "string",
+              minLength: 1,
+            }),
+          }),
+          required: ["project", "title", "prompt", "model"],
+        }),
+      }),
+    ]);
+
+    const [tool] = __testing.availableTools(new Set(["create_nested_thread"]));
+    expect(tool?.inputSchema.properties?.model).not.toHaveProperty("enum");
+  });
+
   it("creates a flavor-scoped child on the authenticated parent provider instance", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-nested-thread-"));
     const cliPath = path.join(root, "t3-test");
@@ -161,6 +182,63 @@ describe("create_nested_thread MCP tool", () => {
         "Find the root cause.",
         "--base-dir",
         "/tmp/t3-dev",
+      ]);
+    } finally {
+      if (originalArgsPath === undefined) delete process.env.T3_MCP_TEST_ARGS;
+      else process.env.T3_MCP_TEST_ARGS = originalArgsPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits reasoning for Copilot models without a selectable reasoning level", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-nested-thread-"));
+    const cliPath = path.join(root, "t3-test");
+    const argsPath = path.join(root, "cli-args.txt");
+    const originalArgsPath = process.env.T3_MCP_TEST_ARGS;
+
+    try {
+      await writeFile(
+        cliPath,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$T3_MCP_TEST_ARGS"\nprintf \'{"threadId":"child-1"}\\n\'\n',
+      );
+      await chmod(cliPath, 0o755);
+      process.env.T3_MCP_TEST_ARGS = argsPath;
+
+      await expect(
+        __testing.createNestedThreadTool(
+          {
+            cwd: root,
+            toolsets: new Set(["create_nested_thread"]),
+            threadId: "parent-1",
+            cliCommand: cliPath,
+            runtimeMode: "full-access",
+            providerInstanceId: ProviderInstanceId.make("copilot"),
+          },
+          {
+            project: "project-1",
+            title: "Investigate nesting",
+            prompt: "Find the root cause.",
+            model: "claude-opus-5",
+          },
+        ),
+      ).resolves.toBe('{"threadId":"child-1"}');
+
+      expect((await readFile(argsPath, "utf8")).trim().split("\n")).toEqual([
+        "chat",
+        "new",
+        "--project",
+        "project-1",
+        "--parent",
+        "parent-1",
+        "--provider",
+        "copilot",
+        "--model",
+        "claude-opus-5",
+        "--runtime-mode",
+        "full-access",
+        "--title",
+        "Investigate nesting",
+        "Find the root cause.",
       ]);
     } finally {
       if (originalArgsPath === undefined) delete process.env.T3_MCP_TEST_ARGS;

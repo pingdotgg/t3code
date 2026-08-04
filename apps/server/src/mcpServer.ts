@@ -645,7 +645,6 @@ async function createNestedThreadTool(
   if (!title) throw new Error("create_nested_thread requires a non-empty title");
   if (!prompt) throw new Error("create_nested_thread requires a non-empty prompt");
   if (!model) throw new Error("create_nested_thread requires a non-empty model");
-  if (!reasoning) throw new Error("create_nested_thread requires a non-empty reasoning level");
 
   if (!options.runtimeMode) {
     throw new Error("create_nested_thread requires an authenticated parent runtime mode");
@@ -665,8 +664,7 @@ async function createNestedThreadTool(
     options.providerInstanceId,
     "--model",
     model,
-    "--reasoning",
-    reasoning,
+    ...(reasoning ? ["--reasoning", reasoning] : []),
     "--runtime-mode",
     options.runtimeMode,
     "--title",
@@ -817,10 +815,14 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
         project: { type: "string", description: "Project id, title, or workspace root." },
         title: { type: "string" },
         prompt: { type: "string" },
-        model: { type: "string", enum: ["gpt-5.6-sol", "gpt-5.6-terra"] },
+        model: {
+          type: "string",
+          minLength: 1,
+          description: "Any model slug available through the authenticated Copilot provider.",
+        },
         reasoning: { type: "string", enum: ["low", "medium", "high", "xhigh"] },
       },
-      required: ["project", "title", "prompt", "model", "reasoning"],
+      required: ["project", "title", "prompt", "model"],
     },
   },
 ];

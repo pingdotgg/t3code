@@ -9,14 +9,15 @@ Use T3's authenticated MCP control plane for running work in other T3 Code threa
 
 ## Quick start
 
-Call `create_nested_thread` with the project, title, prompt, model, and reasoning level.
+Call `create_nested_thread` with the project, title, prompt, model, and optional reasoning level.
 The tool supplies the authenticated current thread as the parent and routes through the
 correct flavor-scoped CLI.
 
 ## Delegation workflow
 
 1. Resolve the project from current context or with the flavor-scoped CLI when necessary.
-2. Choose `gpt-5.6-sol` or `gpt-5.6-terra` and a reasoning level based on the delegated task.
+2. Choose an available GitHub Copilot model and, when supported, a reasoning level based on the
+   delegated task.
 3. Create a nested helper thread with the `create_nested_thread` MCP tool. Never use
    terminal-based `t3 chat new` for delegation: shell environment does not carry an
    authoritative current thread id and a globally installed CLI can target another app flavor.
@@ -32,9 +33,10 @@ correct flavor-scoped CLI.
 ## Model selection
 
 - `create_nested_thread` always uses the GitHub Copilot provider; never use a terminal CLI fallback.
-- Choose between `gpt-5.6-sol` and `gpt-5.6-terra` by assessing the task rather than using a fixed default.
-- Choose `low`, `medium`, `high`, or `xhigh` reasoning based on the task's complexity, ambiguity, and risk.
-- Pass the selected model and reasoning explicitly to every `create_nested_thread` call.
+- Choose any model available through the authenticated Copilot provider, including custom models.
+- When the model supports selectable reasoning, choose `low`, `medium`, `high`, or `xhigh` based on
+  the task's complexity, ambiguity, and risk. Omit reasoning for models that do not expose it.
+- Pass the selected model explicitly to every `create_nested_thread` call.
 
 ## Prompting helper threads
 
