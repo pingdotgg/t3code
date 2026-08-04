@@ -104,12 +104,8 @@ power-adaptive interval selected by the server. It collects:
 - cumulative process I/O counters.
 
 On Linux, task/thread enumeration is disabled. Command lines are loaded only
-when first needed. The process table is first refreshed for identity and CPU
-data, then memory, I/O counters, and command lines are refreshed only for the
-retained process tree. Live diagnostics and explicit `sampleNow` requests force
-fresh command lines; background samples reuse already-loaded command lines.
-This avoids repeating expensive detail work for unrelated processes while
-preserving the full snapshot schema.
+when first needed. This avoids the expensive default behavior of walking every
+`/proc/<pid>/task/<tid>` directory on each refresh.
 
 ### Process-tree selection
 
@@ -146,8 +142,7 @@ The server adjusts native sampling without restarting the sidecar:
 
 - suspended, locked, low-power, or serious/critical thermal state: 15 seconds;
 - battery: 5 seconds;
-- normal AC: 5 seconds in the background and 1 second while live diagnostics
-  is open;
+- normal AC: 1 second;
 - unknown or stale power: 5 seconds in the background and 1 second while live
   diagnostics is open.
 

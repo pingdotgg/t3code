@@ -354,9 +354,6 @@ impl Collector {
             thread::sleep(delay);
         }
         let collection_started = Instant::now();
-        // Process identity and CPU are needed for the whole table so we can
-        // discover descendants and keep CPU deltas accurate. Expensive
-        // process details are refreshed separately for the retained subset.
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,

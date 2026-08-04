@@ -125,7 +125,9 @@ function subscribeToRelativeTime(
     if (ticker.listeners.size === 0 && ticker.timerId !== null) {
       window.clearInterval(ticker.timerId);
       ticker.timerId = null;
-      relativeTimeTickers.delete(intervalMs);
+      if (relativeTimeTickers.get(intervalMs) === ticker) {
+        relativeTimeTickers.delete(intervalMs);
+      }
     }
   };
 }
