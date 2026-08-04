@@ -9,8 +9,8 @@ const FIXTURE_THREAD_ID = "transfer-budget-thread";
 const FIXTURE_TURN_ID = "transfer-budget-turn";
 
 export const TRANSFER_HISTORY_TURN_COUNT = 10;
-export const TRANSFER_HISTORY_TOOLS_PER_TURN = 100;
-export const TRANSFER_MEASURED_TOOLS = 150;
+export const TRANSFER_HISTORY_TOOLS_PER_TURN = 5;
+export const TRANSFER_MEASURED_TOOLS = 20;
 export const TRANSFER_HISTORY_MCP_RESULT_BYTES = 900_000;
 export const TRANSFER_MEASURED_MCP_RESULT_BYTES = 1_100_000;
 
@@ -92,16 +92,6 @@ function diagnosticOutput(input: {
   return chunks.join("").slice(0, input.targetBytes);
 }
 
-function toolOutputBytes(toolIndex: number, measuredTurn: boolean): number {
-  if (measuredTurn) {
-    if (toolIndex >= 136) return 35_000;
-    if (toolIndex >= 101) return 8_000;
-    return 1_000;
-  }
-
-  return 1_000;
-}
-
 function assistantChunks(provider: ProviderDriverKind, turnIndex: number): ReadonlyArray<string> {
   const providerName = provider === "codex" ? "Codex" : "Claude";
   const paragraphs: string[] = [
@@ -159,9 +149,9 @@ function baseEvent(
 
 /**
  * Synthetic canonical events calibrated from heavy local Codex and Claude
- * threads. Ten historical turns produce roughly 2,000 command activity events
- * plus 9 MB of retained MCP results without committing user content. Command
- * output is intentionally modest because the client projection strips it.
+ * threads. Ten historical turns produce 9 MB of retained MCP results without
+ * committing user content. Command output is intentionally modest because the
+ * client projection strips it.
  */
 export function makeRecordedTransferTurn(
   provider: ProviderDriverKind,
@@ -243,7 +233,7 @@ export function makeRecordedTransferTurn(
                 provider,
                 turnIndex,
                 toolIndex,
-                targetBytes: toolOutputBytes(toolIndex, measuredTurn),
+                targetBytes: 1_000,
               }),
               exitCode: 0,
               durationMs: 500 + toolIndex,

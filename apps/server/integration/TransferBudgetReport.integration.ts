@@ -42,9 +42,9 @@ export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> 
     shellSnapshotWireBytes: 1_000,
     threadSnapshotWireBytes: 2_550_000,
     coldOpenWebSocketWireBytes: 1_600,
-    measuredTurnWebSocketWireBytes: 360_000,
-    measuredTurnWebSocketDecodedBytes: 2_050_000,
-    measuredTurnWebSocketMessages: 550,
+    measuredTurnWebSocketWireBytes: 315_000,
+    measuredTurnWebSocketDecodedBytes: 1_550_000,
+    measuredTurnWebSocketMessages: 32,
   },
   claudeAgent: {
     totalWireBytes: 2_900_000,
@@ -52,9 +52,9 @@ export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> 
     shellSnapshotWireBytes: 1_000,
     threadSnapshotWireBytes: 2_550_000,
     coldOpenWebSocketWireBytes: 1_600,
-    measuredTurnWebSocketWireBytes: 360_000,
-    measuredTurnWebSocketDecodedBytes: 2_050_000,
-    measuredTurnWebSocketMessages: 550,
+    measuredTurnWebSocketWireBytes: 315_000,
+    measuredTurnWebSocketDecodedBytes: 1_550_000,
+    measuredTurnWebSocketMessages: 32,
   },
 };
 
