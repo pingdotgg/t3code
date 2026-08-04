@@ -57,14 +57,14 @@ export const make = Effect.gen(function* () {
           (cause) => new RunFinalizationError({ ...input, operation: "capture-checkpoint", cause }),
         ),
       );
-    const projection = yield* projections
-      .getThreadProjection(input.threadId)
+    const scope = yield* projections
+      .getCheckpointScope(input.threadId, input.scopeId)
       .pipe(
         Effect.mapError(
           (cause) => new RunFinalizationError({ ...input, operation: "refresh-workspace", cause }),
         ),
       );
-    const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
+    const cwd = scope?.cwd;
     if (cwd !== undefined) {
       yield* observer
         .refresh(cwd)

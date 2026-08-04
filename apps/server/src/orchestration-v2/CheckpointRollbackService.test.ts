@@ -48,7 +48,7 @@ it.effect("rejects a non-ready checkpoint before opening a session or restoring 
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getOperationalProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(ProviderSessionManagerV2)({ open }),
         Layer.mock(RuntimePolicyV2)({ resolve: resolveRuntimePolicy }),
@@ -118,7 +118,7 @@ it.effect("rejects a rollback when another provider thread became active", () =>
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getOperationalProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(ProviderSessionManagerV2)({ open }),
         Layer.mock(RuntimePolicyV2)({ resolve: resolveRuntimePolicy }),
@@ -190,7 +190,7 @@ it.effect("rejects a rollback when provider selection changed before execution",
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getOperationalProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(ProviderSessionManagerV2)({ open }),
         Layer.mock(RuntimePolicyV2)({ resolve: resolveRuntimePolicy }),
@@ -253,7 +253,7 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getOperationalProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(ProviderSessionManagerV2)({
           open: () => Effect.succeed({} as never),
@@ -302,7 +302,7 @@ it.effect("wraps underlying failures with an unexpected-failure reason and cause
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.fail(projectionError),
+          getOperationalProjection: () => Effect.fail(projectionError),
         }),
         Layer.mock(ProviderSessionManagerV2)({}),
         Layer.mock(RuntimePolicyV2)({}),

@@ -498,7 +498,7 @@ export const layerWithOptions = (
 
           const events: Array<OrchestrationV2DomainEvent> = [];
           for (const threadId of input.entry.attachedThreadIds) {
-            const projection = yield* projectionStore.getThreadProjection(threadId);
+            const projection = yield* projectionStore.getOperationalProjection(threadId);
             const releasedRequests = projection.runtimeRequests.filter(
               (request) =>
                 request.status === "pending" &&
@@ -1541,7 +1541,7 @@ export const layerWithOptions = (
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             if (currentEntry?.supportsMultipleProviderThreads === true) {
               const projection = yield* Effect.option(
-                projectionStore.getThreadProjection(input.threadId),
+                projectionStore.getOperationalProjection(input.threadId),
               );
               if (Option.isSome(projection)) {
                 const providerThreads = new Map(

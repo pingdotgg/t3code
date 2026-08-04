@@ -351,7 +351,7 @@ export const make = Effect.gen(function* () {
       let closedRequests = 0;
       let retiredEffects = 0;
       for (const thread of [...shell.threads, ...shell.archivedThreads]) {
-        const projection = yield* projections.getThreadProjection(thread.id).pipe(
+        const projection = yield* projections.getRecoveryProjection(thread.id).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderRuntimeRecoveryError({

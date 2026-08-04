@@ -86,7 +86,7 @@ export const layer: Layer.Layer<
       readonly operation: "interrupt" | "restart" | "steer";
     }) =>
       Effect.gen(function* () {
-        const projection = yield* projections.getThreadProjection(input.threadId);
+        const projection = yield* projections.getOperationalProjection(input.threadId);
         const providerThread = projection.providerThreads.find(
           (candidate) => candidate.id === input.providerThreadId,
         );
@@ -209,7 +209,7 @@ export const layer: Layer.Layer<
           });
 
           for (let remaining = 1_000; remaining > 0; remaining -= 1) {
-            const projection = yield* projections.getThreadProjection(input.threadId);
+            const projection = yield* projections.getOperationalProjection(input.threadId);
             const providerTurn = projection.providerTurns.find(
               (candidate) => candidate.id === input.providerTurnId,
             );

@@ -85,10 +85,10 @@ export const layer: Layer.Layer<
 
     /**
      * EventSink commits the event, its projection updates, and projection metadata in one SQL
-     * transaction. Startup verification therefore checks that transaction boundary and that every
-     * stored projection can be decoded. It intentionally does not replay domain events through a
-     * second projector: doing so creates another implementation of projection semantics that must
-     * evolve in lockstep with ProjectionStore.
+     * transaction. Startup verification checks that boundary and decodes every
+     * stored projection value. Historical turn items are decoded in bounded
+     * batches rather than hydrated into one projection. It intentionally does
+     * not replay through a second projector.
      */
     const verify = Effect.gen(function* () {
       const expectedThreadRows = yield* sql<{ readonly thread_id: string }>`
@@ -110,15 +110,20 @@ export const layer: Layer.Layer<
       const expectedSet = new Set(expectedIds);
       const missingThreadIds = expectedIds.filter((threadId) => !actualSet.has(threadId));
       const unexpectedThreadIds = actualIds.filter((threadId) => !expectedSet.has(threadId));
-      const unreadableThreadIds = (yield* Effect.forEach(
+      const unreadableThreadIds = new Set<ThreadId>();
+      for (const threadId of yield* Effect.forEach(
         actualIds,
         (threadId) =>
-          projectionStore.getThreadProjection(threadId).pipe(
+          projectionStore.validateThreadProjection(threadId).pipe(
             Effect.as<ThreadId | null>(null),
             Effect.orElseSucceed((): ThreadId | null => threadId),
           ),
         { concurrency: 8 },
-      )).filter((threadId): threadId is ThreadId => threadId !== null);
+      )) {
+        if (threadId !== null) {
+          unreadableThreadIds.add(threadId);
+        }
+      }
       const metadata = yield* sql<ProjectionMetadataRow>`
         SELECT schema_version, last_sequence
         FROM orchestration_v2_projection_metadata
@@ -134,11 +139,11 @@ export const layer: Layer.Layer<
           projectionSequence === expectedSequence &&
           missingThreadIds.length === 0 &&
           unexpectedThreadIds.length === 0 &&
-          unreadableThreadIds.length === 0,
+          unreadableThreadIds.size === 0,
         schemaVersion,
         expectedSequence,
         projectionSequence,
-        unreadableThreadIds,
+        unreadableThreadIds: [...unreadableThreadIds],
         missingThreadIds,
         unexpectedThreadIds,
       } satisfies ProjectionVerificationV2;
