@@ -32,6 +32,7 @@ const threadCache = new WeakMap<
     activities: Thread["activities"];
     activityContext: NonNullable<Thread["activityContext"]>;
     hasMoreActivities: boolean;
+    hasMoreCurrentTurnActivities: boolean;
     insightActivities: NonNullable<Thread["insightActivities"]>;
     proposedPlans: Thread["proposedPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
@@ -121,6 +122,8 @@ export function getThreadFromEnvironmentState(
   const activities = selectThreadActivities(state, threadId);
   const activityContext = state.activityContextByThreadId[threadId] ?? EMPTY_ACTIVITY_CONTEXT;
   const hasMoreActivities = state.hasMoreActivitiesByThreadId?.[threadId] ?? false;
+  const hasMoreCurrentTurnActivities =
+    state.hasMoreCurrentTurnActivitiesByThreadId?.[threadId] ?? false;
   const insightActivities = state.insightActivitiesByThreadId[threadId] ?? EMPTY_INSIGHT_ACTIVITIES;
   const proposedPlans = selectThreadProposedPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
@@ -136,6 +139,7 @@ export function getThreadFromEnvironmentState(
     cached.activities === activities &&
     cached.activityContext === activityContext &&
     cached.hasMoreActivities === hasMoreActivities &&
+    cached.hasMoreCurrentTurnActivities === hasMoreCurrentTurnActivities &&
     cached.insightActivities === insightActivities &&
     cached.proposedPlans === proposedPlans &&
     cached.turnDiffSummaries === turnDiffSummaries &&
@@ -154,6 +158,7 @@ export function getThreadFromEnvironmentState(
     activities,
     activityContext,
     hasMoreActivities,
+    hasMoreCurrentTurnActivities,
     insightActivities,
     proposedPlans,
     turnDiffSummaries,
@@ -168,6 +173,7 @@ export function getThreadFromEnvironmentState(
     activities,
     activityContext,
     hasMoreActivities,
+    hasMoreCurrentTurnActivities,
     insightActivities,
     proposedPlans,
     turnDiffSummaries,

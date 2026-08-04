@@ -21,6 +21,7 @@ import {
   type WsRpcProtocolSocketUrlProvider,
 } from "./protocol";
 import { isTransportConnectionErrorMessage } from "./transportError";
+import { recordWsDiagnostic } from "./wsDiagnostics";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -40,6 +41,13 @@ interface TransportSession {
   readonly runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
 }
 
+interface StreamSubscriptionHandle {
+  /** Tear the current stream down and re-subscribe on the active session. */
+  readonly restart: () => void;
+  /** Release a subscription parked while waiting for the next reconnect. */
+  readonly wake: () => void;
+}
+
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -50,6 +58,7 @@ function formatErrorMessage(error: unknown): string {
 export class WsTransport {
   private readonly url: WsRpcProtocolSocketUrlProvider;
   private readonly lifecycleHandlers: WsProtocolLifecycleHandlers | undefined;
+  private readonly streamSubscriptions = new Set<StreamSubscriptionHandle>();
   private disposed = false;
   private hasReportedTransportDisconnect = false;
   private reconnectChain: Promise<void> = Promise.resolve();
@@ -113,10 +122,42 @@ export class WsTransport {
 
     let active = true;
     let hasReceivedValue = false;
+    let restartRequested = false;
+    let wakeParkedLoop: (() => void) | null = null;
     const retryDelayMs = Duration.toMillis(
       Duration.fromInputUnsafe(options?.retryDelay ?? DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS),
     );
     let cancelCurrentStream: () => void = NOOP;
+
+    const wake = () => {
+      const resume = wakeParkedLoop;
+      wakeParkedLoop = null;
+      resume?.();
+    };
+    const subscription: StreamSubscriptionHandle = {
+      restart: () => {
+        if (!active) {
+          return;
+        }
+        restartRequested = true;
+        wake();
+        cancelCurrentStream();
+      },
+      wake,
+    };
+    this.streamSubscriptions.add(subscription);
+
+    // Parks the loop until the transport reconnects instead of abandoning the
+    // subscription, so a one-off server-side stream failure cannot leave the UI
+    // permanently stale.
+    const awaitRestart = () =>
+      new Promise<void>((resolve) => {
+        if (!active || this.disposed || restartRequested) {
+          resolve();
+          return;
+        }
+        wakeParkedLoop = resolve;
+      });
 
     void (async () => {
       for (;;) {
@@ -124,6 +165,7 @@ export class WsTransport {
           return;
         }
 
+        restartRequested = false;
         const session = this.session;
         try {
           if (hasReceivedValue) {
@@ -153,22 +195,19 @@ export class WsTransport {
             return;
           }
 
-          if (session !== this.session) {
+          if (restartRequested || session !== this.session) {
             continue;
           }
 
           const formattedError = formatErrorMessage(error);
           if (!isTransportConnectionErrorMessage(formattedError)) {
-            console.warn("WebSocket RPC subscription failed", {
-              error: formattedError,
-            });
-            return;
+            recordWsDiagnostic("stream-parked", { error: formattedError });
+            await awaitRestart();
+            continue;
           }
 
           if (!this.hasReportedTransportDisconnect) {
-            console.warn("WebSocket RPC subscription disconnected", {
-              error: formattedError,
-            });
+            recordWsDiagnostic("stream-retry", { error: formattedError });
           }
           this.hasReportedTransportDisconnect = true;
           await sleep(retryDelayMs);
@@ -178,6 +217,8 @@ export class WsTransport {
 
     return () => {
       active = false;
+      this.streamSubscriptions.delete(subscription);
+      wake();
       cancelCurrentStream();
     };
   }
@@ -195,6 +236,10 @@ export class WsTransport {
       clearAllTrackedRpcRequests();
       const previousSession = this.session;
       this.session = this.createSession();
+      // New sessions start at connectCount 0, so onProtocolConnected will not
+      // restart on their first open. Wake parked loops and tear down streams
+      // still attached to the previous session before it closes.
+      this.restartStreamSubscriptions();
       await this.closeSession(previousSession);
     });
 
@@ -207,6 +252,10 @@ export class WsTransport {
       return;
     }
     this.disposed = true;
+    for (const subscription of this.streamSubscriptions) {
+      subscription.wake();
+    }
+    this.streamSubscriptions.clear();
     await this.closeSession(this.session);
   }
 
@@ -220,11 +269,22 @@ export class WsTransport {
     const sessionId = this.nextSessionId + 1;
     this.nextSessionId = sessionId;
     this.activeSessionId = sessionId;
+    let connectCount = 0;
     const runtime = ManagedRuntime.make(
       Layer.mergeAll(
         createWsRpcProtocolLayer(this.url, {
           ...this.lifecycleHandlers,
           isActive: () => !this.disposed && this.activeSessionId === sessionId,
+          onProtocolConnected: () => {
+            connectCount += 1;
+            this.lifecycleHandlers?.onProtocolConnected?.();
+            // The first connect carries the requests the loops already sent.
+            // Every later one replaced a socket whose server-side streams were
+            // torn down without failing the client fibers.
+            if (connectCount > 1) {
+              this.restartStreamSubscriptions();
+            }
+          },
         }),
         ClientTracingLive,
       ),
@@ -235,6 +295,16 @@ export class WsTransport {
       clientScope,
       clientPromise: runtime.runPromise(Scope.provide(clientScope)(makeWsRpcProtocolClient)),
     };
+  }
+
+  private restartStreamSubscriptions(): void {
+    if (this.disposed) {
+      return;
+    }
+    recordWsDiagnostic("streams-restarted", { subscriptions: this.streamSubscriptions.size });
+    for (const subscription of this.streamSubscriptions) {
+      subscription.restart();
+    }
   }
 
   private runStreamOnSession<TValue>(

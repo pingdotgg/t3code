@@ -462,6 +462,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           ...snapshotThread,
           activityContext: [],
           hasMoreActivities: false,
+          hasMoreCurrentTurnActivities: false,
         });
       }
 
@@ -1817,17 +1818,118 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.equal(detail.value.activities[0]?.summary, "activity-41");
         assert.equal(detail.value.activities.at(-1)?.summary, "activity-240");
         assert.equal(detail.value.hasMoreActivities, true);
+        assert.equal(detail.value.hasMoreCurrentTurnActivities, false);
+      }
+
+      yield* sql`
+        UPDATE projection_thread_activities
+        SET turn_id = 'turn-history'
+        WHERE thread_id = 'thread-history'
+          AND sequence > 40
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_files_json
+        ) VALUES (
+          'thread-history',
+          'turn-history',
+          'completed',
+          '2026-04-05T00:00:00.000Z',
+          '2026-04-05T00:00:00.000Z',
+          '2026-04-05T00:02:00.000Z',
+          '[]'
+        )
+      `;
+      const mixedTurnDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-history"),
+      );
+      assert.equal(mixedTurnDetail._tag, "Some");
+      if (mixedTurnDetail._tag === "Some") {
+        assert.equal(mixedTurnDetail.value.hasMoreActivities, true);
+        assert.equal(mixedTurnDetail.value.hasMoreCurrentTurnActivities, false);
+      }
+
+      yield* Effect.forEach(
+        Array.from({ length: 200 }, (_unused, index) => index + 241),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`activity-${String(sequence).padStart(4, "0")}`},
+              'thread-history', 'turn-history', 'info', 'runtime.note',
+              ${`activity-${sequence}`}, '{}', ${sequence}, '2026-04-05T00:01:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+      const currentTurnDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-history"),
+      );
+      assert.equal(currentTurnDetail._tag, "Some");
+      if (currentTurnDetail._tag === "Some") {
+        assert.equal(currentTurnDetail.value.hasMoreCurrentTurnActivities, true);
       }
 
       const olderPage = yield* snapshotQuery.getThreadActivitiesPage({
         threadId: ThreadId.make("thread-history"),
+        turnId: TurnId.make("turn-history"),
         beforeCreatedAt: "2026-04-05T00:01:00.000Z",
-        beforeActivityId: asEventId("activity-0041"),
+        beforeActivityId: asEventId("activity-0241"),
       });
-      assert.equal(olderPage.activities.length, 40);
-      assert.equal(olderPage.activities[0]?.summary, "activity-1");
-      assert.equal(olderPage.activities.at(-1)?.summary, "activity-40");
+      assert.equal(olderPage.activities.length, 200);
+      assert.equal(olderPage.activities[0]?.summary, "activity-41");
+      assert.equal(olderPage.activities.at(-1)?.summary, "activity-240");
       assert.equal(olderPage.hasMore, false);
+
+      // Latest-turn rows can sit past a boundary owned by another turn when
+      // activities interleave by created_at.
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* Effect.forEach(
+        Array.from({ length: 100 }, (_unused, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`history-${String(sequence).padStart(4, "0")}`},
+              'thread-history', 'turn-history', 'info', 'runtime.note',
+              ${`history-${sequence}`}, '{}', ${sequence}, '2026-04-05T00:00:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+      yield* Effect.forEach(
+        Array.from({ length: 201 }, (_unused, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`other-${String(sequence).padStart(4, "0")}`},
+              'thread-history', 'turn-other', 'info', 'runtime.note',
+              ${`other-${sequence}`}, '{}', ${sequence + 100}, '2026-04-05T00:01:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+      const interleavedDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-history"),
+      );
+      assert.equal(interleavedDetail._tag, "Some");
+      if (interleavedDetail._tag === "Some") {
+        assert.equal(interleavedDetail.value.hasMoreActivities, true);
+        assert.equal(interleavedDetail.value.hasMoreCurrentTurnActivities, true);
+      }
 
       yield* sql`DELETE FROM projection_thread_activities`;
       yield* Effect.forEach(

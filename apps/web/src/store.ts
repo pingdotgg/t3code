@@ -85,6 +85,7 @@ export interface EnvironmentState {
   activityByThreadId: Record<ThreadId, Record<string, OrchestrationThreadActivity>>;
   activityContextByThreadId: Record<ThreadId, readonly OrchestrationThreadActivity[]>;
   hasMoreActivitiesByThreadId?: Record<ThreadId, boolean>;
+  hasMoreCurrentTurnActivitiesByThreadId?: Record<ThreadId, boolean>;
   // Insights lifecycle records retained independently of `activityByThreadId`
   // so thread-wide timing stays complete after the capped activity window
   // evicts older turns. Bounded by distinct turns, not raw activity count.
@@ -128,6 +129,7 @@ const initialEnvironmentState: EnvironmentState = {
   activityByThreadId: {},
   activityContextByThreadId: {},
   hasMoreActivitiesByThreadId: {},
+  hasMoreCurrentTurnActivitiesByThreadId: {},
   insightActivitiesByThreadId: {},
   proposedPlanIdsByThreadId: {},
   proposedPlanByThreadId: {},
@@ -337,6 +339,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     activities: thread.activities.map((activity) => ({ ...activity })),
     activityContext: thread.activityContext?.map((activity) => ({ ...activity })) ?? [],
     hasMoreActivities: thread.hasMoreActivities ?? false,
+    hasMoreCurrentTurnActivities: thread.hasMoreCurrentTurnActivities ?? false,
   };
 }
 
@@ -892,6 +895,16 @@ function writeThreadState(
     };
   }
 
+  if (previousThread?.hasMoreCurrentTurnActivities !== nextThread.hasMoreCurrentTurnActivities) {
+    nextState = {
+      ...nextState,
+      hasMoreCurrentTurnActivitiesByThreadId: {
+        ...nextState.hasMoreCurrentTurnActivitiesByThreadId,
+        [nextThread.id]: nextThread.hasMoreCurrentTurnActivities ?? false,
+      },
+    };
+  }
+
   if (previousThread?.proposedPlans !== nextThread.proposedPlans) {
     const nextProposedPlanSlice = buildProposedPlanSlice(nextThread);
     nextState = {
@@ -1074,6 +1087,10 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     state.activityContextByThreadId;
   const { [threadId]: _removedHasMoreActivities, ...hasMoreActivitiesByThreadId } =
     state.hasMoreActivitiesByThreadId ?? {};
+  const {
+    [threadId]: _removedHasMoreCurrentTurnActivities,
+    ...hasMoreCurrentTurnActivitiesByThreadId
+  } = state.hasMoreCurrentTurnActivitiesByThreadId ?? {};
   const { [threadId]: _removedInsightActivities, ...insightActivitiesByThreadId } =
     state.insightActivitiesByThreadId;
   const { [threadId]: _removedPlanIds, ...proposedPlanIdsByThreadId } =
@@ -1101,6 +1118,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     activityByThreadId,
     activityContextByThreadId,
     hasMoreActivitiesByThreadId,
+    hasMoreCurrentTurnActivitiesByThreadId,
     insightActivitiesByThreadId,
     proposedPlanIdsByThreadId,
     proposedPlanByThreadId,
@@ -1651,6 +1669,14 @@ function syncEnvironmentShellSnapshot(
           ),
         }
       : {}),
+    ...(state.hasMoreCurrentTurnActivitiesByThreadId
+      ? {
+          hasMoreCurrentTurnActivitiesByThreadId: retainThreadScopedRecord(
+            state.hasMoreCurrentTurnActivitiesByThreadId,
+            nextThreadIds,
+          ),
+        }
+      : {}),
     insightActivitiesByThreadId: retainThreadScopedRecord(
       state.insightActivitiesByThreadId,
       nextThreadIds,
@@ -1953,6 +1979,7 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        hasMoreCurrentTurnActivities: false,
         updatedAt: event.occurredAt,
       }));
 
@@ -2138,6 +2165,9 @@ function applyEnvironmentOrchestrationEvent(
         ).slice(-MAX_THREAD_PROPOSED_PLANS);
         const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
         const latestCheckpoint = turnDiffSummaries.at(-1) ?? null;
+        // The sticky live-eviction flag described the discarded turn. Clear it
+        // for the restored latestTurn; a later snapshot can re-offer history.
+        const hasMoreCurrentTurnActivities = false;
 
         return {
           ...thread,
@@ -2146,6 +2176,7 @@ function applyEnvironmentOrchestrationEvent(
           proposedPlans,
           activities,
           pendingSourceProposedPlan: undefined,
+          hasMoreCurrentTurnActivities,
           latestTurn:
             latestCheckpoint === null
               ? null
@@ -2173,11 +2204,20 @@ function applyEnvironmentOrchestrationEvent(
           ...thread.activities.filter((activity) => activity.id !== event.payload.activity.id),
           { ...event.payload.activity },
         ].toSorted(compareActivities);
+        const retainedActivityStart = Math.max(0, allActivities.length - MAX_THREAD_ACTIVITIES);
+        const activeTurnId = thread.latestTurn?.turnId;
+        const evictedCurrentTurnActivity =
+          activeTurnId !== undefined &&
+          allActivities
+            .slice(0, retainedActivityStart)
+            .some((activity) => activity.turnId === activeTurnId);
         return {
           ...thread,
-          activities: allActivities.slice(-MAX_THREAD_ACTIVITIES),
+          activities: allActivities.slice(retainedActivityStart),
           hasMoreActivities:
             (thread.hasMoreActivities ?? false) || allActivities.length > MAX_THREAD_ACTIVITIES,
+          hasMoreCurrentTurnActivities:
+            (thread.hasMoreCurrentTurnActivities ?? false) || evictedCurrentTurnActivity,
           updatedAt: event.occurredAt,
         };
       });

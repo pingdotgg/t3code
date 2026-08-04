@@ -134,6 +134,7 @@ export interface Thread {
   activities: OrchestrationThreadActivity[];
   activityContext?: readonly OrchestrationThreadActivity[];
   hasMoreActivities?: boolean;
+  hasMoreCurrentTurnActivities?: boolean;
   // Lifecycle activities retained for Insights beyond the capped `activities`
   // window. Derived in the store; may be absent on directly-built fixtures.
   insightActivities?: readonly OrchestrationThreadActivity[];

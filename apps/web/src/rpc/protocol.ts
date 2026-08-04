@@ -16,6 +16,7 @@ import {
   recordWsConnectionOpened,
   WS_RECONNECT_MAX_RETRIES,
 } from "./wsConnectionState";
+import { recordWsDiagnostic, sanitizeWsSocketUrl } from "./wsDiagnostics";
 
 export interface WsProtocolLifecycleHandlers {
   readonly isActive?: () => boolean;
@@ -23,7 +24,16 @@ export interface WsProtocolLifecycleHandlers {
   readonly onOpen?: () => void;
   readonly onError?: (message: string) => void;
   readonly onClose?: (details: { readonly code: number; readonly reason: string }) => void;
+  /**
+   * Fires once the RPC protocol can send on a freshly opened socket. Transient
+   * socket reopens (ping timeouts, failed reconnect attempts) never fail
+   * in-flight requests, so this is the only signal that pending streams were
+   * abandoned server-side and have to be re-subscribed.
+   */
+  readonly onProtocolConnected?: () => void;
 }
+
+const PING_TIMEOUT_ERROR_MESSAGE = "The T3 server WebSocket stopped responding.";
 
 export const makeWsRpcProtocolClient = RpcClient.make(WsRpcGroup);
 type RpcClientFactory = typeof makeWsRpcProtocolClient;
@@ -51,16 +61,26 @@ function resolveWsRpcSocketUrl(rawUrl: string): string {
 function defaultLifecycleHandlers(): Required<WsProtocolLifecycleHandlers> {
   return {
     isActive: () => true,
-    onAttempt: recordWsConnectionAttempt,
-    onOpen: recordWsConnectionOpened,
+    onAttempt: (socketUrl) => {
+      const safeSocketUrl = sanitizeWsSocketUrl(socketUrl);
+      recordWsDiagnostic("socket-attempt", { socketUrl: safeSocketUrl });
+      recordWsConnectionAttempt(safeSocketUrl);
+    },
+    onOpen: () => {
+      recordWsDiagnostic("socket-open");
+      recordWsConnectionOpened();
+    },
     onError: (message) => {
+      recordWsDiagnostic("socket-error", { message });
       clearAllTrackedRpcRequests();
       recordWsConnectionErrored(message);
     },
     onClose: (details) => {
+      recordWsDiagnostic("socket-close", details);
       clearAllTrackedRpcRequests();
       recordWsConnectionClosed(details);
     },
+    onProtocolConnected: () => undefined,
   };
 }
 
@@ -99,6 +119,13 @@ function composeLifecycleHandlers(
       }
       defaults.onClose(details);
       handlers?.onClose?.(details);
+    },
+    onProtocolConnected: () => {
+      if (!isActive()) {
+        return;
+      }
+      recordWsDiagnostic("protocol-connected");
+      handlers?.onProtocolConnected?.();
     },
   };
 }
@@ -189,5 +216,18 @@ export function createWsRpcProtocolLayer(
     ),
   );
 
-  return protocolLayer.pipe(Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)));
+  const connectionHooksLayer = Layer.succeed(RpcClient.ConnectionHooks, {
+    onConnect: Effect.sync(() => {
+      lifecycle.onProtocolConnected();
+    }),
+    onDisconnect: Effect.void,
+    onPingTimeout: Effect.sync(() => {
+      recordWsDiagnostic("ping-timeout");
+      lifecycle.onError(PING_TIMEOUT_ERROR_MESSAGE);
+    }),
+  });
+
+  return protocolLayer.pipe(
+    Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson, connectionHooksLayer)),
+  );
 }

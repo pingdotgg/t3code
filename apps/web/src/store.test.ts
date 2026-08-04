@@ -204,6 +204,9 @@ function makeState(thread: Thread): AppState {
     hasMoreActivitiesByThreadId: {
       [thread.id]: thread.hasMoreActivities ?? false,
     },
+    hasMoreCurrentTurnActivitiesByThreadId: {
+      [thread.id]: thread.hasMoreCurrentTurnActivities ?? false,
+    },
     insightActivitiesByThreadId: {
       [thread.id]: thread.activities.filter(isInsightActivity),
     },
@@ -749,13 +752,26 @@ describe("incremental orchestration updates", () => {
         latestTurn: { turnId, state: "running", completedAt: null },
       },
     );
-    expect(selectSidebarThreadsAcrossEnvironments(working)[0]).toMatchObject({
+    const workingSidebarThreads = selectSidebarThreadsAcrossEnvironments(working);
+    expect(workingSidebarThreads[0]).toMatchObject({
       session: { orchestrationStatus: "running", activeTurnId: turnId },
       latestTurn: { turnId, state: "running", completedAt: null },
     });
 
-    const stopped = applyOrchestrationEvent(
+    const afterActivity = applyOrchestrationEvent(
       working,
+      activityAppendedEvent({
+        sequence: 2,
+        id: "activity-1",
+        kind: "step",
+        turnId,
+      }),
+      localEnvironmentId,
+    );
+    expect(selectSidebarThreadsAcrossEnvironments(afterActivity)).toBe(workingSidebarThreads);
+
+    const stopped = applyOrchestrationEvent(
+      afterActivity,
       makeEvent("thread.session-set", {
         threadId: thread.id,
         session: {
@@ -808,6 +824,7 @@ describe("incremental orchestration updates", () => {
         proposedPlans: [],
         activities: [],
         hasMoreActivities: true,
+        hasMoreCurrentTurnActivities: true,
         checkpoints: [],
         session: {
           threadId,
@@ -826,6 +843,7 @@ describe("incremental orchestration updates", () => {
 
     expect(threadsOf(next)[0]?.session?.resumeCursor).toEqual(resumeCursor);
     expect(threadsOf(next)[0]?.hasMoreActivities).toBe(true);
+    expect(threadsOf(next)[0]?.hasMoreCurrentTurnActivities).toBe(true);
   });
 
   it("does not mark bootstrap complete for incremental events", () => {
@@ -1902,34 +1920,185 @@ describe("incremental orchestration updates", () => {
   });
 });
 
-describe("insights lifecycle retention", () => {
-  function activityAppendedEvent(input: {
-    sequence: number;
-    id: string;
-    kind: string;
-    turnId: string;
-    payload?: Record<string, unknown>;
-  }): Extract<OrchestrationEvent, { type: "thread.activity-appended" }> {
-    const occurredAt = new Date(1_700_000_000_000 + input.sequence * 1_000).toISOString();
-    return makeEvent(
-      "thread.activity-appended",
-      {
-        threadId: ThreadId.make("thread-1"),
-        activity: {
-          id: EventId.make(input.id),
-          tone: "info",
-          kind: input.kind,
-          summary: input.kind,
-          payload: input.payload ?? {},
-          turnId: TurnId.make(input.turnId),
-          sequence: input.sequence,
-          createdAt: occurredAt,
-        },
+function activityAppendedEvent(input: {
+  sequence: number;
+  id: string;
+  kind: string;
+  turnId: string;
+  payload?: Record<string, unknown>;
+}): Extract<OrchestrationEvent, { type: "thread.activity-appended" }> {
+  const occurredAt = new Date(1_700_000_000_000 + input.sequence * 1_000).toISOString();
+  return makeEvent(
+    "thread.activity-appended",
+    {
+      threadId: ThreadId.make("thread-1"),
+      activity: {
+        id: EventId.make(input.id),
+        tone: "info",
+        kind: input.kind,
+        summary: input.kind,
+        payload: input.payload ?? {},
+        turnId: TurnId.make(input.turnId),
+        sequence: input.sequence,
+        createdAt: occurredAt,
       },
-      { sequence: input.sequence, eventId: EventId.make(`event-${input.sequence}`) },
-    );
-  }
+    },
+    { sequence: input.sequence, eventId: EventId.make(`event-${input.sequence}`) },
+  );
+}
 
+describe("activity pagination state", () => {
+  it("does not offer older current-turn history when live updates only evict prior turns", () => {
+    const olderActivities = Array.from(
+      { length: 500 },
+      (_unused, index) =>
+        activityAppendedEvent({
+          sequence: index + 1,
+          id: `activity-turn-1-${index}`,
+          kind: "step",
+          turnId: "turn-1",
+        }).payload.activity,
+    );
+    const state = makeState(
+      makeThread({
+        activities: olderActivities,
+        hasMoreActivities: true,
+        hasMoreCurrentTurnActivities: false,
+        latestTurn: {
+          turnId: TurnId.make("turn-2"),
+          state: "running",
+          requestedAt: "2026-02-27T00:00:00.000Z",
+          startedAt: "2026-02-27T00:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      activityAppendedEvent({
+        sequence: 501,
+        id: "activity-turn-2-1",
+        kind: "step",
+        turnId: "turn-2",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.hasMoreCurrentTurnActivities).toBe(false);
+  });
+
+  it("offers older current-turn history once a live update evicts the current turn", () => {
+    const currentTurnActivities = Array.from(
+      { length: 500 },
+      (_unused, index) =>
+        activityAppendedEvent({
+          sequence: index + 1,
+          id: `activity-turn-2-${index}`,
+          kind: "step",
+          turnId: "turn-2",
+        }).payload.activity,
+    );
+    const state = makeState(
+      makeThread({
+        activities: currentTurnActivities,
+        hasMoreCurrentTurnActivities: false,
+        latestTurn: {
+          turnId: TurnId.make("turn-2"),
+          state: "running",
+          requestedAt: "2026-02-27T00:00:00.000Z",
+          startedAt: "2026-02-27T00:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      activityAppendedEvent({
+        sequence: 501,
+        id: "activity-turn-2-500",
+        kind: "step",
+        turnId: "turn-2",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.hasMoreCurrentTurnActivities).toBe(true);
+  });
+
+  it("clears sticky current-turn history after revert replaces the latest turn", () => {
+    const state = makeState(
+      makeThread({
+        hasMoreCurrentTurnActivities: true,
+        latestTurn: {
+          turnId: TurnId.make("turn-2"),
+          state: "completed",
+          requestedAt: "2026-02-27T00:00:02.000Z",
+          startedAt: "2026-02-27T00:00:02.000Z",
+          completedAt: "2026-02-27T00:00:03.000Z",
+          assistantMessageId: MessageId.make("assistant-2"),
+        },
+        activities: [
+          {
+            id: EventId.make("activity-1"),
+            tone: "info",
+            kind: "step",
+            summary: "step",
+            payload: {},
+            turnId: TurnId.make("turn-1"),
+            sequence: 1,
+            createdAt: "2026-02-27T00:00:01.000Z",
+          },
+          {
+            id: EventId.make("activity-2"),
+            tone: "info",
+            kind: "step",
+            summary: "step",
+            payload: {},
+            turnId: TurnId.make("turn-2"),
+            sequence: 2,
+            createdAt: "2026-02-27T00:00:02.000Z",
+          },
+        ],
+        turnDiffSummaries: [
+          {
+            turnId: TurnId.make("turn-1"),
+            completedAt: "2026-02-27T00:00:01.000Z",
+            status: "ready",
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            files: [],
+          },
+          {
+            turnId: TurnId.make("turn-2"),
+            completedAt: "2026-02-27T00:00:03.000Z",
+            status: "ready",
+            checkpointTurnCount: 2,
+            checkpointRef: CheckpointRef.make("ref-2"),
+            files: [],
+          },
+        ],
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.reverted", {
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.latestTurn?.turnId).toBe(TurnId.make("turn-1"));
+    expect(threadsOf(next)[0]?.hasMoreCurrentTurnActivities).toBe(false);
+  });
+});
+
+describe("insights lifecycle retention", () => {
   it("retains completed turn timing after older activities exceed the capped window", () => {
     const events: Extract<OrchestrationEvent, { type: "thread.activity-appended" }>[] = [
       activityAppendedEvent({

@@ -1,11 +1,36 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Exit, Metric, Stream } from "effect";
+import { Effect, Exit, Logger, Metric, Stream } from "effect";
 
 import {
   observeRpcEffect,
   observeRpcStream,
   observeRpcStreamEffect,
 } from "./RpcInstrumentation.ts";
+
+interface CapturedLog {
+  readonly level: string;
+  readonly message: string;
+  readonly fields: Record<string, unknown>;
+}
+
+const captureLogs = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const captured: Array<CapturedLog> = [];
+    const capturingLogger = Logger.map(Logger.formatStructured, (entry) => {
+      const parts = Array.isArray(entry.message) ? entry.message : [entry.message];
+      captured.push({
+        level: entry.level,
+        message: String(parts[0]),
+        fields: (parts[1] ?? {}) as Record<string, unknown>,
+      });
+      return entry;
+    });
+
+    yield* effect.pipe(
+      Effect.provide(Logger.layer([capturingLogger], { mergeWithExisting: false })),
+    );
+    return captured;
+  });
 
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
@@ -156,6 +181,47 @@ describe("RpcInstrumentation", () => {
         }),
         true,
       );
+    }),
+  );
+
+  it.effect("logs stream subscription start and end so dead subscriptions are visible", () =>
+    Effect.gen(function* () {
+      const logs = yield* captureLogs(
+        Stream.runCollect(
+          observeRpcStreamEffect(
+            "rpc.instrumentation.stream.logs",
+            Effect.succeed(Stream.make(1, 2)),
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        logs.map((entry) => entry.message),
+        ["rpc stream started", "rpc stream ended"],
+      );
+      assert.equal(logs[0]?.level, "INFO");
+      assert.equal(logs[1]?.level, "INFO");
+      assert.equal(logs[1]?.fields?.outcome, "success");
+      assert.equal(typeof logs[1]?.fields?.durationMs, "number");
+    }),
+  );
+
+  it.effect("logs a warning when a stream subscription fails", () =>
+    Effect.gen(function* () {
+      const logs = yield* captureLogs(
+        Stream.runCollect(
+          observeRpcStreamEffect(
+            "rpc.instrumentation.stream.logs.failure",
+            Effect.succeed(Stream.fail("boom")),
+          ),
+        ).pipe(Effect.exit),
+      );
+
+      const ended = logs.at(-1);
+      assert.equal(ended?.message, "rpc stream failed");
+      assert.equal(ended?.level, "WARN");
+      assert.equal(ended?.fields?.outcome, "failure");
+      assert.include(String(ended?.fields?.cause), "boom");
     }),
   );
 });

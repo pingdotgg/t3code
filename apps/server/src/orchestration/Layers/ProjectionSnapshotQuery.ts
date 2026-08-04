@@ -216,6 +216,22 @@ const ThreadActivitiesBeforeActivityInput = Schema.Struct({
   beforeActivityId: EventId,
   limit: NonNegativeInt,
 });
+const TurnActivitiesBeforeActivityInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  beforeCreatedAt: IsoDateTime,
+  beforeActivityId: EventId,
+  limit: NonNegativeInt,
+});
+const TurnActivityExistsBeforeActivityInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  beforeCreatedAt: IsoDateTime,
+  beforeActivityId: EventId,
+});
+const TurnActivityExistsRowSchema = Schema.Struct({
+  activityId: EventId,
+});
 const TranscriptSearchRowSchema = Schema.Struct({
   threadId: ThreadId,
   title: Schema.String,
@@ -1040,6 +1056,59 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at DESC,
           activity_id DESC
         LIMIT ${limit}
+      `,
+  });
+
+  const listTurnActivityRowsBeforeActivity = SqlSchema.findAll({
+    Request: TurnActivitiesBeforeActivityInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, turnId, beforeCreatedAt, beforeActivityId, limit }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND turn_id = ${turnId}
+          AND (
+            created_at < ${beforeCreatedAt}
+            OR (
+              created_at = ${beforeCreatedAt}
+              AND activity_id < ${beforeActivityId}
+            )
+          )
+        ORDER BY
+          created_at DESC,
+          activity_id DESC
+        LIMIT ${limit}
+      `,
+  });
+
+  const findTurnActivityBeforeActivity = SqlSchema.findOneOption({
+    Request: TurnActivityExistsBeforeActivityInput,
+    Result: TurnActivityExistsRowSchema,
+    execute: ({ threadId, turnId, beforeCreatedAt, beforeActivityId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND turn_id = ${turnId}
+          AND (
+            created_at < ${beforeCreatedAt}
+            OR (
+              created_at = ${beforeCreatedAt}
+              AND activity_id < ${beforeActivityId}
+            )
+          )
+        LIMIT 1
       `,
   });
 
@@ -2113,11 +2182,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       }
 
       const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
+      const latestTurn = reconcileLatestTurnWithSession(
+        Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        session,
+      );
       const visibleActivities = activityRows
         .slice(0, THREAD_DETAIL_ACTIVITY_WINDOW)
         .map(mapThreadActivityRow)
         .toReversed();
       const visibleActivityIds = new Set(visibleActivities.map((activity) => activity.id));
+      // Turns can interleave by created_at, so the first omitted global row is
+      // not proof that the latest turn still has older history. Ask the DB
+      // whether any latest-turn row sits before the visible window boundary.
+      const oldestVisibleActivity = activityRows[THREAD_DETAIL_ACTIVITY_WINDOW - 1];
+      const hasMoreCurrentTurnActivities =
+        latestTurn !== null &&
+        activityRows.length > THREAD_DETAIL_ACTIVITY_WINDOW &&
+        oldestVisibleActivity !== undefined
+          ? Option.isSome(
+              yield* findTurnActivityBeforeActivity({
+                threadId,
+                turnId: latestTurn.turnId,
+                beforeCreatedAt: oldestVisibleActivity.createdAt,
+                beforeActivityId: oldestVisibleActivity.activityId,
+              }).pipe(
+                Effect.mapError(
+                  toPersistenceSqlOrDecodeError(
+                    "ProjectionSnapshotQuery.getThreadDetailById:hasMoreCurrentTurnActivities:query",
+                    "ProjectionSnapshotQuery.getThreadDetailById:hasMoreCurrentTurnActivities:decodeRow",
+                  ),
+                ),
+              ),
+            )
+          : false;
 
       const thread = {
         id: threadRow.value.threadId,
@@ -2134,10 +2231,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ? { reviewSnapshot: threadRow.value.reviewSnapshot }
           : {}),
         reviewResult: threadRow.value.reviewResult ?? null,
-        latestTurn: reconcileLatestTurnWithSession(
-          Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
-          session,
-        ),
+        latestTurn,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -2177,6 +2271,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           .map(mapThreadActivityRow)
           .filter((activity) => !visibleActivityIds.has(activity.id)),
         hasMoreActivities: activityRows.length > THREAD_DETAIL_ACTIVITY_WINDOW,
+        hasMoreCurrentTurnActivities,
         checkpoints: checkpointRows.map((row) => ({
           turnId: row.turnId,
           checkpointTurnCount: row.checkpointTurnCount,
@@ -2233,12 +2328,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Math.max(1, input.limit ?? THREAD_DETAIL_ACTIVITY_WINDOW),
         THREAD_DETAIL_ACTIVITY_WINDOW,
       );
-      const rows = yield* listThreadActivityRowsBeforeActivity({
+      const queryInput = {
         threadId: input.threadId,
         beforeCreatedAt: input.beforeCreatedAt,
         beforeActivityId: input.beforeActivityId,
         limit: limit + 1,
-      }).pipe(
+      };
+      const rows = yield* (
+        input.turnId === undefined
+          ? listThreadActivityRowsBeforeActivity(queryInput)
+          : listTurnActivityRowsBeforeActivity({
+              ...queryInput,
+              turnId: input.turnId,
+            })
+      ).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadActivitiesPage:query",

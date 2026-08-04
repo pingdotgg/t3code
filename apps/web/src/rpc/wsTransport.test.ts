@@ -114,6 +114,34 @@ function createTransport(...args: ConstructorParameters<typeof WsTransport>): Ws
   return transport;
 }
 
+function findStreamRequests(socket: MockWebSocket): ReadonlyArray<{ id: string; tag: string }> {
+  return socket.sent
+    .map((message) => JSON.parse(message) as { _tag?: string; id?: string; tag?: string })
+    .filter(
+      (message): message is { _tag: "Request"; id: string; tag: string } =>
+        message._tag === "Request" && message.tag === WS_METHODS.subscribeServerLifecycle,
+    );
+}
+
+function welcomeEvent(sequence: number, cwd: string) {
+  return {
+    version: 1,
+    sequence,
+    type: "welcome",
+    payload: {
+      environment: {
+        environmentId: "environment-local",
+        label: "Local environment",
+        platform: { os: "darwin", arch: "arm64" },
+        serverVersion: "0.0.0-test",
+        capabilities: { repositoryIdentity: true },
+      },
+      cwd,
+      projectName: "workspace",
+    },
+  };
+}
+
 beforeEach(() => {
   vi.useRealTimers();
   sockets.length = 0;
@@ -928,13 +956,10 @@ describe("WsTransport", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(attempts).toBe(1);
-    expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription failed", {
+    expect(warnSpy).toHaveBeenCalledWith("[ws] stream-parked", {
       error: "Git command failed in GitCore.statusDetails",
     });
-    expect(warnSpy).not.toHaveBeenCalledWith(
-      "WebSocket RPC subscription disconnected",
-      expect.anything(),
-    );
+    expect(warnSpy).not.toHaveBeenCalledWith("[ws] stream-retry", expect.anything());
 
     unsubscribe();
     await transport.dispose();
@@ -965,7 +990,7 @@ describe("WsTransport", () => {
       expect(attempts).toBeGreaterThanOrEqual(2);
     });
 
-    expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription disconnected", {
+    expect(warnSpy).toHaveBeenCalledWith("[ws] stream-retry", {
       error: "SocketCloseError: WebSocket closed",
     });
 
@@ -997,7 +1022,7 @@ describe("WsTransport", () => {
     await waitFor(() => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
     });
-    expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription disconnected", {
+    expect(warnSpy).toHaveBeenCalledWith("[ws] stream-retry", {
       error: "SocketCloseError: 1006",
     });
 
@@ -1089,6 +1114,7 @@ describe("WsTransport", () => {
     };
     const transport = {
       disposed: false,
+      streamSubscriptions: new Set(),
       session: {
         clientScope: {} as never,
         runtime,
@@ -1117,6 +1143,175 @@ describe("WsTransport", () => {
 
     expect(callOrder).toEqual(["close:start", "close:done", "runtime:dispose"]);
   });
+
+  it("resumes parked stream subscriptions once the socket reconnects", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let attempts = 0;
+
+    const unsubscribe = transport.subscribe(
+      () =>
+        Stream.suspend(() => {
+          attempts += 1;
+          return Stream.fail(new Error("Git command failed in GitCore.statusDetails"));
+        }),
+      vi.fn(),
+      { retryDelay: 10 },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(attempts).toBe(1);
+    });
+
+    firstSocket.close(1006, "connection reset");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    }, 5_000);
+
+    getSocket().open();
+
+    await waitFor(() => {
+      expect(attempts).toBe(2);
+    }, 5_000);
+
+    expect(warnSpy).toHaveBeenCalledWith("[ws] stream-parked", {
+      error: "Git command failed in GitCore.statusDetails",
+    });
+
+    unsubscribe();
+    await transport.dispose();
+  }, 20_000);
+
+  it("resumes parked stream subscriptions after an explicit transport reconnect", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let attempts = 0;
+
+    const unsubscribe = transport.subscribe(
+      () =>
+        Stream.suspend(() => {
+          attempts += 1;
+          return Stream.fail(new Error("Git command failed in GitCore.statusDetails"));
+        }),
+      vi.fn(),
+      { retryDelay: 10 },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    getSocket().open();
+
+    await waitFor(() => {
+      expect(attempts).toBe(1);
+    });
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith("[ws] stream-parked", {
+        error: "Git command failed in GitCore.statusDetails",
+      });
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+    getSocket().open();
+
+    await waitFor(() => {
+      expect(attempts).toBe(2);
+    }, 5_000);
+
+    unsubscribe();
+    await transport.dispose();
+  }, 20_000);
+
+  it("re-subscribes live streams after a silent ping-timeout reconnect", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const listener = vi.fn();
+    const onResubscribe = vi.fn();
+
+    const unsubscribe = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      listener,
+      { onResubscribe },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(findStreamRequests(firstSocket)).toHaveLength(1);
+    });
+
+    const firstRequest = findStreamRequests(firstSocket)[0];
+    if (!firstRequest) {
+      throw new Error("Expected a subscription request");
+    }
+    const firstEvent = welcomeEvent(1, "/tmp/one");
+    firstSocket.serverMessage(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: firstRequest.id,
+        values: [firstEvent],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith(firstEvent);
+    });
+
+    // Never answer the protocol pings: the socket is replaced without any
+    // failure reaching in-flight requests, which used to leave every live
+    // subscription attached to a stream the server had already torn down.
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    }, 20_000);
+
+    const secondSocket = getSocket();
+    expect(secondSocket).not.toBe(firstSocket);
+    secondSocket.open();
+
+    await waitFor(() => {
+      expect(findStreamRequests(secondSocket)).toHaveLength(1);
+    }, 5_000);
+
+    const secondRequest = findStreamRequests(secondSocket)[0];
+    if (!secondRequest) {
+      throw new Error("Expected a resubscribe request");
+    }
+    expect(secondRequest.id).not.toBe(firstRequest.id);
+    expect(onResubscribe).toHaveBeenCalled();
+
+    const secondEvent = welcomeEvent(2, "/tmp/two");
+    secondSocket.serverMessage(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: secondRequest.id,
+        values: [secondEvent],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith(secondEvent);
+    });
+
+    unsubscribe();
+    await transport.dispose();
+  }, 40_000);
 
   it("propagates OTLP trace ids for ws transport requests when client tracing is enabled", async () => {
     await configureClientTracing({

@@ -19,6 +19,12 @@ export interface LogContextShape {
   readonly sessionId?: string;
   readonly threadId?: string;
   readonly provider?: string;
+  /**
+   * Identifies a single WebSocket connection. A session outlives its sockets,
+   * so this is what distinguishes "the client reconnected and resubscribed"
+   * from "the client's subscriptions silently died".
+   */
+  readonly connectionId?: string;
 }
 
 const emptyLogContext: LogContextShape = {};
@@ -41,6 +47,7 @@ const toLogAnnotations = (context: LogContextShape): Record<string, string> => {
   if (context.sessionId !== undefined) annotations.sessionId = context.sessionId;
   if (context.threadId !== undefined) annotations.threadId = context.threadId;
   if (context.provider !== undefined) annotations.provider = context.provider;
+  if (context.connectionId !== undefined) annotations.connectionId = context.connectionId;
   return annotations;
 };
 

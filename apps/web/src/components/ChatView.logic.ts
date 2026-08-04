@@ -52,12 +52,15 @@ export function mergeInsightActivityWindows(
 export function getActivityHistoryKey(
   threadRequestKey: string | null,
   latestActivities: ReadonlyArray<OrchestrationThreadActivity>,
+  turnId?: string | null,
 ): string | null {
   // A shifted oldest row means the server replaced the latest window. Stale
   // local pages must be discarded so the next request fills the new boundary.
+  // Turn identity is part of the key because older-page requests are turn-
+  // scoped; without it a pending page for turn A can land after turn B starts.
   return threadRequestKey === null
     ? null
-    : `${threadRequestKey}\u0000${latestActivities[0]?.id ?? ""}`;
+    : `${threadRequestKey}\u0000${turnId ?? ""}\u0000${latestActivities[0]?.id ?? ""}`;
 }
 
 export type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;

@@ -67,6 +67,15 @@ describe("mergeActivityWindows", () => {
     );
   });
 
+  it("changes the history key when the active turn changes", () => {
+    const threadKey = "environment\u0000thread";
+    const activities = [makeActivity("activity-2", 2)];
+
+    expect(getActivityHistoryKey(threadKey, activities, "turn-1")).not.toBe(
+      getActivityHistoryKey(threadKey, activities, "turn-2"),
+    );
+  });
+
   it("adds lifecycle records from loaded pages to retained Insights history", () => {
     const oldInsight = {
       ...makeActivity("turn-started", 1),

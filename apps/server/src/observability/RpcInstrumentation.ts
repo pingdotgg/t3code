@@ -1,4 +1,4 @@
-import { Duration, Effect, Exit, Metric, Stream } from "effect";
+import { Cause, Duration, Effect, Exit, Metric, Stream } from "effect";
 
 import { outcomeFromExit } from "./Attributes.ts";
 import { metricAttributes, rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
@@ -11,6 +11,28 @@ const annotateRpcSpan = (
     "rpc.method": method,
     ...traceAttributes,
   });
+
+/**
+ * Streams are long-lived subscriptions, so their open/close boundaries are the
+ * cheapest way to tell a live client from one whose subscriptions silently
+ * died. Metrics cannot answer "did this client resubscribe after the socket
+ * flipped?", and traces rotate out of the local sink within minutes.
+ */
+const logRpcStreamEnded = <E>(
+  method: string,
+  startedAt: number,
+  exit: Exit.Exit<unknown, E>,
+): Effect.Effect<void, never, never> => {
+  const outcome = outcomeFromExit(exit);
+  const fields = {
+    method,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    outcome,
+  };
+  return Exit.isFailure(exit) && outcome === "failure"
+    ? Effect.logWarning("rpc stream failed", { ...fields, cause: Cause.pretty(exit.cause) })
+    : Effect.logInfo("rpc stream ended", fields);
+};
 
 const recordRpcStreamMetrics = <E>(
   method: string,
@@ -32,6 +54,7 @@ const recordRpcStreamMetrics = <E>(
       ),
       1,
     );
+    yield* logRpcStreamEnded(method, startedAt, exit);
   });
 
 export const observeRpcEffect = <A, E, R>(
@@ -62,6 +85,7 @@ export const observeRpcStream = <A, E, R>(
     Effect.gen(function* () {
       yield* annotateRpcSpan(method, traceAttributes);
       const startedAt = Date.now();
+      yield* Effect.logInfo("rpc stream started", { method });
       return stream.pipe(Stream.onExit((exit) => recordRpcStreamMetrics(method, startedAt, exit)));
     }),
   );
@@ -75,6 +99,7 @@ export const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectErro
     Effect.gen(function* () {
       yield* annotateRpcSpan(method, traceAttributes);
       const startedAt = Date.now();
+      yield* Effect.logInfo("rpc stream started", { method });
       const exit = yield* Effect.exit(effect);
 
       if (Exit.isFailure(exit)) {
