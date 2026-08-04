@@ -543,10 +543,24 @@ export function TerminalViewport({
         clearSelectionAction();
         const selectionAction = readSelectionAction();
         const requestId = selectionActionRequestIdRef.current;
-        const clicked = await localApi.contextMenu.show(
-          terminalContextMenuItems({ hasSelection: selectionAction !== null }),
-          { x: event.clientX, y: event.clientY },
-        );
+        let clicked: TerminalContextMenuAction | null;
+        try {
+          clicked = await localApi.contextMenu.show(
+            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            { x: event.clientX, y: event.clientY },
+          );
+        } catch (error) {
+          if (requestId === selectionActionRequestIdRef.current) {
+            const latestTerminal = terminalRef.current;
+            if (!latestTerminal) return;
+            writeSystemMessage(
+              latestTerminal,
+              error instanceof Error ? error.message : "Unable to open the terminal context menu",
+            );
+            latestTerminal.focus();
+          }
+          return;
+        }
         if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
           return;
         }
