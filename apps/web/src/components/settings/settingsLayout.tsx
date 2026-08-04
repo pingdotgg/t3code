@@ -6,9 +6,8 @@ import {
   type ReactNode,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
 } from "react";
 
 import { cn } from "../../lib/utils";
@@ -78,14 +77,75 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   return targetRef;
 }
 
+interface RelativeTimeTicker {
+  nowMs: number;
+  timerId: number | null;
+  readonly listeners: Set<() => void>;
+}
+
+const relativeTimeTickers = new Map<number, RelativeTimeTicker>();
+
+function getRelativeTimeTicker(intervalMs: number): RelativeTimeTicker {
+  const existing = relativeTimeTickers.get(intervalMs);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const ticker: RelativeTimeTicker = {
+    nowMs: Date.now(),
+    timerId: null,
+    listeners: new Set(),
+  };
+  relativeTimeTickers.set(intervalMs, ticker);
+  return ticker;
+}
+
+function tickRelativeTime(ticker: RelativeTimeTicker): void {
+  const nextNowMs = Date.now();
+  if (nextNowMs === ticker.nowMs) {
+    return;
+  }
+  ticker.nowMs = nextNowMs;
+  for (const listener of ticker.listeners) {
+    listener();
+  }
+}
+
+function subscribeToRelativeTime(
+  ticker: RelativeTimeTicker,
+  intervalMs: number,
+  listener: () => void,
+): () => void {
+  ticker.listeners.add(listener);
+  if (ticker.listeners.size === 1) {
+    ticker.timerId = window.setInterval(() => tickRelativeTime(ticker), intervalMs);
+  }
+
+  return () => {
+    ticker.listeners.delete(listener);
+    if (ticker.listeners.size === 0 && ticker.timerId !== null) {
+      window.clearInterval(ticker.timerId);
+      ticker.timerId = null;
+      relativeTimeTickers.delete(intervalMs);
+    }
+  };
+}
+
+function getRelativeTimeSnapshot(ticker: RelativeTimeTicker): number {
+  if (ticker.timerId === null) {
+    ticker.nowMs = Date.now();
+  }
+  return ticker.nowMs;
+}
+
 /** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
 export function useRelativeTimeTick(intervalMs = 1_000) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return nowMs;
+  const ticker = getRelativeTimeTicker(intervalMs);
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeToRelativeTime(ticker, intervalMs, listener),
+    [intervalMs, ticker],
+  );
+  const getSnapshot = useCallback(() => getRelativeTimeSnapshot(ticker), [ticker]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 export function SettingsSection({
