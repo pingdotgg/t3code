@@ -29,6 +29,7 @@ import {
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
+import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
@@ -912,7 +913,7 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
-    yield* Effect.forkScoped(
+    yield* forkParked(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (
           event.type !== "thread.turn-start-requested" &&
@@ -926,7 +927,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    yield* Effect.forkScoped(
+    yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {
         if (event.type !== "turn.started" && event.type !== "turn.completed") {
           return Effect.void;
