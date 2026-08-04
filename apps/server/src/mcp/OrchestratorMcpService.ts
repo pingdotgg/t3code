@@ -889,12 +889,13 @@ const make = Effect.gen(function* () {
         task.completionDelivery?.state !== "disposed"
       ) {
         const observingRun = latestActiveRun(parentProjection);
+        const acknowledgementRequestKey = yield* requestKey(undefined);
         yield* threadManagement
           .dispatch({
             type: "delegated_task.completion-delivery.acknowledge",
             commandId: stableCommandId({
               scope,
-              requestKey: String(taskId),
+              requestKey: acknowledgementRequestKey,
               operation: acknowledgementOperation,
             }),
             parentThreadId: scope.threadId,

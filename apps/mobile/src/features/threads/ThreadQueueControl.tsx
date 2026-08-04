@@ -12,7 +12,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadProjection } from "../../state/use-thread-detail";
 import {
   buildCancelQueuedRunCommand,
-  collectAutomaticCompletionMessageIds,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
@@ -23,10 +22,6 @@ export function ThreadQueueControl(props: {
   const scoped = useThreadProjection(props);
   const workflow = useMemo(
     () => (scoped ? deriveThreadQueueWorkflowState(scoped.projection) : null),
-    [scoped],
-  );
-  const automaticCompletionMessageIds = useMemo(
-    () => collectAutomaticCompletionMessageIds(scoped?.projection.messages ?? []),
     [scoped],
   );
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
@@ -87,14 +82,12 @@ export function ThreadQueueControl(props: {
       <ScrollView style={{ maxHeight: 156 }} contentContainerStyle={{ paddingVertical: 4 }}>
         {workflow.queuedRuns.map(({ run, text }, index) => {
           const controls = resolveThreadQueueRowControls({
-            automaticCompletionMessageIds,
             busy: busyRunId !== null,
             canPromoteToSteer: workflow.canPromoteToSteer,
             canReorder: workflow.canReorder,
             index,
             queuedCount: workflow.queuedRuns.length,
             text,
-            userMessageId: run.userMessageId,
           });
 
           return (

@@ -22,16 +22,13 @@ import * as Ref from "effect/Ref";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
-import {
-  CheckpointCaptureServiceV2,
-  layer as checkpointCaptureServiceLayer,
-} from "./CheckpointCaptureService.ts";
+import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import { layer as idAllocatorLayer } from "./IdAllocator.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const ProjectionStoreTestLayer = Layer.mergeAll(
-  projectionStoreLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
   SqlitePersistenceMemory,
 );
 
@@ -55,7 +52,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
     "preserves a newer delegatedCompletion cohort when checkpoint run.updated is applied after it",
     () =>
       Effect.gen(function* () {
-        const projectionStore = yield* ProjectionStoreV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const later = DateTime.add(now, { seconds: 1 });
 
@@ -254,10 +251,10 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         });
 
         const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-        const captureLayer = checkpointCaptureServiceLayer.pipe(
+        const captureLayer = CheckpointCaptureService.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              idAllocatorLayer,
+              IdAllocator.layer,
               Layer.mock(CheckpointServiceV2)({
                 materializeBaselineCheckpoint: () =>
                   Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
@@ -280,7 +277,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         );
 
         yield* Effect.gen(function* () {
-          const service = yield* CheckpointCaptureServiceV2;
+          const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
           // Capture reads the waiting run while the projection still holds the stale cohort.
           yield* service.execute({ threadId, runId, scopeId });
 

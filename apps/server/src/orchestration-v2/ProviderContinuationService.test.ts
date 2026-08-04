@@ -303,6 +303,85 @@ describe("ProviderContinuationService", () => {
     });
   });
 
+  it.effect("resets delegated completion retry backoff after archive or deletion", () => {
+    return Effect.gen(function* () {
+      for (const barrier of ["archivedAt", "deletedAt"] as const) {
+        const attempts = yield* Ref.make(0);
+        const blockedProjectionReads = yield* Ref.make(0);
+        const blockedRequestDropped = yield* Deferred.make<void>();
+        const state = yield* Ref.make<"open" | "blocked" | "disposed">("open");
+        const threads = Layer.mock(ThreadManagementService)({
+          getThreadProjection: () =>
+            Effect.gen(function* () {
+              const currentState = yield* Ref.get(state);
+              if (currentState === "blocked") {
+                const reads = yield* Ref.updateAndGet(blockedProjectionReads, (count) => count + 1);
+                if (reads === 2) {
+                  yield* Deferred.succeed(blockedRequestDropped, undefined);
+                }
+              }
+              return {
+                ...delegatedProjection(currentState === "disposed" ? "disposed" : "open"),
+                thread: {
+                  ...projection.thread,
+                  [barrier]:
+                    currentState === "blocked"
+                      ? DateTime.makeUnsafe("2026-08-05T00:00:00.000Z")
+                      : null,
+                },
+              };
+            }),
+          dispatch: () =>
+            Ref.update(attempts, (count) => count + 1).pipe(
+              Effect.andThen(Effect.fail(new Error("simulated persistent failure") as never)),
+            ),
+        });
+        const worker = workerLive.pipe(
+          Layer.provide(Layer.mergeAll(idAllocatorLayer, continuationRequestsLayer, threads)),
+        );
+        const completionRequest = {
+          threadId,
+          providerThreadId,
+          driver,
+          detail: null,
+          delivery: "message_text" as const,
+          delegatedCompletion: {
+            parentRunId,
+            generation: 1,
+            messageId: delegatedMessageId,
+          },
+        };
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests;
+          yield* requests.offer(completionRequest);
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 1);
+
+          yield* Ref.set(state, "blocked");
+          yield* TestClock.adjust("100 millis");
+          yield* Deferred.await(blockedRequestDropped);
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 1);
+
+          yield* Ref.set(state, "open");
+          yield* requests.offer(completionRequest);
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 2);
+          yield* TestClock.adjust("99 millis");
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 2);
+          yield* TestClock.adjust("1 millis");
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 3);
+
+          yield* Ref.set(state, "disposed");
+          yield* TestClock.adjust("200 millis");
+        }).pipe(Effect.provide(Layer.merge(continuationRequestsLayer, worker)), Effect.scoped);
+      }
+    });
+  });
+
   it.effect("drops a delegated completion retry after its delivery closes", () => {
     return Effect.gen(function* () {
       const attempts = yield* Ref.make(0);

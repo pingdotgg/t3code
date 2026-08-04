@@ -21,7 +21,10 @@ import * as Stream from "effect/Stream";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -83,7 +86,30 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
   subscribeChanges: Effect.never,
 });
 
-const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
+const TestLayer = Layer.mergeAll(
+  OrchestrationLayerLive,
+  OrchestrationV2LayerLive,
+  OrchestrationV2EventSinkLayerLive,
+).pipe(
+  Layer.provide(
+    Layer.succeed(ProjectEnrichmentService, {
+      peek: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      request: () => Effect.void,
+      getAvailable: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      invalidate: () => Effect.void,
+      subscribeChanges: Effect.never,
+    }),
+  ),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -101,14 +127,27 @@ const seedParentWithTerminalTask = (input: {
   readonly taskId: NodeId;
   readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
+  readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
+    const applicationEngine = yield* OrchestrationEngineService;
     const orchestrator = yield* OrchestratorV2;
     const eventSink = yield* EventSinkV2;
     const providerThreadId = ProviderThreadId.make(
       `provider-thread:${String(input.threadId).replace("thread:", "")}`,
     );
+
+    yield* applicationEngine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make(`command:seed-project:${input.threadId}`),
+      projectId: input.projectId,
+      title: "Delegated completion delivery",
+      workspaceRoot: `/workspace/${input.projectId}`,
+      defaultModelSelection: modelSelection,
+      scripts: [],
+      createdAt: DateTime.formatIso(input.now),
+    });
 
     yield* orchestrator.dispatch({
       type: "thread.create",
@@ -185,7 +224,14 @@ const seedParentWithTerminalTask = (input: {
               disposition: "open",
               nextGeneration: 2,
               settledDeliveryCount: 1,
-              delivery: null,
+              delivery:
+                input.deliveryTaskIds === undefined
+                  ? null
+                  : {
+                      generation: 1,
+                      messageId: MessageId.make(`message:delegated-delivery:${input.threadId}`),
+                      taskIds: input.deliveryTaskIds,
+                    },
             },
           },
         },
@@ -230,6 +276,56 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
+  it.effect("builds completion text and metadata from the same live cohort", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-delivery-live-cohort");
+      const projectId = ProjectId.make("project:delegated-delivery-live-cohort");
+      const runId = RunId.make("run:delegated-delivery-live-cohort");
+      const rootNodeId = NodeId.make("node:delegated-delivery-live-cohort-root");
+      const firstTaskId = NodeId.make("node:delegated-delivery-live-cohort-first");
+      const secondTaskId = NodeId.make("node:delegated-delivery-live-cohort-second");
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: firstTaskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [firstTaskId, secondTaskId],
+        now,
+      });
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:delegated-delivery-live-cohort"),
+        threadId,
+        messageId,
+        text: `Delegated task ${firstTaskId} reached a terminal state.`,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: {
+          parentRunId: runId,
+          generation: 1,
+          taskIds: [firstTaskId],
+        },
+      });
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const message = projection.messages.find((candidate) => candidate.id === messageId);
+      assert.deepEqual(message?.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
+      assert.include(message?.text ?? "", String(firstTaskId));
+      assert.include(message?.text ?? "", String(secondTaskId));
+      assert.include(message?.text ?? "", "task_status");
+    }),
+  );
+
   it.effect("does not re-offer when wake-policy upgrades after delivered ownership settled", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -412,6 +508,35 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
         const afterDispose = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           afterDispose.subagents.find((candidate) => candidate.id === taskId)?.completionDelivery,
+          {
+            state: "disposed",
+            observedByRunId: null,
+          },
+        );
+
+        const acknowledgeAfterDispose = yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("command:delegated-delivery-a2:ack-after-dispose"),
+          parentThreadId: threadId,
+          taskId,
+          observedByRunId: runId,
+        });
+        const acknowledgedTask = acknowledgeAfterDispose.storedEvents.find(
+          (stored) => stored.event.type === "subagent.updated",
+        );
+        if (acknowledgedTask?.event.type !== "subagent.updated") {
+          return yield* Effect.die(new Error("Acknowledge-after-dispose event missing."));
+        }
+        assert.deepEqual(acknowledgedTask.event.payload.completionDelivery, {
+          state: "disposed",
+          observedByRunId: null,
+        });
+        assert.equal(acknowledgeAfterDispose.storedEvents.length, 1);
+
+        const afterStaleAcknowledge = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          afterStaleAcknowledge.subagents.find((candidate) => candidate.id === taskId)
+            ?.completionDelivery,
           {
             state: "disposed",
             observedByRunId: null,

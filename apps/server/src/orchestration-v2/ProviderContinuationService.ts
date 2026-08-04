@@ -86,6 +86,11 @@ export const workerLive = Layer.effectDiscard(
             threadId: request.threadId,
             providerThreadId: request.providerThreadId,
           });
+          if (request.delegatedCompletion !== undefined) {
+            yield* clearRetryAttempt(
+              delegatedCompletionRetryKey(request, request.delegatedCompletion),
+            );
+          }
           // No continuation turn will start to clear the adapter's sticky offer.
           if (request.clearIfCurrent !== undefined) {
             yield* request.clearIfCurrent();

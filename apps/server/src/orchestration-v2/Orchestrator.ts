@@ -58,6 +58,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
+import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   makeSubagentChildThread,
@@ -307,13 +308,7 @@ function delegatedTaskTerminalStatus(
 function nextQueuedRun(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2Run | undefined {
-  return projection.runs
-    .filter((run) => run.status === "queued")
-    .toSorted(
-      (left, right) =>
-        (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
-        left.ordinal - right.ordinal,
-    )[0];
+  return queuedRunsInDeliveryOrder(projection)[0];
 }
 
 function latestStableRun(projection: OrchestrationV2ThreadProjection): OrchestrationV2Run | null {
@@ -1056,7 +1051,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // valid observations can race after their read preflight. Re-emit the
       // existing task row so the second dispatch is a successful idempotent
       // no-op rather than "already acknowledged/disposed" or empty-events.
-      if (task.completionDelivery?.state === state) {
+      if (
+        task.completionDelivery?.state === state ||
+        (command.type === "delegated_task.completion-delivery.acknowledge" &&
+          task.completionDelivery?.state === "disposed")
+      ) {
         yield* emitEvent({
           type: "subagent.updated",
           threadId: command.parentThreadId,
@@ -2848,6 +2847,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           taskIds: delivery.taskIds,
         };
       }
+      const dispatchText =
+        delegatedCompletion === undefined
+          ? command.text
+          : delegatedCompletionWakeDetail(delegatedCompletion.taskIds);
       const sourcePlanProjection =
         command.sourcePlanRef === undefined
           ? null
@@ -2906,7 +2909,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           modelSelection,
           targetRunId: dispatchMode.targetRunId,
           messageId: command.messageId,
-          text: command.text,
+          text: dispatchText,
           attachments: command.attachments,
           createdBy: command.createdBy,
           creationSource: command.creationSource,
@@ -3064,7 +3067,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           runId,
           nodeId: rootNodeId,
           role: "user",
-          text: command.text,
+          text: dispatchText,
           attachments: command.attachments,
           streaming: false,
           createdAt: now,
@@ -3317,7 +3320,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           runId,
           nodeId: rootNodeId,
           role: "user",
-          text: command.text,
+          text: dispatchText,
           attachments: command.attachments,
           streaming: false,
           createdAt: now,
@@ -3344,7 +3347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           type: "user_message",
           messageId: command.messageId,
           inputIntent: "turn_start",
-          text: command.text,
+          text: dispatchText,
           attachments: command.attachments,
         };
         const preparationTurnItem: OrchestrationV2TurnItem | null =
@@ -3976,7 +3979,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runId,
         nodeId: rootNodeId,
         role: "user",
-        text: command.text,
+        text: dispatchText,
         attachments: command.attachments,
         streaming: false,
         createdAt: now,
@@ -4003,7 +4006,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "user_message",
         messageId: command.messageId,
         inputIntent: "turn_start",
-        text: command.text,
+        text: dispatchText,
         attachments: command.attachments,
       };
       const activeHandoff = portableForkHandoff ?? mergeBackHandoff ?? providerSwitchHandoff;
@@ -5085,13 +5088,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
         );
-      const queuedRuns = projection.runs
-        .filter((run) => run.status === "queued")
-        .toSorted(
-          (left, right) =>
-            (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
-            left.ordinal - right.ordinal,
-        );
+      const queuedRuns = queuedRunsInDeliveryOrder(projection);
       const moving = queuedRuns.find((run) => run.id === command.runId);
       if (moving === undefined) {
         return yield* new OrchestratorDispatchError({
@@ -5110,7 +5107,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "Automatic completion deliveries cannot be reordered.",
         });
       }
-      const withoutMoving = queuedRuns.filter((run) => run.id !== command.runId);
+      const automaticRuns = queuedRuns.filter((run) => isAutomaticCompletionRun(projection, run));
+      if (
+        command.beforeRunId !== null &&
+        automaticRuns.some((run) => run.id === command.beforeRunId)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Queued messages cannot be reordered ahead of automatic completion delivery.",
+        });
+      }
+      const reorderableRuns = queuedRuns.filter(
+        (run) => !isAutomaticCompletionRun(projection, run),
+      );
+      const withoutMoving = reorderableRuns.filter((run) => run.id !== command.runId);
       const beforeIndex =
         command.beforeRunId === null
           ? withoutMoving.length
@@ -5123,6 +5134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const reordered = [
+        ...automaticRuns,
         ...withoutMoving.slice(0, beforeIndex),
         moving,
         ...withoutMoving.slice(beforeIndex),
