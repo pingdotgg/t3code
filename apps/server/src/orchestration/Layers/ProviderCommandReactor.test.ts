@@ -785,6 +785,123 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
+  it("pins the first user message when regeneration context is truncated", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const firstUserMessage = `Review subagent monitoring risks. ${"Opening context. ".repeat(200)}`;
+    const recentUserMessage = `LATEST FINDING: ${"implementation detail ".repeat(320)}`;
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Review subagent monitoring risks" }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-existing-long"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Generic PR review",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-long-title-regeneration"),
+          role: "user",
+          text: firstUserMessage,
+          attachments: [
+            {
+              type: "image",
+              id: "opening-context-image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-middle-turn-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("middle-message-before-long-title-regeneration"),
+          role: "user",
+          text: "Temporary handoff details.",
+          attachments: [
+            {
+              type: "image",
+              id: "middle-context-image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-recent-turn-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("recent-message-before-long-title-regeneration"),
+          role: "user",
+          text: recentUserMessage,
+          attachments: [
+            {
+              type: "image",
+              id: "recent-context-image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate-long"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    const input = harness.generateThreadTitle.mock.calls[0]?.[0];
+    if (!input) {
+      throw new Error("Expected a title generation input");
+    }
+    const message = input.message;
+    expect(message.startsWith("USER:\nReview subagent monitoring risks.")).toBe(true);
+    expect(message).toContain("[First user message truncated]");
+    expect(message).toContain("[Earlier content truncated]");
+    expect(message).toContain("image.png");
+    expect(message).toHaveLength(8_000);
+    expect(input.attachments?.map((attachment) => attachment.id)).toEqual([
+      "opening-context-image",
+      "recent-context-image",
+    ]);
+  });
+
   it("clears title regeneration state left pending across reactor startup", async () => {
     const harness = await createHarness({
       titleRegenerationBeforeStart: "one",
@@ -972,10 +1089,14 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
-  it("keeps the full retained context and excludes attachments outside it", async () => {
+  it("pins the first user context and attachment before the retained tail", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
-    const retainedContext = "x".repeat(8_000);
+    const firstUserContext = "USER:\nOld visual issue\n[Attachments: old-issue.png]";
+    const truncationMarker = "[Earlier content truncated]\n\n";
+    const retainedContext = "x".repeat(
+      8_000 - firstUserContext.length - "\n\n".length - truncationMarker.length,
+    );
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -1040,9 +1161,14 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
 
     expect(harness.generateThreadTitle.mock.calls[0]?.[0].message).toBe(
-      `[Earlier content truncated]\n\n${retainedContext}`,
+      `${firstUserContext}\n\n${truncationMarker}${retainedContext}`,
     );
-    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toBeUndefined();
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toEqual([
+      expect.objectContaining({
+        id: "old-title-context-image",
+        name: "old-issue.png",
+      }),
+    ]);
   });
 
   it("does not overwrite a manual rename while title regeneration is running", async () => {
