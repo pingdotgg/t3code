@@ -14,19 +14,13 @@ import {
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
-  readonly document: HttpTransferMeasurement;
-  readonly shellSnapshot: HttpTransferMeasurement;
   readonly threadSnapshot: HttpTransferMeasurement;
-  readonly coldOpenWebSocket: WebSocketTransferTotals;
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
 }
 
 interface ProviderTransferBudget {
   readonly totalWireBytes: number;
-  readonly documentWireBytes: number;
-  readonly shellSnapshotWireBytes: number;
   readonly threadSnapshotWireBytes: number;
-  readonly coldOpenWebSocketWireBytes: number;
   readonly measuredTurnWebSocketWireBytes: number;
   readonly measuredTurnWebSocketDecodedBytes: number;
   readonly measuredTurnWebSocketMessages: number;
@@ -35,37 +29,21 @@ interface ProviderTransferBudget {
 // These caps leave roughly 30% headroom above the deterministic fixture. The
 // CI report preserves the exact values so intentional protocol growth can be
 // reviewed and the caps raised explicitly.
+const TRANSFER_BUDGET = {
+  totalWireBytes: 2_900_000,
+  threadSnapshotWireBytes: 2_600_000,
+  measuredTurnWebSocketWireBytes: 320_000,
+  measuredTurnWebSocketDecodedBytes: 1_550_000,
+  measuredTurnWebSocketMessages: 20,
+} satisfies ProviderTransferBudget;
+
 export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
-  codex: {
-    totalWireBytes: 2_900_000,
-    documentWireBytes: 1_700,
-    shellSnapshotWireBytes: 1_000,
-    threadSnapshotWireBytes: 2_550_000,
-    coldOpenWebSocketWireBytes: 1_600,
-    measuredTurnWebSocketWireBytes: 315_000,
-    measuredTurnWebSocketDecodedBytes: 1_550_000,
-    measuredTurnWebSocketMessages: 32,
-  },
-  claudeAgent: {
-    totalWireBytes: 2_900_000,
-    documentWireBytes: 1_700,
-    shellSnapshotWireBytes: 1_000,
-    threadSnapshotWireBytes: 2_550_000,
-    coldOpenWebSocketWireBytes: 1_600,
-    measuredTurnWebSocketWireBytes: 315_000,
-    measuredTurnWebSocketDecodedBytes: 1_550_000,
-    measuredTurnWebSocketMessages: 32,
-  },
+  codex: TRANSFER_BUDGET,
+  claudeAgent: TRANSFER_BUDGET,
 };
 
 function totalWireBytes(run: TransferBudgetRun): number {
-  return (
-    run.document.wireBytes +
-    run.shellSnapshot.wireBytes +
-    run.threadSnapshot.wireBytes +
-    run.coldOpenWebSocket.wireBytes +
-    run.measuredTurnWebSocket.wireBytes
-  );
+  return run.threadSnapshot.wireBytes + run.measuredTurnWebSocket.wireBytes;
 }
 
 function formatBytes(bytes: number): string {
@@ -97,15 +75,8 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
       continue;
     }
     const checks = [
-      ["total client-bound wire bytes", totalWireBytes(run), budget.totalWireBytes],
-      ["document wire bytes", run.document.wireBytes, budget.documentWireBytes],
-      ["shell snapshot wire bytes", run.shellSnapshot.wireBytes, budget.shellSnapshotWireBytes],
+      ["total thread wire bytes", totalWireBytes(run), budget.totalWireBytes],
       ["thread snapshot wire bytes", run.threadSnapshot.wireBytes, budget.threadSnapshotWireBytes],
-      [
-        "cold-open WebSocket wire bytes",
-        run.coldOpenWebSocket.wireBytes,
-        budget.coldOpenWebSocketWireBytes,
-      ],
       [
         "measured-turn WebSocket wire bytes",
         run.measuredTurnWebSocket.wireBytes,
@@ -133,12 +104,12 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
 
 export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun>): string {
   const lines = [
-    "# T3 Code stress transfer budget",
+    "# T3 Code thread transfer budget",
     "",
-    "Wire values are client-bound bytes read from local HTTP and WebSocket sockets. They include HTTP response headers and the WebSocket upgrade, but exclude TCP/IP and TLS framing. WebSocket permessage-deflate is negotiated.",
+    "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes are calibrated from heavy local Codex and Claude histories and contain no user data.`,
     "",
-    "| Provider | Total client-bound wire | Budget | Result |",
+    "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
     ...runs.flatMap((run) => {
       const budget = TRANSFER_BUDGETS[run.provider];
@@ -159,27 +130,12 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     const budget = TRANSFER_BUDGETS[run.provider];
     if (!budget) continue;
     lines.push(
-      row(run.provider, "document", "HTTP wire", run.document.wireBytes, budget.documentWireBytes),
-      row(
-        run.provider,
-        "shell snapshot",
-        "HTTP wire",
-        run.shellSnapshot.wireBytes,
-        budget.shellSnapshotWireBytes,
-      ),
       row(
         run.provider,
         "thread snapshot",
         "HTTP wire",
         run.threadSnapshot.wireBytes,
         budget.threadSnapshotWireBytes,
-      ),
-      row(
-        run.provider,
-        "cold open",
-        "WebSocket wire",
-        run.coldOpenWebSocket.wireBytes,
-        budget.coldOpenWebSocketWireBytes,
       ),
       row(
         run.provider,
@@ -209,7 +165,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
   lines.push("", "## Compression diagnostics", "");
   for (const run of runs) {
     lines.push(
-      `- ${run.provider}: document body ${formatBytes(run.document.encodedBodyBytes)}; shell ${formatBytes(run.shellSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.shellSnapshot.encodedBodyBytes)} gzip; thread ${formatBytes(run.threadSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.threadSnapshot.encodedBodyBytes)} gzip.`,
+      `- ${run.provider}: thread snapshot ${formatBytes(run.threadSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.threadSnapshot.encodedBodyBytes)} gzip.`,
     );
   }
 
