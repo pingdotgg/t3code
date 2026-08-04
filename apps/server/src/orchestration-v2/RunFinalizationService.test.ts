@@ -1,10 +1,5 @@
 import { assert, it, vi } from "@effect/vitest";
-import {
-  CheckpointScopeId,
-  RunId,
-  ThreadId,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+import { CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -18,15 +13,12 @@ it.effect("captures the root checkpoint and refreshes workspace state", () => {
   const scopeId = CheckpointScopeId.make("scope_finalize");
   const capture = vi.fn(() => Effect.void);
   const refresh = vi.fn(() => Effect.void);
-  const projection = {
-    checkpointScopes: [{ id: scopeId, cwd: "/repo" }],
-  } as unknown as OrchestrationV2ThreadProjection;
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: capture }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointScope: () => Effect.succeed({ id: scopeId, cwd: "/repo" } as never),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, { refresh }),
       ),

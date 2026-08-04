@@ -272,6 +272,9 @@ export interface ThreadManagementServiceShape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getOperationalProjection: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
   readonly getThreadSnapshot: OrchestratorV2["Service"]["getThreadSnapshot"];
   readonly getProjectThread: (input: {
     readonly projectId: ProjectId;
@@ -408,6 +411,13 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadProjection(threadId)),
     );
 
+  const getOperationalProjection: ThreadManagementServiceShape["getOperationalProjection"] = (
+    threadId,
+  ) =>
+    ensureProjectionTranscript(threadId).pipe(
+      Effect.andThen(orchestrator.getOperationalProjection(threadId)),
+    );
+
   const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (threadId) =>
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
@@ -418,6 +428,31 @@ const make = Effect.gen(function* () {
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadManagementProjectionLoadError({
+            projectId: input.projectId,
+            threadId: input.threadId,
+            cause,
+          }),
+      ),
+      Effect.flatMap((projection) =>
+        projection.thread.projectId === input.projectId && projection.thread.deletedAt === null
+          ? Effect.succeed(projection)
+          : Effect.fail(
+              new ThreadManagementThreadNotFoundError({
+                projectId: input.projectId,
+                threadId: input.threadId,
+              }),
+            ),
+      ),
+    );
+
+  const getOperationalProjectThread = (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+  }) =>
+    getOperationalProjection(input.threadId).pipe(
       Effect.mapError(
         (cause) =>
           new ThreadManagementProjectionLoadError({
@@ -464,7 +499,7 @@ const make = Effect.gen(function* () {
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
     Effect.gen(function* () {
-      const target = yield* getProjectThread(input);
+      const target = yield* getOperationalProjectThread(input);
       if (target.thread.archivedAt !== null) {
         return yield* new ThreadManagementThreadArchivedError({
           threadId: input.threadId,
@@ -547,7 +582,7 @@ const make = Effect.gen(function* () {
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = (input) =>
     Effect.gen(function* () {
-      const target = yield* getProjectThread(input);
+      const target = yield* getOperationalProjectThread(input);
       const selectedRun =
         input.runId === undefined
           ? latestRun(target)
@@ -567,7 +602,7 @@ const make = Effect.gen(function* () {
 
       const wait = Effect.gen(function* () {
         while (true) {
-          const current = yield* getProjectThread(input);
+          const current = yield* getOperationalProjectThread(input);
           const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
           if (run === undefined) {
             return yield* new ThreadManagementRunNotFoundError({
@@ -583,7 +618,7 @@ const make = Effect.gen(function* () {
       if (Option.isSome(waited)) {
         return { threadId: input.threadId, run: waited.value, timedOut: false };
       }
-      const current = yield* getProjectThread(input);
+      const current = yield* getOperationalProjectThread(input);
       const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
       if (run === undefined) {
         return yield* new ThreadManagementRunNotFoundError({
@@ -596,7 +631,7 @@ const make = Effect.gen(function* () {
 
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = (input) =>
     Effect.gen(function* () {
-      const target = yield* getProjectThread(input);
+      const target = yield* getOperationalProjectThread(input);
       const explicitRun =
         input.runId === undefined
           ? undefined
@@ -645,6 +680,7 @@ const make = Effect.gen(function* () {
     ensureLegacyTranscript,
     dispatch,
     getThreadProjection,
+    getOperationalProjection,
     getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,

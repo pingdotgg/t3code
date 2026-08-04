@@ -73,7 +73,7 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
     }) {
       const { runId } = input;
-      const projection = yield* projectionStore.getThreadProjection(input.threadId);
+      const projection = yield* projectionStore.getOperationalProjection(input.threadId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -128,13 +128,11 @@ export const layer: Layer.Layer<
       const isCurrentAttemptInStatus = (
         expectedStatus: OrchestrationV2Run["status"],
       ): Effect.Effect<boolean, never> =>
-        projectionStore.getThreadProjection(projection.thread.id).pipe(
-          Effect.map((current) => {
-            const currentRun = current.runs.find((candidate) => candidate.id === run.id);
-            return (
-              currentRun?.activeAttemptId === attempt.id && currentRun.status === expectedStatus
-            );
-          }),
+        projectionStore.getRun(projection.thread.id, run.id).pipe(
+          Effect.map(
+            (currentRun) =>
+              currentRun?.activeAttemptId === attempt.id && currentRun.status === expectedStatus,
+          ),
           Effect.catchCause(() => Effect.succeed(false)),
         );
 
@@ -157,7 +155,7 @@ export const layer: Layer.Layer<
       let effectiveHandoffs = handoffs;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
-          const sourceProjection = yield* projectionStore.getThreadProjection(
+          const sourceProjection = yield* projectionStore.getOperationalProjection(
             nativeForkTransfer.sourceThreadId,
           );
           const sourceRun = sourceProjection.runs.find(
@@ -218,6 +216,7 @@ export const layer: Layer.Layer<
         if (existingResumeFallback !== undefined) {
           return replacement;
         }
+        const fullHistory = yield* projectionStore.getThreadProjection(projection.thread.id);
         const transferId = yield* idAllocator.allocate.contextTransfer({
           sourceThreadId: projection.thread.id,
           targetThreadId: projection.thread.id,
@@ -234,7 +233,7 @@ export const layer: Layer.Layer<
           toProviderInstanceId: run.providerInstanceId,
           coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
           strategy: "full_thread_summary",
-          items: projection.turnItems,
+          items: fullHistory.turnItems,
           createdAt,
         });
         effectiveHandoffs = [...handoffs, handoff];
@@ -432,9 +431,8 @@ export const layer: Layer.Layer<
           ) + 1,
         shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
         shouldFinalizeRun: () =>
-          projectionStore.getThreadProjection(projection.thread.id).pipe(
-            Effect.map((current) => {
-              const currentRun = current.runs.find((candidate) => candidate.id === run.id);
+          projectionStore.getRun(projection.thread.id, run.id).pipe(
+            Effect.map((currentRun) => {
               return (
                 currentRun?.activeAttemptId === attempt.id &&
                 (currentRun.status === "starting" || currentRun.status === "running")
@@ -443,22 +441,21 @@ export const layer: Layer.Layer<
             Effect.catchCause(() => Effect.succeed(false)),
           ),
         hasUnpairedRunInterruptRequest: () =>
-          projectionStore.getThreadProjection(projection.thread.id).pipe(
-            Effect.map((current) => {
-              const requestId = idAllocator.derive.runSignalTurnItem({
-                runId: run.id,
-                signal: "interrupt-request",
-              });
-              const resultId = idAllocator.derive.runSignalTurnItem({
-                runId: run.id,
-                signal: "interrupt-result",
-              });
-              const hasRequest = current.turnItems.some((item) => item.id === requestId);
-              const hasResult = current.turnItems.some((item) => item.id === resultId);
-              return hasRequest && !hasResult;
-            }),
-            Effect.catchCause(() => Effect.succeed(false)),
-          ),
+          Effect.gen(function* () {
+            const requestId = idAllocator.derive.runSignalTurnItem({
+              runId: run.id,
+              signal: "interrupt-request",
+            });
+            const resultId = idAllocator.derive.runSignalTurnItem({
+              runId: run.id,
+              signal: "interrupt-result",
+            });
+            const present = yield* projectionStore.getPresentTurnItemIds(projection.thread.id, [
+              requestId,
+              resultId,
+            ]);
+            return present.has(requestId) && !present.has(resultId);
+          }).pipe(Effect.catchCause(() => Effect.succeed(false))),
         message: {
           messageId: message.id,
           text:

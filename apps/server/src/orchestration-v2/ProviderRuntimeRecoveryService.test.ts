@@ -104,7 +104,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({ commitCommand: committed }),
         IdAllocator.layer,
@@ -158,7 +158,7 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
@@ -214,7 +214,7 @@ it.effect("preserves a waiting run while its replay-safe checkpoint capture is u
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({ commitCommand: committed }),
         IdAllocator.layer,
@@ -279,7 +279,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
@@ -357,7 +357,7 @@ it.effect("cancels accepted queued work instead of replaying it after restart", 
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
@@ -472,7 +472,7 @@ it.effect(
                 threads: [{ id: threadId }],
                 archivedThreads: [],
               } as never),
-            getThreadProjection: () => Effect.succeed(projection),
+            getRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {

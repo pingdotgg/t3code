@@ -26,7 +26,7 @@ export const workerLive = Layer.effectDiscard(
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
       function* (request: ProviderContinuationRequest) {
-        const projection = yield* threads.getThreadProjection(request.threadId);
+        const projection = yield* threads.getOperationalProjection(request.threadId);
         if (projection.thread.archivedAt !== null) {
           yield* Effect.logInfo("orchestration-v2.provider-continuation.thread-archived", {
             threadId: request.threadId,

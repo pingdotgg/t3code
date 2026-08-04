@@ -4,6 +4,8 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -25,6 +27,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
   isTurnItemAtOrBeforeRun,
+  layerMemory,
   ProjectionStoreV2,
   layer as projectionStoreLayer,
 } from "./ProjectionStore.ts";
@@ -79,6 +82,126 @@ it("includes imported runless history when selecting fork context through a run"
       itemRunId: secondRunId,
       runOrdinalById,
       sourceRunOrdinal: 1,
+    }),
+  );
+});
+
+it.layer(layerMemory)("ProjectionStoreV2 memory", (it) => {
+  it.effect("orders turn item reads by ordinal and id", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:projection-memory-latest-item");
+      const projectId = ProjectId.make("project:projection-memory-latest-item");
+      const runId = RunId.make("run:projection-memory-latest-item");
+      const nodeId = NodeId.make("node:projection-memory-latest-item");
+      const expectedItemId = TurnItemId.make("turn-item:projection-memory-latest-item:z");
+      const expectedItemIds = [
+        TurnItemId.make("turn-item:projection-memory-latest-item:last-inserted"),
+        TurnItemId.make("turn-item:projection-memory-latest-item:a"),
+        expectedItemId,
+      ];
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-memory-latest-item:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId,
+          title: "Memory latest item",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      const turnItemBase = {
+        threadId,
+        runId,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "running",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName: null,
+        input: {},
+        output: {},
+      } satisfies Omit<
+        Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>,
+        "id" | "ordinal"
+      >;
+      const turnItems = [
+        { ...turnItemBase, id: expectedItemId, ordinal: 20 },
+        {
+          ...turnItemBase,
+          id: TurnItemId.make("turn-item:projection-memory-latest-item:a"),
+          ordinal: 20,
+        },
+        {
+          ...turnItemBase,
+          id: TurnItemId.make("turn-item:projection-memory-latest-item:last-inserted"),
+          ordinal: 10,
+        },
+      ];
+
+      yield* Effect.forEach(
+        turnItems,
+        (item) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${item.id}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: item,
+          }),
+        { discard: true },
+      );
+
+      assert.deepEqual(
+        (yield* projectionStore.getRunTurnItems(threadId, runId)).map((item) => item.id),
+        expectedItemIds,
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getNodeTurnItems(threadId, nodeId)).map((item) => item.id),
+        expectedItemIds,
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getRecoveryProjection(threadId)).turnItems.map((item) => item.id),
+        expectedItemIds,
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getOperationalProjection(threadId)).turnItems.map(
+          (item) => item.id,
+        ),
+        [expectedItemId],
+      );
     }),
   );
 });
@@ -497,6 +620,232 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         ],
       );
       assert.equal(fullProjectionExit._tag, "Failure");
+    }),
+  );
+
+  it.effect("loads only turn items required by operational and recovery projections", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const later = DateTime.add(now, { seconds: 1 });
+      const threadId = ThreadId.make("thread:projection-bounded-turn-items");
+      const projectId = ProjectId.make("project:projection-bounded-turn-items");
+      const userMessageId = MessageId.make("message:projection-bounded-turn-items:user");
+      const assistantMessageId = MessageId.make("message:projection-bounded-turn-items:assistant");
+      const completedItemId = TurnItemId.make("turn-item:projection-bounded-turn-items:completed");
+      const pendingItemId = TurnItemId.make("turn-item:projection-bounded-turn-items:pending");
+      const runningItemId = TurnItemId.make("turn-item:projection-bounded-turn-items:running");
+      const waitingItemId = TurnItemId.make("turn-item:projection-bounded-turn-items:waiting");
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-bounded-turn-items:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId,
+          title: "Bounded turn items",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: later,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const messages = [
+        {
+          createdBy: "user",
+          creationSource: "web",
+          id: userMessageId,
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: "user",
+          attachments: [],
+          streaming: false,
+          createdAt: later,
+          updatedAt: later,
+        },
+        {
+          createdBy: "agent",
+          creationSource: "provider",
+          id: assistantMessageId,
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "assistant",
+          text: "assistant",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ] satisfies ReadonlyArray<OrchestrationV2ConversationMessage>;
+      yield* Effect.forEach(
+        messages,
+        (message) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${message.id}`),
+            type: "message.updated",
+            threadId,
+            occurredAt: message.updatedAt,
+            payload: message,
+          }),
+        { discard: true },
+      );
+
+      const turnItemBase = {
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const turnItems = [
+        {
+          ...turnItemBase,
+          createdBy: "user",
+          creationSource: "web",
+          id: TurnItemId.make("turn-item:projection-bounded-turn-items:user"),
+          ordinal: 10,
+          status: "completed",
+          completedAt: now,
+          type: "user_message",
+          messageId: userMessageId,
+          inputIntent: "turn_start",
+          text: "user",
+          attachments: [],
+        },
+        {
+          ...turnItemBase,
+          id: TurnItemId.make("turn-item:projection-bounded-turn-items:assistant"),
+          ordinal: 20,
+          status: "completed",
+          completedAt: now,
+          type: "assistant_message",
+          messageId: assistantMessageId,
+          text: "assistant",
+          streaming: false,
+        },
+        {
+          ...turnItemBase,
+          id: completedItemId,
+          ordinal: 30,
+          status: "completed",
+          completedAt: now,
+          type: "dynamic_tool",
+          toolName: "completed",
+          input: {},
+          output: {},
+        },
+        {
+          ...turnItemBase,
+          id: pendingItemId,
+          ordinal: 40,
+          status: "pending",
+          startedAt: null,
+          type: "dynamic_tool",
+          toolName: "pending",
+          input: {},
+        },
+        {
+          ...turnItemBase,
+          id: runningItemId,
+          ordinal: 50,
+          status: "running",
+          type: "dynamic_tool",
+          toolName: "running",
+          input: {},
+        },
+        {
+          ...turnItemBase,
+          id: waitingItemId,
+          ordinal: 60,
+          status: "waiting",
+          type: "dynamic_tool",
+          toolName: "waiting",
+          input: {},
+        },
+      ] satisfies ReadonlyArray<OrchestrationV2TurnItem>;
+      yield* Effect.forEach(
+        turnItems,
+        (item) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${item.id}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: item.updatedAt,
+            payload: item,
+          }),
+        { discard: true },
+      );
+
+      const fullProjection = yield* projectionStore.getThreadProjection(threadId);
+      const operationalProjection = yield* projectionStore.getOperationalProjection(threadId);
+      const recoveryProjection = yield* projectionStore.getRecoveryProjection(threadId);
+      const expectedMessageIds = [userMessageId, assistantMessageId];
+
+      assert.deepEqual(
+        fullProjection.messages.map((message) => message.id),
+        expectedMessageIds,
+      );
+      assert.deepEqual(
+        operationalProjection.messages.map((message) => message.id),
+        expectedMessageIds,
+      );
+      assert.deepEqual(
+        operationalProjection.turnItems.map((item) => item.id),
+        [waitingItemId],
+      );
+      assert.deepEqual(
+        recoveryProjection.turnItems.map((item) => item.id),
+        [pendingItemId, runningItemId, waitingItemId],
+      );
+
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET payload_json = '{}'
+        WHERE turn_item_id = ${completedItemId}
+      `;
+
+      const fullProjectionExit = yield* Effect.exit(projectionStore.getThreadProjection(threadId));
+      assert.equal(fullProjectionExit._tag, "Failure");
+      assert.deepEqual(
+        (yield* projectionStore.getOperationalProjection(threadId)).turnItems.map(
+          (item) => item.id,
+        ),
+        [waitingItemId],
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getRecoveryProjection(threadId)).turnItems.map((item) => item.id),
+        [pendingItemId, runningItemId, waitingItemId],
+      );
     }),
   );
 
