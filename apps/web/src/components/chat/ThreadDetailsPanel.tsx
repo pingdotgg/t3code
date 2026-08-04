@@ -108,7 +108,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const card = (
     <div
       className={cn(
-        "panel-glass overflow-hidden rounded-[20px]",
+        "dropdown-glass isolate contain-paint overflow-hidden rounded-[20px]",
         props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
       )}
       data-thread-details-card

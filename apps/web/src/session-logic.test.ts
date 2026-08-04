@@ -297,6 +297,14 @@ describe("V2 session presentation", () => {
       targetProviderInstanceId: ProviderInstanceId.make("claude-default"),
       targetModel: "claude-sonnet-4-6",
     } satisfies OrchestrationV2TurnItem;
+    const workspacePreparationItem = {
+      ...base("item-workspace-preparation", 7),
+      type: "command_execution" as const,
+      title: "Workspace ready",
+      input: "Preparing workspace",
+      output: "Workspace preparation completed.",
+      exitCode: 0,
+    } satisfies OrchestrationV2TurnItem;
     const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
       userItem,
       requestItem,
@@ -305,6 +313,7 @@ describe("V2 session presentation", () => {
       todoItem,
       errorItem,
       threadCreatedItem,
+      workspacePreparationItem,
     ].map((item, position) => ({
       position,
       visibility: "local" as const,
