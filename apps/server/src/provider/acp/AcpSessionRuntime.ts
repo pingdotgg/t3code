@@ -670,7 +670,7 @@ export function observePosixOwnershipLedger(input: {
       if (reservedPid !== undefined && !samePosixProcessIdentity(reservedPid, child)) {
         // PID reused under an owned parent; drop the stale reservation.
         input.frontier.delete(child.pid);
-        for (const [key, owned] of [...input.ledger.entries()]) {
+        for (const [key, owned] of input.ledger.entries()) {
           if (owned.pid === child.pid) input.ledger.delete(key);
         }
         reservedPid = undefined;
@@ -802,7 +802,7 @@ export function capturePosixOwnershipLedger(input: {
   // matches the live process at that PID. Either case can block admission of a
   // legitimate child after PID reuse. Keep the root reservation even if the
   // root briefly disappears mid-teardown (finalizer retry still needs it).
-  for (const [key, owned] of [...input.ledger.entries()]) {
+  for (const [key, owned] of input.ledger.entries()) {
     if (owned.pid === input.rootPid) continue;
     const live = byPid.get(owned.pid);
     if (live === undefined || !samePosixProcessIdentity(owned, live)) {
