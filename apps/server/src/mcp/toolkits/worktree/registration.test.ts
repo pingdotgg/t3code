@@ -75,6 +75,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         headers: {
           accept: "application/json, text/event-stream",
           authorization: auth,
+          "mcp-protocol-version": "2025-06-18",
           ...(sessionId ? { "mcp-session-id": sessionId } : {}),
         },
         body: HttpBody.text(
