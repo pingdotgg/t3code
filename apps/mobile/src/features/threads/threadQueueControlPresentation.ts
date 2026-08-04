@@ -3,6 +3,7 @@ import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 export const AUTOMATIC_COMPLETION_DELIVERY_LABEL = "Automatic completion delivery";
 export const DISMISS_AUTOMATIC_COMPLETION_ACCESSIBILITY_LABEL =
   "Dismiss automatic completion delivery";
+export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
 export function collectAutomaticCompletionMessageIds(
   messages: ReadonlyArray<{
@@ -23,7 +24,7 @@ export interface ThreadQueueRowControls {
   readonly canMoveDown: boolean;
   readonly canMoveUp: boolean;
   readonly canSteer: boolean;
-  readonly dismissAccessibilityLabel: string | null;
+  readonly dismissAccessibilityLabel: string;
   readonly displayText: string;
 }
 
@@ -42,13 +43,13 @@ export function resolveThreadQueueRowControls(input: {
 
   return {
     automaticCompletion,
-    canDismiss: automaticCompletion && !input.busy,
+    canDismiss: !input.busy,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
     canSteer: mutationEnabled && input.canPromoteToSteer,
     dismissAccessibilityLabel: automaticCompletion
       ? DISMISS_AUTOMATIC_COMPLETION_ACCESSIBILITY_LABEL
-      : null,
+      : REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     displayText: automaticCompletion ? AUTOMATIC_COMPLETION_DELIVERY_LABEL : input.text,
   };
 }

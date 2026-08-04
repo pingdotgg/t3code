@@ -138,17 +138,15 @@ export function ThreadQueueControl(props: {
                 />
                 <Text className="font-t3-medium text-2xs text-foreground">Steer</Text>
               </Pressable>
-              {controls.automaticCompletion ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={controls.dismissAccessibilityLabel ?? undefined}
-                  disabled={!controls.canDismiss}
-                  onPress={() => void dismiss(run.id)}
-                  className="h-9 w-9 items-center justify-center disabled:opacity-30"
-                >
-                  <SymbolView name="xmark" size={13} tintColor={iconColor} type="monochrome" />
-                </Pressable>
-              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={controls.dismissAccessibilityLabel}
+                disabled={!controls.canDismiss}
+                onPress={() => void dismiss(run.id)}
+                className="h-9 w-9 items-center justify-center disabled:opacity-30"
+              >
+                <SymbolView name="xmark" size={13} tintColor={iconColor} type="monochrome" />
+              </Pressable>
             </View>
           );
         })}

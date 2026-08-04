@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   AUTOMATIC_COMPLETION_DELIVERY_LABEL,
   DISMISS_AUTOMATIC_COMPLETION_ACCESSIBILITY_LABEL,
+  REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
   collectAutomaticCompletionMessageIds,
   resolveThreadQueueRowControls,
@@ -51,7 +52,7 @@ describe("threadQueueControlPresentation", () => {
     );
   });
 
-  it("preserves ordinary queue reorder and steer controls without dismissal", () => {
+  it("preserves ordinary queue reorder and steer controls with removal", () => {
     const controls = resolveThreadQueueRowControls({
       automaticCompletionMessageIds: automaticIds,
       busy: false,
@@ -68,8 +69,8 @@ describe("threadQueueControlPresentation", () => {
     expect(controls.canMoveUp).toBe(true);
     expect(controls.canMoveDown).toBe(true);
     expect(controls.canSteer).toBe(true);
-    expect(controls.canDismiss).toBe(false);
-    expect(controls.dismissAccessibilityLabel).toBeNull();
+    expect(controls.canDismiss).toBe(true);
+    expect(controls.dismissAccessibilityLabel).toBe(REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL);
   });
 
   it("disables edge reorder controls and busy dismissal", () => {
