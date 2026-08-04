@@ -13,6 +13,7 @@ import {
   type GhosttyCellMetrics,
 } from "./renderer";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
+import { isMonospaceFamily } from "../../appearanceFonts";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -25,10 +26,11 @@ const TERMINAL_GLYPH_FALLBACKS =
   '"Symbols Nerd Font Mono", "Symbols Nerd Font", "JetBrainsMono Nerd Font", ' +
   '"JetBrainsMono NF", "FiraCode Nerd Font", "Hack Nerd Font", "MesloLGS NF", ' +
   '"CaskaydiaCove Nerd Font", "PowerlineSymbols", monospace';
-// SF Mono where the platform has it (macOS), otherwise the bundled JetBrains
-// Mono webfont, so the default rendering is identical everywhere else.
+// The platform's own monospace faces; concrete names only, because an
+// unknown keyword (like ui-monospace) makes canvas font shorthand parsing
+// reject the whole string.
 export const DEFAULT_TERMINAL_FONT_FAMILY =
-  '"SF Mono", "SFMono-Regular", "JetBrains Mono", ' + TERMINAL_GLYPH_FALLBACKS;
+  '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
@@ -61,11 +63,67 @@ function ensureTerminalSymbolsFont(): Promise<void> {
   return symbolsFontLoad;
 }
 
+function quoteTerminalFontFamilies(list: string): string {
+  return list
+    .split(",")
+    .map((name) => {
+      const bare = name.trim();
+      if (bare.length === 0) return "";
+      if (/^(['"]).*\1$/.test(bare)) return bare;
+      if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(bare)) return bare;
+      return `"${bare.replaceAll('"', "")}"`;
+    })
+    .filter((name) => name.length > 0)
+    .join(", ");
+}
+
 export function terminalFontFamily(family?: string): string {
-  const custom = family?.trim();
-  if (!custom) return DEFAULT_TERMINAL_FONT_FAMILY;
+  // Quote non-ident names ("3270 Nerd Font", "M+ 1m"): an unquoted one makes
+  // the whole canvas font string invalid and the assignment silently no-ops.
+  const custom = family === undefined ? "" : quoteTerminalFontFamilies(family);
+  if (custom.length === 0) return DEFAULT_TERMINAL_FONT_FAMILY;
+  // The grid places the cursor and selection on one cell advance, so a
+  // proportional face would draw its text narrower than its own cells. Refuse
+  // it here rather than render a ragged grid with a stranded cursor.
+  if (!isMonospaceFamily(custom)) return DEFAULT_TERMINAL_FONT_FAMILY;
   // A custom face keeps the glyph fallbacks so prompt symbols stay covered.
   return `${custom}, ${TERMINAL_GLYPH_FALLBACKS}`;
+}
+
+/**
+ * Grids narrower than a classic 80-column terminal wrap command output hard,
+ * so the rendered font size follows the canvas width: the preference is the
+ * ceiling, and the size slides down (to a legibility floor) until a full-width
+ * grid fits. A widening pane slides it back up toward the preference.
+ */
+const MIN_TERMINAL_FIT_COLUMNS = 80;
+const MIN_TERMINAL_FIT_FONT_SIZE = 8;
+
+export function fittedTerminalFontSize(
+  cellWidthAt: (size: number) => number,
+  requested: number,
+  mountWidth: number,
+): number {
+  const available = mountWidth - CONTENT_PADDING * 2;
+  if (available <= 0) return requested;
+  const floor = Math.min(requested, MIN_TERMINAL_FIT_FONT_SIZE);
+  const fits = (cellWidth: number) =>
+    cellWidth > 0 && Math.floor(available / cellWidth) >= MIN_TERMINAL_FIT_COLUMNS;
+  let cellWidth = cellWidthAt(requested);
+  if (cellWidth <= 0 || fits(cellWidth)) return requested;
+  // The advance scales linearly with size for monospace faces: jump close to
+  // the fitting size, then settle the remaining rounding one step at a time.
+  const targetCellWidth = available / MIN_TERMINAL_FIT_COLUMNS;
+  let size = Math.max(
+    floor,
+    Math.min(requested, Math.floor((requested * targetCellWidth) / cellWidth)),
+  );
+  while (size > floor) {
+    cellWidth = cellWidthAt(size);
+    if (cellWidth <= 0 || fits(cellWidth)) break;
+    size -= 1;
+  }
+  return size;
 }
 
 export function terminalFontSize(size?: number): number {
@@ -350,6 +408,7 @@ export class GhosttyTerminalSurface {
   private metrics: GhosttyCellMetrics;
   private fontFamily: string;
   private fontSize: number;
+  private requestedFontSize: number;
   private fontEpoch = 0;
   private readonly resizeObserver: ResizeObserver;
   private readonly scrollbarThumb: HTMLDivElement;
@@ -425,6 +484,7 @@ export class GhosttyTerminalSurface {
     this.theme = options.theme;
     this.fontFamily = terminalFontFamily(options.font?.family);
     this.fontSize = terminalFontSize(options.font?.size);
+    this.requestedFontSize = this.fontSize;
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.installEvents();
     this.watchDevicePixelRatio();
@@ -544,6 +604,7 @@ export class GhosttyTerminalSurface {
     }
     if (this.disposed || epoch !== this.fontEpoch) return;
     this.fontFamily = fontFamily;
+    this.requestedFontSize = fontSize;
     this.fontSize = fontSize;
     this.applyFontMetrics();
   }
@@ -588,6 +649,22 @@ export class GhosttyTerminalSurface {
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
     if (width <= 0 || height <= 0) return false;
+    const fitted = fittedTerminalFontSize(
+      (size) => measureGhosttyCell(this.context, size, this.fontFamily).width,
+      this.requestedFontSize,
+      width,
+    );
+    if (fitted !== this.fontSize) {
+      this.fontSize = fitted;
+      this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
+      // The grid-change branch below resizes the core, but only when the
+      // column count moved; the cell geometry always did, so sync it here.
+      this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+      this.inputLeft = -1;
+      this.inputTop = -1;
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+    }
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));

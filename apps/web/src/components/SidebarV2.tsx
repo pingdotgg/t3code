@@ -757,7 +757,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         type="button"
         onClick={handlePrClick}
         className={cn(
-          "shrink-0 font-mono text-xs hover:underline",
+          // Sidebar chrome follows the interface font; tabular digits keep the
+          // number from reflowing as PR states stream in.
+          "shrink-0 text-xs tabular-nums hover:underline",
           variant === "slim" && variantAction === "unsettle"
             ? props.isActive
               ? "text-muted-foreground/70"
