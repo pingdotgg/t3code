@@ -42,6 +42,7 @@ import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControl
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "../RunExecutionService.ts";
 import { layer as runFinalizationServiceLayer } from "../RunFinalizationService.ts";
+import { ThreadTitleRegenerationService } from "../ThreadTitleRegenerationService.ts";
 import {
   layer as runtimePolicyLayer,
   layerWithOverride as runtimePolicyLayerWithOverride,
@@ -334,6 +335,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const runFinalizationServiceProvided = runFinalizationServiceLayer.pipe(
     Layer.provide(Layer.merge(checkpointCaptureServiceProvided, storesLayer)),
   );
+  const threadTitleRegenerationTestLayer = Layer.succeed(
+    ThreadTitleRegenerationService,
+    ThreadTitleRegenerationService.of({ execute: () => Effect.void }),
+  );
   const effectExecutorProvided = effectExecutorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -343,6 +348,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         providerTurnControlServiceProvided,
         providerTurnStartServiceProvided,
         runtimeRequestServiceProvided,
+        threadTitleRegenerationTestLayer,
       ),
     ),
   );
@@ -355,7 +361,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         checkpointServiceProvided,
         commandPolicyLayer,
         contextHandoffServiceProvided,
-        effectWorkerProvided,
         persistenceLayer,
         registryLayer,
         runtimeLayer,
