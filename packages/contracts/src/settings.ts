@@ -58,6 +58,21 @@ export const GlassOpacity = Schema.Int.check(
 );
 export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
+// A project's accent colour travels as an OKLCH hue angle rather than a
+// finished colour: lightness and chroma are fixed per theme at the render site,
+// so every project reads at the same weight and the same stored value stays
+// legible in light and dark. A hex triple could encode "dark red on a dark
+// sidebar", which this cannot.
+export const MIN_PROJECT_COLOR_HUE = 0;
+export const MAX_PROJECT_COLOR_HUE = 359;
+export const ProjectColorHue = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PROJECT_COLOR_HUE,
+    maximum: MAX_PROJECT_COLOR_HUE,
+  }),
+);
+export type ProjectColorHue = typeof ProjectColorHue.Type;
+
 export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill", "none"]);
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
@@ -111,6 +126,12 @@ export const ClientSettingsSchema = Schema.Struct({
     TrimmedNonEmptyString,
     SidebarProjectGroupingMode,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Keyed by physical project key, the same identity grouping overrides use.
+  // Absent means "use the hue derived from the key", so clearing an override is
+  // a delete rather than a sentinel value.
+  sidebarProjectColorOverrides: Schema.Record(TrimmedNonEmptyString, ProjectColorHue).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
   ),
@@ -705,6 +726,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
+  ),
+  sidebarProjectColorOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, ProjectColorHue),
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),

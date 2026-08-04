@@ -12,7 +12,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  ProjectColorHue,
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -44,6 +48,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -72,10 +77,18 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import {
+  derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
+import { ProjectColorPicker } from "./ProjectColorPicker";
+import {
+  PROJECT_COLOR_TEXT_CLASS,
+  defaultProjectColor,
+  projectColorStyle,
+  resolveProjectHue,
+} from "../lib/projectColor";
 import {
   buildSidebarProjectSnapshots,
   type SidebarProjectGroupMember,
@@ -405,6 +418,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   environmentLabel: string | null;
   projectCwd: string | null;
   projectTitle: string | null;
+  projectHue: ProjectColorHue | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -928,9 +942,20 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               {props.projectTitle ? (
                 <span
                   className={cn(
-                    "min-w-0 flex-1 truncate text-xs text-muted-foreground/85",
+                    "min-w-0 flex-1 truncate text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
+                    // Only the hue varies per project. The muted default is kept
+                    // for a project whose colour has not resolved yet, so a row
+                    // never flashes an unstyled label.
+                    props.projectHue === null
+                      ? "text-muted-foreground/85"
+                      : PROJECT_COLOR_TEXT_CLASS,
                   )}
+                  style={
+                    props.projectHue === null
+                      ? undefined
+                      : (projectColorStyle(props.projectHue) as CSSProperties)
+                  }
                 >
                   {props.projectTitle}
                 </span>
@@ -1184,6 +1209,7 @@ export default function SidebarV2() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectColorOverrides = useClientSettings((s) => s.sidebarProjectColorOverrides);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -1340,6 +1366,23 @@ export default function SidebarV2() {
         ),
       ),
     [projectGroups],
+  );
+  // Colour is keyed by workspace path, not project id: the same checkout added
+  // on two machines is one project to the user and must land on one colour, and
+  // renaming a project must not reshuffle it. That is the identity grouping
+  // overrides already use.
+  const projectHueByKey = useMemo(
+    () =>
+      new Map(
+        projects.map(
+          (project) =>
+            [
+              `${project.environmentId}:${project.id}`,
+              resolveProjectHue(derivePhysicalProjectKey(project), projectColorOverrides),
+            ] as const,
+        ),
+      ),
+    [projects, projectColorOverrides],
   );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
@@ -1545,6 +1588,22 @@ export default function SidebarV2() {
       updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
     },
     [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
+  );
+
+  // A null hue deletes the entry rather than storing a sentinel: absent means
+  // "derive it", so Auto and never-touched are the same state and cannot drift.
+  const updateProjectColor = useCallback(
+    (member: SidebarProjectGroupMember, hue: ProjectColorHue | null) => {
+      const overrideKey = deriveProjectGroupingOverrideKey(member);
+      const nextOverrides = { ...projectColorOverrides };
+      if (hue === null) {
+        delete nextOverrides[overrideKey];
+      } else {
+        nextOverrides[overrideKey] = hue;
+      }
+      updateSettings({ sidebarProjectColorOverrides: nextOverrides });
+    },
+    [projectColorOverrides, updateSettings],
   );
 
   const handleProjectActions = useCallback(
@@ -2892,6 +2951,9 @@ export default function SidebarV2() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
+                        projectHue={
+                          projectHueByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                        }
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}
@@ -3141,6 +3203,32 @@ export default function SidebarV2() {
                         </SelectPopup>
                       </Select>
                     </label>
+                  </div>
+                  {/* Its own row rather than a third grid cell: the swatch strip
+                    is wider than a select and would force the two controls
+                    above it into a cramped column on narrow dialogs. */}
+                  <div className="grid min-w-0 gap-1.5">
+                    <span className="font-medium text-foreground">Colour</span>
+                    {(() => {
+                      const colorKey = deriveProjectGroupingOverrideKey(member);
+                      const storedHue = projectColorOverrides?.[colorKey];
+                      return (
+                        <>
+                          <ProjectColorPicker
+                            projectLabel={member.title}
+                            hue={resolveProjectHue(colorKey, projectColorOverrides)}
+                            hasOverride={storedHue !== undefined}
+                            onSelect={(hue) => updateProjectColor(member, hue)}
+                            onReset={() => updateProjectColor(member, null)}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {storedHue === undefined
+                              ? `Automatic (${defaultProjectColor(colorKey).label})`
+                              : "Custom"}
+                          </span>
+                        </>
+                      );
+                    })()}
                   </div>
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
