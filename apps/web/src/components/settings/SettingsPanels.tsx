@@ -78,10 +78,13 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import {
+  primaryServerAvailableEditorsAtom,
   primaryServerObservabilityAtom,
   primaryServerProvidersAtom,
   serverEnvironment,
 } from "../../state/server";
+import { useEditorPreferences, useSetDefaultEditor } from "../../editorPreferences";
+import { getOpenInIconClass, resolveEditorOptions } from "../chat/OpenInPicker";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -560,6 +563,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const setDefaultEditor = useSetDefaultEditor();
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -578,6 +582,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.defaultEditor !== DEFAULT_UNIFIED_SETTINGS.defaultEditor ? ["Open in"] : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -624,6 +629,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.defaultEditor,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -651,6 +657,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (!confirmed) return;
 
     setTheme("system");
+    // Goes through its own setter so the pre-override sticky editor is dropped
+    // too, otherwise it would come straight back as the fallback default.
+    setDefaultEditor(null);
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -674,7 +683,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+  }, [changedSettingLabels, onRestored, setDefaultEditor, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -1114,6 +1123,64 @@ export function AppearanceSettingsPanel() {
   );
 }
 
+/**
+ * Global "Open in" app. Projects inherit it unless they carry an override of
+ * their own, set from the picker or the project's settings.
+ */
+function DefaultEditorSettingsRow() {
+  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
+  const { defaultEditor } = useEditorPreferences();
+  const setDefaultEditor = useSetDefaultEditor();
+  const options = useMemo(
+    () => resolveEditorOptions(navigator.platform, availableEditors),
+    [availableEditors],
+  );
+  const selectedOption = options.find(({ value }) => value === defaultEditor) ?? null;
+  const automaticLabel = options[0] ? `Automatic (${options[0].label})` : "No installed apps found";
+
+  return (
+    <SettingsRow
+      title="Open in"
+      description="App the Open button launches for projects without a choice of their own."
+      resetAction={
+        selectedOption ? (
+          <SettingResetButton label="default app" onClick={() => setDefaultEditor(null)} />
+        ) : null
+      }
+      control={
+        <Select
+          value={selectedOption?.value ?? "auto"}
+          onValueChange={(value) => {
+            if (value === "auto") {
+              setDefaultEditor(null);
+              return;
+            }
+            const option = options.find((candidate) => candidate.value === value);
+            if (option) setDefaultEditor(option.value);
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-56" aria-label="Default app to open projects in">
+            <SelectValue>{selectedOption?.label ?? automaticLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="auto">
+              {automaticLabel}
+            </SelectItem>
+            {options.map(({ label, Icon, value, kind }) => (
+              <SelectItem hideIndicator key={value} value={value}>
+                <span className="flex items-center gap-2">
+                  <Icon aria-hidden="true" className={`size-3.5 ${getOpenInIconClass(kind)}`} />
+                  {label}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -1205,6 +1272,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <DefaultEditorSettingsRow />
 
         <SettingsRow
           {...searchableSetting("time-format")}

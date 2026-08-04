@@ -1,11 +1,15 @@
 import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
-import { usePreferredEditor } from "../../editorPreferences";
+import {
+  resolveEditorForProject,
+  useEditorPreferences,
+  usePreferredEditor,
+} from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "../ui/menu";
 import {
   AntigravityIcon,
   CursorIcon,
@@ -35,14 +39,18 @@ import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-type OpenInOption = {
+export type OpenInOption = {
   label: string;
   Icon: Icon;
   value: EditorId;
   kind: "brand" | "generic";
 };
 
-const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+/** Installed editors as pickable options, in the order the picker lists them. */
+export const resolveEditorOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+) => {
   const baseOptions: ReadonlyArray<OpenInOption> = [
     {
       label: "Cursor",
@@ -179,7 +187,7 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
   return baseOptions.filter((option) => availableEditorSet.has(option.value));
 };
 
-function getOpenInIconClass(kind: OpenInOption["kind"]) {
+export function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
@@ -188,6 +196,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  projectKey = null,
   compact = false,
   enableShortcut = true,
 }: {
@@ -195,19 +204,35 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  /**
+   * Physical project key the target belongs to. Picking an editor pins it to
+   * this project; without a key the pick moves the global default instead.
+   */
+  projectKey?: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
-  const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
+  const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors, projectKey);
+  const preferences = useEditorPreferences();
   const options = useMemo(
-    () => resolveOptions(navigator.platform, availableEditors),
+    () => resolveEditorOptions(navigator.platform, availableEditors),
     [availableEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
+  const hasProjectOverride =
+    projectKey !== null && preferences.projectEditorOverrides[projectKey] !== undefined;
+  const inheritedEditor = useMemo(
+    () => resolveEditorForProject({ preferences, projectKey: null, availableEditors }),
+    [availableEditors, preferences],
+  );
+  const inheritedOption = options.find(({ value }) => value === inheritedEditor) ?? null;
 
+  // "remember" pins the pick to this project (or the global default when the
+  // picker has no project); "inherit" drops the pin; "keep" leaves the stored
+  // preference untouched, which is what the plain Open button wants.
   const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
+    (editorId: EditorId | null, intent: "remember" | "inherit" | "keep") => {
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
@@ -218,7 +243,8 @@ export const OpenInPicker = memo(function OpenInPicker({
           editor,
         },
       });
-      setPreferredEditor(editor);
+      if (intent === "remember") setPreferredEditor(editor);
+      if (intent === "inherit") setPreferredEditor(null);
       return result;
     },
     [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
@@ -264,7 +290,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         size="xs"
         variant="outline"
         disabled={!preferredEditor || !openInCwd}
-        onClick={() => openInEditor(preferredEditor)}
+        onClick={() => openInEditor(preferredEditor, "keep")}
       >
         {primaryOption?.Icon && (
           <primaryOption.Icon
@@ -297,8 +323,20 @@ export const OpenInPicker = memo(function OpenInPicker({
         </MenuTrigger>
         <MenuPopup align="end">
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
+          {hasProjectOverride && inheritedOption && (
+            <>
+              <MenuItem onClick={() => openInEditor(inheritedOption.value, "inherit")}>
+                <inheritedOption.Icon
+                  aria-hidden="true"
+                  className={getOpenInIconClass(inheritedOption.kind)}
+                />
+                Use default ({inheritedOption.label})
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          )}
           {options.map(({ label, Icon, value, kind }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
+            <MenuItem key={value} onClick={() => openInEditor(value, "remember")}>
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               {label}
               {value === preferredEditor && openFavoriteEditorShortcutLabel && (

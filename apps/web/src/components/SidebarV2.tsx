@@ -12,7 +12,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { EditorId, ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -88,6 +88,13 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import {
+  resolveEditorForProject,
+  useEditorPreferences,
+  useSetProjectEditorOverride,
+} from "../editorPreferences";
+import { editorProjectKey } from "../editorPreferences.logic";
+import { resolveEditorOptions } from "./chat/OpenInPicker";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -165,6 +172,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
+const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
@@ -1545,6 +1553,16 @@ export default function SidebarV2() {
       updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
     },
     [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
+  );
+
+  const editorPreferences = useEditorPreferences();
+  const setProjectEditorOverride = useSetProjectEditorOverride();
+  const updateProjectEditor = useCallback(
+    (member: SidebarProjectGroupMember, editor: EditorId | null) => {
+      const projectKey = editorProjectKey(member);
+      if (projectKey) setProjectEditorOverride(projectKey, editor);
+    },
+    [setProjectEditorOverride],
   );
 
   const handleProjectActions = useCallback(
@@ -3142,6 +3160,68 @@ export default function SidebarV2() {
                       </Select>
                     </label>
                   </div>
+                  {(() => {
+                    const projectKey = editorProjectKey(member);
+                    const availableEditors =
+                      serverConfigs.get(member.environmentId)?.availableEditors ??
+                      EMPTY_AVAILABLE_EDITORS;
+                    const editorOptions = resolveEditorOptions(
+                      navigator.platform,
+                      availableEditors,
+                    );
+                    const override = projectKey
+                      ? (editorPreferences.projectEditorOverrides[projectKey] ?? null)
+                      : null;
+                    const overrideOption =
+                      editorOptions.find(({ value }) => value === override) ?? null;
+                    const inheritedEditor = resolveEditorForProject({
+                      preferences: editorPreferences,
+                      projectKey: null,
+                      availableEditors,
+                    });
+                    const inheritedLabel =
+                      editorOptions.find(({ value }) => value === inheritedEditor)?.label ?? null;
+                    return (
+                      <label className="grid min-w-0 gap-1.5">
+                        <span className="font-medium text-foreground">Open in</span>
+                        <Select
+                          value={overrideOption?.value ?? "inherit"}
+                          onValueChange={(value) => {
+                            if (value === "inherit") {
+                              updateProjectEditor(member, null);
+                              return;
+                            }
+                            const option = editorOptions.find(
+                              (candidate) => candidate.value === value,
+                            );
+                            if (option) updateProjectEditor(member, option.value);
+                          }}
+                        >
+                          <SelectTrigger
+                            className="w-full sm:min-h-7.5"
+                            aria-label={`App to open ${member.title} in`}
+                          >
+                            <SelectValue>
+                              {overrideOption?.label ??
+                                (inheritedLabel
+                                  ? `Default (${inheritedLabel})`
+                                  : "No installed apps found")}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup align="start" alignItemWithTrigger={false}>
+                            <SelectItem hideIndicator value="inherit">
+                              Use global default
+                            </SelectItem>
+                            {editorOptions.map(({ label, value }) => (
+                              <SelectItem hideIndicator key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            ))}
+                          </SelectPopup>
+                        </Select>
+                      </label>
+                    );
+                  })()}
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
                       <Button

@@ -1269,11 +1269,16 @@ function ChatMarkdown({
     reportFailure: false,
   });
   const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
-  const environmentId = useActiveEnvironmentId();
+  const activeEnvironmentId = useActiveEnvironmentId();
+  // The paths in these links belong to the thread, so the editor has to launch
+  // on the thread's environment — matching the file preview panel — otherwise
+  // the override we resolve and the machine we open on can disagree.
+  const environmentId = threadRef?.environmentId ?? activeEnvironmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
+    threadRef ?? null,
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {

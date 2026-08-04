@@ -26,7 +26,7 @@ import {
   ToastProvider,
   toastManager,
 } from "../components/ui/toast";
-import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { resolvePreferredEditor } from "../editorPreferences";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -363,7 +363,7 @@ function EventRouter() {
               return;
             }
 
-            const editor = resolveAndPersistPreferredEditor(serverConfig.availableEditors);
+            const editor = resolvePreferredEditor(serverConfig.availableEditors);
             if (!editor) {
               return;
             }

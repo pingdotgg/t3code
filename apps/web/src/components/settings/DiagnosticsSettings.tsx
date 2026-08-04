@@ -22,7 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
+import { resolvePreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import {
@@ -862,7 +862,7 @@ export function DiagnosticsSettingsPanel() {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
 
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
+    const editor = resolvePreferredEditor(availableEditors ?? []);
     if (!editor) {
       setOpenLogsDirectoryError("No available editors found.");
       return;

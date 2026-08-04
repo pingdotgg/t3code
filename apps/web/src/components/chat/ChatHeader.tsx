@@ -27,6 +27,8 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
+  /** Physical project key the Open-in picker pins its editor choice to. */
+  openInProjectKey: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -63,6 +65,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadTitle,
   activeProjectName,
   activeProjectCwd,
+  openInProjectKey,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -158,6 +161,7 @@ export const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            projectKey={openInProjectKey}
           />
         )}
         {activeProjectName && (

@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { EditorId } from "./editor.ts";
 import { DEFAULT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
@@ -66,6 +67,10 @@ export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Editor "Open in" falls back to when a project has no override of its own.
+  // Null means "whichever editor the environment reports first", so a fresh
+  // install still opens something without the user picking anything.
+  defaultEditor: Schema.NullOr(EditorId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -92,6 +97,12 @@ export const ClientSettingsSchema = Schema.Struct({
       model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Keyed by physical project key, like `sidebarProjectGroupingOverrides`.
+  // Absent means the project inherits `defaultEditor`, so clearing an override
+  // is a delete rather than a sentinel value.
+  projectEditorOverrides: Schema.Record(TrimmedNonEmptyString, EditorId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   providerModelPreferences: Schema.Record(
     ProviderInstanceId,
     Schema.Struct({
@@ -677,6 +688,7 @@ export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  defaultEditor: Schema.optionalKey(Schema.NullOr(EditorId)),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
@@ -688,6 +700,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  projectEditorOverrides: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, EditorId)),
   providerModelPreferences: Schema.optionalKey(
     Schema.Record(
       ProviderInstanceId,

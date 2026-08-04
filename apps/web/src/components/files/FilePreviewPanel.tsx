@@ -67,6 +67,12 @@ import {
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
+  /**
+   * Physical project key for the owning project. Passed in rather than derived
+   * from `cwd`, which is the worktree path for a worktree thread and would key
+   * editor overrides to something the rest of the UI never reads.
+   */
+  projectKey: string | null;
   projectName: string;
   relativePath: string | null;
   threadRef: ScopedThreadRef;
@@ -747,6 +753,7 @@ function initialExplorerOpen(): boolean {
 export default function FilePreviewPanel({
   environmentId,
   cwd,
+  projectKey,
   projectName,
   relativePath,
   threadRef,
@@ -886,6 +893,7 @@ export default function FilePreviewPanel({
               keybindings={keybindings}
               availableEditors={availableEditors}
               openInCwd={absolutePath}
+              projectKey={projectKey}
               compact
               enableShortcut={false}
             />
