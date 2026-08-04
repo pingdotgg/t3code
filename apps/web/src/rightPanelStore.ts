@@ -5,16 +5,25 @@
  * surface descriptors and the active surface, while each feature continues to
  * own its durable resource state. Browser surfaces point at preview tab ids,
  * terminal surfaces point at terminal session ids, file surfaces point at
- * workspace paths, and diff/plan/files remain singleton surfaces.
+ * workspace paths, message surfaces point at message ids, and diff/plan/files
+ * remain singleton surfaces.
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { MessageId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
+export const RIGHT_PANEL_KINDS = [
+  "plan",
+  "diff",
+  "files",
+  "file",
+  "message",
+  "preview",
+  "terminal",
+] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -37,6 +46,11 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
+  | {
+      id: `message:${string}`;
+      kind: "message";
+      messageId: MessageId;
+    }
   | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -50,9 +64,13 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  open: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "message" | "terminal">,
+  ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openMessage: (ref: ScopedThreadRef, messageId: MessageId) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -72,7 +90,10 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  toggle: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "message" | "terminal">,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -83,7 +104,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
+  kind: Exclude<RightPanelKind, "file" | "message" | "preview" | "terminal">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -118,6 +139,12 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+});
+
+const messageSurface = (messageId: MessageId): RightPanelSurface => ({
+  id: `message:${messageId}`,
+  kind: "message",
+  messageId,
 });
 
 const upsertSurface = (
@@ -285,6 +312,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [...withoutStandaloneExplorer, surface],
             };
           }),
+        })),
+      openMessage: (ref, messageId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, messageSurface(messageId)),
+          ),
         })),
       openTerminal: (ref, terminalId) =>
         set((state) => ({

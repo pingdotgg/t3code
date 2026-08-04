@@ -1,6 +1,15 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import {
+  ClipboardList,
+  FileDiff,
+  Files,
+  Globe2,
+  MessageSquare,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -198,6 +207,8 @@ function surfaceTitle(
       return "Files";
     case "file":
       return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
+    case "message":
+      return "Message";
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
@@ -264,6 +275,8 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3.5 shrink-0" />;
+    case "message":
+      return <MessageSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
   }
