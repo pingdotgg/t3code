@@ -138,9 +138,9 @@ const RpcRequest = Schema.TaggedStruct("Request", {
   payload: Schema.Unknown,
   tag: Schema.String,
 });
-const decodeJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeRpcRequest = Schema.decodeUnknownSync(RpcRequest);
-const encodeJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeServerConfig = Schema.encodeSync(ServerConfig);
 const ENCODED_SERVER_CONFIG = encodeServerConfig(SERVER_CONFIG);
 const LEGACY_SERVER_CONFIG = {
