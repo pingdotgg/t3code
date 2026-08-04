@@ -4,7 +4,6 @@ import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 
@@ -24,7 +23,7 @@ function validateRelayUrl(value: string) {
     ? Effect.fail(
         new Config.ConfigError(
           new Schema.SchemaError(
-            new SchemaIssue.InvalidValue(Option.some(value), {
+            new SchemaIssue.InvalidValue({
               message: "Relay URL must be a secure absolute HTTPS origin.",
             }),
           ),
@@ -130,7 +129,7 @@ function validateHostedAppUrl(value: string) {
     return Effect.fail(
       new Config.ConfigError(
         new Schema.SchemaError(
-          new SchemaIssue.InvalidValue(Option.some(value), {
+          new SchemaIssue.InvalidValue({
             message: "Hosted app URL must be an absolute HTTPS origin (or HTTP loopback origin).",
           }),
         ),
