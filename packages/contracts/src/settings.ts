@@ -143,6 +143,13 @@ export const ClientSettingsSchema = Schema.Struct({
   // Grayscale `-webkit-font-smoothing: antialiased` (thinner strokes);
   // disabling restores the platform's heavier default. No effect off macOS.
   fontSmoothing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Host(+path-prefix) patterns for chat links that should open in the
+  // integrated browser panel instead of the system browser. Stored raw;
+  // parsing/validation lives in the web app so an invalid persisted entry
+  // can never break settings decoding.
+  integratedBrowserUrlPatterns: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -762,6 +769,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
+  integratedBrowserUrlPatterns: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

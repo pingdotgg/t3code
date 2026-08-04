@@ -140,6 +140,7 @@ import {
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { IntegratedBrowserLinksSetting } from "./IntegratedBrowserLinksSetting";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   backgroundActivitySharedPolicySettings,
@@ -650,12 +651,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.integratedBrowserUrlPatterns.length > 0 ? ["Integrated browser links"] : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
     ],
     [
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
       settings.autoOpenPlanSidebar,
+      settings.integratedBrowserUrlPatterns,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -713,6 +716,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      integratedBrowserUrlPatterns: DEFAULT_UNIFIED_SETTINGS.integratedBrowserUrlPatterns,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -2026,6 +2030,26 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {isElectron ? (
+          <SettingsRow
+            {...searchableSetting("integrated-browser-links")}
+            description="Chat links matching these patterns open in the integrated browser panel instead of your system browser."
+            resetAction={
+              settings.integratedBrowserUrlPatterns.length > 0 ? (
+                <SettingResetButton
+                  label="integrated browser links"
+                  onClick={() => updateSettings({ integratedBrowserUrlPatterns: [] })}
+                />
+              ) : null
+            }
+          >
+            <IntegratedBrowserLinksSetting
+              patterns={settings.integratedBrowserUrlPatterns}
+              onChange={(next) => updateSettings({ integratedBrowserUrlPatterns: next })}
+            />
+          </SettingsRow>
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("archive-confirmation")}

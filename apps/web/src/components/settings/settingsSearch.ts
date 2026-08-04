@@ -132,6 +132,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "integrated-browser-links",
+    title: "Integrated browser links",
+    to: "/settings/general",
+  },
+  {
     id: "archive-confirmation",
     title: "Archive confirmation",
     to: "/settings/general",
