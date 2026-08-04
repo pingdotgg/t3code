@@ -19,12 +19,15 @@ export type QrEndpointOption = {
    * endpoints can share one, so it is only used to match the saved default.
    */
   readonly preferenceKey: string;
+  /** False for endpoints that stay copyable but must never render as a QR. */
+  readonly qrShareable: boolean;
 };
 
 /**
- * Resolves which endpoint the QR panel shows: the user's explicit pick, else
- * the saved default endpoint, else the first shareable option. A stale
- * selectedId (endpoint disappeared) falls back rather than blanking the QR.
+ * Resolves which endpoint the share panel shows: the user's explicit pick,
+ * else the saved default endpoint, else the first QR-shareable option (so the
+ * panel never opens on a loopback QR), else the first option. A stale
+ * selectedId (endpoint disappeared) falls back rather than blanking the panel.
  */
 export function selectQrEndpointOption<T extends QrEndpointOption>(
   options: ReadonlyArray<T>,
@@ -36,6 +39,7 @@ export function selectQrEndpointOption<T extends QrEndpointOption>(
     (defaultPreferenceKey !== null
       ? options.find((option) => option.preferenceKey === defaultPreferenceKey)
       : undefined) ??
+    options.find((option) => option.qrShareable) ??
     options[0] ??
     null
   );

@@ -117,9 +117,26 @@ describe("isQrShareableEndpoint", () => {
 
 describe("selectQrEndpointOption", () => {
   const options = [
-    { id: "tailscale-ip:http://100.84.12.7:4780", preferenceKey: "tailscale:ip:http" },
-    { id: "tailscale-ip:http://100.84.12.8:4780", preferenceKey: "tailscale:ip:http" },
-    { id: "desktop-lan:http://192.168.1.42:4780", preferenceKey: "desktop-core:lan:http" },
+    {
+      id: "desktop-loopback:4780",
+      preferenceKey: "desktop-core:loopback:http",
+      qrShareable: false,
+    },
+    {
+      id: "tailscale-ip:http://100.84.12.7:4780",
+      preferenceKey: "tailscale:ip:http",
+      qrShareable: true,
+    },
+    {
+      id: "tailscale-ip:http://100.84.12.8:4780",
+      preferenceKey: "tailscale:ip:http",
+      qrShareable: true,
+    },
+    {
+      id: "desktop-lan:http://192.168.1.42:4780",
+      preferenceKey: "desktop-core:lan:http",
+      qrShareable: true,
+    },
   ];
 
   it("resolves an explicit selection by unique endpoint id, not the shared preference key", () => {
@@ -134,8 +151,15 @@ describe("selectQrEndpointOption", () => {
     );
   });
 
-  it("falls back to the first option for a stale selection or unknown default", () => {
-    expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(options[0]?.id);
+  it("skips non-QR-shareable options in the fallback so the panel never opens on loopback", () => {
+    expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
+      "tailscale-ip:http://100.84.12.7:4780",
+    );
+  });
+
+  it("returns the first option when nothing is QR-shareable, and null when empty", () => {
+    const loopbackOnly = options.slice(0, 1);
+    expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
   });
 });

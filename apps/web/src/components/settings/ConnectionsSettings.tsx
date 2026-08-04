@@ -586,10 +586,6 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     }
     return options;
   }, [endpoints, pairingLink.credential]);
-  const qrEndpointOptions = useMemo(
-    () => endpointCopyOptions.filter((option) => option.qrShareable),
-    [endpointCopyOptions],
-  );
   const shareablePairingUrl =
     endpointPairingUrl ??
     (endpointUrl != null && endpointUrl !== ""
@@ -597,9 +593,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       : isLoopbackHostname(window.location.hostname)
         ? null
         : currentOriginPairingUrl);
-  const revealValue = shareablePairingUrl ?? pairingLink.credential;
-  const isShareableHostedAppPairingUrl =
-    shareablePairingUrl !== null && isHostedAppPairingUrl(shareablePairingUrl);
+  // Last value a copy was attempted for. The clipboard-failure reveal dialog
+  // must show exactly what failed to copy, not the row's default URL.
+  const [lastCopyAttemptValue, setLastCopyAttemptValue] = useState<string | null>(null);
+  const revealValue = lastCopyAttemptValue ?? shareablePairingUrl ?? pairingLink.credential;
+  const isRevealValueUrl = revealValue !== pairingLink.credential;
+  const isRevealValueHostedAppPairingUrl = isRevealValueUrl && isHostedAppPairingUrl(revealValue);
+  // Never render a QR for a loopback URL, even in the manual-copy fallback.
+  const isRevealValueQrShareable =
+    endpointCopyOptions.find((option) => option.url === revealValue)?.qrShareable ?? true;
   const canCopyToClipboard =
     typeof window !== "undefined" &&
     window.isSecureContext &&
@@ -643,6 +645,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 
   const copyPairingValue = useCallback(
     (value: string, kind: "code" | "hosted-link" | "link") => {
+      setLastCopyAttemptValue(kind === "code" ? null : value);
       copyToClipboard(value, kind);
     },
     [copyToClipboard],
@@ -661,11 +664,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
   const selectedQrOption = selectQrEndpointOption(
-    qrEndpointOptions,
+    endpointCopyOptions,
     qrEndpointId,
     defaultEndpointKey,
   );
   const qrPairingUrl = selectedQrOption?.url ?? shareablePairingUrl;
+  // With no endpoint list the fallback is never loopback: selectPairingEndpoint
+  // skips loopback and the current-origin fallback is guarded by
+  // isLoopbackHostname, so only an explicit loopback selection hides the QR.
+  const canRenderQrForSelection = selectedQrOption?.qrShareable ?? true;
   if (expiresAtMs <= nowMs) {
     return null;
   }
@@ -720,15 +727,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <DialogPopup className="max-w-md">
               <DialogHeader>
                 <DialogTitle>
-                  {shareablePairingUrl
-                    ? isShareableHostedAppPairingUrl
+                  {isRevealValueUrl
+                    ? isRevealValueHostedAppPairingUrl
                       ? "Hosted app pairing link"
                       : "Pairing link"
                     : "Pairing code"}
                 </DialogTitle>
                 <DialogDescription>
-                  {shareablePairingUrl
-                    ? isShareableHostedAppPairingUrl
+                  {isRevealValueUrl
+                    ? isRevealValueHostedAppPairingUrl
                       ? "Clipboard copy is unavailable here. Open or manually copy this hosted app link on the device you want to connect."
                       : "Clipboard copy is unavailable here. Open or manually copy this full pairing URL on the device you want to connect."
                     : "Clipboard copy is unavailable here. Manually copy this code into another client."}
@@ -738,15 +745,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 <Textarea
                   readOnly
                   value={revealValue}
-                  rows={shareablePairingUrl ? 4 : 3}
+                  rows={isRevealValueUrl ? 4 : 3}
                   className="text-xs leading-relaxed"
                   onFocus={(event) => event.currentTarget.select()}
                   onClick={(event) => event.currentTarget.select()}
                 />
-                {shareablePairingUrl ? (
+                {isRevealValueUrl && isRevealValueQrShareable ? (
                   <div className="flex justify-center rounded-xl border border-border/60 bg-muted/30 p-4">
                     <QRCodeSvg
-                      value={shareablePairingUrl}
+                      value={revealValue}
                       size={132}
                       level="M"
                       marginSize={2}
@@ -783,14 +790,14 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           className="mt-3 flex flex-col gap-4 border-t border-border/50 pt-3 sm:flex-row sm:items-start sm:justify-between"
         >
           <div className="min-w-0 flex-1 space-y-3">
-            {qrEndpointOptions.length > 1 ? (
+            {endpointCopyOptions.length > 1 ? (
               <div
                 className="space-y-1.5"
                 role="radiogroup"
                 aria-label="Endpoint the pairing QR code and URL use"
               >
                 <p className="text-[11px] text-muted-foreground/70">Reach this machine via</p>
-                {qrEndpointOptions.map((option) => {
+                {endpointCopyOptions.map((option) => {
                   const isSelected = option.id === selectedQrOption?.id;
                   return (
                     <button
@@ -842,15 +849,24 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               Copy code only
             </Button>
           </div>
-          <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
-            <QRCodeSvg
-              value={qrPairingUrl}
-              size={168}
-              level="M"
-              marginSize={1}
-              title="Pairing link — scan to open on another device"
-            />
-          </div>
+          {canRenderQrForSelection ? (
+            <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
+              <QRCodeSvg
+                value={qrPairingUrl}
+                size={168}
+                level="M"
+                marginSize={1}
+                title="Pairing link — scan to open on another device"
+              />
+            </div>
+          ) : (
+            <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border/50 p-4 sm:self-start">
+              <p className="text-center text-[11px] text-muted-foreground/70">
+                No QR for this endpoint. Another device scanning a loopback link would dial itself;
+                copy the URL for use on this machine instead.
+              </p>
+            </div>
+          )}
         </div>
       ) : null}
     </div>
