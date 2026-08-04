@@ -788,8 +788,8 @@ describe("ProviderCommandReactor", () => {
   it("pins the first user message when regeneration context is truncated", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
-    const firstUserMessage = "Review the subagent monitoring design for release risks.";
-    const recentAssistantMessage = `LATEST FINDING: ${"implementation detail ".repeat(500)}`;
+    const firstUserMessage = `Review subagent monitoring risks. ${"Opening context. ".repeat(200)}`;
+    const recentUserMessage = `LATEST FINDING: ${"implementation detail ".repeat(320)}`;
     harness.generateThreadTitle.mockReturnValue(
       Effect.succeed({ title: "Review subagent monitoring risks" }),
     );
@@ -811,7 +811,15 @@ describe("ProviderCommandReactor", () => {
           messageId: asMessageId("user-message-before-long-title-regeneration"),
           role: "user",
           text: firstUserMessage,
-          attachments: [],
+          attachments: [
+            {
+              type: "image",
+              id: "opening-context-image",
+              name: "opening.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -820,20 +828,49 @@ describe("ProviderCommandReactor", () => {
     );
     await harness.runEffect(
       harness.engine.dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: CommandId.make("cmd-assistant-before-long-title-regeneration"),
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-middle-turn-before-long-title-regeneration"),
         threadId: ThreadId.make("thread-1"),
-        messageId: asMessageId("assistant-message-before-long-title-regeneration"),
-        delta: recentAssistantMessage,
+        message: {
+          messageId: asMessageId("middle-message-before-long-title-regeneration"),
+          role: "user",
+          text: "Temporary handoff details.",
+          attachments: [
+            {
+              type: "image",
+              id: "middle-context-image",
+              name: "middle.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
         createdAt: "2026-01-01T00:00:01.000Z",
       }),
     );
     await harness.runEffect(
       harness.engine.dispatch({
-        type: "thread.message.assistant.complete",
-        commandId: CommandId.make("cmd-assistant-complete-before-long-title-regeneration"),
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-recent-turn-before-long-title-regeneration"),
         threadId: ThreadId.make("thread-1"),
-        messageId: asMessageId("assistant-message-before-long-title-regeneration"),
+        message: {
+          messageId: asMessageId("recent-message-before-long-title-regeneration"),
+          role: "user",
+          text: recentUserMessage,
+          attachments: [
+            {
+              type: "image",
+              id: "recent-context-image",
+              name: "recent.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
         createdAt: "2026-01-01T00:00:02.000Z",
       }),
     );
@@ -849,11 +886,18 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
 
     expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
-    const message = harness.generateThreadTitle.mock.calls[0]?.[0].message;
-    expect(message?.startsWith(`USER:\n${firstUserMessage}`)).toBe(true);
+    const input = harness.generateThreadTitle.mock.calls[0]?.[0];
+    const message = input.message;
+    expect(message.startsWith("USER:\nReview subagent monitoring risks.")).toBe(true);
+    expect(message).toContain("[First user message truncated]");
     expect(message).toContain("[Earlier content truncated]");
-    expect(message).toContain("implementation detail");
+    expect(message).toContain("recent.png");
+    expect(message).not.toContain("middle.png");
     expect(message).toHaveLength(8_000);
+    expect(input.attachments?.map((attachment) => attachment.id)).toEqual([
+      "opening-context-image",
+      "recent-context-image",
+    ]);
   });
 
   it("clears title regeneration state left pending across reactor startup", async () => {

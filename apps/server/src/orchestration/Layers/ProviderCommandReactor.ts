@@ -157,6 +157,7 @@ function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): 
     retainedAttachments.unshift(...(message.attachments ?? []));
   }
 
+  let recentContext = context;
   const firstUserMessage = truncated
     ? messages.find((message) => message.role === "user" && formatThreadTitleSection(message))
     : undefined;
@@ -169,8 +170,8 @@ function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): 
         pinnedSection.length -
         "\n\n".length -
         THREAD_TITLE_CONTEXT_TRUNCATION_MARKER.length;
-      context = context.slice(-recentContextBudget);
-      context = `${pinnedSection}\n\n${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}`;
+      recentContext = context.slice(-recentContextBudget);
+      context = `${pinnedSection}\n\n${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${recentContext}`;
     }
   } else if (truncated) {
     context = `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}`;
@@ -178,7 +179,8 @@ function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): 
 
   const pinnedAttachment = firstUserMessage?.attachments?.[0];
   const recentAttachments = retainedAttachments.filter(
-    (attachment) => attachment.id !== pinnedAttachment?.id,
+    (attachment) =>
+      attachment.id !== pinnedAttachment?.id && recentContext.includes(attachment.name),
   );
 
   return {
