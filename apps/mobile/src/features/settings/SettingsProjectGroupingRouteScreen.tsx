@@ -1,12 +1,15 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   mobileProjectGroupingModePatch,
   resolveMobileProjectGroupingSettings,
@@ -22,21 +25,22 @@ const GROUPING_OPTIONS: ReadonlyArray<{
   {
     mode: "repository",
     label: "Group by repository",
-    description: "Matching repositories share a group while every workspace remains selectable.",
+    description: "Matching repositories appear as one project.",
   },
   {
     mode: "repository_path",
     label: "Group by repository path",
-    description: "Monorepo subprojects get their own groups while matching paths stay together.",
+    description: "Keep monorepo paths separate.",
   },
   {
     mode: "separate",
     label: "Keep separate",
-    description: "Every physical workspace appears as its own project.",
+    description: "Show every workspace as its own project.",
   },
 ];
 
 export function SettingsProjectGroupingRouteScreen() {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const checkmarkColor = useThemeColor("--color-icon");
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -48,6 +52,12 @@ export function SettingsProjectGroupingRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
+      {Platform.OS === "android" ? (
+        <>
+          <NativeStackScreenOptions options={{ headerShown: false }} />
+          <AndroidScreenHeader title="Project Grouping" onBack={() => navigation.goBack()} />
+        </>
+      ) : null}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

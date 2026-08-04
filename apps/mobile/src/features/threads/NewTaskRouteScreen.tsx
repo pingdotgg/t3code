@@ -238,6 +238,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           gap: 12,
+          paddingBottom: 8,
           paddingHorizontal: 20,
           paddingTop: 8,
         }}
