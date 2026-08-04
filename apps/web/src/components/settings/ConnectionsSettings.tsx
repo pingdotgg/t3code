@@ -1,5 +1,4 @@
 import {
-  ChevronDownIcon,
   ChevronsLeftRightEllipsisIcon,
   PlusIcon,
   QrCodeIcon,
@@ -8,7 +7,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useMemo, useState } from "react";
+import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -42,7 +41,11 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  isQrShareableEndpoint,
+  selectQrEndpointOption,
+} from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -82,17 +85,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
-import { Group, GroupSeparator } from "../ui/group";
 import { AnimatedHeight } from "../AnimatedHeight";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
@@ -506,6 +499,22 @@ function isHostedAppPairingUrl(value: string): boolean {
   }
 }
 
+function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
+  if (isHostedAppPairingUrl(url)) {
+    return "Opens the hosted app, no install needed";
+  }
+  switch (endpoint.reachability) {
+    case "lan":
+      return "Devices on the same network";
+    case "private-network":
+      return "Devices on your private network";
+    case "public":
+      return "Reachable from anywhere";
+    case "loopback":
+      return "Clients on this machine";
+  }
+}
+
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
   endpointUrl: string | null | undefined;
@@ -532,8 +541,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
   const [isQrPanelOpen, setIsQrPanelOpen] = useState(false);
-  // Ephemeral per-row choice of which endpoint the QR encodes; null falls back to the default.
-  const [qrEndpointKey, setQrEndpointKey] = useState<string | null>(null);
+  // Ephemeral per-row choice of which endpoint the QR encodes (AdvertisedEndpoint.id);
+  // null falls back to the saved default endpoint.
+  const [qrEndpointId, setQrEndpointId] = useState<string | null>(null);
+  const qrPanelId = useId();
 
   const currentOriginPairingUrl = useMemo(
     () => resolveCurrentOriginPairingUrl(pairingLink.credential),
@@ -552,10 +563,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   }, [defaultEndpointKey, endpoints, pairingLink.credential]);
   const endpointCopyOptions = useMemo(() => {
     const options: Array<{
-      readonly key: string;
+      readonly id: string;
+      readonly preferenceKey: string;
       readonly label: string;
       readonly url: string;
       readonly detail: string;
+      readonly qrShareable: boolean;
     }> = [];
     for (const endpoint of endpoints) {
       if (endpoint.status === "unavailable") {
@@ -563,14 +576,20 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       }
       const url = resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential);
       options.push({
-        key: endpointDefaultPreferenceKey(endpoint),
+        id: endpoint.id,
+        preferenceKey: endpointDefaultPreferenceKey(endpoint),
         label: endpoint.label,
         url,
-        detail: isHostedAppPairingUrl(url) ? "Hosted app link" : "Backend pairing URL",
+        detail: endpointShareHint(endpoint, url),
+        qrShareable: isQrShareableEndpoint(endpoint),
       });
     }
     return options;
   }, [endpoints, pairingLink.credential]);
+  const qrEndpointOptions = useMemo(
+    () => endpointCopyOptions.filter((option) => option.qrShareable),
+    [endpointCopyOptions],
+  );
   const shareablePairingUrl =
     endpointPairingUrl ??
     (endpointUrl != null && endpointUrl !== ""
@@ -638,102 +657,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     copyPairingValue(pairingLink.credential, "code");
   }, [copyPairingValue, pairingLink.credential]);
 
-  const handleCopyDefaultLink = useCallback(() => {
-    if (!shareablePairingUrl) return;
-    copyPairingValue(shareablePairingUrl, copyKindForUrl(shareablePairingUrl));
-  }, [copyKindForUrl, copyPairingValue, shareablePairingUrl]);
-
   const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
-  const defaultEndpointCopyOption =
-    endpointCopyOptions.find((option) => option.key === defaultEndpointKey) ??
-    endpointCopyOptions[0] ??
-    null;
-  const defaultEndpointCopyLabel = defaultEndpointCopyOption?.label ?? "URL";
-  const selectedQrCopyOption =
-    (qrEndpointKey !== null
-      ? endpointCopyOptions.find((option) => option.key === qrEndpointKey)
-      : null) ?? defaultEndpointCopyOption;
-  const qrPairingUrl = selectedQrCopyOption?.url ?? shareablePairingUrl;
-  const backendEndpointCopyOptions = endpointCopyOptions.filter(
-    (option) => !isHostedAppPairingUrl(option.url),
+  const selectedQrOption = selectQrEndpointOption(
+    qrEndpointOptions,
+    qrEndpointId,
+    defaultEndpointKey,
   );
-  const hostedEndpointCopyOptions = endpointCopyOptions.filter((option) =>
-    isHostedAppPairingUrl(option.url),
-  );
-  const renderEndpointMenuItems = (
-    options: typeof endpointCopyOptions = endpointCopyOptions,
-    renderDetail = true,
-  ) =>
-    options.map((option) => (
-      <MenuItem
-        key={option.key}
-        onClick={() => copyPairingValue(option.url, copyKindForUrl(option.url))}
-      >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate">{option.label}</span>
-          {renderDetail ? (
-            <span className="block truncate text-[11px] text-muted-foreground">
-              {option.detail}
-            </span>
-          ) : null}
-        </span>
-      </MenuItem>
-    ));
-  const renderPairingCodeMenuItem = (renderDetail = true) => (
-    <MenuItem onClick={handleCopyCode}>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate">Copy code</span>
-        {renderDetail ? (
-          <span className="block truncate text-[11px] text-muted-foreground">Token only</span>
-        ) : null}
-      </span>
-    </MenuItem>
-  );
-  const renderCompactEndpointGroup = (
-    label: string,
-    options: typeof endpointCopyOptions,
-    includeSeparator: boolean,
-  ) =>
-    options.length > 0 ? (
-      <>
-        {includeSeparator ? <MenuSeparator /> : null}
-        <MenuGroup>
-          <MenuGroupLabel>{label}</MenuGroupLabel>
-          {renderEndpointMenuItems(options, false)}
-        </MenuGroup>
-      </>
-    ) : null;
-  const renderGroupedCopyMenuItems = (options?: { codeFirst?: boolean }) => (
-    <>
-      {options?.codeFirst ? (
-        <>
-          <MenuGroup>
-            <MenuGroupLabel>Pairing code</MenuGroupLabel>
-            {renderPairingCodeMenuItem(false)}
-          </MenuGroup>
-          {endpointCopyOptions.length > 0 ? <MenuSeparator /> : null}
-        </>
-      ) : null}
-      {renderCompactEndpointGroup("Pairing URLs", backendEndpointCopyOptions, false)}
-      {renderCompactEndpointGroup(
-        "Hosted app link",
-        hostedEndpointCopyOptions,
-        backendEndpointCopyOptions.length > 0,
-      )}
-      {!options?.codeFirst ? (
-        <>
-          {endpointCopyOptions.length > 0 ? <MenuSeparator /> : null}
-          <MenuGroup>
-            <MenuGroupLabel>Pairing code</MenuGroupLabel>
-            {renderPairingCodeMenuItem(false)}
-          </MenuGroup>
-        </>
-      ) : null}
-    </>
-  );
-
+  const qrPairingUrl = selectedQrOption?.url ?? shareablePairingUrl;
   if (expiresAtMs <= nowMs) {
     return null;
   }
@@ -761,57 +693,25 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-          {shareablePairingUrl ? (
+          {shareablePairingUrl && canCopyToClipboard ? (
             <Button
               size="xs"
               variant="outline"
               aria-expanded={isQrPanelOpen}
+              aria-controls={qrPanelId}
               onClick={() => setIsQrPanelOpen((open) => !open)}
             >
               <QrCodeIcon aria-hidden />
-              QR
+              Share
             </Button>
           ) : null}
           <Dialog open={isRevealDialogOpen} onOpenChange={setIsRevealDialogOpen}>
             {canCopyToClipboard ? (
-              <>
-                {shareablePairingUrl ? (
-                  <Group aria-label="Copy selected endpoint">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="max-w-56"
-                      title={`Copy pairing URL for: ${defaultEndpointCopyLabel}`}
-                      onClick={handleCopyDefaultLink}
-                    >
-                      <span className="truncate">
-                        Copy pairing URL for: {defaultEndpointCopyLabel}
-                      </span>
-                    </Button>
-                    <GroupSeparator />
-                    <Menu>
-                      <MenuTrigger
-                        render={
-                          <Button
-                            size="icon-xs"
-                            variant="outline"
-                            aria-label="Choose endpoint to copy"
-                          />
-                        }
-                      >
-                        <ChevronDownIcon className="size-3.5" />
-                      </MenuTrigger>
-                      <MenuPopup align="end" className="min-w-60">
-                        {renderGroupedCopyMenuItems()}
-                      </MenuPopup>
-                    </Menu>
-                  </Group>
-                ) : (
-                  <Button size="xs" variant="outline" onClick={handleCopyCode}>
-                    Copy code
-                  </Button>
-                )}
-              </>
+              shareablePairingUrl ? null : (
+                <Button size="xs" variant="outline" onClick={handleCopyCode}>
+                  Copy code
+                </Button>
+              )
             ) : (
               <DialogTrigger render={<Button size="xs" variant="outline" />}>
                 {shareablePairingUrl ? "Show link" : "Show code"}
@@ -878,52 +778,71 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         </div>
       </div>
       {isQrPanelOpen && qrPairingUrl !== null ? (
-        <div className="mt-3 flex flex-col gap-4 border-t border-border/50 pt-3 sm:flex-row sm:items-start sm:justify-between">
+        <div
+          id={qrPanelId}
+          className="mt-3 flex flex-col gap-4 border-t border-border/50 pt-3 sm:flex-row sm:items-start sm:justify-between"
+        >
           <div className="min-w-0 flex-1 space-y-3">
-            {endpointCopyOptions.length > 1 ? (
-              <div className="space-y-1.5">
-                <p className="text-[11px] text-muted-foreground/70">Scannable from</p>
-                <div className="flex flex-wrap gap-1.5" role="group" aria-label="QR code endpoint">
-                  {endpointCopyOptions.map((option) => {
-                    const isSelected = option.key === selectedQrCopyOption?.key;
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        aria-pressed={isSelected}
-                        title={option.detail}
+            {qrEndpointOptions.length > 1 ? (
+              <div
+                className="space-y-1.5"
+                role="radiogroup"
+                aria-label="Endpoint the pairing QR code and URL use"
+              >
+                <p className="text-[11px] text-muted-foreground/70">Reach this machine via</p>
+                {qrEndpointOptions.map((option) => {
+                  const isSelected = option.id === selectedQrOption?.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      className={cn(
+                        "flex w-full items-baseline gap-2 rounded-lg border px-2.5 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        isSelected
+                          ? "border-foreground/60 bg-muted/30"
+                          : "border-border/50 hover:bg-muted/20",
+                      )}
+                      onClick={() => setQrEndpointId(option.id)}
+                    >
+                      <span
                         className={cn(
-                          "rounded-full border px-2.5 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          isSelected
-                            ? "border-foreground/80 text-foreground"
-                            : "border-border/60 text-muted-foreground hover:text-foreground",
+                          "text-xs font-medium",
+                          isSelected ? "text-foreground" : "text-muted-foreground",
                         )}
-                        onClick={() => setQrEndpointKey(option.key)}
                       >
                         {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                      </span>
+                      <span className="min-w-0 truncate text-[11px] text-muted-foreground/70">
+                        {option.detail}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
             <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5">
-              <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+              <code
+                title={qrPairingUrl}
+                className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+              >
                 {qrPairingUrl}
               </code>
-              {canCopyToClipboard ? (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="shrink-0"
-                  onClick={() => copyPairingValue(qrPairingUrl, copyKindForUrl(qrPairingUrl))}
-                >
-                  Copy
-                </Button>
-              ) : null}
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                onClick={() => copyPairingValue(qrPairingUrl, copyKindForUrl(qrPairingUrl))}
+              >
+                Copy link
+              </Button>
             </div>
+            <Button size="xs" variant="ghost" onClick={handleCopyCode}>
+              Copy code only
+            </Button>
           </div>
-          <div className="flex shrink-0 justify-center rounded-xl bg-white p-3">
+          <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
             <QRCodeSvg
               value={qrPairingUrl}
               size={168}

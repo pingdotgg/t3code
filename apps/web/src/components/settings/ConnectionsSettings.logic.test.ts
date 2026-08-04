@@ -1,6 +1,10 @@
-import type { DesktopWslState } from "@t3tools/contracts";
+import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  isQrShareableEndpoint,
+  selectQrEndpointOption,
+} from "./ConnectionsSettings.logic";
 
 const baseWslState: DesktopWslState = {
   enabled: false,
@@ -71,5 +75,67 @@ describe("applyWslEnableSelection", () => {
     expect(calls).toEqual(["setWslOnly:true", "setWslBackendEnabled:true"]);
     expect(setWslDistro).not.toHaveBeenCalled();
     expect(state).toMatchObject({ enabled: true, wslOnly: true });
+  });
+});
+
+function makeEndpoint(overrides: Partial<AdvertisedEndpoint>): AdvertisedEndpoint {
+  return {
+    id: "desktop-lan:http://192.168.1.42:4780",
+    label: "Local network",
+    provider: { id: "desktop-core", label: "Desktop", kind: "core", isAddon: false },
+    httpBaseUrl: "http://192.168.1.42:4780",
+    wsBaseUrl: "ws://192.168.1.42:4780",
+    reachability: "lan",
+    compatibility: { hostedHttpsApp: "unknown", desktopApp: "compatible" },
+    source: "desktop-core",
+    status: "available",
+    ...overrides,
+  };
+}
+
+describe("isQrShareableEndpoint", () => {
+  it("excludes loopback endpoints so a scanned phone never dials itself", () => {
+    expect(
+      isQrShareableEndpoint(
+        makeEndpoint({
+          id: "desktop-loopback:4780",
+          reachability: "loopback",
+          httpBaseUrl: "http://127.0.0.1:4780",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("excludes unavailable endpoints and keeps reachable ones", () => {
+    expect(isQrShareableEndpoint(makeEndpoint({ status: "unavailable" }))).toBe(false);
+    expect(isQrShareableEndpoint(makeEndpoint({}))).toBe(true);
+    expect(
+      isQrShareableEndpoint(makeEndpoint({ reachability: "private-network", status: "unknown" })),
+    ).toBe(true);
+  });
+});
+
+describe("selectQrEndpointOption", () => {
+  const options = [
+    { id: "tailscale-ip:http://100.84.12.7:4780", preferenceKey: "tailscale:ip:http" },
+    { id: "tailscale-ip:http://100.84.12.8:4780", preferenceKey: "tailscale:ip:http" },
+    { id: "desktop-lan:http://192.168.1.42:4780", preferenceKey: "desktop-core:lan:http" },
+  ];
+
+  it("resolves an explicit selection by unique endpoint id, not the shared preference key", () => {
+    expect(selectQrEndpointOption(options, "tailscale-ip:http://100.84.12.8:4780", null)?.id).toBe(
+      "tailscale-ip:http://100.84.12.8:4780",
+    );
+  });
+
+  it("falls back to the saved default preference key when nothing is selected", () => {
+    expect(selectQrEndpointOption(options, null, "desktop-core:lan:http")?.id).toBe(
+      "desktop-lan:http://192.168.1.42:4780",
+    );
+  });
+
+  it("falls back to the first option for a stale selection or unknown default", () => {
+    expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(options[0]?.id);
+    expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
   });
 });
