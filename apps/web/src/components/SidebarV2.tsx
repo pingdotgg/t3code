@@ -2674,7 +2674,7 @@ export default function SidebarV2() {
                     render={
                       <SidebarMenuButton
                         aria-label="Filter threads by project"
-                        className="min-w-0 flex-1 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                        className="min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       />
                     }
                   >
@@ -2765,7 +2765,7 @@ export default function SidebarV2() {
           </SidebarGroup>
         }
       >
-        <SidebarGroup className="px-[var(--sidebar-content-inset)] pb-1 pt-0">
+        <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
