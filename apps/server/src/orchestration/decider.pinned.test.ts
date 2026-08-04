@@ -127,6 +127,36 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
     }),
   );
 
+  it.effect("settling a pinned thread also unpins it", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-pinned"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({ pinnedAt: PINNED_AT }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unpinned"]);
+    }),
+  );
+
+  it.effect("settling an unpinned thread emits no unpin event", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-unpinned"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({}),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled"]);
+    }),
+  );
+
   it.effect("rejects pinning an archived thread", () =>
     Effect.gen(function* () {
       const error = yield* decideOrchestrationCommand({

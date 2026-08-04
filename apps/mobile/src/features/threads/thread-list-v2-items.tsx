@@ -82,9 +82,11 @@ const SNOOZED_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
-// Pinned rows: the pin overrides settle/snooze, so Unpin is the only
-// lifecycle item on offer.
+// Pinned rows: Settle stays the lifecycle action (settling clears the pin
+// server-side); Unpin is the menu-only escape hatch. Snooze is withheld —
+// it does not unpin, so the pin would override it invisibly.
 const PINNED_MENU_ACTIONS: MenuAction[] = [
+  { id: "settle", title: "Settle", image: "checkmark" },
   { id: "unpin", title: "Unpin", image: "pin.slash" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
@@ -523,14 +525,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onPress: handleArchive,
       };
     }
-    if (swipeActions.primary === "unpin") {
-      return {
-        accessibilityLabel: `Unpin ${thread.title}`,
-        icon: "pin.slash" as const,
-        label: "Unpin",
-        onPress: handleUnpin,
-      };
-    }
     if (swipeActions.primary === "unsnooze") {
       return {
         accessibilityLabel: `Wake ${thread.title} now`,
@@ -555,7 +549,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     handleArchive,
     handleSettle,
-    handleUnpin,
     handleUnsettle,
     handleUnsnooze,
     swipeActions.primary,

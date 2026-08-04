@@ -24,13 +24,7 @@ export { snoozeWakeLabel };
  * unlabeled resting state.
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
-export type ThreadListV2SwipeAction =
-  | "archive"
-  | "settle"
-  | "unsettle"
-  | "snooze"
-  | "unsnooze"
-  | "unpin";
+export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -63,18 +57,20 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozable: boolean;
   /** Row is on the snoozed shelf. */
   readonly snoozed?: boolean;
-  /** Row is in the pinned block: the pin overrides the lifecycle, so the
-      only transition on offer is Unpin. */
+  /** Row is in the pinned block. Settle stays the primary quick action
+      (settling clears the pin server-side); snooze is withheld because
+      snoozing does not unpin, so the pin would override it invisibly.
+      Unpin itself lives in the long-press menu only. */
   readonly pinned?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
   readonly secondary: "snooze" | null;
 } {
-  if (input.pinned === true) {
-    return { primary: "unpin", secondary: null };
-  }
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
+  }
+  if (input.pinned === true) {
+    return { primary: input.settlementSupported ? "settle" : "archive", secondary: null };
   }
   const primary = input.settlementSupported
     ? input.variant === "slim"

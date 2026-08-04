@@ -29,7 +29,6 @@ import {
   EllipsisIcon,
   MessageSquareIcon,
   PinIcon,
-  PinOffIcon,
   PlusIcon,
   SearchIcon,
   ServerIcon,
@@ -396,11 +395,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   settlementSupported: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
-  // Same contract for thread.pin/unpin.
-  pinningSupported: boolean;
-  // Pinned cards trade the settle/snooze affordances for Unpin: while the
-  // pin holds, either would be overridden right back by the pin
-  // classification, so offering them would be offering a no-op.
+  // Pinned cards keep Settle as the hover quick action (settling clears the
+  // pin server-side), but hide Snooze: snoozing does NOT unpin, so it would
+  // stamp state the pin immediately overrides. Pin/unpin themselves live in
+  // the context menu only.
   isPinned: boolean;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
@@ -427,7 +425,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
-  onUnpin: (threadRef: ScopedThreadRef) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
 }) {
   const {
@@ -442,7 +439,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     onStartRename,
     onThreadActivate,
     onThreadClick,
-    onUnpin,
     onUnsettle,
     onUnsnooze,
     renamingTitle,
@@ -674,14 +670,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       onSnooze(threadRef, preset);
     },
     [onSnooze, threadRef],
-  );
-  const handleUnpinClick = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onUnpin(threadRef);
-    },
-    [onUnpin, threadRef],
   );
   // While the snooze popover is open the pointer leaves the row, which
   // would fade the hover actions out from under the open menu; pin them.
@@ -1006,21 +994,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     threadTimeLabel(thread)
                   )}
                 </span>
-                {props.isPinned ? (
-                  props.pinningSupported ? (
-                    <span className="absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-hover/v2-row:static group-hover/v2-row:opacity-100">
-                      <button
-                        type="button"
-                        aria-label="Unpin thread"
-                        onClick={handleUnpinClick}
-                        className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                      >
-                        <PinOffIcon className="size-3.5" />
-                        Unpin
-                      </button>
-                    </span>
-                  ) : null
-                ) : props.settlementSupported || showSnoozeButton ? (
+                {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
                       // focus-visible, not focus-within: a mouse click leaves
@@ -2301,13 +2275,12 @@ export default function SidebarV2() {
         // Post-settle navigation must skip threads settling in this same
         // batch — they are all leaving the card block together. Rows that
         // are already explicitly settled are skipped: nothing to do on a
-        // valid mixed selection. Pinned rows are skipped the same way: the
-        // pin overrides settled classification, so settling one would only
-        // stamp invisible state that surfaces after unpin.
+        // valid mixed selection. Pinned rows ARE included: the decider
+        // clears the pin as part of settling, so they park like the rest.
         const coSettlingKeys = new Set(threadKeys);
         for (const threadKey of threadKeys) {
           const thread = threadByKeyRef.current.get(threadKey);
-          if (!thread || thread.settledOverride === "settled" || thread.pinnedAt != null) continue;
+          if (!thread || thread.settledOverride === "settled") continue;
           attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
         }
         clearSelection();
@@ -2429,10 +2402,11 @@ export default function SidebarV2() {
                       : { id: "pin", label: "Pin thread" },
                   ]
                 : []),
-              // While pinned, settle and snooze are hidden, not disabled:
-              // the pin overrides both classifications, so either action
-              // would appear to do nothing.
-              ...(supportsSettlement && !isPinned
+              // Settle stays available on pinned threads: the decider clears
+              // the pin as part of settling ("done" beats "keep on top").
+              // Snooze does NOT unpin, so it is hidden while pinned rather
+              // than offered as a no-op the pin immediately overrides.
+              ...(supportsSettlement
                 ? [
                     isSettled
                       ? { id: "unsettle", label: "Un-settle thread" }
@@ -2991,10 +2965,6 @@ export default function SidebarV2() {
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadSnooze === true
                         }
-                        pinningSupported={
-                          serverConfigs.get(thread.environmentId)?.environment.capabilities
-                            .threadPinning === true
-                        }
                         isPinned={section === "pinned"}
                         snoozeWakeLabelText={
                           section === "snoozed" && thread.snoozedUntil != null
@@ -3034,7 +3004,6 @@ export default function SidebarV2() {
                         onUnsettle={attemptUnsettle}
                         onSnooze={attemptSnooze}
                         onUnsnooze={attemptUnsnooze}
-                        onUnpin={attemptUnpin}
                         onChangeRequestState={handleChangeRequestState}
                       />
                     );
