@@ -161,6 +161,8 @@ import {
   expectedMeasuredAssistantText,
   queueMeasuredTransferTurn,
   seedTransferBudgetHistory,
+  TRANSFER_HISTORY_TURN_COUNT,
+  TRANSFER_MEASURED_TURN_CREATED_AT,
   TRANSFER_MEASURED_TURN_INDEX,
   TRANSFER_THREAD_ID,
   transferModelSelection,
@@ -7892,178 +7894,196 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 });
 
-it.live("reports basic-use HTTP and WebSocket transfer budgets", () =>
-  Effect.gen(function* () {
-    const providers = [
-      ProviderDriverKind.make("codex"),
-      ProviderDriverKind.make("claudeAgent"),
-    ] as const;
-    const staticDir = NodeURL.fileURLToPath(new URL("../../web", import.meta.url));
+it.live(
+  "reports stress HTTP and WebSocket transfer budgets",
+  () =>
+    Effect.gen(function* () {
+      const providers = [
+        ProviderDriverKind.make("codex"),
+        ProviderDriverKind.make("claudeAgent"),
+      ] as const;
+      const staticDir = NodeURL.fileURLToPath(new URL("../../web", import.meta.url));
 
-    const runs = yield* Effect.forEach(
-      providers,
-      (provider) =>
-        Effect.acquireUseRelease(
-          makeOrchestrationIntegrationHarness({ provider }),
-          (harness) =>
-            Effect.gen(function* () {
-              yield* seedTransferBudgetHistory(harness, provider);
-              yield* buildAppUnderTest({
-                config: { staticDir },
-                layers: {
-                  orchestrationEngine: harness.engine,
-                  projectionSnapshotQuery: harness.snapshotQuery,
-                },
-              });
+      const runs = yield* Effect.forEach(
+        providers,
+        (provider) =>
+          Effect.acquireUseRelease(
+            makeOrchestrationIntegrationHarness({ provider }),
+            (harness) =>
+              Effect.gen(function* () {
+                yield* seedTransferBudgetHistory(harness, provider);
+                yield* buildAppUnderTest({
+                  config: { staticDir },
+                  layers: {
+                    orchestrationEngine: harness.engine,
+                    projectionSnapshotQuery: harness.snapshotQuery,
+                  },
+                });
 
-              const baseUrl = yield* getHttpServerUrl();
-              const cookie = yield* getAuthenticatedSessionCookieHeader();
-              const document = yield* measureHttpGet({ url: `${baseUrl}/` });
-              assert.equal(document.status, 200);
+                const baseUrl = yield* getHttpServerUrl();
+                const cookie = yield* getAuthenticatedSessionCookieHeader();
+                const document = yield* measureHttpGet({ url: `${baseUrl}/` });
+                assert.equal(document.status, 200);
 
-              const recorder = makeWebSocketTransferRecorder();
-              const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
-              const protocolLayer = countingWsRpcProtocolLayer({
-                url: wsUrl,
-                cookie,
-                recorder,
-              });
+                const recorder = makeWebSocketTransferRecorder();
+                const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+                const protocolLayer = countingWsRpcProtocolLayer({
+                  url: wsUrl,
+                  cookie,
+                  recorder,
+                });
 
-              return yield* Effect.scoped(
-                Effect.gen(function* () {
-                  const client = yield* makeCountingWsRpcClient;
-                  yield* client[WS_METHODS.serverGetConfig]({});
+                return yield* Effect.scoped(
+                  Effect.gen(function* () {
+                    const client = yield* makeCountingWsRpcClient;
+                    yield* client[WS_METHODS.serverGetConfig]({});
 
-                  const configEvents = yield* Queue.unbounded<unknown>();
-                  yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(
-                    Stream.runForEach((event) =>
-                      Queue.offer(configEvents, event).pipe(Effect.asVoid),
-                    ),
-                    Effect.forkScoped,
-                  );
-                  yield* Queue.take(configEvents);
+                    const configEvents = yield* Queue.unbounded<unknown>();
+                    yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(
+                      Stream.runForEach((event) =>
+                        Queue.offer(configEvents, event).pipe(Effect.asVoid),
+                      ),
+                      Effect.forkScoped,
+                    );
+                    yield* Queue.take(configEvents);
 
-                  const shellSnapshot = yield* measureHttpGet({
-                    url: `${baseUrl}/api/orchestration/shell`,
-                    headers: { cookie },
-                  });
-                  assert.equal(shellSnapshot.status, 200);
-                  assert.equal(shellSnapshot.contentEncoding, "gzip");
-                  const decodedShell = yield* decodeTransferShellSnapshot(
-                    Buffer.from(shellSnapshot.decodedBody).toString("utf8"),
-                  );
+                    const shellSnapshot = yield* measureHttpGet({
+                      url: `${baseUrl}/api/orchestration/shell`,
+                      headers: { cookie },
+                    });
+                    assert.equal(shellSnapshot.status, 200);
+                    assert.equal(shellSnapshot.contentEncoding, "gzip");
+                    const decodedShell = yield* decodeTransferShellSnapshot(
+                      Buffer.from(shellSnapshot.decodedBody).toString("utf8"),
+                    );
 
-                  const shellItems = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-                  yield* client[ORCHESTRATION_WS_METHODS.subscribeShell]({
-                    afterSequence: decodedShell.snapshotSequence,
-                    requestCompletionMarker: true,
-                  }).pipe(
-                    Stream.runForEach((item) => Queue.offer(shellItems, item).pipe(Effect.asVoid)),
-                    Effect.forkScoped,
-                  );
-                  const initialShellItems = yield* collectQueueUntil(
-                    shellItems,
-                    (item) => item.kind === "synchronized",
-                  );
-                  assert.isFalse(initialShellItems.some((item) => item.kind === "snapshot"));
+                    const shellItems = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+                    yield* client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+                      afterSequence: decodedShell.snapshotSequence,
+                      requestCompletionMarker: true,
+                    }).pipe(
+                      Stream.runForEach((item) =>
+                        Queue.offer(shellItems, item).pipe(Effect.asVoid),
+                      ),
+                      Effect.forkScoped,
+                    );
+                    const initialShellItems = yield* collectQueueUntil(
+                      shellItems,
+                      (item) => item.kind === "synchronized",
+                    );
+                    assert.isFalse(initialShellItems.some((item) => item.kind === "snapshot"));
 
-                  const threadSnapshot = yield* measureHttpGet({
-                    url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}`,
-                    headers: { cookie },
-                  });
-                  assert.equal(threadSnapshot.status, 200);
-                  assert.equal(threadSnapshot.contentEncoding, "gzip");
-                  const decodedThread = yield* decodeTransferThreadSnapshot(
-                    Buffer.from(threadSnapshot.decodedBody).toString("utf8"),
-                  );
-                  assert.equal(decodedThread.thread.messages.length, 12);
+                    const threadSnapshot = yield* measureHttpGet({
+                      url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}`,
+                      headers: { cookie },
+                    });
+                    assert.equal(threadSnapshot.status, 200);
+                    assert.equal(threadSnapshot.contentEncoding, "gzip");
+                    const decodedThread = yield* decodeTransferThreadSnapshot(
+                      Buffer.from(threadSnapshot.decodedBody).toString("utf8"),
+                    );
+                    assert.equal(
+                      decodedThread.thread.messages.length,
+                      TRANSFER_HISTORY_TURN_COUNT * 2,
+                    );
 
-                  const threadItems = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-                  yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
-                    threadId: TRANSFER_THREAD_ID,
-                    afterSequence: decodedThread.snapshotSequence,
-                    requestCompletionMarker: true,
-                  }).pipe(
-                    Stream.runForEach((item) => Queue.offer(threadItems, item).pipe(Effect.asVoid)),
-                    Effect.forkScoped,
-                  );
-                  const initialThreadItems = yield* collectQueueUntil(
-                    threadItems,
-                    (item) => item.kind === "synchronized",
-                  );
-                  assert.isFalse(initialThreadItems.some((item) => item.kind === "snapshot"));
-                  assert.include(recorder.negotiatedExtensions(), "permessage-deflate");
+                    const threadItems = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                    yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                      threadId: TRANSFER_THREAD_ID,
+                      afterSequence: decodedThread.snapshotSequence,
+                      requestCompletionMarker: true,
+                    }).pipe(
+                      Stream.runForEach((item) =>
+                        Queue.offer(threadItems, item).pipe(Effect.asVoid),
+                      ),
+                      Effect.forkScoped,
+                    );
+                    const initialThreadItems = yield* collectQueueUntil(
+                      threadItems,
+                      (item) => item.kind === "synchronized",
+                    );
+                    assert.isFalse(initialThreadItems.some((item) => item.kind === "snapshot"));
+                    assert.include(recorder.negotiatedExtensions(), "permessage-deflate");
 
-                  const coldOpenWebSocket = recorder.totals();
-                  yield* queueMeasuredTransferTurn(harness, provider);
-                  const turnStartTotals = recorder.totals();
-                  yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-                    type: "thread.turn.start",
-                    commandId: CommandId.make(`transfer:${provider}:measured-turn`),
-                    threadId: TRANSFER_THREAD_ID,
-                    message: {
-                      messageId: MessageId.make("transfer-user-measured"),
-                      role: "user",
-                      text: "Measure the client-bound transfer for this turn.",
-                      attachments: [],
-                    },
-                    modelSelection: transferModelSelection(provider),
-                    runtimeMode: "approval-required",
-                    interactionMode: "default",
-                    createdAt: "2026-06-01T00:06:00.000Z",
-                  });
-                  yield* waitForTurnQuiesced(harness, TRANSFER_MEASURED_TURN_INDEX + 1);
-                  const finalSequence = yield* harness.engine.latestSequence;
+                    const coldOpenWebSocket = recorder.totals();
+                    yield* queueMeasuredTransferTurn(harness, provider);
+                    const turnStartTotals = recorder.totals();
+                    yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                      type: "thread.turn.start",
+                      commandId: CommandId.make(`transfer:${provider}:measured-turn`),
+                      threadId: TRANSFER_THREAD_ID,
+                      message: {
+                        messageId: MessageId.make("transfer-user-measured"),
+                        role: "user",
+                        text: "Measure the client-bound transfer for this turn.",
+                        attachments: [],
+                      },
+                      modelSelection: transferModelSelection(provider),
+                      runtimeMode: "approval-required",
+                      interactionMode: "default",
+                      createdAt: TRANSFER_MEASURED_TURN_CREATED_AT,
+                    });
+                    yield* waitForTurnQuiesced(harness, TRANSFER_MEASURED_TURN_INDEX + 1);
+                    const finalSequence = yield* harness.engine.latestSequence;
 
-                  yield* collectQueueUntil(
-                    threadItems,
-                    (item) => item.kind === "event" && item.event.sequence >= finalSequence,
-                  );
-                  yield* collectQueueUntil(
-                    shellItems,
-                    (item) =>
-                      item.kind !== "snapshot" &&
-                      item.kind !== "synchronized" &&
-                      item.sequence >= finalSequence,
-                  );
-                  const measuredTurnWebSocket = transferDelta(turnStartTotals, recorder.totals());
+                    yield* collectQueueUntil(
+                      threadItems,
+                      (item) => item.kind === "event" && item.event.sequence >= finalSequence,
+                    );
+                    yield* collectQueueUntil(
+                      shellItems,
+                      (item) =>
+                        item.kind !== "snapshot" &&
+                        item.kind !== "synchronized" &&
+                        item.sequence >= finalSequence,
+                    );
+                    const measuredTurnWebSocket = transferDelta(turnStartTotals, recorder.totals());
 
-                  const finalThreadSnapshot = yield* harness.snapshotQuery
-                    .getThreadDetailSnapshot(TRANSFER_THREAD_ID)
-                    .pipe(Effect.map(Option.getOrThrow));
-                  const finalAssistant = finalThreadSnapshot.thread.messages.findLast(
-                    (message) => message.role === "assistant",
-                  );
-                  assert.equal(finalAssistant?.text, expectedMeasuredAssistantText(provider));
-                  assert.equal(finalAssistant?.streaming, false);
-                  assert.equal(finalThreadSnapshot.thread.session?.status, "ready");
-                  assert.equal(finalThreadSnapshot.thread.checkpoints.length, 7);
+                    const finalThreadSnapshot = yield* harness.snapshotQuery
+                      .getThreadDetailSnapshot(TRANSFER_THREAD_ID)
+                      .pipe(Effect.map(Option.getOrThrow));
+                    const expectedAssistantText = expectedMeasuredAssistantText(provider);
+                    const measuredAssistant = finalThreadSnapshot.thread.messages.find(
+                      (message) =>
+                        message.role === "assistant" && message.text === expectedAssistantText,
+                    );
+                    assert.isDefined(measuredAssistant);
+                    assert.isTrue(
+                      finalThreadSnapshot.thread.messages.length >= TRANSFER_HISTORY_TURN_COUNT * 2,
+                    );
+                    assert.equal(measuredAssistant?.streaming, false);
+                    assert.equal(finalThreadSnapshot.thread.session?.status, "ready");
+                    assert.equal(
+                      finalThreadSnapshot.thread.checkpoints.length,
+                      TRANSFER_HISTORY_TURN_COUNT + 1,
+                    );
 
-                  return {
-                    provider,
-                    document,
-                    shellSnapshot,
-                    threadSnapshot,
-                    coldOpenWebSocket,
-                    measuredTurnWebSocket,
-                  } satisfies TransferBudgetRun;
-                }).pipe(Effect.provide(protocolLayer)),
-              );
-            }),
-          (harness) => harness.dispose,
-        ).pipe(Effect.provide(NodeHttpServerTestWithWsDeflate)),
-      { concurrency: 1 },
-    );
+                    return {
+                      provider,
+                      document,
+                      shellSnapshot,
+                      threadSnapshot,
+                      coldOpenWebSocket,
+                      measuredTurnWebSocket,
+                    } satisfies TransferBudgetRun;
+                  }).pipe(Effect.provide(protocolLayer)),
+                );
+              }),
+            (harness) => harness.dispose,
+          ).pipe(Effect.provide(NodeHttpServerTestWithWsDeflate)),
+        { concurrency: 1 },
+      );
 
-    const report = formatTransferBudgetReport(runs);
-    yield* Effect.logInfo(`\n${report}`);
-    const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
-      Config.option,
-    );
-    if (Option.isSome(reportPath)) {
-      const fileSystem = yield* FileSystem.FileSystem;
-      yield* fileSystem.writeFileString(reportPath.value, report);
-    }
-    assert.deepEqual(transferBudgetViolations(runs), []);
-  }).pipe(Effect.provide(NodeServices.layer)),
+      const report = formatTransferBudgetReport(runs);
+      yield* Effect.logInfo(`\n${report}`);
+      const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
+        Config.option,
+      );
+      if (Option.isSome(reportPath)) {
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.writeFileString(reportPath.value, report);
+      }
+      assert.deepEqual(transferBudgetViolations(runs), []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  120_000,
 );

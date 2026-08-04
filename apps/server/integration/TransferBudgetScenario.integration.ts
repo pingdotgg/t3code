@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import type { TurnProcessingQuiescedReceipt } from "../src/orchestration/Services/RuntimeReceiptBus.ts";
 import type { OrchestrationIntegrationHarness } from "./OrchestrationEngineHarness.integration.ts";
 import {
+  expectedRecordedAssistantText,
   makeRecordedTransferTurn,
   TRANSFER_HISTORY_TURN_COUNT,
 } from "./fixtures/transferBudget.ts";
@@ -33,16 +34,20 @@ function turnTimestamp(turnIndex: number): string {
   return `2026-06-01T00:${String(turnIndex).padStart(2, "0")}:00.000Z`;
 }
 
+export const TRANSFER_MEASURED_TURN_CREATED_AT = turnTimestamp(TRANSFER_MEASURED_TURN_INDEX);
+
 const waitForTurnQuiesced = Effect.fn("TransferBudget.waitForTurnQuiesced")(function* (
   harness: OrchestrationIntegrationHarness,
   checkpointTurnCount: number,
 ) {
-  return yield* harness.waitForReceipt(
+  const receipt = yield* harness.waitForReceipt(
     (receipt): receipt is TurnProcessingQuiescedReceipt =>
       receipt.type === "turn.processing.quiesced" &&
       receipt.threadId === TRANSFER_THREAD_ID &&
       receipt.checkpointTurnCount === checkpointTurnCount,
   );
+  yield* harness.drainProviderRuntime;
+  return receipt;
 });
 
 export const seedTransferBudgetHistory = Effect.fn("TransferBudget.seedHistory")(function* (
@@ -111,20 +116,12 @@ export const queueMeasuredTransferTurn = Effect.fn("TransferBudget.queueMeasured
   if (!harness.adapterHarness) {
     return yield* Effect.die(new Error("Transfer budget measurement requires the replay adapter."));
   }
-  yield* harness.adapterHarness.queueTurnResponse(
-    TRANSFER_THREAD_ID,
-    makeRecordedTransferTurn(provider, TRANSFER_MEASURED_TURN_INDEX),
-  );
+  const response = makeRecordedTransferTurn(provider, TRANSFER_MEASURED_TURN_INDEX);
+  yield* harness.adapterHarness.queueTurnResponse(TRANSFER_THREAD_ID, response);
 });
 
 export function expectedMeasuredAssistantText(provider: ProviderDriverKind): string {
-  return makeRecordedTransferTurn(provider, TRANSFER_MEASURED_TURN_INDEX)
-    .events.filter((event) => event.type === "content.delta")
-    .map((event) => {
-      const payload = event.payload as { readonly delta?: unknown } | undefined;
-      return typeof payload?.delta === "string" ? payload.delta : "";
-    })
-    .join("");
+  return expectedRecordedAssistantText(provider, TRANSFER_MEASURED_TURN_INDEX);
 }
 
-export { waitForTurnQuiesced };
+export { TRANSFER_HISTORY_TURN_COUNT, waitForTurnQuiesced };

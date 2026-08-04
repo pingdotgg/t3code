@@ -4,6 +4,13 @@ import type {
   HttpTransferMeasurement,
   WebSocketTransferTotals,
 } from "./NetworkTransferMeasurement.integration.ts";
+import {
+  TRANSFER_HISTORY_MCP_RESULT_BYTES,
+  TRANSFER_HISTORY_TOOLS_PER_TURN,
+  TRANSFER_HISTORY_TURN_COUNT,
+  TRANSFER_MEASURED_MCP_RESULT_BYTES,
+  TRANSFER_MEASURED_TOOLS,
+} from "./fixtures/transferBudget.ts";
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
@@ -30,24 +37,24 @@ interface ProviderTransferBudget {
 // reviewed and the caps raised explicitly.
 export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
   codex: {
-    totalWireBytes: 13_000,
-    documentWireBytes: 4_000,
+    totalWireBytes: 2_900_000,
+    documentWireBytes: 1_700,
     shellSnapshotWireBytes: 1_000,
-    threadSnapshotWireBytes: 3_000,
+    threadSnapshotWireBytes: 2_550_000,
     coldOpenWebSocketWireBytes: 1_600,
-    measuredTurnWebSocketWireBytes: 3_400,
-    measuredTurnWebSocketDecodedBytes: 18_000,
-    measuredTurnWebSocketMessages: 14,
+    measuredTurnWebSocketWireBytes: 360_000,
+    measuredTurnWebSocketDecodedBytes: 2_050_000,
+    measuredTurnWebSocketMessages: 550,
   },
   claudeAgent: {
-    totalWireBytes: 13_000,
-    documentWireBytes: 4_000,
+    totalWireBytes: 2_900_000,
+    documentWireBytes: 1_700,
     shellSnapshotWireBytes: 1_000,
-    threadSnapshotWireBytes: 3_000,
+    threadSnapshotWireBytes: 2_550_000,
     coldOpenWebSocketWireBytes: 1_600,
-    measuredTurnWebSocketWireBytes: 3_400,
-    measuredTurnWebSocketDecodedBytes: 18_000,
-    measuredTurnWebSocketMessages: 14,
+    measuredTurnWebSocketWireBytes: 360_000,
+    measuredTurnWebSocketDecodedBytes: 2_050_000,
+    measuredTurnWebSocketMessages: 550,
   },
 };
 
@@ -63,6 +70,9 @@ function totalWireBytes(run: TransferBudgetRun): number {
 
 function formatBytes(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
+  if (bytes >= 1_024 * 1_024) {
+    return `${(bytes / 1_024 / 1_024).toFixed(2)} MiB (${bytes.toLocaleString("en-US")} B)`;
+  }
   return `${(bytes / 1_024).toFixed(1)} KiB (${bytes.toLocaleString("en-US")} B)`;
 }
 
@@ -123,9 +133,10 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
 
 export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun>): string {
   const lines = [
-    "# T3 Code basic-use transfer budget",
+    "# T3 Code stress transfer budget",
     "",
     "Wire values are client-bound bytes read from local HTTP and WebSocket sockets. They include HTTP response headers and the WebSocket upgrade, but exclude TCP/IP and TLS framing. WebSocket permessage-deflate is negotiated.",
+    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes are calibrated from heavy local Codex and Claude histories and contain no user data.`,
     "",
     "| Provider | Total client-bound wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
