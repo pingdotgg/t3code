@@ -531,6 +531,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     [pairingLink.expiresAt],
   );
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
+  const [isQrPanelOpen, setIsQrPanelOpen] = useState(false);
+  // Ephemeral per-row choice of which endpoint the QR encodes; null falls back to the default.
+  const [qrEndpointKey, setQrEndpointKey] = useState<string | null>(null);
 
   const currentOriginPairingUrl = useMemo(
     () => resolveCurrentOriginPairingUrl(pairingLink.credential),
@@ -648,6 +651,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     endpointCopyOptions[0] ??
     null;
   const defaultEndpointCopyLabel = defaultEndpointCopyOption?.label ?? "URL";
+  const selectedQrCopyOption =
+    (qrEndpointKey !== null
+      ? endpointCopyOptions.find((option) => option.key === qrEndpointKey)
+      : null) ?? defaultEndpointCopyOption;
+  const qrPairingUrl = selectedQrCopyOption?.url ?? shareablePairingUrl;
   const backendEndpointCopyOptions = endpointCopyOptions.filter(
     (option) => !isHostedAppPairingUrl(option.url),
   );
@@ -740,35 +748,6 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               dotClassName="bg-amber-400"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
-            <Popover>
-              {shareablePairingUrl ? (
-                <>
-                  <PopoverTrigger
-                    openOnHover
-                    delay={250}
-                    closeDelay={100}
-                    render={
-                      <button
-                        type="button"
-                        className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/50 outline-none hover:text-foreground"
-                        aria-label="Show QR code"
-                      />
-                    }
-                  >
-                    <QrCodeIcon aria-hidden className="size-3" />
-                  </PopoverTrigger>
-                  <PopoverPopup side="top" align="start" tooltipStyle className="w-max">
-                    <QRCodeSvg
-                      value={shareablePairingUrl}
-                      size={88}
-                      level="M"
-                      marginSize={2}
-                      title="Pairing link — scan to open on another device"
-                    />
-                  </PopoverPopup>
-                </>
-              ) : null}
-            </Popover>
           </div>
           <p className="text-xs text-muted-foreground" title={expiresAbsolute}>
             {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
@@ -782,6 +761,17 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {shareablePairingUrl ? (
+            <Button
+              size="xs"
+              variant="outline"
+              aria-expanded={isQrPanelOpen}
+              onClick={() => setIsQrPanelOpen((open) => !open)}
+            >
+              <QrCodeIcon aria-hidden />
+              QR
+            </Button>
+          ) : null}
           <Dialog open={isRevealDialogOpen} onOpenChange={setIsRevealDialogOpen}>
             {canCopyToClipboard ? (
               <>
@@ -887,6 +877,63 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           </Button>
         </div>
       </div>
+      {isQrPanelOpen && qrPairingUrl !== null ? (
+        <div className="mt-3 flex flex-col gap-4 border-t border-border/50 pt-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-3">
+            {endpointCopyOptions.length > 1 ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] text-muted-foreground/70">Scannable from</p>
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="QR code endpoint">
+                  {endpointCopyOptions.map((option) => {
+                    const isSelected = option.key === selectedQrCopyOption?.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        aria-pressed={isSelected}
+                        title={option.detail}
+                        className={cn(
+                          "rounded-full border px-2.5 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isSelected
+                            ? "border-foreground/80 text-foreground"
+                            : "border-border/60 text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={() => setQrEndpointKey(option.key)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5">
+              <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                {qrPairingUrl}
+              </code>
+              {canCopyToClipboard ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="shrink-0"
+                  onClick={() => copyPairingValue(qrPairingUrl, copyKindForUrl(qrPairingUrl))}
+                >
+                  Copy
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 justify-center rounded-xl bg-white p-3">
+            <QRCodeSvg
+              value={qrPairingUrl}
+              size={168}
+              level="M"
+              marginSize={1}
+              title="Pairing link — scan to open on another device"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 });
