@@ -10,23 +10,6 @@ import * as ServiceLauncherClient from "../../cloud/serviceLauncherClient.ts";
 import { ProjectionThreadGoalRepositoryLive } from "../Services/ProjectionThreadGoals.ts";
 import { makeRuntimeSqliteLayer } from "../RuntimeSqliteLayer.ts";
 
-const repairMainMigrationLedger = Effect.fn("repairMainMigrationLedger")(function* () {
-  const sql = yield* SqlClient.SqlClient;
-
-  const migrationLedgerColumns = yield* sql<{ readonly name: string }>`
-    PRAGMA table_info(effect_sql_migrations)
-  `;
-  if (migrationLedgerColumns.length === 0) {
-    return;
-  }
-
-  yield* sql`
-    DELETE FROM effect_sql_migrations
-    WHERE migration_id = 31
-      AND name = 'ProjectionThreadGoals'
-  `;
-});
-
 const setup = (trial: boolean) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -34,7 +17,6 @@ const setup = (trial: boolean) =>
       yield* sql`PRAGMA foreign_keys = ON;`;
       if (!trial) {
         yield* sql`PRAGMA journal_mode = WAL;`;
-        yield* repairMainMigrationLedger();
         yield* runMigrations();
       }
     }),
