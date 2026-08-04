@@ -288,6 +288,57 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
+  it("renders pinned threads first and exempts them from auto-settle — parity with web", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("pinned-settled"),
+          title: "Pinned while settled",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          // Stale settled state (the decider clears it on pin): the pin wins.
+          settledOverride: "settled",
+          settledAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-settled", "active"]);
+    expect(layout.items.map((item) => item.pinned)).toEqual([true, false]);
+    expect(layout.settledCount).toBe(0);
+  });
+
+  it("snooze hides a pinned thread and wake restores it to the pinned block", () => {
+    const snoozedInput = {
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("pinned-snoozed"),
+          title: "Pinned and snoozed",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T11:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+    };
+
+    // Before the wake time: the snooze wins; the pin holds underneath.
+    const whileSnoozed = buildThreadListV2Items({ ...snoozedInput, now: NOW });
+    expect(whileSnoozed.items.map((item) => item.thread.id)).toEqual(["active"]);
+    expect(whileSnoozed.snoozedCount).toBe(1);
+
+    // After the wake time: the thread returns pinned, back on top.
+    const afterWake = buildThreadListV2Items({ ...snoozedInput, now: "2026-06-03T10:00:00.000Z" });
+    expect(afterWake.items.map((item) => item.thread.id)).toEqual(["pinned-snoozed", "active"]);
+    expect(afterWake.items[0]?.pinned).toBe(true);
+    expect(afterWake.snoozedCount).toBe(0);
+  });
+
   it("classifies snooze with the second-precise clock and reports the next wake", () => {
     const layout = buildThreadListV2Items({
       threads: [
