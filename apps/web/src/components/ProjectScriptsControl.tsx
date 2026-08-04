@@ -363,7 +363,11 @@ export default function ProjectScriptsControl({
                 <Button
                   size="xs"
                   variant={isPanel ? "ghost" : "outline"}
-                  className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS : undefined}
+                  className={
+                    isPanel
+                      ? THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS
+                      : "w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
+                  }
                   aria-label={`Run ${primaryScript.name}`}
                   onClick={() => onRunScript(primaryScript)}
                 />
@@ -544,7 +548,11 @@ export default function ProjectScriptsControl({
               <Button
                 size="xs"
                 variant={isPanel ? "ghost" : "outline"}
-                className={isPanel ? THREAD_DETAILS_PANEL_ROW_CLASS : undefined}
+                className={
+                  isPanel
+                    ? THREAD_DETAILS_PANEL_ROW_CLASS
+                    : "w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
+                }
                 aria-label={isPanel ? "Add project script" : "Add action"}
                 onClick={openAddDialog}
               />
