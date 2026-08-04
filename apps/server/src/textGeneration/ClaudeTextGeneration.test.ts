@@ -32,11 +32,18 @@ function makeFakeClaudeBinary(dir: string) {
       [
         "#!/bin/sh",
         'args="$*"',
+        'argv="$(printf "<%s>" "$@")"',
         'stdin_content="$(cat)"',
         'if [ -n "$T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN" ]; then',
         '  printf "%s" "$args" | grep -F -- "$T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN" >/dev/null || {',
         '    printf "%s\\n" "args missing expected content" >&2',
         "    exit 2",
+        "  }",
+        "fi",
+        'if [ -n "$T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN" ]; then',
+        '  printf "%s" "$argv" | grep -F -- "$T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN" >/dev/null || {',
+        '    printf "%s\\n" "argv missing expected content" >&2',
+        "    exit 6",
         "  }",
         "fi",
         'if [ -n "$T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN" ]; then',
@@ -75,6 +82,7 @@ function withFakeClaudeEnv<A, E, R>(
     stderr?: string;
     argsMustContain?: string;
     argsMustNotContain?: string;
+    argvMustContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
@@ -91,6 +99,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
     const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+    const previousArgvMustContain = process.env.T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
 
@@ -121,6 +130,12 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = input.argsMustNotContain;
         } else {
           delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+        }
+
+        if (input.argvMustContain !== undefined) {
+          process.env.T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN = input.argvMustContain;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN;
         }
 
         if (input.stdinMustContain !== undefined) {
@@ -167,6 +182,12 @@ function withFakeClaudeEnv<A, E, R>(
             delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
           } else {
             process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = previousArgsMustNotContain;
+          }
+
+          if (previousArgvMustContain === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN;
+          } else {
+            process.env.T3_FAKE_CLAUDE_ARGV_MUST_CONTAIN = previousArgvMustContain;
           }
 
           if (previousStdinMustContain === undefined) {
@@ -265,6 +286,8 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           },
         }),
         stdinMustContain: "You write concise thread titles for coding conversations.",
+        argvMustContain: "<--tools><><--disable-slash-commands>",
+        argsMustNotContain: "--dangerously-skip-permissions",
       },
       (textGeneration) =>
         Effect.gen(function* () {
