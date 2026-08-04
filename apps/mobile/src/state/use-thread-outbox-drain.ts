@@ -5,6 +5,7 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -231,6 +232,10 @@ export function useThreadOutboxDrain(): void {
             attachments: toUploadChatImageAttachments(queuedMessage.attachments),
           },
           modelSelection: settings.modelSelection,
+          titleSeed: deriveThreadTitleSeed({
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
+          }),
           runtimeMode: settings.runtimeMode,
           interactionMode: settings.interactionMode,
           createdAt: queuedMessage.createdAt,

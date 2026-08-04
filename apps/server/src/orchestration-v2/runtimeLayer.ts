@@ -4,6 +4,7 @@ import {
   OrchestrationLayerLive,
 } from "../orchestration/runtimeLayer.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { layer as projectServiceLayer } from "../project/ProjectService.ts";
 import { layer as projectSetupScriptRunnerLayer } from "../project/ProjectSetupScriptRunner.ts";
 import { layer as checkpointCaptureServiceLayer } from "./CheckpointCaptureService.ts";
@@ -27,7 +28,7 @@ import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts"
 import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromProviderInstances } from "./ProviderAdapterRegistry.ts";
 import { layer as providerContinuationRequestsLayer } from "./ProviderContinuationRequests.ts";
 import { workerLive as providerContinuationWorkerLive } from "./ProviderContinuationService.ts";
-import { workerLive as threadTitleRegenerationWorkerLive } from "./ThreadTitleRegenerationService.ts";
+import { layer as threadTitleRegenerationServiceLayer } from "./ThreadTitleRegenerationService.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
 import { layer as providerRuntimeRecoveryLayer } from "./ProviderRuntimeRecoveryService.ts";
@@ -157,33 +158,6 @@ const runFinalizationServiceProvided = runFinalizationServiceLayer.pipe(
   Layer.provide(Layer.merge(checkpointCaptureServiceProvided, projectionStoreLayer)),
 );
 
-const effectExecutorProvided = effectExecutorLayer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      runFinalizationServiceProvided,
-      checkpointRollbackServiceProvided,
-      providerSessionManagerProvided,
-      providerTurnControlServiceProvided,
-      providerTurnStartServiceProvided,
-      runtimeRequestServiceProvided,
-    ),
-  ),
-);
-const effectWorkerProvided = effectWorkerLayer.pipe(
-  Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
-);
-const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      effectWorkerProvided,
-      storesLayer,
-      eventSinkProvided,
-      idAllocatorLayer,
-      projectionStoreLayer,
-    ),
-  ),
-);
-
 const orchestratorProvided = orchestratorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -191,7 +165,6 @@ const orchestratorProvided = orchestratorLayer.pipe(
       commandPolicyLayer,
       storesLayer,
       eventSinkProvided,
-      effectWorkerProvided,
       commandReceiptStoreProvided,
       contextHandoffServiceProvided,
       idAllocatorLayer,
@@ -237,8 +210,37 @@ const providerContinuationWorkerProvided = providerContinuationWorkerLive.pipe(
     Layer.mergeAll(providerContinuationRequestsLayer, threadManagementProvided, idAllocatorLayer),
   ),
 );
-const threadTitleRegenerationWorkerProvided = threadTitleRegenerationWorkerLive.pipe(
-  Layer.provide(Layer.merge(threadManagementProvided, ProjectServiceLayerLive)),
+const threadTitleRegenerationProvided = threadTitleRegenerationServiceLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(threadManagementProvided, ProjectionProjectRepositoryLive, TextGeneration.layer),
+  ),
+);
+const effectExecutorProvided = effectExecutorLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      runFinalizationServiceProvided,
+      checkpointRollbackServiceProvided,
+      providerSessionManagerProvided,
+      providerTurnControlServiceProvided,
+      providerTurnStartServiceProvided,
+      runtimeRequestServiceProvided,
+      threadTitleRegenerationProvided,
+    ),
+  ),
+);
+const effectWorkerProvided = effectWorkerLayer.pipe(
+  Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
+);
+const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      effectWorkerProvided,
+      storesLayer,
+      eventSinkProvided,
+      idAllocatorLayer,
+      projectionStoreLayer,
+    ),
+  ),
 );
 
 export const OrchestrationV2LayerLive = Layer.mergeAll(
@@ -254,7 +256,6 @@ export const OrchestrationV2LayerLive = Layer.mergeAll(
 export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   OrchestrationLayerLive,
   OrchestrationV2LayerLive,
-  threadTitleRegenerationWorkerProvided,
   ProjectServiceLayerLive,
   threadLaunchProvided,
   threadLifecycleProvided,

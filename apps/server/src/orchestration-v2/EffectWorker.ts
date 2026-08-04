@@ -27,6 +27,7 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
 import { ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
 import { RuntimeRequestServiceV2 } from "./RuntimeRequestService.ts";
+import { ThreadTitleRegenerationService } from "./ThreadTitleRegenerationService.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedErrorClass<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -81,6 +82,7 @@ export const executorLayer: Layer.Layer<
   | ProviderTurnControlServiceV2
   | ProviderTurnStartServiceV2
   | RuntimeRequestServiceV2
+  | ThreadTitleRegenerationService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -91,6 +93,7 @@ export const executorLayer: Layer.Layer<
     const providerTurnControl = yield* ProviderTurnControlServiceV2;
     const providerTurnStart = yield* ProviderTurnStartServiceV2;
     const runtimeRequests = yield* RuntimeRequestServiceV2;
+    const threadTitleRegeneration = yield* ThreadTitleRegenerationService;
     return OrchestrationEffectExecutorV2.of({
       execute: (effect) => {
         switch (effect.request.type) {
@@ -290,6 +293,23 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          case "thread-title.generate":
+            return threadTitleRegeneration
+              .execute({
+                threadId: effect.threadId,
+                requestId: effect.commandId,
+                kind: effect.request.kind,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
         }
       },
     });

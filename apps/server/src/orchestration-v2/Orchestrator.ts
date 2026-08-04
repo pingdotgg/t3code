@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   CommandId,
+  type MessageId,
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2AppThread,
@@ -196,6 +197,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
@@ -221,6 +223,21 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.merge_back":
       return command.targetThreadId;
   }
+}
+
+function pendingThreadTitleGenerationEffect(
+  commandId: CommandId,
+  threadId: ThreadId,
+  kind:
+    | { readonly type: "initial"; readonly messageId: MessageId }
+    | { readonly type: "regenerate" },
+): PendingOrchestrationEffectV2 {
+  return {
+    id: `effect:${commandId}:thread-title.generate`,
+    commandId,
+    threadId,
+    request: { type: "thread-title.generate", kind },
+  };
 }
 
 function nextTurnItemOrdinal(projection: OrchestrationV2ThreadProjection): number {
@@ -943,6 +960,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.visit"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.title.regeneration.complete"
           | "thread.runtime-mode.set"
           | "thread.interaction-mode.set"
           | "thread.model-selection.set"
@@ -1100,11 +1118,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
-          return { ...thread, archivedAt: now, updatedAt: now };
+          return { ...thread, archivedAt: now, titleRegeneration: null, updatedAt: now };
         case "thread.unarchive":
           return { ...thread, archivedAt: null, updatedAt: now };
         case "thread.delete":
-          return { ...thread, deletedAt: thread.deletedAt ?? now, updatedAt: now };
+          return {
+            ...thread,
+            deletedAt: thread.deletedAt ?? now,
+            titleRegeneration: null,
+            updatedAt: now,
+          };
         case "thread.settle": {
           const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
           return {
@@ -1173,6 +1196,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             updatedAt: now,
           };
+        case "thread.title.regeneration.complete":
+          return thread.titleRegeneration?.requestId === command.requestId
+            ? {
+                ...thread,
+                ...(command.title === undefined ? {} : { title: command.title }),
+                titleRegeneration: null,
+                updatedAt: now,
+              }
+            : thread;
         case "thread.runtime-mode.set":
           return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
         case "thread.interaction-mode.set":
@@ -1208,6 +1240,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
+        case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
         case "thread.runtime-mode.set":
           return "thread.runtime-mode-updated" as const;
@@ -1229,6 +1262,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+
+    if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        pendingThreadTitleGenerationEffect(command.commandId, command.threadId, {
+          type: "regenerate",
+        }),
+      ]);
+    }
 
     if (command.type === "thread.archive" || command.type === "thread.delete") {
       const emitEvent = emit(events, command);
@@ -2341,6 +2383,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: thread,
         });
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      }
+      if (command.titleSeed !== undefined && projection.messages.length === 0) {
+        const now = yield* DateTime.now;
+        const thread: OrchestrationV2AppThread = {
+          ...projection.thread,
+          title: command.titleSeed,
+          titleRegeneration: { requestId: command.commandId, startedAt: now },
+          updatedAt: now,
+        };
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          pendingThreadTitleGenerationEffect(command.commandId, command.threadId, {
+            type: "initial",
+            messageId: command.messageId,
+          }),
+        ]);
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
@@ -5702,6 +5771,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.visit":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
