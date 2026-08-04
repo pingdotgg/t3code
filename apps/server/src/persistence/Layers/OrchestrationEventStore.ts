@@ -95,8 +95,8 @@ interface ApplicationEventRow {
 const decodeV2EventJson = Schema.decodeUnknownEffect(OrchestrationV2DomainEventJson);
 const encodeV2EventJson = Schema.encodeEffect(OrchestrationV2DomainEventJson);
 const decodeV2StoredEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
-const decodeJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
-const encodeJson = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function metadataForV2Event(event: OrchestrationV2DomainEvent): Record<string, unknown> {
   return {

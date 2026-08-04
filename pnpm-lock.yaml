@@ -11777,11 +11777,6 @@ snapshots:
       '@cursor/sdk-linux-x64': 1.0.22
       '@cursor/sdk-win32-x64': 1.0.22
 
-  '@develar/schema-utils@2.6.5':
-    dependencies:
-      ajv: 6.15.0
-      ajv-keywords: 3.5.2(ajv@6.15.0)
-
   '@distilled.cloud/aws@0.30.2(effect@4.0.0-beta.103(patch_hash=a18f963109656ddbeb2a99ca45f942ecf54830986259eb01ce6a970421c9c6a9))':
     dependencies:
       '@aws-crypto/crc32': 5.2.0
