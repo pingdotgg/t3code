@@ -1050,15 +1050,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "delegated_task.completion-delivery.acknowledge"
           ? "acknowledged"
           : "disposed";
-      if (task.completionDelivery?.state === state) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Delegated task ${command.taskId} completion delivery is already ${state}.`,
-        });
-      }
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
+      // task_status and t3_thread_read use distinct command IDs, so two
+      // valid observations can race after their read preflight. Re-emit the
+      // existing task row so the second dispatch is a successful idempotent
+      // no-op rather than "already acknowledged/disposed" or empty-events.
+      if (task.completionDelivery?.state === state) {
+        yield* emitEvent({
+          type: "subagent.updated",
+          threadId: command.parentThreadId,
+          ...(task.runId === null ? {} : { runId: task.runId }),
+          nodeId: task.id,
+          driver: task.driver,
+          providerInstanceId: task.providerInstanceId,
+          occurredAt: now,
+          payload: task,
+        });
+        return;
+      }
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
         completionDelivery: {
@@ -5998,7 +6008,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly now: DateTime.Utc;
   }) {
     const taskDelivery = input.updatedTask.completionDelivery;
-    if (taskDelivery?.state === "acknowledged" || taskDelivery?.state === "disposed") {
+    // delivered ownership has already settled through a completed wake run.
+    // A later wake-policy upgrade must not re-claim the task or offer again.
+    if (
+      taskDelivery?.state === "acknowledged" ||
+      taskDelivery?.state === "delivered" ||
+      taskDelivery?.state === "disposed"
+    ) {
       return {
         task: input.updatedTask,
         parentRun: undefined,
