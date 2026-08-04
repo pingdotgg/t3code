@@ -114,7 +114,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
+      "Opens the collaborative browser for the current thread. Newly created tabs acknowledge server creation immediately while any requested presentation and initial page load continue; reopening an existing shown tab waits for stable panel presentation. Wait on the returned tab before interacting while its initial page loads.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
@@ -542,12 +542,14 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),
-  screenshot: Schema.Struct({
-    mimeType: Schema.Literal("image/png"),
-    data: Schema.String,
-    width: Schema.Int,
-    height: Schema.Int,
-  }),
+  screenshot: Schema.NullOr(
+    Schema.Struct({
+      mimeType: Schema.Literal("image/png"),
+      data: Schema.String,
+      width: Schema.Int,
+      height: Schema.Int,
+    }),
+  ),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 

@@ -23,9 +23,10 @@ Object.assign(process.env, repoEnv);
 // since the page still loads.
 const isSingleOriginDev = process.env.T3CODE_SINGLE_ORIGIN_DEV === "1";
 
+const DEV_LOOPBACK_HOST = "127.0.0.1";
 const port = Number(process.env.PORT ?? 5733);
 const explicitHost = process.env.HOST?.trim();
-const host = explicitHost || "localhost";
+const host = explicitHost || DEV_LOOPBACK_HOST;
 const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
 const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
@@ -81,13 +82,24 @@ const unitTestProject = {
 function resolveDevProxyTarget(
   backendPort: string | undefined,
   wsUrl: string | undefined,
+  backendHost: string | undefined,
 ): string | undefined {
   // Browser dev is single-origin: the backend port is proxied through this
   // server so the app works from any origin (localhost, tailnet, LAN, phone).
   // T3CODE_PORT is set by scripts/dev-runner.ts for every non-desktop mode.
   const port = Number(backendPort?.trim());
   if (Number.isInteger(port) && port > 0) {
-    return `http://localhost:${port}/`;
+    const normalizedHost = backendHost?.trim();
+    const proxyHost =
+      normalizedHost === "::1" ||
+      normalizedHost === "[::1]" ||
+      normalizedHost === "::" ||
+      normalizedHost === "[::]"
+        ? "[::1]"
+        : normalizedHost === "localhost"
+          ? "localhost"
+          : DEV_LOOPBACK_HOST;
+    return `http://${proxyHost}:${port}/`;
   }
 
   // dev:desktop still points the renderer straight at the backend, so fall
@@ -112,7 +124,11 @@ function resolveDevProxyTarget(
   }
 }
 
-const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
+const devProxyTarget = resolveDevProxyTarget(
+  process.env.T3CODE_PORT,
+  configuredWsUrl,
+  process.env.T3CODE_HOST,
+);
 
 // Vite rejects requests whose Host header isn't localhost, which blocks sharing
 // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:

@@ -54,7 +54,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
 export const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Newly created tabs return after server creation while requested presentation and page loading continue; reopening an existing shown tab waits for stable presentation. Wait on the returned tab before interacting while its initial page loads.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -104,7 +104,7 @@ export const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot when capture is available.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,

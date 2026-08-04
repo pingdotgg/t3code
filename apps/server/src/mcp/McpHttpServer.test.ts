@@ -16,6 +16,7 @@ const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
 const tabId = PreviewTabId.make("tab-mcp-test");
 const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
+const noScreenshotTabId = PreviewTabId.make("tab-mcp-no-screenshot");
 const invocation = {
   environmentId,
   threadId,
@@ -182,12 +183,15 @@ it.effect("registers annotated tools and preserves authenticated request context
                   consoleEntries: [],
                   networkEntries: [],
                   actionTimeline: [],
-                  screenshot: {
-                    mimeType: "image/png",
-                    data: Buffer.from("png").toString("base64"),
-                    width: 10,
-                    height: 5,
-                  },
+                  screenshot:
+                    event.request.tabId === noScreenshotTabId
+                      ? null
+                      : {
+                          mimeType: "image/png",
+                          data: Buffer.from("png").toString("base64"),
+                          width: 10,
+                          height: 5,
+                        },
                 }
               : event.request.operation === "press"
                 ? undefined
@@ -256,6 +260,16 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(routedRequests.find(({ operation }) => operation === "snapshot")?.tabId).toBe(
         alternateTabId,
       );
+
+      const snapshotWithoutImage = yield* server
+        .callTool({ name: "preview_snapshot", arguments: { tabId: noScreenshotTabId } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(snapshotWithoutImage.isError).toBe(false);
+      expect(snapshotWithoutImage.content.some((content) => content.type === "image")).toBe(false);
+      expect(snapshotWithoutImage.structuredContent).toMatchObject({ screenshot: null });
 
       const press = yield* server
         .callTool({ name: "preview_press", arguments: { key: "Enter" } })

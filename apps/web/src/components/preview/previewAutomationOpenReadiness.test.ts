@@ -5,6 +5,7 @@ import {
   DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  resolvePreviewAutomationOpenWaitPolicy,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 
@@ -39,26 +40,106 @@ describe("preview automation open readiness", () => {
     ).toBe(false);
   });
 
-  it("waits when an empty tab is immediately given a URL", () => {
+  it("acknowledges a newly created shown tab without cold renderer readiness", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
+      resolvePreviewAutomationOpenWaitPolicy(
         { url: "https://example.com" } as PreviewAutomationOpenInput,
-        snapshot({ _tag: "Idle" }),
+        snapshot({
+          _tag: "Loading",
+          url: "https://example.com/",
+          title: "",
+        }),
+        false,
       ),
-    ).toBe(true);
+    ).toEqual({
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
   });
 
-  it("waits for existing tabs that already have rendered content", () => {
+  it("acknowledges a newly created background tab without renderer readiness", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
-        {} as PreviewAutomationOpenInput,
+      resolvePreviewAutomationOpenWaitPolicy(
+        { url: "https://example.com", show: false } as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "Loading",
+          url: "https://example.com/",
+          title: "",
+        }),
+        false,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
+  });
+
+  it("waits for the overlay and visibility when navigating a reused tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        { url: "https://example.com" } as PreviewAutomationOpenInput,
+        snapshot({ _tag: "Idle" }),
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: true,
+    });
+  });
+
+  it("waits for an existing rendered overlay without requiring visibility when show is false", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        { show: false } as PreviewAutomationOpenInput,
         snapshot({
           _tag: "Success",
           url: "https://example.com/",
           title: "Example",
         }),
+        true,
       ),
-    ).toBe(true);
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
+  });
+
+  it("does not require visibility for a reused empty tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({ _tag: "Idle" }),
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
+  });
+
+  it("does not require visibility for a reused failed tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "LoadFailed",
+          url: "https://example.com/",
+          title: "Example",
+          code: -2,
+          description: "Failed",
+        }),
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
   });
 
   it("gives newly-created automation tabs a stable desktop viewport", () => {

@@ -12,19 +12,39 @@ export interface HostedBrowserWebviewWrapperStyle {
   readonly height: number;
   readonly zIndex: number;
   readonly pointerEvents: "auto" | "none";
+  readonly opacity?: number;
   readonly borderRadius?: number;
   readonly visibility?: "visible";
 }
 
 export const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
+export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX = 31;
+export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY = 0.001;
+
+export function resolveHostedBrowserWebviewPresentation(input: {
+  readonly backgroundCaptureRequested: boolean;
+  readonly hasRect: boolean;
+  readonly selected: boolean;
+  readonly surfaceVisible: boolean;
+}): {
+  readonly active: boolean;
+  readonly backgroundCapture: boolean;
+} {
+  const active = input.selected && input.surfaceVisible && input.hasRect;
+  return {
+    active,
+    backgroundCapture: !active && input.backgroundCaptureRequested && input.hasRect,
+  };
+}
 
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
+  readonly backgroundCapture: boolean;
   readonly cornerRadius?: number;
   readonly rect: BrowserSurfaceRect | null;
   readonly hiddenSize: HostedBrowserWebviewSize;
 }): HostedBrowserWebviewWrapperStyle {
-  const { active, cornerRadius = 0, hiddenSize, rect } = input;
+  const { active, backgroundCapture, cornerRadius = 0, hiddenSize, rect } = input;
   if (active && rect) {
     return {
       left: rect.x,
@@ -34,6 +54,17 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
       zIndex: 30,
       pointerEvents: "auto",
       ...(cornerRadius > 0 ? { borderRadius: cornerRadius } : {}),
+    };
+  }
+  if (backgroundCapture && rect) {
+    return {
+      left: rect.x,
+      top: rect.y,
+      width: rect.width,
+      height: rect.height,
+      zIndex: BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX,
+      pointerEvents: "none",
+      opacity: BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY,
     };
   }
 

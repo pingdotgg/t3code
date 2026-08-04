@@ -43,6 +43,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -895,6 +896,14 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
+export const DesktopPreviewAutomationSnapshotInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  background: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0))
+    .check(Schema.isLessThanOrEqualTo(60_000))
+    .pipe(Schema.withDecodingDefault(Effect.succeed(15_000))),
+});
+
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -1082,7 +1091,11 @@ export interface DesktopPreviewBridge {
   };
   automation: {
     status: (tabId: string) => Promise<PreviewAutomationStatus>;
-    snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
+    snapshot: (
+      tabId: string,
+      background: boolean,
+      timeoutMs?: number,
+    ) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;

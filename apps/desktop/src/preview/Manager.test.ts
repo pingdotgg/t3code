@@ -36,7 +36,30 @@ describe("fitPictureInPictureContentSize", () => {
   });
 });
 
+describe("automationExecutionBudget", () => {
+  it("keeps short execution budgets monotonic while reserving response grace", () => {
+    expect(PreviewManager.automationExecutionBudget(100)).toBe(100);
+    expect(PreviewManager.automationExecutionBudget(500)).toBe(500);
+    expect(PreviewManager.automationExecutionBudget(501)).toBe(500);
+    expect(PreviewManager.automationExecutionBudget(750)).toBe(500);
+    expect(PreviewManager.automationExecutionBudget(751)).toBe(501);
+    expect(PreviewManager.automationExecutionBudget(1_000)).toBe(750);
+
+    const budgets = Array.from({ length: 1_001 }, (_, timeoutMs) =>
+      PreviewManager.automationExecutionBudget(timeoutMs),
+    );
+    expect(budgets.every((budget, index) => index === 0 || budget >= budgets[index - 1]!)).toBe(
+      true,
+    );
+  });
+});
+
 const {
+  bridgeAttach,
+  bridgeDestroy,
+  bridgeIsDestroyed,
+  bridgeSendCommand,
+  createFromBuffer,
   browserWindowConstructor,
   createFromPath,
   fromId,
@@ -46,17 +69,40 @@ const {
   webviewSend,
   writeFile,
   writeImage,
-} = vi.hoisted(() => ({
-  browserWindowConstructor: vi.fn(),
-  createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
-  fromId: vi.fn((_id?: number) => null),
-  getFocusedWebContents: vi.fn(() => null),
-  mkdir: vi.fn((_path: string) => undefined),
-  showItemInFolder: vi.fn(),
-  webviewSend: vi.fn(),
-  writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
-  writeImage: vi.fn(),
-}));
+} = vi.hoisted(() => {
+  const bridgeAttach = vi.fn();
+  const bridgeDestroy = vi.fn();
+  const bridgeIsDestroyed = vi.fn(() => false);
+  const bridgeSendCommand = vi.fn();
+  const browserWindowConstructor = vi.fn<(...args: Array<unknown>) => unknown>(function () {
+    return {
+      isDestroyed: bridgeIsDestroyed,
+      destroy: bridgeDestroy,
+      webContents: {
+        debugger: {
+          attach: bridgeAttach,
+          sendCommand: bridgeSendCommand,
+        },
+      },
+    };
+  });
+  return {
+    bridgeAttach,
+    bridgeDestroy,
+    bridgeIsDestroyed,
+    bridgeSendCommand,
+    browserWindowConstructor,
+    createFromBuffer: vi.fn(),
+    createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
+    fromId: vi.fn((_id?: number) => null),
+    getFocusedWebContents: vi.fn(() => null),
+    mkdir: vi.fn((_path: string) => undefined),
+    showItemInFolder: vi.fn(),
+    webviewSend: vi.fn(),
+    writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
+    writeImage: vi.fn(),
+  };
+});
 
 vi.mock("electron", () => ({
   BrowserWindow: browserWindowConstructor,
@@ -64,6 +110,7 @@ vi.mock("electron", () => ({
     writeImage,
   },
   nativeImage: {
+    createFromBuffer,
     createFromPath,
   },
   shell: {
@@ -196,7 +243,24 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
 
 describe("PreviewManager", () => {
   beforeEach(() => {
+    bridgeAttach.mockClear();
+    bridgeDestroy.mockClear();
+    bridgeIsDestroyed.mockReset();
+    bridgeIsDestroyed.mockReturnValue(false);
+    bridgeSendCommand.mockReset();
     browserWindowConstructor.mockReset();
+    browserWindowConstructor.mockImplementation(function () {
+      return {
+        isDestroyed: bridgeIsDestroyed,
+        destroy: bridgeDestroy,
+        webContents: {
+          debugger: {
+            attach: bridgeAttach,
+            sendCommand: bridgeSendCommand,
+          },
+        },
+      };
+    });
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
@@ -205,6 +269,7 @@ describe("PreviewManager", () => {
     showItemInFolder.mockClear();
     writeImage.mockClear();
     createFromPath.mockClear();
+    createFromBuffer.mockReset();
     webviewSend.mockClear();
   });
 
@@ -231,6 +296,405 @@ describe("PreviewManager", () => {
           loading: false,
         });
         expect(fromId).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "captures automation screenshots through CDP and recovers when capture is unavailable",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const png = Buffer.from("automation-preview-png");
+          const image = {
+            isEmpty: () => false,
+            getSize: () => ({ width: 640, height: 360 }),
+            resize: vi.fn(),
+            toPNG: () => png,
+          };
+          createFromBuffer.mockReturnValue(image);
+          let attached = false;
+          let captureMode: "available" | "failure" | "timeout" = "available";
+          let accessibilityGate: Promise<void> | null = null;
+          const controlEvents: Array<string> = [];
+          const attach = vi.fn(() => {
+            attached = true;
+            controlEvents.push("attach");
+          });
+          const detach = vi.fn(() => {
+            attached = false;
+            controlEvents.push("detach");
+          });
+          const capturePage = vi.fn(async () => image);
+          const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+            if (method === "Runtime.evaluate") {
+              controlEvents.push("evaluate");
+              return {
+                result: {
+                  value: {
+                    url: "https://example.com/",
+                    title: "Example",
+                    loading: false,
+                    visibleText: "Example body",
+                    interactiveElements: [],
+                  },
+                },
+              };
+            }
+            if (method === "Accessibility.getFullAXTree") {
+              if (accessibilityGate !== null) await accessibilityGate;
+              return { nodes: [] };
+            }
+            if (method === "Target.getTargetInfo") {
+              return { targetInfo: { targetId: "target-42" } };
+            }
+            if (method === "Page.captureScreenshot") {
+              if (captureMode === "failure") throw new Error("UnknownVizError");
+              if (captureMode === "timeout") return await new Promise<never>(() => undefined);
+              return { data: png.toString("base64") };
+            }
+            return undefined;
+          });
+          bridgeSendCommand.mockImplementation(
+            async (method: string, _params?: unknown, sessionId?: string): Promise<unknown> => {
+              if (method === "Target.attachToTarget") {
+                return { sessionId: "target-session-42" };
+              }
+              if (method === "Page.captureScreenshot") {
+                expect(sessionId).toBe("target-session-42");
+                if (captureMode === "failure") throw new Error("UnknownVizError");
+                if (captureMode === "timeout") return await new Promise<never>(() => undefined);
+                return { data: png.toString("base64") };
+              }
+              return {};
+            },
+          );
+          fromId.mockReturnValue({
+            id: 42,
+            isDestroyed: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com/",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            isDevToolsOpened: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            capturePage,
+            debugger: {
+              isAttached: () => attached,
+              attach,
+              detach,
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          } as never);
+          yield* manager.createTab("tab_snapshot");
+          yield* manager.registerWebview("tab_snapshot", 42);
+          yield* Effect.yieldNow;
+
+          const captured = yield* manager.automationSnapshot("tab_snapshot");
+
+          expect(captured).toMatchObject({
+            url: "https://example.com/",
+            title: "Example",
+            visibleText: "Example body",
+            accessibilityTree: { nodes: [] },
+            screenshot: {
+              mimeType: "image/png",
+              data: png.toString("base64"),
+              width: 640,
+              height: 360,
+            },
+          });
+          expect(capturePage).not.toHaveBeenCalled();
+          expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", {
+            format: "png",
+            fromSurface: true,
+            captureBeyondViewport: false,
+          });
+          expect(sendCommand).not.toHaveBeenCalledWith("Page.bringToFront", undefined);
+
+          const backgroundCdpCaptured = yield* manager.automationSnapshot("tab_snapshot", true);
+          expect(backgroundCdpCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
+          expect(browserWindowConstructor).toHaveBeenCalledWith({
+            show: false,
+            webPreferences: { sandbox: true },
+          });
+          expect(bridgeAttach).toHaveBeenCalledWith("1.3");
+          expect(bridgeSendCommand).toHaveBeenCalledWith("Target.attachToTarget", {
+            targetId: "target-42",
+            flatten: true,
+          });
+          expect(bridgeSendCommand).toHaveBeenCalledWith(
+            "Page.captureScreenshot",
+            {
+              format: "png",
+              fromSurface: true,
+              captureBeyondViewport: false,
+            },
+            "target-session-42",
+          );
+          expect(bridgeSendCommand).toHaveBeenCalledWith("Target.detachFromTarget", {
+            sessionId: "target-session-42",
+          });
+          expect(bridgeDestroy).toHaveBeenCalledOnce();
+          expect(sendCommand).not.toHaveBeenCalledWith("Page.bringToFront", undefined);
+          expect(capturePage).not.toHaveBeenCalled();
+
+          captureMode = "failure";
+          const backgroundFallbackCaptured = yield* manager.automationSnapshot(
+            "tab_snapshot",
+            true,
+          );
+          expect(backgroundFallbackCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true });
+          expect(bridgeDestroy).toHaveBeenCalledTimes(2);
+
+          capturePage.mockClear();
+          const foregroundFallbackCaptured = yield* manager.automationSnapshot("tab_snapshot");
+          expect(foregroundFallbackCaptured.screenshot).toMatchObject({
+            width: 640,
+            height: 360,
+          });
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: false });
+
+          capturePage.mockClear();
+          capturePage.mockResolvedValueOnce({ ...image, isEmpty: () => true });
+          const degraded = yield* manager.automationSnapshot("tab_snapshot");
+          expect(degraded.screenshot).toBeNull();
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(detach).not.toHaveBeenCalled();
+
+          capturePage.mockClear();
+          captureMode = "timeout";
+          const timedOutCapture = yield* manager
+            .automationSnapshot("tab_snapshot")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          const queuedAfterTimedOutCapture = yield* manager
+            .automationEvaluate("tab_snapshot", { expression: "document.title" })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(5_000);
+          expect((yield* Fiber.join(timedOutCapture)).screenshot).toMatchObject({
+            width: 640,
+            height: 360,
+          });
+          expect(yield* Fiber.join(queuedAfterTimedOutCapture)).toMatchObject({
+            title: "Example",
+          });
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(detach).toHaveBeenCalledOnce();
+          expect(controlEvents.slice(-3)).toEqual(["detach", "attach", "evaluate"]);
+
+          captureMode = "available";
+          const recovered = yield* manager.automationSnapshot("tab_snapshot");
+          expect(recovered.screenshot).toMatchObject({ width: 640, height: 360 });
+          expect(attach).toHaveBeenCalledTimes(2);
+
+          capturePage.mockClear();
+          captureMode = "timeout";
+          capturePage.mockImplementationOnce(async () => await new Promise<never>(() => undefined));
+          const callerBoundCapture = yield* manager
+            .automationSnapshot("tab_snapshot", false, 1_000)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(725);
+          const callerBoundResult = yield* Fiber.join(callerBoundCapture);
+          expect(callerBoundResult).toMatchObject({
+            url: "https://example.com/",
+            visibleText: "Example body",
+            screenshot: null,
+          });
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(detach).toHaveBeenCalledTimes(2);
+
+          capturePage.mockClear();
+          captureMode = "available";
+          let releaseAccessibility!: () => void;
+          accessibilityGate = new Promise<void>((resolve) => {
+            releaseAccessibility = resolve;
+          });
+          const skippedCapture = yield* manager
+            .automationSnapshot("tab_snapshot", false, 1_000)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(730);
+          releaseAccessibility();
+          accessibilityGate = null;
+
+          expect((yield* Fiber.join(skippedCapture)).screenshot).toBeNull();
+          expect(capturePage).not.toHaveBeenCalled();
+          expect(detach).toHaveBeenCalledTimes(2);
+          expect(attach).toHaveBeenCalledTimes(3);
+
+          expect((yield* manager.automationSnapshot("tab_snapshot")).screenshot).toMatchObject({
+            width: 640,
+            height: 360,
+          });
+          expect(attach).toHaveBeenCalledTimes(3);
+        }),
+      ),
+  );
+
+  effectIt.effect("bounds debugger initialization and recovers the control session", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        let firstInitialization = true;
+        const attach = vi.fn(() => {
+          attached = true;
+        });
+        const detach = vi.fn(() => {
+          attached = false;
+        });
+        const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+          if (method === "Runtime.enable" && firstInitialization) {
+            firstInitialization = false;
+            return await new Promise<never>(() => undefined);
+          }
+          return method === "Runtime.evaluate" ? { result: { value: "recovered" } } : undefined;
+        });
+        fromId.mockReturnValue({
+          id: 43,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_timeout");
+        yield* manager.registerWebview("tab_timeout", 43);
+        yield* Effect.yieldNow;
+
+        const evaluation = yield* manager
+          .automationEvaluate("tab_timeout", { expression: "document.title" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(15_000);
+        const timedOut = yield* Effect.exit(Fiber.join(evaluation));
+
+        expect(Exit.isFailure(timedOut)).toBe(true);
+        if (Exit.isFailure(timedOut)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(timedOut.cause))).toMatchObject({
+            _tag: "PreviewAutomationTimeoutError",
+            tabId: "tab_timeout",
+          });
+        }
+        expect(detach).toHaveBeenCalledOnce();
+
+        expect(
+          yield* manager.automationEvaluate("tab_timeout", {
+            expression: "document.title",
+          }),
+        ).toBe("recovered");
+        expect(attach).toHaveBeenCalledTimes(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not let a queued timeout detach the active control session", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        let stallNextEvaluation = true;
+        const attach = vi.fn(() => {
+          attached = true;
+        });
+        const detach = vi.fn(() => {
+          attached = false;
+        });
+        const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+          if (method === "Runtime.evaluate" && stallNextEvaluation) {
+            stallNextEvaluation = false;
+            return await new Promise<never>(() => undefined);
+          }
+          return method === "Runtime.evaluate" ? { result: { value: "recovered" } } : undefined;
+        });
+        fromId.mockReturnValue({
+          id: 44,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_queued_timeout");
+        yield* manager.registerWebview("tab_queued_timeout", 44);
+        let latestController: string | undefined;
+        yield* manager.subscribeStateChanges((tabId, state) =>
+          Effect.sync(() => {
+            if (tabId === "tab_queued_timeout") latestController = state.controller;
+          }),
+        );
+        const active = yield* manager
+          .automationEvaluate("tab_queued_timeout", { expression: "document.title" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        const queued = yield* manager
+          .automationWaitFor("tab_queued_timeout", { text: "ready", timeoutMs: 1_000 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust(750);
+        expect(Exit.isFailure(yield* Effect.exit(Fiber.join(queued)))).toBe(true);
+        expect(detach).not.toHaveBeenCalled();
+        expect(latestController).toBe("agent");
+
+        yield* TestClock.adjust(14_000);
+        expect(Exit.isFailure(yield* Effect.exit(Fiber.join(active)))).toBe(true);
+        expect(detach).toHaveBeenCalledOnce();
+        expect(latestController).toBe("none");
+
+        expect(
+          yield* manager.automationEvaluate("tab_queued_timeout", {
+            expression: "document.title",
+          }),
+        ).toBe("recovered");
       }),
     ),
   );

@@ -75,6 +75,72 @@ export class PreviewAutomationViewportTimeoutError extends Schema.TaggedErrorCla
   }
 }
 
+export class PreviewAutomationVisibilityTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationVisibilityTimeoutError>()(
+  "PreviewAutomationVisibilityTimeoutError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    timeoutMs: Schema.Int,
+    activeSurfaceKind: Schema.optional(Schema.Literals(["inline-preview", "right-panel", "none"])),
+    activeSurfaceId: Schema.optional(Schema.NullOr(Schema.String)),
+    inlinePreviewOpen: Schema.optional(Schema.Boolean),
+    inlinePreviewTabId: Schema.optional(Schema.NullOr(PreviewTabId)),
+    rightPanelOpen: Schema.optional(Schema.Boolean),
+    rightPanelSurfaceId: Schema.optional(Schema.NullOr(Schema.String)),
+    surfaceRegistered: Schema.optional(Schema.Boolean),
+    presentationRectAvailable: Schema.optional(Schema.Boolean),
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError" as const;
+  }
+
+  override get message(): string {
+    return `Preview browser surface for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} did not become visible within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PreviewAutomationBackgroundPresentationTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationBackgroundPresentationTimeoutError>()(
+  "PreviewAutomationBackgroundPresentationTimeoutError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError" as const;
+  }
+
+  override get message(): string {
+    return `Preview browser surface for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} was not staged for background automation within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PreviewAutomationHostDeadlineExceededError extends Schema.TaggedErrorClass<PreviewAutomationHostDeadlineExceededError>()(
+  "PreviewAutomationHostDeadlineExceededError",
+  {
+    requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: Schema.NullOr(PreviewTabId),
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} (tab ${this.tabId ?? "unassigned"}) did not complete within the ${this.timeoutMs}ms host response budget.`;
+  }
+}
+
 export class PreviewAutomationTargetUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationTargetUnavailableError>()(
   "PreviewAutomationTargetUnavailableError",
   {
@@ -209,6 +275,9 @@ export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationViewportTimeoutError,
+  PreviewAutomationVisibilityTimeoutError,
+  PreviewAutomationBackgroundPresentationTimeoutError,
+  PreviewAutomationHostDeadlineExceededError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetNotEditableHostError,

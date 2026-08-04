@@ -7,8 +7,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
-import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import {
+  resolveBrowserSurfaceBackgroundCaptureRect,
+  selectBrowserSurfaceRenderState,
+  useBrowserSurfaceStore,
+} from "./browserSurfaceStore";
 import {
   browserViewportSettingKey,
   resolveBrowserViewportLayout,
@@ -17,7 +23,10 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
-import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import {
+  resolveHostedBrowserWebviewPresentation,
+  resolveHostedBrowserWebviewWrapperStyle,
+} from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -57,19 +66,30 @@ export function HostedBrowserWebview(props: {
   const webviewRef = useRef<ElectronWebview | null>(null);
   const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(INITIAL_WEBVIEW_CRASH_RECOVERY_STATE);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
-  const presentation = useBrowserSurfaceStore(
-    useShallow((state) => {
-      const current = state.byTabId[runtimeTabId];
-      return {
-        content: current?.content ?? null,
-        cornerRadius: current?.cornerRadius ?? 0,
-        fitSourceContent: current?.fitSourceContent ?? false,
-        fittedSourceContent: current?.fittedSourceContent ?? null,
-        rect: resolveBrowserSurfacePanelRect(state.byTabId, runtimeTabId),
-        visible: current?.visible ?? false,
-      };
-    }),
+  const surface = useBrowserSurfaceStore(
+    useShallow((state) => selectBrowserSurfaceRenderState(state, runtimeTabId)),
   );
+  const selectedInRightPanel = useRightPanelStore((state) => {
+    const panel = selectThreadRightPanelState(state.byThreadKey, threadRef);
+    return panel.isOpen && panel.activeSurfaceId === `browser:${tabId}`;
+  });
+  const selectedInMiniPlayer = usePreviewMiniPlayerStore(
+    (state) => selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef)?.tabId === tabId,
+  );
+  const presentation = {
+    backgroundCapture: surface.backgroundCapture,
+    content: surface.content,
+    cornerRadius: surface.cornerRadius,
+    fitSourceContent: surface.fitSourceContent,
+    fittedSourceContent: surface.fittedSourceContent,
+    rect: surface.backgroundCapture
+      ? resolveBrowserSurfaceBackgroundCaptureRect(surface.rect, {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        })
+      : surface.rect,
+    visible: surface.visible,
+  };
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
 
   useEffect(() => {
@@ -146,7 +166,12 @@ export function HostedBrowserWebview(props: {
     };
   }, [config, initialSrc, runtimeTabId, webviewGeneration]);
 
-  const active = presentation.visible && presentation.rect !== null;
+  const { active, backgroundCapture } = resolveHostedBrowserWebviewPresentation({
+    backgroundCaptureRequested: presentation.backgroundCapture,
+    hasRect: presentation.rect !== null,
+    selected: selectedInRightPanel || selectedInMiniPlayer,
+    surfaceVisible: presentation.visible,
+  });
   const lastRect = presentation.rect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
@@ -174,7 +199,7 @@ export function HostedBrowserWebview(props: {
           width: hiddenContentSize?.width ?? lastRect?.width ?? 1280,
           height: hiddenContentSize?.height ?? lastRect?.height ?? 800,
         };
-  const containerSize = active && lastRect ? lastRect : hiddenSize;
+  const containerSize = (active || backgroundCapture) && lastRect ? lastRect : hiddenSize;
   const deviceToolbarVisible = active && viewport._tag !== "fill" && !presentation.fitSourceContent;
   const {
     activeDrag,
@@ -233,6 +258,7 @@ export function HostedBrowserWebview(props: {
 
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
+    backgroundCapture,
     cornerRadius: presentation.cornerRadius,
     rect: lastRect,
     hiddenSize,
@@ -245,6 +271,7 @@ export function HostedBrowserWebview(props: {
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
       data-preview-viewport={runtimeTabId}
+      data-preview-background-capture={backgroundCapture ? "true" : undefined}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
         {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
@@ -281,7 +308,7 @@ export function HostedBrowserWebview(props: {
                 ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
                 : effectiveViewport.height
           }
-          aria-hidden={active ? undefined : true}
+          aria-hidden={active || backgroundCapture ? undefined : true}
           className={cn(
             "absolute flex overflow-hidden bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",

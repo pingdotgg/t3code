@@ -165,7 +165,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
             onFailure: previewSnapshotFailure,
             onSuccess: ({ encodedResult }) => {
               const snapshot = encodedResult as {
-                readonly screenshot: {
+                readonly screenshot: null | {
                   readonly mimeType: "image/png";
                   readonly data: string;
                   readonly width: number;
@@ -176,11 +176,14 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const { screenshot, ...page } = snapshot;
               const metadata = {
                 ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
+                screenshot:
+                  screenshot === null
+                    ? null
+                    : {
+                        mimeType: screenshot.mimeType,
+                        width: screenshot.width,
+                        height: screenshot.height,
+                      },
               };
               return Effect.succeed(
                 new McpSchema.CallToolResult({
@@ -188,11 +191,15 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                   structuredContent: metadata,
                   content: [
                     { type: "text", text: JSON.stringify(metadata) },
-                    {
-                      type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
-                    },
+                    ...(screenshot === null
+                      ? []
+                      : [
+                          {
+                            type: "image" as const,
+                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                            mimeType: screenshot.mimeType,
+                          },
+                        ]),
                   ],
                 }),
               );
