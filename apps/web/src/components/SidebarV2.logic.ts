@@ -8,17 +8,16 @@ import {
   effectiveSettled,
   effectiveSnoozed,
 } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  scopedProjectKey,
-  scopedThreadKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 
 import { isMacPlatform } from "../lib/utils";
 import { isThreadActivelyWorking } from "../session-logic";
-import { selectVisibleSidebarThreads } from "../sidebarThreadTree";
-import type { SidebarThreadSummary, TurnDiffSummary } from "../types";
+import {
+  normalizeParentThreadKeys,
+  selectVisibleSidebarThreads,
+  sidebarThreadKey,
+} from "../sidebarThreadTree";
+import type { SidebarThreadSummary } from "../types";
 
 export type ThreadLifecycleSupport = {
   readonly settlement: boolean;
@@ -91,12 +90,292 @@ function sortByRecent(left: SidebarThreadSummary, right: SidebarThreadSummary): 
   return left.title.localeCompare(right.title);
 }
 
+/**
+ * A row in a nested-chat group. Nested rows render title-only, so `displayStatus`
+ * always rolls up the subtree — expanding a parent must not be the only way to
+ * learn that a nested chat is blocked on the user.
+ */
+export interface SidebarV2ThreadRow {
+  readonly thread: SidebarThreadSummary;
+  readonly threadKey: string;
+  readonly depth: number;
+  readonly hasChildren: boolean;
+  readonly isExpanded: boolean;
+  /** Total descendants, used for the expand affordance's label. */
+  readonly childCount: number;
+  readonly displayStatus: SidebarV2Status;
+  /**
+   * True when this thread or any active descendant is mid-turn. Archive walks
+   * the whole subtree server-side, so a quiet parent with a running child must
+   * still disable the control.
+   */
+  readonly archiveBlocked: boolean;
+}
+
+/** A root thread plus its visible descendants. `rows[0]` is always the root. */
+export interface SidebarV2ThreadGroup {
+  readonly root: SidebarThreadSummary;
+  readonly rootKey: string;
+  readonly rows: readonly SidebarV2ThreadRow[];
+}
+
+interface SidebarV2ThreadNode {
+  readonly thread: SidebarThreadSummary;
+  readonly threadKey: string;
+  readonly children: SidebarV2ThreadNode[];
+  readonly status: SidebarV2Status;
+  rolledUpStatus: SidebarV2Status;
+  descendantCount: number;
+  archiveBlocked: boolean;
+}
+
+/** Matches the client archive guard: a live agent run or an in-flight session turn. */
+export function isSidebarV2ArchiveBlockedThread(
+  thread: Pick<SidebarThreadSummary, "session" | "virtualAgentRun">,
+): boolean {
+  if (thread.virtualAgentRun?.status === "running") {
+    return true;
+  }
+  return thread.session?.status === "running" && thread.session.activeTurnId != null;
+}
+
+// Highest urgency first. A collapsed parent adopts the most urgent status in
+// its subtree so hiding children never hides work.
+const SIDEBAR_V2_STATUS_PRIORITY = ["approval", "input", "working", "failed", "ready"] as const;
+
+export function rollUpSidebarV2Status(statuses: readonly SidebarV2Status[]): SidebarV2Status {
+  let resolved: SidebarV2Status = "ready";
+  let resolvedRank = SIDEBAR_V2_STATUS_PRIORITY.indexOf(resolved);
+  for (const status of statuses) {
+    const rank = SIDEBAR_V2_STATUS_PRIORITY.indexOf(status);
+    if (rank < resolvedRank) {
+      resolved = status;
+      resolvedRank = rank;
+    }
+  }
+  return resolved;
+}
+
+/** Anything but the resting state: drives both shelf promotion and the
+    default expansion of a parent whose subtree still has live work. */
+export function isSidebarV2ActiveStatus(status: SidebarV2Status): boolean {
+  return status !== "ready";
+}
+
+function buildThreadNodes(threads: readonly SidebarThreadSummary[]): SidebarV2ThreadNode[] {
+  const parentByKey = normalizeParentThreadKeys(threads);
+  // Sorted once up front so roots and children land in order as they are
+  // appended, avoiding a recursive sort pass per subtree.
+  const sortedThreads = threads.toSorted(sortByRecent);
+  const nodesByKey = new Map<string, SidebarV2ThreadNode>(
+    sortedThreads.map((thread) => {
+      const threadKey = sidebarThreadKey(thread);
+      return [
+        threadKey,
+        {
+          thread,
+          threadKey,
+          children: [],
+          status: resolveSidebarV2Status(thread),
+          rolledUpStatus: "ready",
+          descendantCount: 0,
+          archiveBlocked: false,
+        },
+      ];
+    }),
+  );
+
+  const roots: SidebarV2ThreadNode[] = [];
+  for (const thread of sortedThreads) {
+    const threadKey = sidebarThreadKey(thread);
+    const node = nodesByKey.get(threadKey);
+    if (!node) continue;
+    const parentKey = parentByKey.get(threadKey);
+    const parent = parentKey === undefined ? undefined : nodesByKey.get(parentKey);
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  resolveNodeRollups(roots);
+  return roots;
+}
+
+function resolveNodeRollups(nodes: readonly SidebarV2ThreadNode[]): void {
+  for (const node of nodes) {
+    resolveNodeRollups(node.children);
+    node.descendantCount = node.children.reduce(
+      (count, child) => count + 1 + child.descendantCount,
+      0,
+    );
+    node.rolledUpStatus = rollUpSidebarV2Status([
+      node.status,
+      ...node.children.map((child) => child.rolledUpStatus),
+    ]);
+    node.archiveBlocked =
+      isSidebarV2ArchiveBlockedThread(node.thread) ||
+      node.children.some((child) => child.archiveBlocked);
+  }
+}
+
+/**
+ * Flattens a subtree into rows. Expansion mirrors sidebar v1: an explicit
+ * override wins, the default is "expanded while the subtree has live work",
+ * and a routed descendant always stays visible so the open thread can never be
+ * collapsed out of view.
+ */
+function flattenGroupRows(input: {
+  readonly nodes: readonly SidebarV2ThreadNode[];
+  readonly depth: number;
+  readonly activeThreadKey: string | undefined;
+  readonly expandedOverrideByThreadKey: ReadonlyMap<string, boolean>;
+  readonly output: SidebarV2ThreadRow[];
+}): boolean {
+  let containsActiveThread = false;
+  for (const node of input.nodes) {
+    const hasChildren = node.children.length > 0;
+    const childRows: SidebarV2ThreadRow[] = [];
+    const containsActiveDescendant = hasChildren
+      ? flattenGroupRows({
+          nodes: node.children,
+          depth: input.depth + 1,
+          activeThreadKey: input.activeThreadKey,
+          expandedOverrideByThreadKey: input.expandedOverrideByThreadKey,
+          output: childRows,
+        })
+      : false;
+    const override = input.expandedOverrideByThreadKey.get(node.threadKey);
+    const hasActiveDescendant =
+      containsActiveDescendant ||
+      node.children.some((child) => isSidebarV2ActiveStatus(child.rolledUpStatus));
+    const isExpanded =
+      hasChildren &&
+      (hasActiveDescendant || (override ?? isSidebarV2ActiveStatus(node.rolledUpStatus)));
+    input.output.push({
+      thread: node.thread,
+      threadKey: node.threadKey,
+      depth: input.depth,
+      hasChildren,
+      isExpanded,
+      childCount: node.descendantCount,
+      displayStatus: node.rolledUpStatus,
+      archiveBlocked: node.archiveBlocked,
+    });
+    if (isExpanded) {
+      input.output.push(...childRows);
+    }
+    containsActiveThread ||= node.threadKey === input.activeThreadKey || containsActiveDescendant;
+  }
+  return containsActiveThread;
+}
+
+function toThreadGroup(
+  node: SidebarV2ThreadNode,
+  input: {
+    readonly activeThreadKey: string | undefined;
+    readonly expandedOverrideByThreadKey: ReadonlyMap<string, boolean>;
+  },
+): SidebarV2ThreadGroup {
+  const rows: SidebarV2ThreadRow[] = [];
+  flattenGroupRows({
+    nodes: [node],
+    depth: 0,
+    activeThreadKey: input.activeThreadKey,
+    expandedOverrideByThreadKey: input.expandedOverrideByThreadKey,
+    output: rows,
+  });
+  return { root: node.thread, rootKey: node.threadKey, rows };
+}
+
+const NO_EXPANDED_OVERRIDES: ReadonlyMap<string, boolean> = new Map();
+
 export interface SidebarV2Shelves {
-  readonly pinned: readonly SidebarThreadSummary[];
-  readonly pinnedByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  readonly active: readonly SidebarThreadSummary[];
-  readonly snoozed: readonly SidebarThreadSummary[];
-  readonly settled: readonly SidebarThreadSummary[];
+  readonly pinned: readonly SidebarV2ThreadGroup[];
+  readonly pinnedByProjectKey: ReadonlyMap<string, readonly SidebarV2ThreadGroup[]>;
+  readonly active: readonly SidebarV2ThreadGroup[];
+  readonly snoozed: readonly SidebarV2ThreadGroup[];
+  readonly settled: readonly SidebarV2ThreadGroup[];
+}
+
+export function classifySidebarV2Shelves(input: {
+  readonly threads: readonly SidebarThreadSummary[];
+  readonly now: string;
+  readonly pinnedThreadKeysByProjectKey?: PinnedThreadKeysByProjectKey;
+  readonly expandedOverrideByThreadKey?: ReadonlyMap<string, boolean>;
+  readonly activeThreadKey?: string | undefined;
+}): SidebarV2Shelves {
+  const visibleThreads = selectVisibleSidebarThreads(input.threads);
+  const flattenInput = {
+    activeThreadKey: input.activeThreadKey,
+    expandedOverrideByThreadKey: input.expandedOverrideByThreadKey ?? NO_EXPANDED_OVERRIDES,
+  };
+  const rootNodes = buildThreadNodes(visibleThreads);
+  // Only roots are pinnable: a nested chat rides along with its parent, so a
+  // stale pin on a thread that has since become a child is ignored.
+  const groupByRootKey = new Map(
+    rootNodes
+      .filter((node) => node.thread.virtualAgentRun === undefined)
+      .map((node) => [node.threadKey, node] as const),
+  );
+
+  const pinnedByProjectKey = new Map<string, readonly SidebarV2ThreadGroup[]>();
+  const pinnedThreadKeys = new Set<string>();
+  for (const [projectKey, threadKeys] of Object.entries(input.pinnedThreadKeysByProjectKey ?? {})) {
+    const pinnedGroups = threadKeys.flatMap((threadKey) => {
+      const node = groupByRootKey.get(threadKey);
+      return node &&
+        scopedProjectKey(scopeProjectRef(node.thread.environmentId, node.thread.projectId)) ===
+          projectKey
+        ? [toThreadGroup(node, flattenInput)]
+        : [];
+    });
+    if (pinnedGroups.length > 0) {
+      pinnedByProjectKey.set(projectKey, pinnedGroups);
+      for (const group of pinnedGroups) {
+        pinnedThreadKeys.add(group.rootKey);
+      }
+    }
+  }
+
+  const active: SidebarV2ThreadGroup[] = [];
+  const snoozed: SidebarV2ThreadGroup[] = [];
+  const settled: SidebarV2ThreadGroup[] = [];
+  for (const node of rootNodes) {
+    if (pinnedThreadKeys.has(node.threadKey)) {
+      continue;
+    }
+    const group = toThreadGroup(node, flattenInput);
+    // The whole subtree lands wherever its root does, so a nested chat never
+    // detaches from its parent. Promote only for live *descendants* first: the
+    // root's own working status must not defeat an intentional snooze (canSnooze
+    // allows active work). After that, honor the root's snooze/settled state
+    // before falling back to its own status.
+    const hasActiveDescendant = node.children.some((child) =>
+      isSidebarV2ActiveStatus(child.rolledUpStatus),
+    );
+    if (hasActiveDescendant) {
+      active.push(group);
+    } else if (effectiveSnoozed(node.thread, { now: input.now })) {
+      snoozed.push(group);
+    } else if (isSidebarV2ActiveStatus(node.status)) {
+      active.push(group);
+    } else if (effectiveSettled(node.thread, { now: input.now })) {
+      settled.push(group);
+    } else {
+      active.push(group);
+    }
+  }
+  const sortGroups = (groups: readonly SidebarV2ThreadGroup[]) =>
+    groups.toSorted((left, right) => sortByRecent(left.root, right.root));
+  return {
+    pinned: [...pinnedByProjectKey.values()].flat(),
+    pinnedByProjectKey,
+    active: sortGroups(active),
+    snoozed: sortGroups(snoozed),
+    settled: sortGroups(settled),
+  };
 }
 
 export function resolveSidebarV2ThreadRouteTarget(
@@ -109,62 +388,6 @@ export function resolveSidebarV2ThreadRouteTarget(
   return agentRun
     ? { threadId: agentRun.parentThreadId, agentTaskId: agentRun.taskId }
     : { threadId: thread.id, agentTaskId: null };
-}
-
-export function classifySidebarV2Shelves(input: {
-  readonly threads: readonly SidebarThreadSummary[];
-  readonly now: string;
-  readonly pinnedThreadKeysByProjectKey?: PinnedThreadKeysByProjectKey;
-}): SidebarV2Shelves {
-  const visibleThreads = selectVisibleSidebarThreads(input.threads);
-  const threadByKey = new Map(
-    visibleThreads
-      .filter((thread) => thread.virtualAgentRun === undefined)
-      .map(
-        (thread) =>
-          [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
-      ),
-  );
-  const pinnedByProjectKey = new Map<string, readonly SidebarThreadSummary[]>();
-  const pinnedThreadKeys = new Set<string>();
-  for (const [projectKey, threadKeys] of Object.entries(input.pinnedThreadKeysByProjectKey ?? {})) {
-    const pinnedThreads = threadKeys.flatMap((threadKey) => {
-      const thread = threadByKey.get(threadKey);
-      return thread &&
-        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)) === projectKey
-        ? [thread]
-        : [];
-    });
-    if (pinnedThreads.length > 0) {
-      pinnedByProjectKey.set(projectKey, pinnedThreads);
-      for (const thread of pinnedThreads) {
-        pinnedThreadKeys.add(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
-      }
-    }
-  }
-
-  const active: SidebarThreadSummary[] = [];
-  const snoozed: SidebarThreadSummary[] = [];
-  const settled: SidebarThreadSummary[] = [];
-  for (const thread of visibleThreads) {
-    if (pinnedThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))) {
-      continue;
-    }
-    if (effectiveSnoozed(thread, { now: input.now })) {
-      snoozed.push(thread);
-    } else if (effectiveSettled(thread, { now: input.now })) {
-      settled.push(thread);
-    } else {
-      active.push(thread);
-    }
-  }
-  return {
-    pinned: [...pinnedByProjectKey.values()].flat(),
-    pinnedByProjectKey,
-    active: active.toSorted(sortByRecent),
-    snoozed: snoozed.toSorted(sortByRecent),
-    settled: settled.toSorted(sortByRecent),
-  };
 }
 
 // ── Sidebar v2 status model ─────────────────────────────────────────
@@ -278,37 +501,6 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-export interface TurnDiffStats {
-  readonly insertions: number;
-  readonly deletions: number;
-}
-
-/**
- * Line counts for a turn's checkpoint. Per-file additions/deletions are
- * optional on the wire, so a checkpoint that only carries paths contributes
- * nothing and the row renders no diff rather than a misleading `+0 −0`.
- */
-export function latestTurnDiffStats(
-  summary: TurnDiffSummary | null | undefined,
-): TurnDiffStats | null {
-  if (!summary) return null;
-  const files = summary.turnFiles ?? summary.files;
-  let insertions = 0;
-  let deletions = 0;
-  let counted = false;
-  for (const file of files) {
-    if (file.additions !== undefined) {
-      insertions += file.additions;
-      counted = true;
-    }
-    if (file.deletions !== undefined) {
-      deletions += file.deletions;
-      counted = true;
-    }
-  }
-  return counted ? { insertions, deletions } : null;
 }
 
 /**

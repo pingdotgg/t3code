@@ -10,6 +10,7 @@ import {
   DEFAULT_CODE_FONT,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_SIDEBAR_META_FONT_SIZE,
+  DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
@@ -99,21 +100,41 @@ describe("ClientSettings.sidebarFontSize", () => {
   it("rejects invalid sidebar font size patches", () => {
     expect(() => decodeClientSettingsPatch({ sidebarFontSize: 25 })).toThrow();
   });
-});
 
-describe("ClientSettings.sidebarMetaFontSize", () => {
-  it("defaults below the sidebar title font size so metadata stays secondary", () => {
-    expect(DEFAULT_CLIENT_SETTINGS.sidebarMetaFontSize).toBe(DEFAULT_SIDEBAR_META_FONT_SIZE);
-    expect(decodeClientSettings({}).sidebarMetaFontSize).toBe(DEFAULT_SIDEBAR_META_FONT_SIZE);
-    expect(DEFAULT_SIDEBAR_META_FONT_SIZE).toBeLessThan(DEFAULT_SIDEBAR_FONT_SIZE);
+  describe("ClientSettings.sidebarMetaFontSize", () => {
+    it("defaults below the sidebar title font size so metadata stays secondary", () => {
+      expect(DEFAULT_CLIENT_SETTINGS.sidebarMetaFontSize).toBe(DEFAULT_SIDEBAR_META_FONT_SIZE);
+      expect(decodeClientSettings({}).sidebarMetaFontSize).toBe(DEFAULT_SIDEBAR_META_FONT_SIZE);
+      expect(DEFAULT_SIDEBAR_META_FONT_SIZE).toBeLessThan(DEFAULT_SIDEBAR_FONT_SIZE);
+    });
+
+    it("accepts valid sidebar metadata font size patches", () => {
+      expect(decodeClientSettingsPatch({ sidebarMetaFontSize: 9 }).sidebarMetaFontSize).toBe(9);
+    });
+
+    it("rejects invalid sidebar metadata font size patches", () => {
+      expect(() => decodeClientSettingsPatch({ sidebarMetaFontSize: 25 })).toThrow();
+    });
   });
 
-  it("accepts valid sidebar metadata font size patches", () => {
-    expect(decodeClientSettingsPatch({ sidebarMetaFontSize: 10 }).sidebarMetaFontSize).toBe(10);
-  });
+  describe("ClientSettings.sidebarRowSpacing", () => {
+    it("defaults to the default row spacing", () => {
+      expect(DEFAULT_CLIENT_SETTINGS.sidebarRowSpacing).toBe(DEFAULT_SIDEBAR_ROW_SPACING);
+      expect(decodeClientSettings({}).sidebarRowSpacing).toBe(DEFAULT_SIDEBAR_ROW_SPACING);
+    });
 
-  it("rejects invalid sidebar metadata font size patches", () => {
-    expect(() => decodeClientSettingsPatch({ sidebarMetaFontSize: 25 })).toThrow();
+    it("accepts known sidebar row spacing levels in patches", () => {
+      expect(decodeClientSettingsPatch({ sidebarRowSpacing: "compact" }).sidebarRowSpacing).toBe(
+        "compact",
+      );
+      expect(decodeClientSettingsPatch({ sidebarRowSpacing: "relaxed" }).sidebarRowSpacing).toBe(
+        "relaxed",
+      );
+    });
+
+    it("rejects unknown sidebar row spacing levels in patches", () => {
+      expect(() => decodeClientSettingsPatch({ sidebarRowSpacing: "tight" })).toThrow();
+    });
   });
 });
 

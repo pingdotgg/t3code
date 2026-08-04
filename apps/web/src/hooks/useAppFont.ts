@@ -7,12 +7,14 @@ import {
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_SIDEBAR_META_FONT_SIZE,
+  DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_STATUS_LINE_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
   type CodeFont,
   type FontSize,
+  type SidebarRowSpacing,
   type SidebarTranslucency,
   type UiDensity,
   type UiFont,
@@ -25,6 +27,7 @@ import { syncBrowserChromeTheme } from "./useTheme";
 const APP_FONT_ATTRIBUTE = "data-ui-font";
 const CODE_FONT_ATTRIBUTE = "data-code-font";
 const SIDEBAR_TRANSLUCENCY_ATTRIBUTE = "data-sidebar-translucency";
+const SIDEBAR_ROW_SPACING_ATTRIBUTE = "data-sidebar-row-spacing";
 const NATIVE_VIBRANCY_ATTRIBUTE = "data-native-vibrancy";
 const WINDOW_FOCUSED_ATTRIBUTE = "data-window-focused";
 let nativeVibrancyRequestId = 0;
@@ -99,6 +102,14 @@ export function applyFontSizes(sizes: {
   style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
 }
 
+export function applySidebarRowSpacing(spacing: SidebarRowSpacing): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.setAttribute(SIDEBAR_ROW_SPACING_ATTRIBUTE, spacing);
+}
+
 export function applyUiDensity(density: UiDensity): void {
   if (typeof document === "undefined") {
     return;
@@ -114,6 +125,12 @@ function normalizeUiDensity(value: unknown): UiDensity {
     value === "spacious"
     ? value
     : DEFAULT_UI_DENSITY;
+}
+
+function normalizeSidebarRowSpacing(value: unknown): SidebarRowSpacing {
+  return value === "compact" || value === "default" || value === "relaxed"
+    ? value
+    : DEFAULT_SIDEBAR_ROW_SPACING;
 }
 
 function normalizeSidebarTranslucency(value: unknown): SidebarTranslucency {
@@ -190,6 +207,7 @@ if (typeof document !== "undefined") {
   applyCodeFont(normalizeCodeFont(storedSettings?.codeFont));
   applyUiDensity(normalizeUiDensity(storedSettings?.uiDensity));
   applySidebarTranslucency(normalizeSidebarTranslucency(storedSettings?.sidebarTranslucency));
+  applySidebarRowSpacing(normalizeSidebarRowSpacing(storedSettings?.sidebarRowSpacing));
   setWindowFocusedAttribute(isWindowFocused());
   applyFontSizes({
     codeFontSize: normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
@@ -216,6 +234,7 @@ export function useAppFont() {
   const statusLineFontSize = useSettings((settings) => settings.statusLineFontSize);
   const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const sidebarMetaFontSize = useSettings((settings) => settings.sidebarMetaFontSize);
+  const sidebarRowSpacing = useSettings((settings) => settings.sidebarRowSpacing);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
   const inputFontSize = useSettings((settings) => settings.inputFontSize);
   const uiDensity = useSettings((settings) => settings.uiDensity);
@@ -248,6 +267,10 @@ export function useAppFont() {
     toolFontSize,
     inputFontSize,
   ]);
+
+  useEffect(() => {
+    applySidebarRowSpacing(sidebarRowSpacing);
+  }, [sidebarRowSpacing]);
 
   useEffect(() => {
     applyUiDensity(uiDensity);
@@ -284,6 +307,7 @@ export function useAppFont() {
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,
+    sidebarRowSpacing,
     toolFontSize,
     inputFontSize,
     uiDensity,

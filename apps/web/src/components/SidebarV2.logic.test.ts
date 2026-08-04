@@ -10,7 +10,7 @@ import {
   classifySidebarV2Shelves,
   compactSidebarTimeLabel,
   formatWorkingDurationLabel,
-  latestTurnDiffStats,
+  isSidebarV2ArchiveBlockedThread,
   resolveSidebarV2Status,
   resolveSidebarV2StatusLabel,
   resolveSidebarV2ThreadRouteTarget,
@@ -18,13 +18,9 @@ import {
   resolveWorkingStartedAt,
   selectSnoozeShelfBulkTargets,
   shouldReserveMacSidebarChrome,
+  type SidebarV2ThreadGroup,
 } from "./SidebarV2.logic";
-import {
-  DEFAULT_INTERACTION_MODE,
-  type SidebarThreadSummary,
-  type ThreadSession,
-  type TurnDiffSummary,
-} from "../types";
+import { DEFAULT_INTERACTION_MODE, type SidebarThreadSummary, type ThreadSession } from "../types";
 
 const now = "2026-01-01T12:00:00.000Z";
 const capableEnvironmentId = EnvironmentId.make("environment-capable");
@@ -134,6 +130,16 @@ describe("selectSnoozeShelfBulkTargets", () => {
   });
 });
 
+function rootsOf(groups: readonly SidebarV2ThreadGroup[]): readonly SidebarThreadSummary[] {
+  return groups.map((group) => group.root);
+}
+
+function rowTitles(groups: readonly SidebarV2ThreadGroup[]): readonly string[] {
+  return groups.flatMap((group) =>
+    group.rows.map((row) => `${"  ".repeat(row.depth)}${row.thread.title}`),
+  );
+}
+
 describe("classifySidebarV2Shelves", () => {
   it("keeps pinned threads in their durable project order and out of other shelves", () => {
     const projectId = ProjectId.make("project-1");
@@ -152,9 +158,9 @@ describe("classifySidebarV2Shelves", () => {
       },
     });
 
-    expect(shelves.pinned).toEqual([second, first]);
-    expect(shelves.pinnedByProjectKey.get(projectKey)).toEqual([second, first]);
-    expect(shelves.active).toEqual([active]);
+    expect(rootsOf(shelves.pinned)).toEqual([second, first]);
+    expect(rootsOf(shelves.pinnedByProjectKey.get(projectKey) ?? [])).toEqual([second, first]);
+    expect(rootsOf(shelves.active)).toEqual([active]);
     expect(shelves.snoozed).toEqual([]);
     expect(shelves.settled).toEqual([]);
   });
@@ -173,7 +179,7 @@ describe("classifySidebarV2Shelves", () => {
     });
 
     expect(shelves.pinned).toEqual([]);
-    expect(shelves.active).toEqual([realThread]);
+    expect(rootsOf(shelves.active)).toEqual([realThread]);
   });
 
   it("excludes descendants of archived parents before shelf classification", () => {
@@ -198,9 +204,226 @@ describe("classifySidebarV2Shelves", () => {
       now,
     });
 
-    expect(shelves.active).toEqual([visibleThread]);
+    expect(rootsOf(shelves.active)).toEqual([visibleThread]);
     expect(shelves.snoozed).toEqual([]);
     expect(shelves.settled).toEqual([]);
+  });
+
+  it("nests chats under their parent instead of listing them as siblings", () => {
+    const parent = thread({ id: ThreadId.make("parent"), title: "Parent" });
+    const child = thread({
+      id: ThreadId.make("child"),
+      parentThreadId: parent.id,
+      title: "Child",
+    });
+    const grandchild = thread({
+      id: ThreadId.make("grandchild"),
+      parentThreadId: child.id,
+      title: "Grandchild",
+    });
+
+    const shelves = classifySidebarV2Shelves({
+      threads: [grandchild, child, parent],
+      now,
+      expandedOverrideByThreadKey: new Map([
+        [`${capableEnvironmentId}:${parent.id}`, true],
+        [`${capableEnvironmentId}:${child.id}`, true],
+      ]),
+    });
+
+    expect(rootsOf(shelves.active)).toEqual([parent]);
+    expect(rowTitles(shelves.active)).toEqual(["Parent", "  Child", "    Grandchild"]);
+  });
+
+  it("keeps a settled parent's subtree together and rolls the child up while collapsed", () => {
+    const parent = thread({
+      id: ThreadId.make("parent"),
+      title: "Parent",
+      settledOverride: "settled",
+    });
+    const child = thread({
+      id: ThreadId.make("child"),
+      parentThreadId: parent.id,
+      title: "Child",
+      settledOverride: "settled",
+    });
+
+    const settledShelves = classifySidebarV2Shelves({ threads: [parent, child], now });
+    expect(rootsOf(settledShelves.settled)).toEqual([parent]);
+    expect(rowTitles(settledShelves.settled)).toEqual(["Parent"]);
+    expect(settledShelves.settled[0]?.rows[0]?.displayStatus).toBe("ready");
+
+    const workingChild = { ...child, hasPendingApprovals: true };
+    const promotedShelves = classifySidebarV2Shelves({ threads: [parent, workingChild], now });
+    // A settled parent cannot bury a child that is blocked on the user.
+    expect(rootsOf(promotedShelves.active)).toEqual([parent]);
+    expect(promotedShelves.settled).toEqual([]);
+    expect(rowTitles(promotedShelves.active)).toEqual(["Parent", "  Child"]);
+    expect(promotedShelves.active[0]?.rows[0]?.displayStatus).toBe("approval");
+  });
+
+  it("keeps a collapsed parent's routed descendant visible", () => {
+    const parent = thread({ id: ThreadId.make("parent"), title: "Parent" });
+    const child = thread({
+      id: ThreadId.make("child"),
+      parentThreadId: parent.id,
+      title: "Child",
+    });
+
+    const collapsed = classifySidebarV2Shelves({
+      threads: [parent, child],
+      now,
+      expandedOverrideByThreadKey: new Map([[`${capableEnvironmentId}:${parent.id}`, false]]),
+    });
+    expect(rowTitles(collapsed.active)).toEqual(["Parent"]);
+
+    const routed = classifySidebarV2Shelves({
+      threads: [parent, child],
+      now,
+      expandedOverrideByThreadKey: new Map([[`${capableEnvironmentId}:${parent.id}`, false]]),
+      activeThreadKey: `${capableEnvironmentId}:${child.id}`,
+    });
+    expect(rowTitles(routed.active)).toEqual(["Parent", "  Child"]);
+  });
+
+  it("keeps a selected completed agent-run row visible under an explicit collapse", () => {
+    const parent = thread({ id: ThreadId.make("parent-thread"), title: "Parent" });
+    const agentRun = thread({
+      id: ThreadId.make("agent-run:parent-thread:agent-1"),
+      parentThreadId: parent.id,
+      title: "Agent",
+      virtualAgentRun: {
+        parentThreadId: parent.id,
+        taskId: "agent-1",
+        status: "completed",
+      },
+    });
+
+    const collapsed = classifySidebarV2Shelves({
+      threads: [parent, agentRun],
+      now,
+      expandedOverrideByThreadKey: new Map([[`${capableEnvironmentId}:${parent.id}`, false]]),
+      // Parent path key alone would leave the completed agent row hidden.
+      activeThreadKey: `${capableEnvironmentId}:agent-run:parent-thread:agent-1`,
+    });
+
+    expect(rowTitles(collapsed.active)).toEqual(["Parent", "  Agent"]);
+  });
+
+  it("blocks archive on a quiet parent when a descendant turn is running", () => {
+    const parent = thread({ id: ThreadId.make("parent"), title: "Parent" });
+    const idleChild = thread({
+      id: ThreadId.make("idle-child"),
+      parentThreadId: parent.id,
+      title: "Idle child",
+    });
+    const runningGrandchild = thread({
+      id: ThreadId.make("running-grandchild"),
+      parentThreadId: idleChild.id,
+      title: "Running grandchild",
+      session: session({
+        status: "running",
+        activeTurnId: "turn-1" as never,
+        orchestrationStatus: "running",
+      }),
+    });
+    const runningAgent = thread({
+      id: ThreadId.make("agent-run:idle-child:agent-1"),
+      parentThreadId: idleChild.id,
+      title: "Agent",
+      virtualAgentRun: {
+        parentThreadId: idleChild.id,
+        taskId: "agent-1",
+        status: "running",
+      },
+    });
+
+    expect(isSidebarV2ArchiveBlockedThread(parent)).toBe(false);
+    expect(isSidebarV2ArchiveBlockedThread(runningGrandchild)).toBe(true);
+    expect(isSidebarV2ArchiveBlockedThread(runningAgent)).toBe(true);
+
+    const shelves = classifySidebarV2Shelves({
+      threads: [parent, idleChild, runningGrandchild, runningAgent],
+      now,
+      expandedOverrideByThreadKey: new Map([
+        [`${capableEnvironmentId}:${parent.id}`, true],
+        [`${capableEnvironmentId}:${idleChild.id}`, true],
+      ]),
+    });
+    const blockedByTitle = new Map(
+      (shelves.active[0]?.rows ?? []).map((row) => [row.thread.title, row.archiveBlocked]),
+    );
+    expect(blockedByTitle).toEqual(
+      new Map([
+        ["Parent", true],
+        ["Idle child", true],
+        ["Running grandchild", true],
+        ["Agent", true],
+      ]),
+    );
+  });
+
+  it("honors a working root's snooze unless a descendant still needs attention", () => {
+    const workingRoot = thread({
+      id: ThreadId.make("working-root"),
+      title: "Working root",
+      snoozedUntil: "2026-01-02T00:00:00.000Z",
+      latestTurn: {
+        turnId: "turn-1",
+        state: "running",
+        requestedAt: "2026-01-01T11:00:00.000Z",
+        startedAt: "2026-01-01T11:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      } as SidebarThreadSummary["latestTurn"],
+    });
+    const quietChild = thread({
+      id: ThreadId.make("quiet-child"),
+      parentThreadId: workingRoot.id,
+      title: "Quiet child",
+    });
+
+    const snoozedShelves = classifySidebarV2Shelves({
+      threads: [workingRoot, quietChild],
+      now,
+    });
+    expect(resolveSidebarV2Status(workingRoot)).toBe("working");
+    expect(rootsOf(snoozedShelves.snoozed)).toEqual([workingRoot]);
+    expect(snoozedShelves.active).toEqual([]);
+
+    const blockedChild = {
+      ...quietChild,
+      hasPendingApprovals: true,
+    };
+    const promotedShelves = classifySidebarV2Shelves({
+      threads: [workingRoot, blockedChild],
+      now,
+    });
+    expect(rootsOf(promotedShelves.active)).toEqual([workingRoot]);
+    expect(promotedShelves.snoozed).toEqual([]);
+  });
+
+  it("drops cyclic and self parent references back to roots", () => {
+    const left = thread({ id: ThreadId.make("left"), title: "Left" });
+    const right = thread({ id: ThreadId.make("right"), title: "Right" });
+    const cyclicLeft = { ...left, parentThreadId: right.id };
+    const cyclicRight = { ...right, parentThreadId: left.id };
+    const selfParented = thread({ id: ThreadId.make("self"), title: "Self" });
+
+    const shelves = classifySidebarV2Shelves({
+      threads: [cyclicLeft, cyclicRight, { ...selfParented, parentThreadId: selfParented.id }],
+      now,
+    });
+
+    // One edge of the cycle is dropped so every thread still resolves to
+    // exactly one root: the survivors are a two-thread group and the
+    // self-parented root, never an infinite chain or a dropped thread.
+    expect(
+      shelves.active.map((group) => [group.root.title, group.rows[0]?.childCount]).toSorted(),
+    ).toEqual([
+      ["Left", 1],
+      ["Self", 0],
+    ]);
   });
 });
 
@@ -384,39 +607,6 @@ describe("formatWorkingDurationLabel", () => {
   it("clamps negative and non-finite elapsed values", () => {
     expect(formatWorkingDurationLabel(-1_000)).toBe("0s");
     expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
-  });
-});
-
-describe("latestTurnDiffStats", () => {
-  function summary(files: TurnDiffSummary["files"]): TurnDiffSummary {
-    return {
-      turnId: "turn-1",
-      completedAt: "2026-01-01T00:00:00.000Z",
-      files,
-    } as TurnDiffSummary;
-  }
-
-  it("sums the turn's file changes", () => {
-    expect(
-      latestTurnDiffStats(
-        summary([
-          { path: "a.ts", additions: 3, deletions: 1 },
-          { path: "b.ts", additions: 2, deletions: 4 },
-        ]),
-      ),
-    ).toEqual({ insertions: 5, deletions: 5 });
-  });
-
-  it("prefers turn-scoped files over the full checkpoint", () => {
-    const scoped = summary([{ path: "a.ts", additions: 10, deletions: 10 }]);
-    expect(
-      latestTurnDiffStats({ ...scoped, turnFiles: [{ path: "a.ts", additions: 1, deletions: 2 }] }),
-    ).toEqual({ insertions: 1, deletions: 2 });
-  });
-
-  it("renders nothing when no line counts are carried", () => {
-    expect(latestTurnDiffStats(summary([{ path: "a.ts" }]))).toBeNull();
-    expect(latestTurnDiffStats(undefined)).toBeNull();
   });
 });
 

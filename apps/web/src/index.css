@@ -132,10 +132,20 @@
   --app-code-font-size: 12px;
   --app-chat-font-size: 14px;
   --app-sidebar-font-size: 12px;
-  /* Secondary sidebar text (project, worktree, branch, timestamps). Its own
+  /* The thread title is the row's anchor, so it scales just above the sidebar
+     font-size knob rather than relying on metadata shrinking alone — at the
+     12px default there is too little headroom below to build the step from
+     one side only. */
+  --app-sidebar-title-font-size: calc(var(--app-sidebar-font-size) + 1px);
+  /* Secondary sidebar text (project, worktree, branch, PR, timestamps). Its own
      setting rather than a derived size so metadata can stay visibly quieter
      than chat titles at any sidebar font size. */
   --app-sidebar-meta-font-size: 11px;
+  /* Sidebar row rhythm, driven by the Sidebar row spacing setting. The gap
+     between rows must beat the gap between a row's own lines or three-line
+     cards read as one loose list instead of discrete threads. */
+  --app-sidebar-row-gap: 0.25rem;
+  --app-sidebar-row-padding-y: 0.5rem;
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
   --sidebar-translucency-alpha: 100%;
@@ -332,6 +342,17 @@ html[data-ui-density="comfortable"] {
 html[data-ui-density="spacious"] {
   --spacing: 0.31rem;
   font-size: 16.5px;
+}
+
+/* ── Sidebar row spacing ─────────────────────────────────────── */
+html[data-sidebar-row-spacing="compact"] {
+  --app-sidebar-row-gap: 0.125rem;
+  --app-sidebar-row-padding-y: 0.3125rem;
+}
+
+html[data-sidebar-row-spacing="relaxed"] {
+  --app-sidebar-row-gap: 0.5rem;
+  --app-sidebar-row-padding-y: 0.75rem;
 }
 
 body {

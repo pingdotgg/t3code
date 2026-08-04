@@ -35,6 +35,7 @@ import {
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_SIDEBAR_META_FONT_SIZE,
+  DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_V2_ENABLED,
   DEFAULT_STATUS_LINE_FONT_SIZE,
@@ -45,6 +46,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type CodeFont,
   type FontSize,
+  type SidebarRowSpacing,
   type SidebarTranslucency,
   type ThreadCompletionNotificationMode,
   type UiDensity,
@@ -147,6 +149,16 @@ const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint:
   { value: "default", label: "Default", hint: "— balanced" },
   { value: "comfortable", label: "Comfortable", hint: "— relaxed spacing" },
   { value: "spacious", label: "Spacious", hint: "— more breathing room" },
+];
+
+const SIDEBAR_ROW_SPACING_OPTIONS: ReadonlyArray<{
+  value: SidebarRowSpacing;
+  label: string;
+  hint: string;
+}> = [
+  { value: "compact", label: "Compact", hint: "— more threads on screen" },
+  { value: "default", label: "Default", hint: "— balanced" },
+  { value: "relaxed", label: "Relaxed", hint: "— more breathing room" },
 ];
 
 const SIDEBAR_TRANSLUCENCY_OPTIONS: ReadonlyArray<{
@@ -742,6 +754,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarMetaFontSize
         ? ["Sidebar metadata font size"]
         : []),
+      ...(settings.sidebarRowSpacing !== DEFAULT_UNIFIED_SETTINGS.sidebarRowSpacing
+        ? ["Sidebar row spacing"]
+        : []),
       ...(settings.toolFontSize !== DEFAULT_UNIFIED_SETTINGS.toolFontSize
         ? ["Tool font size"]
         : []),
@@ -794,6 +809,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.agentWorkflows,
       settings.sidebarFontSize,
       settings.sidebarMetaFontSize,
+      settings.sidebarRowSpacing,
       settings.sidebarTranslucency,
       settings.threadCompletionNotifications,
       settings.timestampFormat,
@@ -1685,7 +1701,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           title="Sidebar metadata font size"
-          description="Font size for the project name, worktree, and timestamps on sidebar rows."
+          description="Font size for the project name, worktree, branch, pull request, and timestamps on sidebar rows."
           resetAction={
             settings.sidebarMetaFontSize !== DEFAULT_SIDEBAR_META_FONT_SIZE ? (
               <SettingResetButton
@@ -1718,6 +1734,46 @@ export function GeneralSettingsPanel() {
                 {FONT_SIZE_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={String(option.value)}>
                     {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Sidebar row spacing"
+          description="Control the padding inside sidebar rows and the gap between them."
+          resetAction={
+            settings.sidebarRowSpacing !== DEFAULT_SIDEBAR_ROW_SPACING ? (
+              <SettingResetButton
+                label="sidebar row spacing"
+                onClick={() => updateSettings({ sidebarRowSpacing: DEFAULT_SIDEBAR_ROW_SPACING })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarRowSpacing}
+              onValueChange={(value) => {
+                if (SIDEBAR_ROW_SPACING_OPTIONS.some((option) => option.value === value)) {
+                  updateSettings({ sidebarRowSpacing: value as SidebarRowSpacing });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar row spacing">
+                <SelectValue>
+                  {SIDEBAR_ROW_SPACING_OPTIONS.find(
+                    (option) => option.value === settings.sidebarRowSpacing,
+                  )?.label ?? "Default"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SIDEBAR_ROW_SPACING_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    <div>
+                      <span className="font-medium">{option.label}</span>
+                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
+                    </div>
                   </SelectItem>
                 ))}
               </SelectPopup>

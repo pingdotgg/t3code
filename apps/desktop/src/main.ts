@@ -91,6 +91,7 @@ import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { createMainWindowWebPreferences } from "./mainWindowPreferences.ts";
 import { startPreviewRuntime, type PreviewRuntimeHandle } from "./preview/Runtime.ts";
+import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 
 const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
 
@@ -2163,8 +2164,6 @@ function createWindow(initialUrl?: string): BrowserWindow {
   return window;
 }
 
-configureAppIdentity();
-
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
   const configuredBackendPort = resolveConfiguredDesktopBackendPort(process.env.T3CODE_PORT);
@@ -2238,75 +2237,102 @@ async function bootstrap(): Promise<void> {
   ensureInitialBackendWindowOpen();
 }
 
-app.on("before-quit", () => {
-  isQuitting = true;
-  void previewRuntime?.dispose();
-  previewRuntime = null;
-  updateInstallInFlight = false;
-  writeDesktopLogHeader("before-quit received");
-  clearUpdatePollTimer();
-  cancelBackendReadinessWait();
-  stopBackend();
-  restoreStdIoCapture?.();
-});
+function startDesktopApplication(): void {
+  configureAppIdentity();
 
-app
-  .whenReady()
-  .then(() => {
-    writeDesktopLogHeader("app ready");
-    configureAppIdentity();
-    configureApplicationMenu();
-    registerDesktopProtocol();
-    configureAutoUpdater();
-    void bootstrap().catch((error) => {
-      if (isBackendReadinessAborted(error) && isQuitting) {
-        return;
-      }
-      handleFatalStartupError("bootstrap", error);
-    });
-
-    app.on("activate", () => {
-      const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];
-      if (existingWindow) {
-        revealWindow(existingWindow);
-        return;
-      }
-      if (isDevelopment) {
-        mainWindow = createWindow();
-        return;
-      }
-      ensureInitialBackendWindowOpen();
-    });
-  })
-  .catch((error) => {
-    handleFatalStartupError("whenReady", error);
-  });
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !isQuitting) {
-    app.quit();
-  }
-});
-
-if (process.platform !== "win32") {
-  process.on("SIGINT", () => {
-    if (isQuitting) return;
+  app.on("before-quit", () => {
     isQuitting = true;
-    writeDesktopLogHeader("SIGINT received");
+    void previewRuntime?.dispose();
+    previewRuntime = null;
+    updateInstallInFlight = false;
+    writeDesktopLogHeader("before-quit received");
     clearUpdatePollTimer();
     cancelBackendReadinessWait();
     stopBackend();
     restoreStdIoCapture?.();
-    app.quit();
   });
 
-  process.on("SIGTERM", () => {
-    if (isQuitting) return;
-    isQuitting = true;
-    writeDesktopLogHeader("SIGTERM received");
-    clearUpdatePollTimer();
-    stopBackend();
-    restoreStdIoCapture?.();
-    app.quit();
+  app
+    .whenReady()
+    .then(() => {
+      writeDesktopLogHeader("app ready");
+      configureAppIdentity();
+      configureApplicationMenu();
+      registerDesktopProtocol();
+      configureAutoUpdater();
+      void bootstrap().catch((error) => {
+        if (isBackendReadinessAborted(error) && isQuitting) {
+          return;
+        }
+        handleFatalStartupError("bootstrap", error);
+      });
+
+      app.on("activate", () => {
+        const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];
+        if (existingWindow) {
+          revealWindow(existingWindow);
+          return;
+        }
+        if (isDevelopment) {
+          mainWindow = createWindow();
+          return;
+        }
+        ensureInitialBackendWindowOpen();
+      });
+    })
+    .catch((error) => {
+      handleFatalStartupError("whenReady", error);
+    });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin" && !isQuitting) {
+      app.quit();
+    }
   });
+
+  if (process.platform !== "win32") {
+    process.on("SIGINT", () => {
+      if (isQuitting) return;
+      isQuitting = true;
+      writeDesktopLogHeader("SIGINT received");
+      clearUpdatePollTimer();
+      cancelBackendReadinessWait();
+      stopBackend();
+      restoreStdIoCapture?.();
+      app.quit();
+    });
+
+    process.on("SIGTERM", () => {
+      if (isQuitting) return;
+      isQuitting = true;
+      writeDesktopLogHeader("SIGTERM received");
+      clearUpdatePollTimer();
+      stopBackend();
+      restoreStdIoCapture?.();
+      app.quit();
+    });
+  }
+}
+
+const desktopCliPassthrough = resolveDesktopCliPassthrough({
+  argv: process.argv,
+  backendEntry: resolveBackendEntry(),
+  execPath: process.execPath,
+  env: process.env,
+});
+
+if (desktopCliPassthrough) {
+  const child = ChildProcess.spawn(desktopCliPassthrough.command, [...desktopCliPassthrough.args], {
+    env: desktopCliPassthrough.env,
+    stdio: "inherit",
+  });
+  child.once("error", (error) => {
+    console.error(`[desktop] failed to launch embedded CLI: ${formatErrorMessage(error)}`);
+    app.exit(1);
+  });
+  child.once("close", (code) => {
+    app.exit(code ?? 1);
+  });
+} else {
+  startDesktopApplication();
 }
