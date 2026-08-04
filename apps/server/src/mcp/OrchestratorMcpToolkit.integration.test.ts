@@ -35,7 +35,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -44,6 +46,7 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
 import { layer as threadManagementServiceLayer } from "../orchestration-v2/ThreadManagementService.ts";
 import {
@@ -58,7 +61,14 @@ import {
   ProviderContinuationRequests,
 } from "../orchestration-v2/ProviderContinuationRequests.ts";
 import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import {
+  makeOrchestratorV2ProviderReplayLayer,
+  makeOrchestratorV2ReplayLayerWithRegistry,
+} from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -76,6 +86,8 @@ const delegatedPrompt = "Inspect the delegated API boundary and return the resul
 const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
+const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
+const queuedFollowupResult = "Queued delegated follow-up completed.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
@@ -98,6 +110,22 @@ const claudeSelection = {
   instanceId: claudeInstanceId,
   model: claudeModel,
 } satisfies ModelSelection;
+
+const delegatedTaskStatusTranscriptFile = new URL(
+  "../orchestration-v2/testkit/fixtures/delegated_task_status/codex_transcript.ndjson",
+  import.meta.url,
+);
+
+const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
+  function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString(
+      decodeURIComponent(delegatedTaskStatusTranscriptFile.pathname),
+    );
+    return yield* decodeProviderReplayNdjson(text);
+  },
+  Effect.provide(NodeServices.layer),
+);
 
 interface CapturedTurn {
   readonly instanceId: ProviderInstanceId;
@@ -422,6 +450,18 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
     runCount: 0,
   };
 }
+
+const unusedScheduledTaskStubLayer = Layer.succeed(
+  ScheduledTaskService,
+  ScheduledTaskService.of({
+    list: () => Effect.succeed({ tasks: [] }),
+    subscribeList: () => Stream.succeed({ tasks: [] }),
+    upsert: () => Effect.die("ScheduledTaskService.upsert is unused in this test"),
+    setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
+    delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
+    runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+  }),
+);
 
 describe("orchestrator MCP toolkit", () => {
   it.live(
@@ -2695,5 +2735,307 @@ describe("orchestrator MCP toolkit", () => {
           }).pipe(Effect.provide(testLayer));
         }),
       ),
+  );
+
+  it.live("reports running and queued child follow-ups from a Codex replay transcript", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("delegated-task-status");
+        const rawTranscript = yield* readDelegatedTaskStatusTranscript();
+        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
+        );
+        const orchestratorLayer = makeOrchestratorV2ProviderReplayLayer(
+          {
+            name: "delegated-task-status/codex",
+            transcript,
+            commands: [],
+            runtimePolicyOverride: { cwd },
+          },
+          CodexOrchestratorReplayHarness,
+        );
+        const orchestrationLayer = Layer.merge(
+          orchestratorLayer,
+          threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+        );
+        const providerRegistryLayer = makeProviderRegistryLayer([
+          makeProviderSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: codexModel,
+          }),
+        ]);
+        const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(orchestrationLayer),
+          Layer.provide(providerRegistryLayer),
+          Layer.provide(unusedScheduledTaskStubLayer),
+          Layer.provide(NodeServices.layer),
+        );
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const server = yield* McpServer.McpServer;
+          const parentCreate = yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:mcp-replay-parent:create"),
+            threadId: parentThreadId,
+            projectId,
+            title: "MCP replay parent",
+            modelSelection: codexSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:mcp-replay-parent:start"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("message:mcp-replay-parent:start"),
+            text: parentPrompt,
+            attachments: [],
+            modelSelection: codexSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: parentThreadId,
+              afterSequence: parentCreate.sequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "provider-turn.updated" &&
+                  stored.event.payload.status === "running",
+              ),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Parent provider turn did not start."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+
+          const invocation: McpInvocationContext.McpInvocationScope = {
+            environmentId: EnvironmentId.make("environment:mcp-replay"),
+            threadId: parentThreadId,
+            providerSessionId: "mcp-provider-session-replay-parent",
+            providerInstanceId: codexInstanceId,
+            capabilities: new Set(["orchestration"]),
+            issuedAt: 1,
+          };
+          const invoke = (name: string, args: Record<string, unknown>) =>
+            server
+              .callTool({ name, arguments: args })
+              .pipe(
+                Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+                Effect.provideService(McpSchema.McpServerClient, client),
+              );
+
+          const delegationStartSequence =
+            yield* orchestrator.getThreadEventSequence(parentThreadId);
+          const delegatedCall = yield* invoke("delegate_task", {
+            task: delegatedPrompt,
+            target: {
+              providerInstanceId: codexInstanceId,
+              model: codexModel,
+            },
+            mode: "async",
+            clientRequestId: "delegate-codex-replay-1",
+          });
+          const delegatedStart = yield* decodeDelegateTaskResult(
+            delegatedCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(delegatedStart.childRunId).not.toBeNull();
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: parentThreadId,
+              afterSequence: delegationStartSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "context-transfer.created" &&
+                  stored.event.payload.type === "subagent_result" &&
+                  stored.event.payload.sourceThreadId === delegatedStart.childThreadId &&
+                  stored.event.payload.sourcePoint.runId === delegatedStart.childRunId,
+              ),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Delegated result transfer was not created."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+          const delegatedStatusCall = yield* invoke("task_status", {
+            taskId: delegatedStart.taskId,
+          });
+          const delegated = yield* decodeDelegateTaskResult(
+            delegatedStatusCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(delegated).toMatchObject({
+            status: "completed",
+            summary: delegatedResult,
+            providerInstanceId: codexInstanceId,
+            hasPendingChildRuns: false,
+            latestTerminalRunId: delegated.childRunId,
+            latestTerminalStatus: "completed",
+            latestTerminalSummary: delegatedResult,
+          });
+          expect(delegated.resultContextTransferId).not.toBeNull();
+          expect(delegated.latestTerminalResultContextTransferId).toBe(
+            delegated.resultContextTransferId,
+          );
+
+          const followupStartSequence = yield* orchestrator.getThreadEventSequence(
+            delegated.childThreadId,
+          );
+          const runningFollowupCall = yield* invoke("t3_thread_send", {
+            threadId: delegated.childThreadId,
+            message: cancellationPrompt,
+            clientRequestId: "delegated-child-replay-running-1",
+          });
+          const runningFollowup = yield* decodeThreadSendResult(
+            runningFollowupCall.structuredContent,
+          ).pipe(Effect.orDie);
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: delegated.childThreadId,
+              afterSequence: followupStartSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "provider-turn.updated" &&
+                  stored.event.payload.status === "running",
+              ),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Follow-up provider turn did not start."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+
+          const queuedFollowupCall = yield* invoke("t3_thread_send", {
+            threadId: delegated.childThreadId,
+            message: queuedFollowupPrompt,
+            mode: "queue",
+            clientRequestId: "delegated-child-replay-queued-1",
+          });
+          const queuedFollowup = yield* decodeThreadSendResult(
+            queuedFollowupCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(queuedFollowup).toMatchObject({
+            status: "queued",
+            delivery: "queued",
+          });
+
+          const pendingProjection = yield* orchestrator.getThreadProjection(
+            delegated.childThreadId,
+          );
+          expect(
+            pendingProjection.runs.find((run) => run.id === delegated.childRunId)?.status,
+          ).toBe("completed");
+          expect(
+            pendingProjection.runs.find((run) => run.id === runningFollowup.runId)?.status,
+          ).toBe("running");
+          expect(
+            pendingProjection.runs.find((run) => run.id === queuedFollowup.runId)?.status,
+          ).toBe("queued");
+          expect(
+            (yield* orchestrator.getThreadProjection(parentThreadId)).runs.some(
+              (run) => run.status === "running",
+            ),
+          ).toBe(true);
+
+          const pendingStatusCall = yield* invoke("task_status", {
+            taskId: delegated.taskId,
+          });
+          const pendingStatus = yield* decodeDelegateTaskResult(
+            pendingStatusCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(pendingStatus).toMatchObject({
+            childRunId: delegated.childRunId,
+            status: "completed",
+            summary: delegatedResult,
+            resultContextTransferId: delegated.resultContextTransferId,
+            hasPendingChildRuns: true,
+            latestTerminalRunId: delegated.childRunId,
+            latestTerminalStatus: "completed",
+            latestTerminalSummary: delegatedResult,
+            latestTerminalResultContextTransferId: delegated.resultContextTransferId,
+          });
+
+          const finalSequence = yield* orchestrator.getThreadEventSequence(delegated.childThreadId);
+          const interruptCall = yield* invoke("t3_thread_interrupt", {
+            threadId: delegated.childThreadId,
+            runId: runningFollowup.runId,
+            reason: "Allow the queued replay follow-up to run.",
+            clientRequestId: "interrupt-delegated-child-replay-1",
+          });
+          const interrupt = yield* decodeThreadInterruptResult(
+            interruptCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(interrupt).toMatchObject({
+            runId: runningFollowup.runId,
+            status: "interrupt_requested",
+          });
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: delegated.childThreadId,
+              afterSequence: finalSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === queuedFollowup.runId &&
+                  stored.event.payload.status === "completed",
+              ),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Queued follow-up did not complete."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+
+          const finalProjection = yield* orchestrator.getThreadProjection(delegated.childThreadId);
+          expect(finalProjection.runs.find((run) => run.id === runningFollowup.runId)?.status).toBe(
+            "interrupted",
+          );
+          expect(finalProjection.runs.find((run) => run.id === queuedFollowup.runId)?.status).toBe(
+            "completed",
+          );
+          const finalStatusCall = yield* invoke("task_status", {
+            taskId: delegated.taskId,
+          });
+          const finalStatus = yield* decodeDelegateTaskResult(
+            finalStatusCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(finalStatus).toMatchObject({
+            childRunId: delegated.childRunId,
+            status: "completed",
+            summary: delegatedResult,
+            resultContextTransferId: delegated.resultContextTransferId,
+            hasPendingChildRuns: false,
+            latestTerminalRunId: queuedFollowup.runId,
+            latestTerminalStatus: "completed",
+            latestTerminalSummary: queuedFollowupResult,
+            latestTerminalResultContextTransferId: null,
+          });
+        }).pipe(Effect.provide(testLayer));
+      }),
+    ),
   );
 });
