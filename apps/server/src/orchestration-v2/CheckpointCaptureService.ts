@@ -30,6 +30,8 @@ export class CheckpointCaptureExecutionError extends Schema.TaggedErrorClass<Che
   },
 ) {}
 
+const isCheckpointCaptureExecutionError = Schema.is(CheckpointCaptureExecutionError);
+
 export interface CheckpointCaptureServiceV2Shape {
   readonly execute: (input: {
     readonly threadId: ThreadId;
@@ -223,7 +225,7 @@ export const layer: Layer.Layer<
       execute: (input) =>
         execute(input).pipe(
           Effect.mapError((cause) =>
-            Schema.is(CheckpointCaptureExecutionError)(cause)
+            isCheckpointCaptureExecutionError(cause)
               ? cause
               : new CheckpointCaptureExecutionError({ ...input, cause }),
           ),

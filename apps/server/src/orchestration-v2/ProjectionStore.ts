@@ -473,40 +473,56 @@ const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
 );
 
-const decodeThreadPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema))(json);
-const decodeRunPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RunJsonSchema))(json);
-const decodeRunAttemptPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema))(json);
-const decodeNodePayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema))(json);
-const decodeSubagentPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2SubagentJsonSchema))(json);
-const decodeProviderSessionPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema))(json);
-const decodeProviderThreadPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema))(json);
-const decodeProviderTurnPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema))(json);
-const decodeRuntimeRequestPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RuntimeRequestJsonSchema))(json);
-const decodeMessagePayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema))(
-    json,
-  );
-const decodePlanPayload = (json: string) =>
-  Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema)(parseEncodedPayload(json));
-const decodeTurnItemPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema))(json);
-const decodeCheckpointScopePayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema))(json);
-const decodeCheckpointPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2CheckpointJsonSchema))(json);
-const decodeContextHandoffPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema))(json);
-const decodeContextTransferPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema))(json);
+const decodeThreadPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
+);
+const decodeRunPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2RunJsonSchema),
+);
+const decodeRunAttemptPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
+);
+const decodeNodePayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
+);
+const decodeSubagentPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
+);
+const decodeProviderSessionPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
+);
+const decodeProviderThreadPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema),
+);
+const decodeProviderTurnPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema),
+);
+const decodeRuntimeRequestPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2RuntimeRequestJsonSchema),
+);
+const decodeMessagePayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema),
+);
+const decodePlanArtifact = Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema);
+const decodePlanPayload = (json: string) => decodePlanArtifact(parseEncodedPayload(json));
+const decodeTurnItemPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
+);
+const decodeCheckpointScopePayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
+);
+const decodeCheckpointPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2CheckpointJsonSchema),
+);
+const decodeContextHandoffPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema),
+);
+const decodeContextTransferPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
+
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
+const isProjectionStoreReadError = Schema.is(ProjectionStoreReadError);
 
 function parseEncodedPayload(json: string): Record<string, unknown> {
   return JSON.parse(json) as Record<string, unknown>;
@@ -2044,7 +2060,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return withLocalVisibleTurnItems(projection);
       }).pipe(
         Effect.mapError((cause) =>
-          Schema.is(ProjectionStoreThreadNotFoundError)(cause)
+          isProjectionStoreThreadNotFoundError(cause)
             ? cause
             : new ProjectionStoreReadError({
                 threadId,
@@ -2101,8 +2117,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(
           Effect.mapError((cause) =>
-            Schema.is(ProjectionStoreThreadNotFoundError)(cause) ||
-            Schema.is(ProjectionStoreReadError)(cause)
+            isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
               ? cause
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
