@@ -887,6 +887,9 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
     const input = harness.generateThreadTitle.mock.calls[0]?.[0];
+    if (!input) {
+      throw new Error("Expected a title generation input");
+    }
     const message = input.message;
     expect(message.startsWith("USER:\nReview subagent monitoring risks.")).toBe(true);
     expect(message).toContain("[First user message truncated]");
