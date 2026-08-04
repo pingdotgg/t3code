@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -36,6 +37,7 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
 import { ProviderTurnStartError, ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
 import { RuntimeRequestServiceV2 } from "./RuntimeRequestService.ts";
+import { ThreadTitleRegenerationService } from "./ThreadTitleRegenerationService.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -141,6 +143,12 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       RuntimeRequestServiceV2,
       RuntimeRequestServiceV2.of({ respond: () => Effect.void }),
+    ),
+    Layer.succeed(
+      ThreadTitleRegenerationService,
+      ThreadTitleRegenerationService.of({
+        execute: ({ requestId, kind }) => record(`title:${kind.type}:${requestId}`),
+      }),
     ),
   );
   return executorLayer.pipe(Layer.provide(dependencies));
@@ -711,6 +719,39 @@ it.effect("detaches a handed-off session only after the old turn terminalizes", 
     }).pipe(Effect.provide(makeExecutorLayer({ events })));
 
     assert.deepEqual(yield* Ref.get(events), ["interrupt", "detach", "start"]);
+  }),
+);
+
+it.effect("executes durable thread title generation effects", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const commandId = CommandId.make("command:title-generation");
+    const effect: OrchestrationEffectV2 = {
+      id: "effect:title-generation",
+      commandId,
+      threadId,
+      request: {
+        type: "thread-title.generate",
+        kind: { type: "initial", messageId: MessageId.make("message:title-generation") },
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: "test-worker",
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+
+    yield* Effect.gen(function* () {
+      const executor = yield* OrchestrationEffectExecutorV2;
+      yield* executor.execute(effect);
+    }).pipe(Effect.provide(makeExecutorLayer({ events })));
+
+    assert.deepEqual(yield* Ref.get(events), [`title:initial:${commandId}`]);
   }),
 );
 

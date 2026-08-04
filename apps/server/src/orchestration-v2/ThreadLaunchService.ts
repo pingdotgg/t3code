@@ -59,6 +59,7 @@ export interface ThreadLaunchInput {
   readonly reuseExistingThread?: boolean;
   readonly projectId: ProjectId;
   readonly title: string;
+  readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -197,34 +198,6 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
-
-    if (input.title === "New thread" && input.initialMessage !== undefined) {
-      yield* textGeneration
-        .generateThreadTitle({
-          cwd: project.workspaceRoot,
-          message: input.initialMessage.text,
-          attachments: input.initialMessage.attachments,
-          modelSelection: input.modelSelection,
-        })
-        .pipe(
-          Effect.flatMap((result) =>
-            threads.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`${input.commandId}:title`),
-              threadId,
-              title: result.title,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Thread title generation failed", {
-              commandId: input.commandId,
-              threadId,
-              cause,
-            }),
-          ),
-          Effect.forkIn(preparationScope),
-        );
-    }
 
     const initialMessage = input.initialMessage;
     let branch =
@@ -502,6 +475,7 @@ export const make = Effect.gen(function* () {
               messageId,
               text: input.initialMessage.text,
               attachments: input.initialMessage.attachments,
+              ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
               dispatchMode: { type: "defer_start" },
               createdBy: input.createdBy,
