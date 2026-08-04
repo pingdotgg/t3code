@@ -61,6 +61,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "terminal-font-family",
+    // Titled with "Terminal" so the section header's context reaches the
+    // index too: search matches titles only, and "terminal" is the term a
+    // user reaches for before "font".
+    title: "Terminal font family",
+    to: "/settings/appearance",
+  },
+  {
+    id: "terminal-font-size",
+    title: "Terminal font size",
+    to: "/settings/appearance",
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

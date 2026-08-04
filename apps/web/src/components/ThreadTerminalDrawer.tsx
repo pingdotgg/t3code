@@ -34,10 +34,13 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
+  type GhosttyTerminalFont,
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
+import { useClientSettings } from "../hooks/useSettings";
+import { quoteTerminalFontFamily } from "../terminalAppearance";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { isTerminalLinkActivation, resolvePathLinkTarget } from "../terminal-links";
 import {
@@ -233,6 +236,47 @@ export function shouldHandleTerminalExit(
   );
 }
 
+/**
+ * Decide whether to print the "[terminal] ..." exit notice, and why.
+ *
+ * Separating this from `shouldHandleLiveTerminalExit` is the point: the notice
+ * and closing the drawer are different decisions. `"initial"` is the first
+ * snapshot of a session that had already ended before the drawer opened, so it
+ * deserves a notice explaining the empty-looking terminal but must not close it.
+ * `"live"` is a session that ended while being watched. Anything else already
+ * printed its notice, which is what stops a re-render from duplicating it.
+ */
+export function classifyTerminalExitTransition(options: {
+  previousVersion: number;
+  previousStatus: string;
+  currentStatus: string;
+}): "none" | "initial" | "live" {
+  if (options.currentStatus !== "closed" && options.currentStatus !== "exited") {
+    return "none";
+  }
+  if (options.previousVersion === 0) {
+    return "initial";
+  }
+  return options.previousStatus === "running" ? "live" : "none";
+}
+
+/**
+ * Whether an exit should close the drawer. Requires an observed `running` →
+ * ended transition, so hydrating a terminal that had already exited leaves it
+ * on screen for the user to read instead of dismissing it out from under them.
+ */
+export function shouldHandleLiveTerminalExit(options: {
+  previousStatus: string;
+  currentStatus: string;
+  hasHandledExit: boolean;
+}): boolean {
+  return (
+    options.previousStatus === "running" &&
+    (options.currentStatus === "closed" || options.currentStatus === "exited") &&
+    !options.hasHandledExit
+  );
+}
+
 interface TerminalViewportProps {
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
@@ -274,6 +318,23 @@ export function TerminalViewport({
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
+  const { terminalFontFamily, terminalFontSize } = useClientSettings();
+  // `family` is spread in rather than set to `undefined`, because the surface
+  // treats an omitted field as "use the default" and `exactOptionalPropertyTypes`
+  // will not accept an explicit `undefined` in its place.
+  const requestedTerminalFont = useMemo<GhosttyTerminalFont>(
+    () => ({
+      ...(terminalFontFamily ? { family: quoteTerminalFontFamily(terminalFontFamily) } : {}),
+      size: terminalFontSize,
+    }),
+    [terminalFontFamily, terminalFontSize],
+  );
+  // The surface is created asynchronously, so the creation effect reads the font
+  // through this ref rather than closing over it. Settings that hydrate while
+  // `create` is still in flight are picked up by the create path; settings that
+  // change after it resolves are picked up by the `setFont` effect below.
+  const requestedTerminalFontRef = useRef(requestedTerminalFont);
+  requestedTerminalFontRef.current = requestedTerminalFont;
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -291,6 +352,7 @@ export function TerminalViewport({
     reportFailure: false,
   });
   const hasHandledExitRef = useRef(false);
+  const previousTerminalStatusRef = useRef<TerminalSessionState["status"]>("closed");
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
@@ -330,24 +392,6 @@ export function TerminalViewport({
   const terminalBuffer = terminalSession.buffer;
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
-  const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
-  const synchronizeTerminalStatus = useEffectEvent(
-    (terminal: GhosttyTerminalSurface, status: TerminalSessionState["status"]) => {
-      const synchronized = synchronizedStatusRef.current;
-      if (status === "running") {
-        hasHandledExitRef.current = false;
-      } else if (shouldHandleTerminalExit(status, synchronized, hasHandledExitRef.current)) {
-        hasHandledExitRef.current = true;
-        writeSystemMessage(terminal, status === "closed" ? "Terminal closed" : "Process exited");
-        window.setTimeout(() => {
-          if (hasHandledExitRef.current) {
-            handleSessionExited();
-          }
-        }, 0);
-      }
-      synchronizedStatusRef.current = status;
-    },
-  );
   const terminalVersion = terminalSession.version;
   const previousSessionRef = useRef({
     buffer: terminalBuffer,
@@ -380,6 +424,7 @@ export function TerminalViewport({
     const setup = async (): Promise<(() => void) | null> => {
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
+        font: requestedTerminalFontRef.current,
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -401,12 +446,18 @@ export function TerminalViewport({
       previousSessionRef.current = latestSession;
       if (latestSession.buffer.length > 0) terminal.resetAndWrite(latestSession.buffer);
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
-      // Attaching to a session that already exited must still run exit handling
-      // once, so mount synchronization starts from the empty "closed" state.
-      // (A session that is "closed" at mount is indistinguishable from one that
-      // never started, so only "exited" triggers the message — as with xterm.)
-      synchronizedStatusRef.current = "closed";
-      synchronizeTerminalStatus(terminal, latestSession.status);
+      // Attaching to a session that already ended still explains itself, for
+      // "closed" as well as "exited" — otherwise hydrating a finished terminal
+      // shows a dead prompt with no indication why. It deliberately does not
+      // call `handleSessionExited`: only the observed running → ended transition
+      // in the status effect below closes the drawer, so a finished terminal
+      // stays on screen to be read.
+      if (latestSession.status === "closed" || latestSession.status === "exited") {
+        writeSystemMessage(
+          terminal,
+          latestSession.status === "closed" ? "Terminal closed" : "Process exited",
+        );
+      }
       if (autoFocus) window.requestAnimationFrame(() => terminal.focus());
 
       const clearSelectionAction = () => {
@@ -737,7 +788,6 @@ export function TerminalViewport({
     }
 
     const previous = previousSessionRef.current;
-    synchronizeTerminalStatus(terminal, current.status);
     if (current.version === previous.version) {
       return;
     }
@@ -756,6 +806,21 @@ export function TerminalViewport({
       writeSystemMessage(terminal, current.error);
     }
 
+    // After the buffer, not before: the notice belongs at the end of the output
+    // it is describing.
+    if (
+      classifyTerminalExitTransition({
+        previousVersion: previous.version,
+        previousStatus: previous.status,
+        currentStatus: current.status,
+      }) !== "none"
+    ) {
+      writeSystemMessage(
+        terminal,
+        current.status === "closed" ? "Terminal closed" : "Process exited",
+      );
+    }
+
     if (previous.version === 0 && autoFocus) {
       window.requestAnimationFrame(() => {
         terminal.focus();
@@ -763,6 +828,42 @@ export function TerminalViewport({
     }
     previousSessionRef.current = current;
   }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+
+  // Closing the drawer is driven by status alone, independently of buffer
+  // versions, so a session that ends without emitting more output still closes.
+  useEffect(() => {
+    const previousStatus = previousTerminalStatusRef.current;
+    previousTerminalStatusRef.current = terminalStatus;
+    if (terminalStatus === "running") {
+      hasHandledExitRef.current = false;
+      return;
+    }
+    if (
+      !shouldHandleLiveTerminalExit({
+        previousStatus,
+        currentStatus: terminalStatus,
+        hasHandledExit: hasHandledExitRef.current,
+      })
+    ) {
+      return;
+    }
+    hasHandledExitRef.current = true;
+    window.setTimeout(() => {
+      if (hasHandledExitRef.current) {
+        handleSessionExited();
+      }
+    }, 0);
+  }, [terminalStatus]);
+
+  // `setFont` normalizes and clamps, and its epoch guard makes the newest call
+  // win regardless of font-load order, so this can fire freely as settings
+  // hydrate. Before the surface exists this is a no-op and the creation path
+  // reads the same values from the ref instead.
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    void terminal.setFont(requestedTerminalFont);
+  }, [requestedTerminalFont]);
 
   useEffect(() => {
     if (!autoFocus) return;

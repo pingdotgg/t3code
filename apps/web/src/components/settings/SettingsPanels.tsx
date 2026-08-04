@@ -15,6 +15,8 @@ import {
   defaultInstanceIdForDriver,
   type BackgroundActivityProfile,
   type BackgroundActivitySettings,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
   type DesktopUpdateChannel,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
@@ -139,6 +141,10 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  normalizeTerminalFontFamilyInput,
+  normalizeTerminalFontSizeInput,
+} from "../../terminalAppearance";
 
 const THEME_OPTIONS = [
   {
@@ -586,6 +592,12 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Project Grouping"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.terminalFontFamily !== DEFAULT_UNIFIED_SETTINGS.terminalFontFamily
+        ? ["Terminal font family"]
+        : []),
+      ...(settings.terminalFontSize !== DEFAULT_UNIFIED_SETTINGS.terminalFontSize
+        ? ["Terminal font size"]
+        : []),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
@@ -635,6 +647,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
+      settings.terminalFontFamily,
+      settings.terminalFontSize,
       settings.wordWrap,
       theme,
     ],
@@ -653,6 +667,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      terminalFontFamily: DEFAULT_UNIFIED_SETTINGS.terminalFontFamily,
+      terminalFontSize: DEFAULT_UNIFIED_SETTINGS.terminalFontSize,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1106,6 +1122,70 @@ export function AppearanceSettingsPanel() {
               checked={settings.wordWrap}
               onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
               aria-label="Wrap code, tables, diffs, and file previews by default"
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Terminal">
+        <SettingsRow
+          {...searchableSetting("terminal-font-family")}
+          description="Auto prefers locally installed Nerd Fonts. Enter the exact name of an installed font family to override it."
+          resetAction={
+            settings.terminalFontFamily !== DEFAULT_UNIFIED_SETTINGS.terminalFontFamily ? (
+              <SettingResetButton
+                label="terminal font family"
+                onClick={() =>
+                  updateSettings({
+                    terminalFontFamily: DEFAULT_UNIFIED_SETTINGS.terminalFontFamily,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-72"
+              value={settings.terminalFontFamily}
+              onCommit={(next) =>
+                updateSettings({ terminalFontFamily: normalizeTerminalFontFamilyInput(next) })
+              }
+              placeholder="Auto (Nerd Font compatible)"
+              spellCheck={false}
+              aria-label="Terminal font family"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("terminal-font-size")}
+          description={`Set the integrated terminal font size from ${MIN_TERMINAL_FONT_SIZE} to ${MAX_TERMINAL_FONT_SIZE} pixels.`}
+          resetAction={
+            settings.terminalFontSize !== DEFAULT_UNIFIED_SETTINGS.terminalFontSize ? (
+              <SettingResetButton
+                label="terminal font size"
+                onClick={() =>
+                  updateSettings({
+                    terminalFontSize: DEFAULT_UNIFIED_SETTINGS.terminalFontSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-28"
+              type="number"
+              min={MIN_TERMINAL_FONT_SIZE}
+              max={MAX_TERMINAL_FONT_SIZE}
+              step={1}
+              value={String(settings.terminalFontSize)}
+              onCommit={(next) =>
+                updateSettings({
+                  terminalFontSize: normalizeTerminalFontSizeInput(next),
+                })
+              }
+              aria-label="Terminal font size"
             />
           }
         />

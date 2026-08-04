@@ -84,4 +84,26 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("routes terminal font settings to the appearance section", () => {
+    expect(searchSettings("font family")[0]).toMatchObject({
+      id: "terminal-font-family",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("font size")[0]).toMatchObject({
+      id: "terminal-font-size",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("font").map((item) => item.id)).toEqual([
+      "terminal-font-family",
+      "terminal-font-size",
+    ]);
+  });
+
+  it("finds terminal font settings by their section name", () => {
+    expect(searchSettings("terminal").map((item) => item.id)).toEqual([
+      "terminal-font-family",
+      "terminal-font-size",
+    ]);
+  });
 });

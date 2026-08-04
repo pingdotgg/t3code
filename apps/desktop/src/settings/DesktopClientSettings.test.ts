@@ -32,6 +32,8 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   sidebarV2Enabled: false,
   sidebarV2ConfiguredByUser: false,
+  terminalFontFamily: "JetBrainsMono Nerd Font",
+  terminalFontSize: 14,
   timestampFormat: "24-hour",
   wordWrap: true,
 };

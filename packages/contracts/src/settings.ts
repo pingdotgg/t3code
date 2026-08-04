@@ -66,6 +66,23 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+// The web renderer clamps to its own 6..32 range in
+// `apps/web/src/terminal/ghostty/surface.ts`. These bounds are deliberately
+// narrower, so every value the contract accepts survives the renderer
+// untouched — no setting silently disagrees with what gets drawn. Contracts
+// cannot import from apps/web, so the two definitions stay separate; keep this
+// range inside the renderer's if either side moves.
+export const MIN_TERMINAL_FONT_SIZE = 8;
+export const MAX_TERMINAL_FONT_SIZE = 32;
+export const DEFAULT_TERMINAL_FONT_SIZE = 12;
+export const TerminalFontSize = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_TERMINAL_FONT_SIZE,
+    maximum: MAX_TERMINAL_FONT_SIZE,
+  }),
+);
+export type TerminalFontSize = typeof TerminalFontSize.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -131,6 +148,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // there is no way to tell that apart from "left alone", and a channel-derived
   // default could never reach them. Mirrors `updateChannelConfiguredByUser`.
   sidebarV2ConfiguredByUser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // An empty family means "let the renderer pick"; the web surface resolves it
+  // to its own default stack and appends the Nerd Font glyph fallbacks.
+  terminalFontFamily: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  terminalFontSize: TerminalFontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_FONT_SIZE)),
+  ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -721,6 +744,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   sidebarV2ConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  terminalFontFamily: Schema.optionalKey(TrimmedString),
+  terminalFontSize: Schema.optionalKey(TerminalFontSize),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

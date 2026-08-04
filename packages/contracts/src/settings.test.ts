@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_TERMINAL_FONT_SIZE,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -108,6 +109,38 @@ describe("ClientSettings sidebar v2", () => {
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
     expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
     expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  });
+});
+
+describe("ClientSettings terminal appearance", () => {
+  it("hydrates legacy settings with terminal defaults", () => {
+    const decoded = decodeClientSettings({ wordWrap: false });
+    expect(decoded.terminalFontFamily).toBe("");
+    expect(decoded.terminalFontSize).toBe(DEFAULT_TERMINAL_FONT_SIZE);
+    expect(decoded.wordWrap).toBe(false);
+  });
+
+  it("trims and round-trips valid terminal appearance preferences", () => {
+    const decoded = decodeClientSettings({
+      terminalFontFamily: "  MesloLGS NF  ",
+      terminalFontSize: 14,
+    });
+    expect(decoded.terminalFontFamily).toBe("MesloLGS NF");
+    expect(decoded.terminalFontSize).toBe(14);
+  });
+
+  it("accepts terminal appearance patches and rejects invalid sizes", () => {
+    expect(
+      decodeClientSettingsPatch({
+        terminalFontFamily: "  JetBrainsMono Nerd Font  ",
+        terminalFontSize: 15,
+      }),
+    ).toEqual({
+      terminalFontFamily: "JetBrainsMono Nerd Font",
+      terminalFontSize: 15,
+    });
+    expect(() => decodeClientSettingsPatch({ terminalFontSize: 7 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ terminalFontSize: 12.5 })).toThrow();
   });
 });
 
