@@ -513,6 +513,22 @@ export function getProjectSortTimestamp(
 }
 
 /**
+ * Whether a project's thread list renders expanded.
+ *
+ * The project header carries the only disclosure control, so a project whose
+ * header is hidden (the sidebar is filtered to it alone) must stay expanded —
+ * otherwise a previously collapsed project would filter down to nothing and
+ * leave the user with no way to reopen it. Apply the same rule when deriving
+ * keyboard jump targets and previous/next traversal so those match the list.
+ */
+export function resolveProjectExpanded(input: {
+  storedExpanded: boolean;
+  hasHeader: boolean;
+}): boolean {
+  return input.hasHeader ? input.storedExpanded : true;
+}
+
+/**
  * Which projects the sidebar renders under the current project filter.
  *
  * Matching is by physical project key (`environmentId:cwd`) rather than cwd
