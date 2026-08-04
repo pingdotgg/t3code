@@ -14,6 +14,7 @@ import {
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
+  toggleThreadFavorite,
   type UiState,
 } from "./uiStateStore";
 
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    favoriteThreadKeys: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -51,6 +53,15 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
     expect(markThreadUnread(next, threadId, null)).toBe(next);
+  });
+
+  it("toggles a favorite thread by its scoped key", () => {
+    const initialState = makeUiState();
+    const favorite = toggleThreadFavorite(initialState, "environment:thread-1");
+
+    expect(favorite.favoriteThreadKeys).toEqual(["environment:thread-1"]);
+    expect(toggleThreadFavorite(favorite, "environment:thread-1").favoriteThreadKeys).toEqual([]);
+    expect(toggleThreadFavorite(initialState, "")).toBe(initialState);
   });
 
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {
@@ -154,6 +165,7 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      favoriteThreadKeys: ["environment:thread-1", "", "environment:thread-1"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -173,6 +185,7 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      favoriteThreadKeys: ["environment:thread-1"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -270,6 +283,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      favoriteThreadKeys: ["environment:thread-1"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -292,6 +306,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      favoriteThreadKeys: ["environment:thread-1"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

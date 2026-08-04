@@ -20,6 +20,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  favoriteThreadKeys?: string[];
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -35,6 +36,7 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  favoriteThreadKeys: string[];
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -48,6 +50,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  favoriteThreadKeys: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -125,6 +128,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    favoriteThreadKeys: sanitizeStringArray(parsed.favoriteThreadKeys),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -203,6 +207,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        favoriteThreadKeys: state.favoriteThreadKeys,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -242,6 +247,19 @@ export function markThreadVisited(state: UiState, threadId: string, visitedAt: s
       ...state.threadLastVisitedAtById,
       [threadId]: visitedAt,
     },
+  };
+}
+
+export function toggleThreadFavorite(state: UiState, threadKey: string): UiState {
+  if (!threadKey) {
+    return state;
+  }
+  const isFavorite = state.favoriteThreadKeys.includes(threadKey);
+  return {
+    ...state,
+    favoriteThreadKeys: isFavorite
+      ? state.favoriteThreadKeys.filter((key) => key !== threadKey)
+      : [...state.favoriteThreadKeys, threadKey],
   };
 }
 
@@ -382,6 +400,7 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  toggleThreadFavorite: (threadKey: string) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -396,6 +415,7 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  toggleThreadFavorite: (threadKey) => set((state) => toggleThreadFavorite(state, threadKey)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

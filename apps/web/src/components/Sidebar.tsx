@@ -9,6 +9,7 @@ import {
   LoaderIcon,
   SearchIcon,
   SquarePenIcon,
+  StarIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -367,6 +368,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const isFavorite = useUiStateStore((state) => state.favoriteThreadKeys.includes(threadKey));
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -823,6 +825,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 </Tooltip>
               )
             ) : null}
+            {isFavorite ? (
+              <StarIcon
+                aria-label="Favorite"
+                className="mr-1 size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
+              />
+            ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
                 {isRemoteThread && !isDesktopLocalThread && (
@@ -1116,6 +1124,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const toggleThreadFavorite = useUiStateStore((state) => state.toggleThreadFavorite);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -2117,6 +2126,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread" },
+          {
+            id: "toggle-favorite",
+            label: useUiStateStore.getState().favoriteThreadKeys.includes(threadKey)
+              ? "Remove from favorites"
+              : "Add to favorites",
+          },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2151,6 +2166,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "rename") {
         startThreadRename(threadKey, thread.title);
+        return;
+      }
+
+      if (clicked === "toggle-favorite") {
+        toggleThreadFavorite(threadKey);
         return;
       }
 
@@ -2210,6 +2230,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       memberProjectByScopedKey,
       project.workspaceRoot,
       startThreadRename,
+      toggleThreadFavorite,
     ],
   );
 
