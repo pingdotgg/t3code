@@ -69,6 +69,9 @@ import {
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { ModelPickerPrototypeToolbar } from "./model-picker-prototype/ModelPickerPrototypeToolbar";
+
+const MODEL_PICKER_PROTOTYPE_ENABLED = process.env.EXPO_PUBLIC_MODEL_PICKER_PROTOTYPE === "1";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -264,7 +267,6 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
     </Animated.View>
   );
 });
-
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
@@ -272,6 +274,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const [modelPickerGestureActive, setModelPickerGestureActive] = useState(false);
+  const [modelPickerMenuOpen, setModelPickerMenuOpen] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
@@ -719,7 +723,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
-        {connectionStatus ? (
+        {connectionStatus && !modelPickerMenuOpen ? (
           <ComposerConnectionStatusPill
             status={connectionStatus}
             onPress={props.onReconnectEnvironment}
@@ -842,25 +846,38 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               <ComposerToolbarScroller
                 fadeOpaque={toolbarFadeOpaque}
                 fadeTransparent={toolbarFadeTransparent}
+                scrollEnabled={!modelPickerGestureActive}
               >
+                {MODEL_PICKER_PROTOTYPE_ENABLED ? (
+                  <ModelPickerPrototypeToolbar
+                    currentModelSelection={currentModelSelection}
+                    modelOptions={modelOptions}
+                    onGestureActiveChange={setModelPickerGestureActive}
+                    onMenuOpenChange={setModelPickerMenuOpen}
+                    onUpdateModelSelection={props.onUpdateModelSelection}
+                    providerOptionDescriptors={providerOptionDescriptors}
+                  />
+                ) : null}
                 <ComposerToolbarButton
                   accessibilityLabel="Add attachment"
                   icon="plus"
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
                 />
-                <ControlPillMenu
-                  actions={modelMenuActions}
-                  onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-                >
-                  <ComposerToolbarTrigger
-                    accessibilityLabel="Model"
-                    iconNode={
-                      <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
-                    }
-                    label={currentModelOption?.label ?? currentModelSelection.model}
-                  />
-                </ControlPillMenu>
+                {!MODEL_PICKER_PROTOTYPE_ENABLED ? (
+                  <ControlPillMenu
+                    actions={modelMenuActions}
+                    onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+                  >
+                    <ComposerToolbarTrigger
+                      accessibilityLabel="Model"
+                      iconNode={
+                        <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                      }
+                      label={currentModelOption?.label ?? currentModelSelection.model}
+                    />
+                  </ControlPillMenu>
+                ) : null}
                 <ControlPillMenu
                   actions={optionsMenuActions}
                   onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
