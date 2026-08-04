@@ -15,6 +15,7 @@ import {
   BRAND_ASSET_PATHS,
   resolveWebAssetBrandForChannel,
   type WebAssetBrand,
+  type WebAssetChannel,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
@@ -1449,7 +1450,7 @@ export function resolveDesktopRuntimeDependencies(
 }
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
+  updateChannel: WebAssetChannel,
 ) {
   const env = yield* Config.all({
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
@@ -1469,13 +1470,19 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
     provider: "github",
     owner,
     repo,
-    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    releaseType: updateChannel === "latest" ? "release" : "prerelease",
+    ...(updateChannel === "latest" ? {} : { channel: updateChannel }),
   };
 });
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
-  return /-nightly\.\d{8}(?:\.\d+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version) ? "nightly" : "latest";
+export function resolveDesktopUpdateChannel(version: string): WebAssetChannel {
+  if (/-canary\.\d{8}(?:\.\d+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+    return "canary";
+  }
+  if (/-nightly\.\d{8}(?:\.\d+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+    return "nightly";
+  }
+  return "latest";
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
@@ -1483,7 +1490,15 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  if (resolveDesktopUpdateChannel(version) === "nightly") {
+  const channel = resolveDesktopUpdateChannel(version);
+  if (channel === "canary") {
+    return {
+      macIconPng: BRAND_ASSET_PATHS.developmentDesktopIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.developmentUniversalIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.developmentWindowsIconIco,
+    };
+  }
+  if (channel === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
@@ -1516,9 +1531,14 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+  const channel = resolveDesktopUpdateChannel(version);
+  if (channel === "canary") {
+    return "T3 Code (Canary)";
+  }
+  if (channel === "nightly") {
+    return "T3 Code (Nightly)";
+  }
+  return desktopPackageJson.productName ?? "T3 Code";
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -1587,9 +1607,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    const executableName = updateChannel === "canary" ? "t3code-canary" : "t3code";
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName,
       icon: "icons",
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
@@ -1603,7 +1624,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: executableName,
         },
       },
     };

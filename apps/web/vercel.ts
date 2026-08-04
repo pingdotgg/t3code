@@ -4,6 +4,7 @@ const ROUTER_HOST = "app.t3.codes";
 const HOSTED_WEB_CHANNEL_COOKIE = "t3code_web_channel";
 const LATEST_ORIGIN = "https://latest.app.t3.codes";
 const NIGHTLY_ORIGIN = "https://nightly.app.t3.codes";
+const CANARY_ORIGIN = "https://canary.app.t3.codes";
 const CLEAN_CHANNEL_QUERY_TRANSFORMS = [
   {
     type: "request.query",
@@ -12,7 +13,7 @@ const CLEAN_CHANNEL_QUERY_TRANSFORMS = [
   },
 ] satisfies Transform[];
 
-function channelCookie(channel: "latest" | "nightly"): string {
+function channelCookie(channel: "latest" | "nightly" | "canary"): string {
   return [
     `${HOSTED_WEB_CHANNEL_COOKIE}=${channel}`,
     "Path=/",
@@ -34,6 +35,16 @@ export const config: VercelConfig = {
   routes: [
     {
       src: "/__t3code/channel",
+      has: [matchers.query("channel", "canary")],
+      transforms: CLEAN_CHANNEL_QUERY_TRANSFORMS,
+      headers: {
+        Location: "/",
+        "Set-Cookie": channelCookie("canary"),
+      },
+      status: 302,
+    },
+    {
+      src: "/__t3code/channel",
       has: [matchers.query("channel", "nightly")],
       transforms: CLEAN_CHANNEL_QUERY_TRANSFORMS,
       headers: {
@@ -50,6 +61,11 @@ export const config: VercelConfig = {
         "Set-Cookie": channelCookie("latest"),
       },
       status: 302,
+    },
+    {
+      src: "/(.*)",
+      has: [matchers.host(ROUTER_HOST), matchers.cookie(HOSTED_WEB_CHANNEL_COOKIE, "canary")],
+      dest: `${CANARY_ORIGIN}/$1`,
     },
     {
       src: "/(.*)",

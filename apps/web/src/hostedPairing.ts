@@ -8,7 +8,7 @@ export interface HostedPairingRequest {
   readonly label: string;
 }
 
-export type HostedAppChannel = "latest" | "nightly";
+export type HostedAppChannel = "latest" | "nightly" | "canary";
 
 function hostedStaticAppEnabled(): boolean {
   return import.meta.env.VITE_HOSTED_STATIC_APP === "true";
@@ -32,7 +32,10 @@ function configuredBackendUrl(): string {
 
 function configuredHostedAppChannel(): HostedAppChannel | null {
   const channel = import.meta.env.VITE_HOSTED_APP_CHANNEL?.trim().toLowerCase();
-  return channel === "latest" || channel === "nightly" ? channel : null;
+  if (channel === "latest" || channel === "nightly" || channel === "canary") {
+    return channel;
+  }
+  return null;
 }
 
 function originFromUrl(value: string): string | null {

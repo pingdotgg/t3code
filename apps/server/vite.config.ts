@@ -17,7 +17,11 @@ export function shouldBundleCliDependency(id: string): boolean {
 }
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = packageJson.version.includes("-nightly.") ? "nightly" : "latest";
+const cliBuildChannel = packageJson.version.includes("-canary.")
+  ? "canary"
+  : packageJson.version.includes("-nightly.")
+    ? "nightly"
+    : "latest";
 
 export default mergeConfig(
   baseConfig,

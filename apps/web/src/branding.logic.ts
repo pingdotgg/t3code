@@ -1,4 +1,5 @@
 const NIGHTLY_SERVER_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
+const CANARY_SERVER_VERSION_PATTERN = /-canary\.\d{8}\.\d+$/;
 
 export function formatAppDisplayName(input: {
   readonly baseName: string;
@@ -14,14 +15,14 @@ export function formatAppDisplayName(input: {
 /**
  * Whether the sidebar v2 beta is on by default for a build stage.
  *
- * Nightly and local dev opt in; Alpha and Latest stay on v1. This is resolved
+ * Canary, Nightly, and local dev opt in; Alpha and Latest stay on v1. This is resolved
  * from the client's own stage label rather than the connected server's version:
  * v2 only exists in the client, so a stable client on a nightly server has
  * nothing to turn on.
  */
 export function resolveSidebarV2Default(stageLabel: string): boolean {
   const stage = stageLabel.trim().toLowerCase();
-  return stage === "nightly" || stage === "dev";
+  return stage === "canary" || stage === "nightly" || stage === "dev";
 }
 
 /**
@@ -60,10 +61,14 @@ export function resolveServerBackedAppStageLabel(input: {
   readonly primaryServerVersion: string | null | undefined;
   readonly fallbackStageLabel: string;
 }): string {
-  return input.primaryServerVersion &&
-    NIGHTLY_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)
-    ? "Nightly"
-    : input.fallbackStageLabel;
+  const version = input.primaryServerVersion ?? "";
+  if (CANARY_SERVER_VERSION_PATTERN.test(version)) {
+    return "Canary";
+  }
+  if (NIGHTLY_SERVER_VERSION_PATTERN.test(version)) {
+    return "Nightly";
+  }
+  return input.fallbackStageLabel;
 }
 
 export function resolveServerBackedAppDisplayName(input: {

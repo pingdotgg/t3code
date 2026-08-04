@@ -32,6 +32,7 @@ export function readCommandLineSwitchValue(
 export const resolveEarlyLinuxElectronOptionsFromProcess =
   (): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
     DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
+      appVersion: Electron.app.getVersion(),
       env: process.env,
       homeDirectory: NodeOS.homedir(),
       joinPath: NodePath.posix.join,

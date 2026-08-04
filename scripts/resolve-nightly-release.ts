@@ -20,6 +20,8 @@ export interface NightlyReleaseMetadata {
 }
 
 const DateSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/));
+const PrereleaseChannel = Schema.Literals(["nightly", "canary"]);
+type PrereleaseChannel = typeof PrereleaseChannel.Type;
 const RunNumberSchema = Schema.FiniteFromString.check(
   Schema.isInt(),
   Schema.isGreaterThanOrEqualTo(1),
@@ -101,14 +103,16 @@ export const resolveNightlyReleaseMetadata = (
   date: string,
   runNumber: number,
   sha: string,
+  channel: PrereleaseChannel = "nightly",
 ) => {
   const shortSha = sha.slice(0, 12);
-  const version = `${baseVersion}-nightly.${date}.${runNumber}`;
+  const version = `${baseVersion}-${channel}.${date}.${runNumber}`;
+  const channelLabel = channel === "canary" ? "Canary" : "Nightly";
   return {
     baseVersion,
     version,
     tag: `v${version}`,
-    name: `T3 Code Nightly ${version} (${shortSha})`,
+    name: `T3 Code ${channelLabel} ${version} (${shortSha})`,
     shortSha,
   };
 };
@@ -186,9 +190,13 @@ export const writeNightlyReleaseOutput = Effect.fn("writeNightlyReleaseOutput")(
 const command = Command.make(
   "resolve-nightly-release",
   {
+    channel: Flag.choice("channel", PrereleaseChannel.literals).pipe(
+      Flag.withDescription("Prerelease channel."),
+      Flag.withDefault("nightly"),
+    ),
     date: Flag.string("date").pipe(
       Flag.withSchema(DateSchema),
-      Flag.withDescription("Nightly build date in YYYYMMDD."),
+      Flag.withDescription("Prerelease build date in YYYYMMDD."),
     ),
     runNumber: Flag.string("run-number").pipe(
       Flag.withSchema(RunNumberSchema),
@@ -207,12 +215,14 @@ const command = Command.make(
       Flag.optional,
     ),
   },
-  ({ date, runNumber, sha, githubOutput, root }) =>
+  ({ channel, date, runNumber, sha, githubOutput, root }) =>
     readDesktopBaseVersion(Option.getOrUndefined(root)).pipe(
-      Effect.map((baseVersion) => resolveNightlyReleaseMetadata(baseVersion, date, runNumber, sha)),
+      Effect.map((baseVersion) =>
+        resolveNightlyReleaseMetadata(baseVersion, date, runNumber, sha, channel),
+      ),
       Effect.flatMap((metadata) => writeNightlyReleaseOutput(metadata, githubOutput)),
     ),
-).pipe(Command.withDescription("Resolve nightly release version metadata."));
+).pipe(Command.withDescription("Resolve nightly or canary release version metadata."));
 
 if (import.meta.main) {
   Command.run(command, { version: "0.0.0" }).pipe(

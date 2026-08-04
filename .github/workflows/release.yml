@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - canary
   workflow_dispatch:
     inputs:
       channel:
@@ -14,6 +15,7 @@ on:
         options:
           - stable
           - nightly
+          - canary
       version:
         description: "Release version (for example 1.2.3 or v1.2.3)"
         required: false
@@ -22,6 +24,10 @@ on:
 permissions:
   contents: read
   id-token: none
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/canary' }}
 
 jobs:
   preflight:
@@ -140,16 +146,22 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
             echo "make_latest=true" >> "$GITHUB_OUTPUT"
           else
-            nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+            prerelease_channel="nightly"
+            if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/canary" ]] ||
+              [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "canary" ]]; then
+              prerelease_channel="canary"
+            fi
+            prerelease_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
-              --date "$nightly_date" \
+              --channel "$prerelease_channel" \
+              --date "$prerelease_date" \
               --run-number "$NIGHTLY_RUN_NUMBER" \
               --sha "$NIGHTLY_SHA" \
               --github-output
 
-            echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
-            echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "release_channel=$prerelease_channel" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=$prerelease_channel" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
@@ -665,7 +677,7 @@ jobs:
 
           # Enable if Windows arm64 builds are enabled.
           # Windows updater metadata is channel-specific (for example
-          # "latest.yml" or "nightly.yml"). Suffix each per-arch copy so the
+          # "latest.yml", "nightly.yml", or "canary.yml"). Suffix each per-arch copy so the
           # release job can merge matching arm64/x64 manifests back into one
           # canonical manifest per channel.
           # if [[ "${{ matrix.platform }}" == "win" ]]; then
@@ -713,7 +725,7 @@ jobs:
       T3CODE_CLERK_JWT_TEMPLATE: ""
       T3CODE_RELAY_URL: ""
       VITE_HOSTED_STATIC_APP: "true"
-      VITE_HOSTED_APP_CHANNEL: ${{ needs.preflight.outputs.release_channel == 'stable' && 'latest' || 'nightly' }}
+      VITE_HOSTED_APP_CHANNEL: ${{ needs.preflight.outputs.release_channel == 'stable' && 'latest' || needs.preflight.outputs.release_channel }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -973,6 +985,7 @@ jobs:
       T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
       T3CODE_WEB_LATEST_DOMAIN: ${{ vars.T3CODE_WEB_LATEST_DOMAIN }}
       T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
+      T3CODE_WEB_CANARY_DOMAIN: ${{ vars.T3CODE_WEB_CANARY_DOMAIN }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
@@ -1013,6 +1026,7 @@ jobs:
           router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
           latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
           nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+          canary_domain="${T3CODE_WEB_CANARY_DOMAIN:-canary.app.t3.codes}"
           router_domain="${router_url#http://}"
           router_domain="${router_domain#https://}"
           router_domain="${router_domain%%/*}"
@@ -1020,9 +1034,12 @@ jobs:
           if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
             channel_domain="$latest_domain"
             channel_name="latest"
-          else
+          elif [[ "${{ needs.preflight.outputs.release_channel }}" == "nightly" ]]; then
             channel_domain="$nightly_domain"
             channel_name="nightly"
+          else
+            channel_domain="$canary_domain"
+            channel_name="canary"
           fi
 
           vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"

@@ -39,7 +39,9 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 ### Release And CI
 
-- Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.
+- Fork workflows create/update a daily stable release PR, main-branch pushes produce nightly releases, and canary-branch pushes produce canary releases.
+- Canary releases use immutable `X.Y.Z-canary.YYYYMMDD.RUN` versions and GitHub prereleases without changing stable package versions.
+- The Nix dependency hash workflow checks both `main` and `canary`, and targets repair PRs back to the branch that drifted.
 - Stable release PRs list every commit since the previous stable tag, including commits brought in by upstream merges.
 - Main-branch pushes update the stable release PR immediately when the committed package version is already tagged.
 - Stable-version pushes wait for the matching release to finish so tag-based version resolution advances past the published version.
@@ -57,13 +59,14 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 ### Nix Package
 
 - The fork exposes the server and web bundle as an `x86_64-linux` flake package.
-- The package version follows the server manifest by default and supports the generated nightly version override.
-- Main-branch pushes verify the pnpm dependency hash, open or update a repair PR when it drifts, and fail the source workflow run.
+- The package version follows the server manifest by default and supports generated nightly and canary version overrides.
+- Main- and canary-branch pushes verify the pnpm dependency hash, open or update a repair PR against the affected branch when it drifts, and fail the source workflow run.
 
 ### Desktop Updater Channels
 
-- Stable builds use `latest`; nightly builds use `nightly`.
-- Nightly detection accepts fork release metadata while preserving the upstream channel split.
+- Stable builds use `latest`, nightly builds use `nightly`, and canary builds use `canary`.
+- Nightly and canary detection accepts fork release metadata while preserving separate updater feeds.
+- Canary desktop builds isolate server and client state under `~/.t3/canary` and Electron data under `t3code-canary`. Desktop settings stay shared so update-track changes survive channel switches.
 
 ### Fork Persistence
 

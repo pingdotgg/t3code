@@ -1,12 +1,13 @@
-export type LoopbackAuthorizationStage = "dev" | "nightly" | "latest";
+export type LoopbackAuthorizationStage = "canary" | "dev" | "nightly" | "latest";
 
-declare const __T3CODE_BUILD_CHANNEL__: "nightly" | "latest" | undefined;
+declare const __T3CODE_BUILD_CHANNEL__: "canary" | "nightly" | "latest" | undefined;
 
 export function resolveLoopbackAuthorizationStage(): LoopbackAuthorizationStage {
   return typeof __T3CODE_BUILD_CHANNEL__ === "undefined" ? "dev" : __T3CODE_BUILD_CHANNEL__;
 }
 
 const stageBrands = {
+  canary: "T3 Code (Canary)",
   dev: "T3 Code (Dev)",
   nightly: "T3 Code (Nightly)",
   latest: "T3 Code",
@@ -62,10 +63,12 @@ export function renderLoopbackAuthorizationCompleteHtml(
           radial-gradient(circle at 76% 18%, rgba(136, 204, 255, 0.52), transparent 38%),
           linear-gradient(135deg, #2468df, #172f82);
       }
-      .stage-dev {
+      .stage-dev,
+      .stage-canary {
         background: linear-gradient(145deg, #5ab8fa 0%, #347ff8 46%, #1939bd 100%);
       }
-      .stage-dev::before {
+      .stage-dev::before,
+      .stage-canary::before {
         content: "";
         position: absolute;
         inset: 0;

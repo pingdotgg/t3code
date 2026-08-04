@@ -2,34 +2,28 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-This document covers the unified release workflow for stable and nightly desktop releases.
+This document covers the unified release workflow for stable, nightly, and canary desktop releases.
 
 ## What the workflow does
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - push tag matching `v*.*.*` for stable releases
-  - scheduled nightly check every three hours
-  - manual `workflow_dispatch` for either channel
+  - pushes to `main` for stable or nightly releases
+  - pushes to `canary` for canary releases
+  - manual `workflow_dispatch` for any channel
 - Runs quality gates first: lint, typecheck, test.
-- Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
-- Builds four artifacts in parallel for both channels:
+- Fork builds use empty relay and Clerk configuration because the production relay config job is disabled.
+- Builds four artifacts in parallel for every channel:
   - macOS `arm64` DMG
   - macOS `x64` DMG
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
-  - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
-  - Only plain stable `X.Y.Z` releases are marked as the repository's latest release.
-  - Nightly runs are always GitHub prereleases and never marked latest.
-  - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
-- Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
-- Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing from the same workflow file:
-  - stable releases publish npm dist-tag `latest`
-  - nightly releases publish npm dist-tag `nightly`
-- Deploys the hosted web app to Vercel only after a release is published:
-  - stable releases are aliased to the `latest` hosted app channel
-  - nightly releases are aliased to the `nightly` hosted app channel
+  - Stable runs publish plain `X.Y.Z` versions and mark them as the repository's latest release.
+  - Nightly and canary runs are always GitHub prereleases and never marked latest.
+  - Automatically generated release notes compare against the previous tag in the same channel.
+- Includes Electron auto-update metadata such as `latest*.yml`, `nightly*.yml`, `canary*.yml`, and `*.blockmap` in release assets.
+- The fork keeps npm publishing and hosted Vercel deployment disabled. Releases still include the desktop artifacts and hosted web archive.
 - Signing is optional and auto-detected per platform from secrets.
 
 ## Required release credentials
@@ -40,18 +34,16 @@ credentials documented below:
 - `RELEASE_APP_ID`
 - `RELEASE_APP_PRIVATE_KEY`
 
-The GitHub Release job uses them to mint the token that publishes release assets. Stable releases use
-them again in the finalize job, which can commit and push aligned package versions to `main`.
+The GitHub Release job uses them to mint the token that publishes release assets.
 
 ## T3 Connect relay deployment
 
-The relay is a shared control plane versioned separately from client releases. Stable and nightly
+The relay is a shared control plane versioned separately from client releases. Stable, nightly, and canary
 client builds must point at the same relay so users see the same linked environments when switching
 release channels.
 
-`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. The
-release workflow reads the relay URL and Clerk client configuration from the existing `production`
-GitHub Actions environment before building desktop, CLI, or hosted web artifacts.
+`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. The fork's
+release workflow does not read this deployment state because its relay config job is disabled.
 
 Required repository variables shared by relay deployments:
 
@@ -103,10 +95,10 @@ vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 
 ## Hosted web app release deployment
 
-The hosted app is intentionally not deployed by Vercel's Git integration. The
-web project disables automatic Git deployments in `apps/web/vercel.ts` via
-`git.deploymentEnabled: false`, and `.github/workflows/release.yml` deploys the
-web app with Vercel CLI after the GitHub Release succeeds.
+The web project disables automatic Git deployments in `apps/web/vercel.ts` via
+`git.deploymentEnabled: false`. The fork also disables the `deploy_web` release
+job, so releases do not change Vercel aliases. The configuration below applies
+if that job is enabled later.
 
 Required GitHub Actions secrets:
 
@@ -120,24 +112,27 @@ Optional GitHub Actions variables:
 - `T3CODE_WEB_ROUTER_URL`: defaults to `https://app.t3.codes`.
 - `T3CODE_WEB_LATEST_DOMAIN`: defaults to `latest.app.t3.codes`.
 - `T3CODE_WEB_NIGHTLY_DOMAIN`: defaults to `nightly.app.t3.codes`.
+- `T3CODE_WEB_CANARY_DOMAIN`: defaults to `canary.app.t3.codes`.
 
 Required Vercel domains:
 
 - `app.t3.codes`: the router domain users open, updated by stable releases.
 - `latest.app.t3.codes`: channel alias updated by stable releases.
 - `nightly.app.t3.codes`: channel alias updated by nightly releases.
+- `canary.app.t3.codes`: channel alias updated by canary releases.
 
 The router domain uses `apps/web/vercel.ts` routes. Users opt into a channel by
-visiting `/__t3code/channel?channel=latest` or
-`/__t3code/channel?channel=nightly`; the router stores the
+visiting `/__t3code/channel?channel=latest`,
+`/__t3code/channel?channel=nightly`, or
+`/__t3code/channel?channel=canary`; the router stores the
 `t3code_web_channel` cookie and rewrites future requests on `app.t3.codes` to
 the matching channel alias.
 
 The release deploy job rewrites release package versions before upload so the
 hosted app's About panel renders the release version. Stable deploys alias the
 same deployment to both the `latest` channel and the router domain so the router
-rules stay current. Nightly deploys only alias the `nightly` channel. The job
-also passes `VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted
+rules stay current. Nightly and canary deploy only their matching channel aliases. The job
+also passes `VITE_HOSTED_APP_CHANNEL=latest|nightly|canary`, which renders the hosted
 update track selector in the About panel. Changing the selector navigates
 through `/__t3code/channel` on the router domain so the user's channel cookie is
 updated before redirecting to the hosted app root.
@@ -145,7 +140,7 @@ updated before redirecting to the hosted app root.
 One-time Vercel dashboard setup:
 
 1. Confirm the web project root directory remains `apps/web`.
-2. Add the three domains above to the web project.
+2. Add the four domains above to the web project.
 3. Disable automatic Git deployments in the dashboard if desired; the committed
    `vercel.ts` setting is the source-of-truth, but disconnecting Git in the
    dashboard is also safe.
@@ -157,9 +152,9 @@ One-time Vercel dashboard setup:
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - scheduled check every three hours
+  - pushes to `main` unless the committed package version is an untagged stable version
   - manual `workflow_dispatch` with `channel=nightly`
-- Runs the same desktop quality gates and artifact matrix as the tagged release flow.
+- Runs the same desktop quality gates and artifact matrix as the stable release flow.
 - Publishes a GitHub prerelease only:
   - current tag format: `vX.Y.Z-nightly.YYYYMMDD.<run_number>`
   - `nightly-v...` is accepted only as a legacy previous-nightly tag
@@ -167,30 +162,29 @@ One-time Vercel dashboard setup:
   - `make_latest` is always `false`
 - Uses the next stable patch version as the nightly base. For example, `0.0.17` produces nightlies on `0.0.18-nightly.*`.
 - Publishes Electron auto-update metadata to the dedicated `nightly` updater channel, so desktop users can opt into that track independently from stable.
-- Publishes the CLI package (`apps/server`, npm package `t3`) to the `nightly` npm dist-tag using the same nightly version.
+- Does not publish the CLI package in the fork because `publish_cli` is disabled.
 - Does not commit version bumps back to `main`.
+
+## Canary builds
+
+- Every push to the long-lived `canary` branch publishes one immutable GitHub prerelease.
+- Tag format: `vX.Y.Z-canary.YYYYMMDD.<run_number>`.
+- Uses the next stable patch version as its base, independently of the nightly tag series.
+- Publishes Electron metadata to the `canary` updater channel. Canary desktop builds select it by default.
+- Uses `T3 Code (Canary)` branding, isolates client and managed server state under `~/.t3/canary`, and stores Electron data under `t3code-canary`. Desktop settings remain shared so switching update tracks persists across restarts.
+- Does not publish the CLI package or deploy the hosted web app in the fork.
+- Does not change package versions on `canary` or `main`.
+- Merge `main` into `canary` regularly. Develop experiments on focused branches and merge them into `canary`; promote proven changes to `main` through separate focused PRs.
 
 ## Server self-update release invariant
 
-Connected servers update to the client's exact version, not to an npm dist-tag. Every released
-desktop or hosted client version must therefore have a matching `t3@<version>` package available on
-npm before users can receive that client.
+Connected servers update to the client's exact version, not to an npm dist-tag. The fork disables
+`publish_cli`, so its GitHub releases do not create matching `t3@<version>` packages. Remote server
+self-update cannot target those release versions unless npm publishing is enabled again. Canary SSH
+environments use the published `t3@nightly` runner instead of requesting a missing canary package.
 
-The workflow enforces this ordering:
-
-1. `publish_cli` publishes the exact stable or nightly version to npm.
-2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
-3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
-
-Preserve these dependencies when changing the release graph. Publishing a client first would leave
-the **Update server** action targeting a package version that does not exist yet.
-
-For a release smoke test, confirm `npm view t3@<version> version` returns the expected version, then
-connect the new client to a server on the previous version and verify that the update action
-reconnects to the matching server. Use releases with identical migration manifests for the
-automatic path. When the manifest changed, verify that the remote action stops before restart and
-shows the exact local `npx t3@<version> service update` command. Also test the manual or
-desktop-managed guidance when those environments are available.
+If npm publishing is enabled again, confirm `npm view t3@<version> version` returns the expected
+version before testing remote server self-update.
 
 ## Desktop auto-update notes
 
@@ -207,17 +201,17 @@ desktop-managed guidance when those environments are available.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
-  - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases
+  - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases, and `canary*.yml` for canary releases
   - `*.blockmap` files (used for differential downloads)
 - macOS metadata note:
-  - `electron-updater` reads `latest-mac.yml` on stable and `nightly-mac.yml` on nightly, for both Intel and Apple Silicon.
+  - `electron-updater` reads `latest-mac.yml`, `nightly-mac.yml`, or `canary-mac.yml` for the selected channel, for both Intel and Apple Silicon.
   - The workflow merges the per-arch mac manifests into one channel-specific mac manifest before publishing the GitHub Release.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
-The workflow invokes `node apps/server/scripts/cli.ts publish` after aligning package versions. That
-script temporarily prepares the `t3` package, then runs `vp pm publish --filter t3 ...` from the
-repository root so workspace publish configuration is applied correctly.
+The fork disables the `publish_cli` job. If it is enabled later, the job invokes
+`node apps/server/scripts/cli.ts publish` after aligning package versions. That script temporarily
+prepares the `t3` package, then runs `vp pm publish --filter t3 ...` from the repository root.
 
 Checklist:
 
@@ -228,25 +222,19 @@ Checklist:
    - Workflow file: `.github/workflows/release.yml`
    - Environment (if used): match your npm trusted publishing config
 3. Ensure npm account and org policies allow trusted publishing for the package.
-4. Create release tag `vX.Y.Z` and push; workflow will:
+4. Enable the `publish_cli` job and run a stable release; the workflow will:
    - align the release package versions to `X.Y.Z`
    - build web + server
    - invoke the CLI publish script with npm dist-tag `latest`
-5. Nightly runs invoke the same publish script with npm dist-tag `nightly`.
+5. Nightly and canary runs invoke the same publish script with their matching npm dist-tag.
 
 ## 1) Release validation and unsigned builds
 
-There is no dry-run tag path. Pushing any accepted non-nightly tag, including
-`v0.0.0-test.1`, classifies the run as the stable channel. It publishes `t3` with npm dist-tag
-`latest`, creates a real GitHub Release, aliases the hosted app to `latest.app.t3.codes` and
-`app.t3.codes`, and can commit a version bump to `main` in the finalize job. Do not push a test tag
-to validate the workflow.
-
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
 validate checks and builds without shipping. To exercise the complete release graph at lower stable
-risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, and hosted nightly alias, but it does not update stable aliases or
-commit a version bump to `main`. Only run it when a real nightly release is acceptable.
+risk, manually dispatch `channel=nightly` or `channel=canary`; this still publishes a real GitHub
+prerelease and desktop updater release. It does not publish npm packages, deploy hosted aliases, or
+commit a version bump to `main` in the fork.
 
 Manual `channel=stable` with a version input is also a real stable-channel release. Omitting signing
 secrets only makes platform artifacts unsigned; it does not prevent publication.
@@ -328,15 +316,13 @@ Checklist:
 ## 4) Ongoing release checklist
 
 1. Ensure `main` is green in CI.
-2. Bump app version as needed.
-3. Create release tag: `vX.Y.Z`.
-4. Push tag.
-5. Verify workflow steps:
+2. Review and merge the generated stable release PR.
+3. Verify workflow steps:
    - preflight passes
    - all matrix builds pass
-   - `publish_cli` publishes the exact release version before the release job
+   - the fork's disabled `publish_cli` job remains skipped
    - release job uploads expected files
-6. Smoke test downloaded artifacts.
+4. Smoke test downloaded artifacts.
 
 ## 5) Troubleshooting
 

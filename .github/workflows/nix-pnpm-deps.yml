@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - canary
 
 permissions:
   contents: read

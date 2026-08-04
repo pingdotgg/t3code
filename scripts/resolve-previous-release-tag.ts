@@ -11,8 +11,9 @@ import * as String from "effect/String";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const ReleaseChannel = Schema.Literals(["stable", "nightly"]);
+const ReleaseChannel = Schema.Literals(["stable", "nightly", "canary"]);
 type ReleaseChannel = typeof ReleaseChannel.Type;
+type PrereleaseChannel = "nightly" | "canary";
 
 export class InvalidReleaseTagError extends Schema.TaggedErrorClass<InvalidReleaseTagError>()(
   "InvalidReleaseTagError",
@@ -91,7 +92,7 @@ interface StableVersion {
   readonly prerelease: ReadonlyArray<string>;
 }
 
-interface NightlyVersion {
+interface PrereleaseVersion {
   readonly major: number;
   readonly minor: number;
   readonly patch: number;
@@ -151,10 +152,11 @@ const parseStableTag = (tag: string): StableVersion | undefined => {
   if (!major || !minor || !patch) return undefined;
 
   const prereleaseIdentifiers = prerelease ? prerelease.split(".") : [];
-  // Nightly tags also start with `v` and carry a `nightly.*` prerelease
-  // identifier. They must not be considered stable candidates when resolving
-  // the previous stable tag.
-  if (prereleaseIdentifiers[0] === "nightly") return undefined;
+  // Channel tags also start with `v`, but must not be considered stable
+  // candidates when resolving the previous stable tag.
+  if (prereleaseIdentifiers[0] === "nightly" || prereleaseIdentifiers[0] === "canary") {
+    return undefined;
+  }
 
   return {
     major: Number(major),
@@ -164,7 +166,7 @@ const parseStableTag = (tag: string): StableVersion | undefined => {
   };
 };
 
-const compareNightlyVersions = (left: NightlyVersion, right: NightlyVersion): number => {
+const comparePrereleaseVersions = (left: PrereleaseVersion, right: PrereleaseVersion): number => {
   if (left.major !== right.major) return left.major - right.major;
   if (left.minor !== right.minor) return left.minor - right.minor;
   if (left.patch !== right.patch) return left.patch - right.patch;
@@ -172,13 +174,16 @@ const compareNightlyVersions = (left: NightlyVersion, right: NightlyVersion): nu
   return left.sequence - right.sequence;
 };
 
-const parseNightlyTag = (tag: string): NightlyVersion | undefined => {
-  // Accept both the current `v<semver>` format and the legacy `nightly-v<semver>`
-  // format so release note diffs keep working across the tag-format transition.
+const parsePrereleaseTag = (
+  channel: PrereleaseChannel,
+  tag: string,
+): PrereleaseVersion | undefined => {
   const match =
-    /^(?:nightly-)?v(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})(?:\.(\d+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
-      tag,
-    );
+    channel === "nightly"
+      ? /^(?:nightly-)?v(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})(?:\.(\d+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
+          tag,
+        )
+      : /^v(\d+)\.(\d+)\.(\d+)-canary\.(\d{8})(?:\.(\d+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(tag);
   if (!match) return undefined;
 
   const [, major, minor, patch, date, sequence] = match;
@@ -216,18 +221,18 @@ export const resolvePreviousReleaseTag = (
       return candidates[0]?.tag;
     }
 
-    const current = parseNightlyTag(currentTag);
+    const current = parsePrereleaseTag(channel, currentTag);
     if (!current) {
       return yield* new InvalidReleaseTagError({ channel, currentTag });
     }
 
     const candidates = tags
-      .map((tag) => ({ tag, parsed: parseNightlyTag(tag) }))
+      .map((tag) => ({ tag, parsed: parsePrereleaseTag(channel, tag) }))
       .filter(
-        (entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined,
+        (entry): entry is { tag: string; parsed: PrereleaseVersion } => entry.parsed !== undefined,
       )
-      .filter((entry) => compareNightlyVersions(entry.parsed, current) < 0)
-      .toSorted((left, right) => compareNightlyVersions(right.parsed, left.parsed));
+      .filter((entry) => comparePrereleaseVersions(entry.parsed, current) < 0)
+      .toSorted((left, right) => comparePrereleaseVersions(right.parsed, left.parsed));
 
     return candidates[0]?.tag;
   });
@@ -358,7 +363,7 @@ const command = Command.make(
       Effect.flatMap((tags) => resolvePreviousReleaseTag(channel, currentTag, tags)),
       Effect.flatMap((previousTag) => writePreviousReleaseTagOutput(previousTag, githubOutput)),
     ),
-).pipe(Command.withDescription("Resolve the previous release tag for a stable or nightly series."));
+).pipe(Command.withDescription("Resolve the previous release tag for a release channel."));
 
 if (import.meta.main) {
   Command.run(command, { version: "0.0.0" }).pipe(
