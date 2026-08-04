@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -12,10 +12,42 @@ import {
 } from "./subagentRuntime.ts";
 
 let sequence = 0;
+/**
+ * Fixtures model POST-INGESTION rows: ingestion stamps agentKind on every
+ * task.* payload, so the helper stamps too (same classifier). Pass an
+ * explicit agentKind (or agentKind: undefined via legacy()) to override.
+ */
 function activity(
   kind: string,
   payload: Record<string, unknown>,
   at = `2026-08-01T10:00:${String(sequence).padStart(2, "0")}.000Z`,
+): OrchestrationThreadActivity {
+  sequence += 1;
+  const stamped =
+    kind.startsWith("task.") && !("agentKind" in payload)
+      ? {
+          ...payload,
+          agentKind: classifyTaskAgentKind({
+            taskType: typeof payload.taskType === "string" ? payload.taskType : undefined,
+            agentId: typeof payload.agentId === "string" ? payload.agentId : undefined,
+          }),
+        }
+      : payload;
+  return {
+    id: `activity-${sequence}`,
+    tone: "info",
+    kind,
+    summary: kind,
+    payload: stamped,
+    turnId: null,
+    createdAt: at,
+  } as unknown as OrchestrationThreadActivity;
+}
+
+/** A pre-stamp row (legacy thread / old server): no agentKind at all. */
+function legacyActivity(
+  kind: string,
+  payload: Record<string, unknown>,
 ): OrchestrationThreadActivity {
   sequence += 1;
   return {
@@ -25,7 +57,7 @@ function activity(
     summary: kind,
     payload,
     turnId: null,
-    createdAt: at,
+    createdAt: `2026-08-01T10:00:${String(sequence).padStart(2, "0")}.000Z`,
   } as unknown as OrchestrationThreadActivity;
 }
 
@@ -490,36 +522,31 @@ describe("background task exclusion", () => {
     expect(agents).toHaveLength(1);
   });
 
-  it("server agentKind stamp beats client heuristics in both directions", () => {
+  it("the server stamp is the only classifier: no stamp means no roster row", () => {
     const agents = fold([
-      // Stamped background: marker fields present but the server says no.
+      // Stamped background: agent-looking fields don't matter.
       activity("task.started", {
         taskId: "bg-1",
         agentKind: "background",
         role: "watcher",
         model: "sonnet",
       }),
-      // Stamped agent: legacy-looking row (no markers) but the server says yes.
+      // Stamped agent: plain row still joins the roster.
       activity("task.started", { taskId: "ag-1", agentKind: "agent", detail: "plain row" }),
+      // Legacy pre-stamp rows (old threads/servers) stay in the work log —
+      // exactly their pre-upgrade behavior.
+      legacyActivity("task.started", { taskId: "old-task", detail: "tailing logs" }),
+      legacyActivity("task.progress", { taskId: "old-task", summary: "still tailing" }),
     ]);
     expect(agents.map((agent) => agent.id)).toEqual(["ag-1"]);
   });
 
-  it("legacy rows (no taskType, no pipeline markers) keep pre-upgrade behavior", () => {
-    // Pre-upgrade activity rows carried only taskId + detail; a historical
-    // "tailing logs" shell must not become a running subagent.
-    const agents = fold([
-      activity("task.started", { taskId: "old-task", detail: "tailing logs" }),
-      activity("task.progress", { taskId: "old-task", summary: "still tailing" }),
-    ]);
-    expect(agents).toHaveLength(0);
-  });
-
-  it("membership is sticky: marker-less later rows still reach a known agent", () => {
+  it("membership is sticky: a stampless later row still reaches a known agent", () => {
     const agents = fold([
       activity("task.started", { taskId: "a1", taskType: "local_agent", title: "Agent" }),
-      // Terminal row carries only taskId + status (no linkage) — common shape.
-      activity("task.completed", { taskId: "a1", status: "completed", summary: "done" }),
+      // Terminal row missing the stamp (defensive: adapters synthesize some
+      // rows) — sticky membership still routes it to the agent.
+      legacyActivity("task.completed", { taskId: "a1", status: "completed", summary: "done" }),
     ]);
     expect(agents).toHaveLength(1);
     expect(agents[0]!.status).toBe("completed");

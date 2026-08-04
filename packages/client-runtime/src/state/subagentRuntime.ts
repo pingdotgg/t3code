@@ -107,74 +107,15 @@ const SUMMARY_CHAR_LIMIT = 180;
 const ROSTER_LIMIT = 100;
 
 /**
- * Task types that are NOT agents: background shells, watch loops, and
- * plan-mode bookkeeping. Deliberately a denylist — the SDK's agent-flavored
- * type names drift (subagent, local_agent, remote_agent, local_workflow, …)
- * and an allowlist silently dropped real subagents when "local_agent"
- * appeared (live-test finding). Unknown or absent types count as agents.
+ * True when this activity's payload does NOT belong on the Agents surface.
+ * Classification happens exactly once, server-side at ingestion
+ * (classifyTaskAgentKind → the persisted agentKind stamp); the client only
+ * reads it. Rows without a stamp — legacy threads, pre-stamp servers — are
+ * background by definition: they render in the ordinary work log, exactly
+ * as they did before this feature existed.
  */
-const NON_AGENT_TASK_TYPES: ReadonlySet<string> = new Set([
-  "shell",
-  "local_bash",
-  "monitor",
-  "monitor_mcp",
-  "dream",
-  "plan",
-]);
-
-function isNonAgentTaskType(taskType: string | undefined): boolean {
-  return taskType !== undefined && NON_AGENT_TASK_TYPES.has(taskType);
-}
-
-/**
- * Positive evidence that a taskType-less row came from the new agent
- * pipeline. Pre-upgrade activity rows carry none of these fields, so
- * legacy shells/monitors whose rows predate taskType stay out of the
- * roster (review finding: old "tailing logs" tasks appeared as running
- * subagents after upgrading). Every new emitter marks its rows: Claude
- * repeats linkage (role/model/toolUseId) on all task.* rows, workflow
- * members carry parentAgentId/agentIndex, Codex children carry
- * timelineBypass/agentPath.
- */
-function hasAgentPipelineMarker(payload: Record<string, unknown>): boolean {
-  return (
-    payload.timelineBypass === true ||
-    typeof payload.role === "string" ||
-    typeof payload.model === "string" ||
-    typeof payload.parentAgentId === "string" ||
-    typeof payload.agentPath === "string" ||
-    typeof payload.workflowName === "string" ||
-    typeof payload.toolUseId === "string" ||
-    typeof payload.agentIndex === "number"
-  );
-}
-
-/** True when this activity's payload describes a non-agent background task. */
 export function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
-  // Server-stamped rows are self-describing: trust the stamp outright.
-  // Everything below is the legacy fallback for pre-stamp rows.
-  if (payload.agentKind === "agent") {
-    return false;
-  }
-  if (payload.agentKind === "background") {
-    return true;
-  }
-  const taskType = typeof payload.taskType === "string" ? payload.taskType : undefined;
-  const ownedByAgent = typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
-  // A subagent's internal SHELLS are background (its own liveness covers
-  // them) — but a nested AGENT spawned from inside a subagent is still an
-  // agent and belongs in the roster (review finding: agentId alone hid
-  // nested agents entirely).
-  if (ownedByAgent) {
-    return taskType === undefined || isNonAgentTaskType(taskType);
-  }
-  if (taskType === undefined) {
-    // No taskType: agent only with positive new-pipeline evidence; legacy
-    // rows (which predate both taskType and the marker fields) keep their
-    // pre-upgrade work-log behavior.
-    return !hasAgentPipelineMarker(payload);
-  }
-  return isNonAgentTaskType(taskType);
+  return payload.agentKind !== "agent";
 }
 
 function bounded(value: string): string {
