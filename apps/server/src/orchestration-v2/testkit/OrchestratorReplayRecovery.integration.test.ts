@@ -40,7 +40,11 @@ import {
   projectionFor,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "./ReplayTranscriptNdjson.ts";
 
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";
@@ -53,11 +57,11 @@ const readRawTranscript = Effect.fn("readRecoveryTranscript")(function* (file: U
   const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
   return yield* decodeProviderReplayNdjson(text);
 });
-const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* () {
+const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* (workspace: string) {
   const transcript = yield* readRawTranscript(
     new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
   );
-  return yield* decodeCodexTranscript(transcript);
+  return yield* decodeCodexTranscript(materializeReplayTranscriptWorkspace(transcript, workspace));
 });
 const readCursorTranscript = Effect.fn("readCursorRecoveryTranscript")(function* () {
   const transcript = yield* readRawTranscript(
@@ -177,7 +181,11 @@ describe("orchestrator replay recovery", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const transcript = yield* readCodexTranscript();
+          // Checkpoint against a throwaway git workspace: with no override the
+          // scope cwd falls back to process.cwd(), and a cold full-repo
+          // baseline capture on CI outlives the scenario wait budget.
+          const workspace = yield* checkpointWorkspace("provider_thread_resume");
+          const transcript = yield* readCodexTranscript(workspace);
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* Effect.acquireRelease(
@@ -222,6 +230,7 @@ describe("orchestrator replay recovery", () => {
               commands: phase1Commands,
               steps: phase1Steps,
               projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
             },
             harness,
             options,
@@ -234,6 +243,7 @@ describe("orchestrator replay recovery", () => {
               commands: phase2Commands,
               steps: phase2Steps,
               projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
             },
             harness,
             options,
