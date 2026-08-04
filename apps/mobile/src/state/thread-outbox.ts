@@ -12,8 +12,8 @@ export const threadOutboxManager = createThreadOutboxManager({
   storage: expoThreadOutboxStorage,
 });
 
-export function ensureThreadOutboxLoaded(): void {
-  void threadOutboxManager.load();
+export function ensureThreadOutboxLoaded(): Promise<boolean> {
+  return threadOutboxManager.load();
 }
 
 export function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {

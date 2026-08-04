@@ -1,4 +1,5 @@
 import { useAuth, useUser } from "@clerk/expo";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -211,13 +212,13 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Cloud access",
-      "Live Activity updates require approved T3 Cloud access so relay can deliver updates to this device.",
+      "Sign in to T3 Connect",
+      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
-          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" }),
+          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
         },
       ],
     );
@@ -347,13 +348,9 @@ function ConfiguredSettingsRouteScreen() {
 
   const openAccount = useCallback(() => {
     if (!isLoaded) return;
-    if (!isSignedIn) {
-      navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" });
-      return;
-    }
     expandClerkSheet();
     navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
-  }, [expandClerkSheet, isLoaded, isSignedIn, navigation]);
+  }, [expandClerkSheet, isLoaded, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -421,6 +418,12 @@ function ConfiguredSettingsRouteScreen() {
 
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
+  const version = Constants.expoConfig?.version ?? "0.0.0";
+  const variant =
+    typeof Constants.expoConfig?.extra?.appVariant === "string"
+      ? Constants.expoConfig.extra.appVariant
+      : "production";
+  const versionLabel = variant === "production" ? version : `${version} · ${variant}`;
 
   return (
     <SettingsSection title="App">
@@ -433,7 +436,7 @@ function AppSettingsSection() {
           weight="regular"
         />
         <Text className="flex-1 text-lg text-foreground">Version</Text>
-        <Text className="text-lg text-foreground-muted">Alpha</Text>
+        <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
       </View>
     </SettingsSection>
   );

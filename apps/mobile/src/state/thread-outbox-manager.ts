@@ -46,7 +46,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     ((message: string, error: unknown) => {
       console.warn(message, error);
     });
-  let loadPromise: Promise<void> | null = null;
+  let loadPromise: Promise<boolean> | null = null;
   let mutationQueue: Promise<void> = Promise.resolve();
 
   const serialize = <A>(mutation: () => Promise<A>): Promise<A> => {
@@ -65,13 +65,14 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     options.registry.set(queuedMessagesByThreadKeyAtom, groupQueuedThreadMessages(messages));
   };
 
-  const load = (): Promise<void> => {
+  const load = (): Promise<boolean> => {
     if (loadPromise !== null) {
       return loadPromise;
     }
     loadPromise = serialize(async () => {
       const persistedMessages = await options.storage.load();
       setMessages([...persistedMessages, ...currentMessages()]);
+      return true;
     }).catch((cause) => {
       loadPromise = null;
       warn(
@@ -84,6 +85,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
           cause,
         }),
       );
+      return false;
     });
     return loadPromise;
   };
@@ -153,23 +155,23 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
 
   const clearEnvironment = (environmentId: EnvironmentId): Promise<void> =>
     serialize(async () => {
-      const persisted = await options.storage.load().catch((cause) => {
-        warn(
-          "[thread-outbox] failed to load messages while clearing environment",
-          new ThreadOutboxManagerError({
-            operation: "clear-environment-load",
-            environmentId,
-            threadId: null,
-            messageId: null,
-            cause,
-          }),
-        );
-        return [];
-      });
+      let persisted: ReadonlyArray<QueuedThreadMessage>;
+      try {
+        persisted = await options.storage.load();
+      } catch (cause) {
+        throw new ThreadOutboxManagerError({
+          operation: "clear-environment-load",
+          environmentId,
+          threadId: null,
+          messageId: null,
+          cause,
+        });
+      }
       const allMessages = flattenQueuedThreadMessages(
         groupQueuedThreadMessages([...persisted, ...currentMessages()]),
       );
       const removedMessageIds = new Set<MessageId>();
+      const failures: ThreadOutboxManagerError[] = [];
 
       await Promise.all(
         allMessages
@@ -179,8 +181,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
               await options.storage.remove(message);
               removedMessageIds.add(message.messageId);
             } catch (cause) {
-              warn(
-                "[thread-outbox] failed to clear persisted message",
+              failures.push(
                 new ThreadOutboxManagerError({
                   operation: "clear-environment-remove",
                   environmentId: message.environmentId,
@@ -194,6 +195,15 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       );
 
       setMessages(allMessages.filter((message) => !removedMessageIds.has(message.messageId)));
+      if (failures.length > 0) {
+        throw new ThreadOutboxManagerError({
+          operation: "clear-environment-remove",
+          environmentId,
+          threadId: null,
+          messageId: null,
+          cause: new AggregateError(failures, "One or more queued messages could not be removed."),
+        });
+      }
     });
 
   return {

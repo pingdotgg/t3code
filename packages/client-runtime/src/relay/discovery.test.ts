@@ -378,7 +378,7 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
-  it.effect("clears previously discovered rows when a refresh fails", () =>
+  it.effect("preserves previously discovered rows when a refresh fails", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* Effect.gen(function* () {
@@ -403,7 +403,7 @@ describe("RelayEnvironmentDiscovery", () => {
         yield* discovery.refresh;
 
         const failed = yield* SubscriptionRef.get(discovery.state);
-        expect(failed.environments.size).toBe(0);
+        expect(failed.environments.size).toBe(2);
         expect(Option.isSome(failed.error)).toBe(true);
       }).pipe(Effect.provide(harness.layer));
     }),

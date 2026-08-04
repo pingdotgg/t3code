@@ -36,7 +36,7 @@
     "install:t3:official": "bash scripts/install-t3-official.sh",
     "release:smoke": "node scripts/release-smoke.ts",
     "release:cli-smoke": "node scripts/cli-package-smoke.ts",
-    "release:connect-smoke": "node apps/server/integration/connect-release-smoke.ts",
+    "release:connect-smoke": "node apps/server/integration/connect-release-smoke.ts && vp test run packages/client-runtime/src/connection/supervisor.test.ts apps/mobile/src/state/thread-outbox.test.ts apps/mobile/src/connection/environment-owned-data-cleanup.test.ts apps/mobile/src/features/settings/environmentDiscoveryPresentation.test.ts --no-file-parallelism",
     "test:direct-connect-smoke": "pnpm --filter t3 exec playwright install chromium && pnpm --filter @t3tools/web build && vp test run apps/server/integration/directConnectSmoke.integration.test.ts --no-file-parallelism",
     "clean": "node scripts/clean.ts",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"

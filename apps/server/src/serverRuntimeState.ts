@@ -12,6 +12,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
+  devUrl: Schema.optional(Schema.String),
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
@@ -33,7 +34,7 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfigShape, "host">;
+  readonly config: Pick<ServerConfigShape, "host" | "devUrl">;
   readonly port: number;
 }): PersistedServerRuntimeState => ({
   version: 1,
@@ -41,6 +42,7 @@ export const makePersistedServerRuntimeState = (input: {
   ...(input.config.host ? { host: input.config.host } : {}),
   port: input.port,
   origin: runtimeOriginForConfig(input.config, input.port),
+  ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
   startedAt: new Date().toISOString(),
 });
 

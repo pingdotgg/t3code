@@ -7,6 +7,7 @@ import {
   settlePromise,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { type ReactNode, useEffect, useRef } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
@@ -18,6 +19,7 @@ import {
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
+import { createRecoverableTransitionQueue } from "./recoverable-transition-queue";
 
 function resetManagedRelayTokenCache() {
   return settleAsyncResult(() =>
@@ -60,7 +62,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     readonly provider: () => Promise<string | null>;
   } | null>(null);
   const observedAccountRef = useRef<string | null | undefined>(undefined);
-  const accountTransitionRef = useRef<Promise<void> | null>(null);
+  const accountTransitionQueueRef = useRef(createRecoverableTransitionQueue());
 
   useEffect(() => {
     let cancelled = false;
@@ -78,8 +80,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         readonly provider: () => Promise<string | null>;
       } | null,
     ) => {
-      const previousTransition = accountTransitionRef.current ?? Promise.resolve();
-      accountTransitionRef.current = previousTransition.then(async () => {
+      return accountTransitionQueueRef.current.enqueue(async () => {
         const cleanup = [
           resetManagedRelayTokenCache(),
           removeRelayEnvironments(),
@@ -94,11 +95,17 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
             : []),
         ];
         const results = await Promise.all(cleanup);
+        let cleanupFailed = false;
         for (const result of results) {
           reportAtomCommandResult(result, { label: "cloud account cleanup" });
+          cleanupFailed ||= AsyncResult.isFailure(result);
+        }
+        if (cleanupFailed) {
+          throw new Error(
+            "Cloud account cleanup failed; refusing to activate a different relay account.",
+          );
         }
       });
-      return accountTransitionRef.current;
     };
 
     if (!isSignedIn || !userId) {
@@ -106,7 +113,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousTokenProviderRef.current = null;
       deactivateCloudRelayAccount();
       if (previousObservedAccount !== null) {
-        void queueAccountCleanup(previous);
+        void queueAccountCleanup(previous).catch(() => undefined);
       }
       return;
     }
@@ -138,7 +145,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       deactivateCloudRelayAccount();
       activateAfterTransition(queueAccountCleanup(previous));
     } else {
-      activateAfterTransition(accountTransitionRef.current ?? Promise.resolve());
+      activateAfterTransition(accountTransitionQueueRef.current.retryPending());
     }
 
     return () => {

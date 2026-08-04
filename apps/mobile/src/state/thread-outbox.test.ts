@@ -7,7 +7,8 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import * as Cause from "effect/Cause";
+import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   decodeQueuedThreadMessage,
@@ -22,7 +23,9 @@ import {
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
+import { startThreadOutboxLoadRetry } from "./thread-outbox-load-retry";
 import { createThreadOutboxManager, ThreadOutboxManagerError } from "./thread-outbox-manager";
+import { createThreadOutboxDrainWorker } from "./thread-outbox-drain-worker";
 import type { ThreadOutboxStorage } from "./thread-outbox-storage";
 
 function queuedMessage(input: {
@@ -205,6 +208,8 @@ describe("thread outbox", () => {
 
     releaseInitialLoad();
     await Promise.all([loading, clearing]);
+    expect(removeCalls).toBe(1);
+    expect(stored.size).toBe(0);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
     registry.dispose();
   });
@@ -228,7 +233,7 @@ describe("thread outbox", () => {
       warn: (message, error) => warnings.push({ message, error }),
     });
 
-    await manager.load();
+    expect(await manager.load()).toBe(false);
     expect(warnings).toEqual([
       {
         message: "[thread-outbox] failed to load persisted messages",
@@ -242,9 +247,37 @@ describe("thread outbox", () => {
       },
     ]);
 
-    await manager.load();
+    expect(await manager.load()).toBe(true);
     expect(loadCalls).toBe(2);
     registry.dispose();
+  });
+
+  it("retries persisted bootstrap with backoff after an initial load failure", async () => {
+    const scheduled: Array<{ callback: () => void; delayMs: number }> = [];
+    let loadCalls = 0;
+    const stop = startThreadOutboxLoadRetry({
+      load: async () => {
+        loadCalls += 1;
+        return loadCalls > 1;
+      },
+      retryDelayMs: (attempt) => attempt * 100,
+      schedule: (callback, delayMs) => {
+        scheduled.push({ callback, delayMs });
+        return 1 as ReturnType<typeof setTimeout>;
+      },
+      cancel: () => undefined,
+    });
+
+    await Promise.resolve();
+    expect(loadCalls).toBe(1);
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0]?.delayMs).toBe(100);
+
+    scheduled[0]?.callback();
+    await Promise.resolve();
+    expect(loadCalls).toBe(2);
+    expect(scheduled).toHaveLength(1);
+    stop();
   });
 
   it("keeps atom state aligned with durable writes and removals", async () => {
@@ -290,6 +323,51 @@ describe("thread outbox", () => {
 
     failRemoval = false;
     await manager.remove(message);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
+    registry.dispose();
+  });
+
+  it("reports partial environment clear failures and removes the remainder on retry", async () => {
+    const registry = AtomRegistry.make();
+    const first = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const second = queuedMessage({
+      messageId: "message-2",
+      createdAt: "2026-06-08T10:00:02.000Z",
+    });
+    const stored = new Map([
+      [first.messageId, first],
+      [second.messageId, second],
+    ]);
+    let failSecond = true;
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [...stored.values()],
+        write: async () => undefined,
+        remove: async (message) => {
+          if (message.messageId === second.messageId && failSecond) {
+            throw new Error("storage unavailable");
+          }
+          stored.delete(message.messageId);
+        },
+      },
+    });
+
+    await expect(manager.clearEnvironment(first.environmentId)).rejects.toMatchObject({
+      _tag: "ThreadOutboxManagerError",
+      operation: "clear-environment-remove",
+    });
+    expect([...stored.keys()]).toEqual([second.messageId]);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [second],
+    });
+
+    failSecond = false;
+    await manager.clearEnvironment(first.environmentId);
+    expect(stored.size).toBe(0);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
     registry.dispose();
   });
@@ -468,5 +546,153 @@ describe("thread outbox", () => {
         interrupted: false,
       }),
     ).toBe("discard");
+  });
+
+  it("drains durable messages exactly once after reconnect and retries transient failures", async () => {
+    const registry = AtomRegistry.make();
+    const stored = new Map<MessageId, QueuedThreadMessage>();
+    const storage: ThreadOutboxStorage = {
+      load: async () => [...stored.values()],
+      write: async (message) => {
+        stored.set(message.messageId, message);
+      },
+      remove: async (message) => {
+        stored.delete(message.messageId);
+      },
+    };
+    const manager = createThreadOutboxManager({ registry, storage });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    let dispatches = 0;
+    let successfulDispatches = 0;
+    let failTransiently = true;
+    const worker = createThreadOutboxDrainWorker({
+      remove: manager.remove,
+      startTurn: async () => {
+        dispatches += 1;
+        if (failTransiently) {
+          return AsyncResult.failure(Cause.fail(new Error("Socket is not connected")));
+        }
+        successfulDispatches += 1;
+        return AsyncResult.success(undefined);
+      },
+      updateThreadMetadata: async () => AsyncResult.success(undefined),
+      setThreadRuntimeMode: async () => AsyncResult.success(undefined),
+      setThreadInteractionMode: async () => AsyncResult.success(undefined),
+      warn: () => undefined,
+    });
+    const connectedSnapshot = () => ({
+      queuedMessagesByThreadKey: registry.get(manager.queuedMessagesByThreadKeyAtom),
+      editingQueuedMessageIds: {},
+      shellStatuses: new Map([[message.environmentId, "live" as const]]),
+      connectedEnvironmentIds: new Set([message.environmentId]),
+      threads: [
+        {
+          environmentId: message.environmentId,
+          id: message.threadId,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          session: null,
+        },
+      ],
+      projects: [],
+      canDispatch: () => true,
+    });
+
+    await manager.enqueue(message);
+    expect(stored.get(message.messageId)).toEqual(message);
+    expect(
+      await worker.drainNext({
+        ...connectedSnapshot(),
+        shellStatuses: new Map([[message.environmentId, "cached" as const]]),
+        connectedEnvironmentIds: new Set(),
+      }),
+    ).toEqual({ _tag: "Idle" });
+    expect(dispatches).toBe(0);
+
+    expect(await worker.drainNext(connectedSnapshot())).toEqual({
+      _tag: "Attempted",
+      messageId: message.messageId,
+      delivered: false,
+    });
+    expect(dispatches).toBe(1);
+    expect(stored.get(message.messageId)).toEqual(message);
+
+    failTransiently = false;
+    expect(await worker.drainNext(connectedSnapshot())).toEqual({
+      _tag: "Attempted",
+      messageId: message.messageId,
+      delivered: true,
+    });
+    expect(dispatches).toBe(2);
+    expect(stored.size).toBe(0);
+    expect(successfulDispatches).toBe(1);
+
+    expect(await worker.drainNext(connectedSnapshot())).toEqual({ _tag: "Idle" });
+    expect(await worker.drainNext(connectedSnapshot())).toEqual({ _tag: "Idle" });
+    expect(dispatches).toBe(2);
+    registry.dispose();
+  });
+
+  it("discards a deterministically rejected queued message through the production drain worker", async () => {
+    const registry = AtomRegistry.make();
+    const stored = new Map<MessageId, QueuedThreadMessage>();
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [...stored.values()],
+        write: async (message) => {
+          stored.set(message.messageId, message);
+        },
+        remove: async (message) => {
+          stored.delete(message.messageId);
+        },
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-deterministic-failure",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const worker = createThreadOutboxDrainWorker({
+      remove: manager.remove,
+      startTurn: async () => AsyncResult.failure(Cause.fail(new Error("Thread no longer exists"))),
+      updateThreadMetadata: async () => AsyncResult.success(undefined),
+      setThreadRuntimeMode: async () => AsyncResult.success(undefined),
+      setThreadInteractionMode: async () => AsyncResult.success(undefined),
+      warn: () => undefined,
+    });
+    await manager.enqueue(message);
+
+    expect(
+      await worker.drainNext({
+        queuedMessagesByThreadKey: registry.get(manager.queuedMessagesByThreadKeyAtom),
+        editingQueuedMessageIds: {},
+        shellStatuses: new Map([[message.environmentId, "live"]]),
+        connectedEnvironmentIds: new Set([message.environmentId]),
+        threads: [
+          {
+            environmentId: message.environmentId,
+            id: message.threadId,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            session: null,
+          },
+        ],
+        projects: [],
+        canDispatch: () => true,
+      }),
+    ).toEqual({ _tag: "Attempted", messageId: message.messageId, delivered: true });
+    expect(stored.size).toBe(0);
+    registry.dispose();
   });
 });

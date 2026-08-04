@@ -216,12 +216,12 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
 
       let generation = yield* Ref.get(accountGeneration);
       yield* Ref.set(refreshGeneration, generation);
-      yield* SubscriptionRef.set(state, {
-        environments: new Map(),
+      yield* SubscriptionRef.update(state, (current) => ({
+        ...current,
         refreshing: true,
         offline: false,
         error: Option.none(),
-      });
+      }));
 
       const clerkToken = yield* session.clerkToken;
       if ((yield* Ref.get(accountGeneration)) !== generation) {
@@ -235,6 +235,10 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       ) {
         generation = yield* Ref.updateAndGet(accountGeneration, (current) => current + 1);
         yield* Ref.set(refreshGeneration, generation);
+        yield* SubscriptionRef.update(state, (current) => ({
+          ...current,
+          environments: new Map(),
+        }));
       }
       yield* Ref.set(activeAccountId, accountId);
 

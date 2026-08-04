@@ -1,7 +1,21 @@
-import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { buildRemotePairingUrl, readHostedPairingRequest } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
+
+function isIpLiteral(host: string): boolean {
+  try {
+    const hostname = new URL(`http://${host}`).hostname.replace(/^\[|\]$/g, "");
+    if (hostname.includes(":")) return true;
+    const octets = hostname.split(".");
+    return (
+      octets.length === 4 &&
+      octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
@@ -19,9 +33,10 @@ export function buildPairingUrl(host: string, code: string): string {
   if (!c) return h;
 
   try {
-    const url = new URL(h.includes("://") ? h : `https://${h}`);
-    url.hash = new URLSearchParams([["token", c]]).toString();
-    return url.toString();
+    return buildRemotePairingUrl(
+      h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`,
+      c,
+    );
   } catch {
     return `${h}#token=${c}`;
   }

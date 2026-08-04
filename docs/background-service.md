@@ -23,14 +23,14 @@ The instance-specific definition path and rotating server log are shown by `t3 s
 
 Connect onboarding offers background installation after linking. A service failure does not undo the successful link. The service itself does not require Clerk or a relay.
 
-For direct Tailnet access, bind T3 to a fixed loopback port and persist a Tailscale HTTPS Serve configuration:
+For direct Tailnet access, bind T3 to a fixed loopback port, then let `t3 pair` provision and validate the persistent HTTPS mapping:
 
 ```sh
 t3 service install --host 127.0.0.1 --port 13773
-tailscale serve --bg --https=443 http://127.0.0.1:13773
+t3 pair --base-dir ~/.t3 --tailscale --label "Mobile device"
 tailscale serve status
 ```
 
-Pair the RN app/browser with the resulting `https://<machine>.<tailnet>.ts.net` URL. Tailscale Serve persists its configuration independently. Remove the HTTPS listener with `tailscale serve --https=443 off`, or remove all Serve configuration with `tailscale serve reset`.
+Scan the printed QR code in the RN app or open the same canonical URL in a browser. Tailscale Serve persists independently across T3 restarts. Use the exact per-port removal command printed by `t3 pair`; avoid `tailscale serve reset`, which removes unrelated mappings too.
 
 The service definition contains its startup paths and selected non-secret configuration. Pairing/session credentials still grant workstation access: use Tailnet ACLs, revoke unused T3 sessions, protect the workstation account, and do not expose the port directly to an untrusted network.

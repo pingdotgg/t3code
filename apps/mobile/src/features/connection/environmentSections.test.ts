@@ -35,11 +35,12 @@ function cloudEnvironment(environmentId: string): RelayClientEnvironmentRecord {
 }
 
 describe("mobile environment settings sections", () => {
-  it("keeps saved relay-managed connections under T3 Cloud", () => {
+  it("keeps saved relay-managed connections under T3 Connect", () => {
     const local = connectedEnvironment({
       environmentId: "environment-local",
       isRelayManaged: false,
     });
+
     const cloud = connectedEnvironment({
       environmentId: "environment-cloud",
       isRelayManaged: true,
@@ -58,6 +59,16 @@ describe("mobile environment settings sections", () => {
     expect(
       sections.availableCloudEnvironments.map((environment) => environment.environmentId),
     ).toEqual([EnvironmentId.make("environment-new")]);
+  });
+
+  it("deduplicates repeated discovered environments", () => {
+    const discovered = cloudEnvironment("environment-new");
+    const sections = splitEnvironmentSections({
+      connectedEnvironments: [],
+      cloudEnvironments: [discovered, discovered],
+    });
+
+    expect(sections.availableCloudEnvironments).toEqual([discovered]);
   });
 
   it("keeps saved relay-managed connections visible when cloud listing is unavailable", () => {

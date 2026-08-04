@@ -91,6 +91,15 @@ export class TailscaleStatusParseError extends Schema.TaggedErrorClass<Tailscale
   }
 }
 
+export class TailscaleServeStatusParseError extends Schema.TaggedErrorClass<TailscaleServeStatusParseError>()(
+  "TailscaleServeStatusParseError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to decode tailscale serve status JSON.";
+  }
+}
+
 const TailscaleStatusSelf = Schema.Struct({
   DNSName: Schema.optional(Schema.Unknown),
   TailscaleIPs: Schema.optional(Schema.Unknown),
@@ -292,6 +301,120 @@ const runTailscaleCommand = (
       }),
     );
   });
+
+const isUnknownRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const parseTailscaleServePortConfigured = (
+  rawStatusJson: string,
+  servePort: number,
+): Effect.Effect<boolean, TailscaleServeStatusParseError> =>
+  Effect.try({
+    try: () => {
+      const parsed: unknown = JSON.parse(rawStatusJson);
+      if (!isUnknownRecord(parsed)) return false;
+      const tcp = parsed.TCP;
+      if (isUnknownRecord(tcp) && Object.hasOwn(tcp, String(servePort))) return true;
+      const web = parsed.Web;
+      return (
+        isUnknownRecord(web) &&
+        Object.keys(web).some((hostPort) => hostPort.endsWith(`:${String(servePort)}`))
+      );
+    },
+    catch: (cause) => new TailscaleServeStatusParseError({ cause }),
+  });
+
+const proxyTargetFromHandlers = (value: unknown): string | null => {
+  if (!isUnknownRecord(value)) return null;
+  for (const handler of Object.values(value)) {
+    if (!isUnknownRecord(handler)) continue;
+    const proxy = handler.Proxy;
+    if (typeof proxy === "string") return proxy;
+  }
+  return null;
+};
+
+export const parseTailscaleServePortTarget = (
+  rawStatusJson: string,
+  servePort: number,
+): Effect.Effect<string | null, TailscaleServeStatusParseError> =>
+  Effect.try({
+    try: () => {
+      const parsed: unknown = JSON.parse(rawStatusJson);
+      if (!isUnknownRecord(parsed) || !isUnknownRecord(parsed.Web)) return null;
+      for (const [hostPort, configuration] of Object.entries(parsed.Web)) {
+        if (!hostPort.endsWith(`:${String(servePort)}`) || !isUnknownRecord(configuration)) {
+          continue;
+        }
+        const target = proxyTargetFromHandlers(configuration.Handlers);
+        if (target !== null) return target;
+      }
+      return null;
+    },
+    catch: (cause) => new TailscaleServeStatusParseError({ cause }),
+  });
+
+const readTailscaleServeStatus = Effect.gen(function* () {
+  const args = ["serve", "status", "--json"];
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const hostPlatform = yield* HostProcessPlatform;
+  const executable = tailscaleCommandForPlatform(hostPlatform);
+  const commandContext = {
+    executable,
+    subcommand: "serve" as const,
+    argumentCount: args.length,
+  };
+  return yield* Effect.gen(function* () {
+    const child = yield* spawner
+      .spawn(ChildProcess.make(executable, args))
+      .pipe(
+        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+      );
+    const [commandStdout, stderr, exitCode] = yield* Effect.all(
+      [
+        collectStdout(child.stdout),
+        collectStderr(child.stderr),
+        child.exitCode.pipe(Effect.map(Number)),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
+    );
+    if (exitCode !== 0) {
+      return yield* new TailscaleCommandExitError({
+        ...commandContext,
+        exitCode,
+        stdoutLength: commandStdout.length,
+        stderrLength: stderr.length,
+      });
+    }
+    return commandStdout;
+  }).pipe(
+    Effect.scoped,
+    Effect.timeout(TAILSCALE_STATUS_TIMEOUT),
+    Effect.catchTags({
+      TimeoutError: (cause) =>
+        Effect.fail(
+          new TailscaleCommandTimeoutError({
+            ...commandContext,
+            timeoutMs: Duration.toMillis(TAILSCALE_STATUS_TIMEOUT),
+            cause,
+          }),
+        ),
+    }),
+  );
+});
+
+export const isTailscaleServePortConfigured = (servePort: number) =>
+  Effect.gen(function* () {
+    const stdout = yield* readTailscaleServeStatus;
+    return yield* parseTailscaleServePortConfigured(stdout, servePort);
+  });
+
+export const readTailscaleServePortTarget = (servePort: number) =>
+  readTailscaleServeStatus.pipe(
+    Effect.flatMap((stdout) => parseTailscaleServePortTarget(stdout, servePort)),
+  );
 
 export const ensureTailscaleServe = (input: {
   readonly localPort: number;

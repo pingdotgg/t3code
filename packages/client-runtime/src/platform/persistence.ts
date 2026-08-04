@@ -1,5 +1,5 @@
 import {
-  type EnvironmentId,
+  EnvironmentId,
   type OrchestrationThread,
   type OrchestrationShellSnapshot,
   type ThreadId,
@@ -29,6 +29,23 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
     message: Schema.String,
   },
 ) {}
+
+export class EnvironmentOwnedDataCleanupError extends Schema.TaggedErrorClass<EnvironmentOwnedDataCleanupError>()(
+  "EnvironmentOwnedDataCleanupError",
+  {
+    environmentId: EnvironmentId,
+    failures: Schema.Array(
+      Schema.Struct({
+        resource: Schema.Literals(["thread-outbox", "composer-drafts"]),
+        cause: Schema.Defect(),
+      }),
+    ),
+  },
+) {
+  override get message(): string {
+    return `Could not clear all environment-owned data for ${this.environmentId}: ${this.failures.map((failure) => failure.resource).join(", ")}.`;
+  }
+}
 
 export class ConnectionTargetStore extends Context.Service<
   ConnectionTargetStore,
@@ -76,7 +93,9 @@ export class EnvironmentCacheStore extends Context.Service<
 >()("@t3tools/client-runtime/platform/persistence/EnvironmentCacheStore") {}
 
 export class EnvironmentOwnedDataCleanup extends Context.Reference<{
-  readonly clear: (environmentId: EnvironmentId) => Effect.Effect<void>;
+  readonly clear: (
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<void, EnvironmentOwnedDataCleanupError>;
 }>("@t3tools/client-runtime/platform/persistence/EnvironmentOwnedDataCleanup", {
   defaultValue: () => ({
     clear: () => Effect.void,

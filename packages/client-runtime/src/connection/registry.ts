@@ -73,12 +73,13 @@ export class EnvironmentRegistry extends Context.Service<
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<void, Persistence.EnvironmentOwnedDataCleanupError>;
     readonly remove: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
+      | Persistence.EnvironmentOwnedDataCleanupError
       | ConnectionAttemptError
       | EnvironmentNotRegisteredError
       | PlatformEnvironmentRemovalError
@@ -86,6 +87,7 @@ export class EnvironmentRegistry extends Context.Service<
     readonly removeRelayEnvironments: () => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
+      | Persistence.EnvironmentOwnedDataCleanupError
       | ConnectionAttemptError
       | PlatformEnvironmentRemovalError
     >;
@@ -476,6 +478,7 @@ export const make = Effect.gen(function* () {
         environmentId,
         Effect.gen(function* () {
           const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+          yield* ownedDataCleanup.clear(environmentId);
           yield* Ref.update(platformEnvironmentIds, (current) => {
             const next = new Set(current);
             next.delete(environmentId);
@@ -507,7 +510,6 @@ export const make = Effect.gen(function* () {
                   }),
                 ),
               ),
-              ownedDataCleanup.clear(environmentId),
             ],
             { concurrency: "unbounded", discard: true },
           );
@@ -556,6 +558,7 @@ export const make = Effect.gen(function* () {
             ? yield* profiles.get(target.connectionId)
             : Option.none();
 
+        yield* ownedDataCleanup.clear(environmentId);
         yield* registrations.remove(target);
         yield* Ref.update(persistedTargetsByEnvironment, (current) => {
           const next = new Map(current);
@@ -578,7 +581,6 @@ export const make = Effect.gen(function* () {
                 }),
               ),
             ),
-            ownedDataCleanup.clear(environmentId),
           ],
           { concurrency: "unbounded", discard: true },
         );

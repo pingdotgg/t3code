@@ -69,13 +69,14 @@ try {
   run("npm", ["install", "--ignore-scripts", "--no-package-lock", tarball], tempDir);
 
   for (const args of [
+    ["t3", "pair", "--help"],
     ["t3", "connect", "--help"],
     ["t3", "connect", "login", "--headless", "--help"],
     ["t3", "connect", "link", "--headless", "--help"],
     ["t3", "connect", "status", "--help"],
   ]) {
     const output = run("npx", ["--offline", "--no-install", ...args], tempDir);
-    assertContains(output, "t3 connect");
+    assertContains(output, `t3 ${args[1]}`);
   }
   assertContains(
     run("npx", ["--offline", "--no-install", "t3", "connect", "--help"], tempDir),

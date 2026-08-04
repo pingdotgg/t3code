@@ -16,6 +16,7 @@ export function splitEnvironmentSections(input: EnvironmentSectionsInput): Envir
   const savedEnvironmentIds = new Set(
     input.connectedEnvironments.map((environment) => environment.environmentId),
   );
+  const discoveredEnvironmentIds = new Set<string>();
 
   return {
     localEnvironments: input.connectedEnvironments.filter(
@@ -24,8 +25,15 @@ export function splitEnvironmentSections(input: EnvironmentSectionsInput): Envir
     connectedCloudEnvironments: input.connectedEnvironments.filter(
       (environment) => environment.isRelayManaged,
     ),
-    availableCloudEnvironments: (input.cloudEnvironments ?? []).filter(
-      (environment) => !savedEnvironmentIds.has(environment.environmentId),
-    ),
+    availableCloudEnvironments: (input.cloudEnvironments ?? []).filter((environment) => {
+      if (
+        savedEnvironmentIds.has(environment.environmentId) ||
+        discoveredEnvironmentIds.has(environment.environmentId)
+      ) {
+        return false;
+      }
+      discoveredEnvironmentIds.add(environment.environmentId);
+      return true;
+    }),
   };
 }

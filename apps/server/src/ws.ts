@@ -90,7 +90,7 @@ import {
   vcsListRefsInputToGit,
 } from "./git/VcsBridge.ts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -2227,6 +2227,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             makeWsRpcLayer(session.sessionId).pipe(Layer.provideMerge(RpcSerialization.layerJson)),
           ),
         );
+        const waitUntilSessionInactive = sessions
+          .waitUntilInactive(session.sessionId)
+          .pipe(Effect.as(HttpServerResponse.empty({ status: 401 })));
         // A silently replaced socket leaves every subscription on the old
         // connection dead, so connection open/close is the anchor every stream
         // log below correlates against.
@@ -2238,7 +2241,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             Effect.logInfo("websocket connected", {
               userAgent: request.headers["user-agent"],
             }).pipe(
-              Effect.andThen(rpcWebSocketHttpEffect),
+              Effect.andThen(Effect.raceFirst(rpcWebSocketHttpEffect, waitUntilSessionInactive)),
               Effect.onExit((exit) =>
                 Effect.logInfo("websocket disconnected", {
                   durationMs: Date.now() - connectedAt,

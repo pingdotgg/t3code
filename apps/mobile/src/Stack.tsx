@@ -43,7 +43,6 @@ import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppea
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import { SettingsWaitlistRouteScreen } from "./features/settings/SettingsWaitlistRouteScreen";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
@@ -151,13 +150,6 @@ const SettingsSheetStack = createNativeStackNavigator({
       linking: "auth",
       options: {
         title: "Sign in",
-      },
-    }),
-    SettingsWaitlist: createNativeStackScreen({
-      screen: SettingsWaitlistRouteScreen,
-      linking: "waitlist",
-      options: {
-        title: "Join the waitlist",
       },
     }),
   },

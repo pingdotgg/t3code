@@ -48,6 +48,12 @@ export const ListActiveAuthSessionsInput = Schema.Struct({
 });
 export type ListActiveAuthSessionsInput = typeof ListActiveAuthSessionsInput.Type;
 
+export const ListInactiveAuthSessionIdsInput = Schema.Struct({
+  sessionIds: Schema.Array(AuthSessionId),
+  now: Schema.DateTimeUtcFromString,
+});
+export type ListInactiveAuthSessionIdsInput = typeof ListInactiveAuthSessionIdsInput.Type;
+
 export const RevokeAuthSessionInput = Schema.Struct({
   sessionId: AuthSessionId,
   revokedAt: Schema.DateTimeUtcFromString,
@@ -76,6 +82,9 @@ export interface AuthSessionRepositoryShape {
   readonly listActive: (
     input: ListActiveAuthSessionsInput,
   ) => Effect.Effect<ReadonlyArray<AuthSessionRecord>, AuthSessionRepositoryError>;
+  readonly listInactiveIds: (
+    input: ListInactiveAuthSessionIdsInput,
+  ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
   readonly revoke: (
     input: RevokeAuthSessionInput,
   ) => Effect.Effect<boolean, AuthSessionRepositoryError>;

@@ -27,12 +27,12 @@ import { AppState } from "react-native";
 import { authClientMetadata } from "../lib/authClientMetadata";
 import { loadOrCreateAgentAwarenessDeviceId } from "../lib/storage";
 import { appAtomRegistry } from "../state/atom-registry";
-import { clearThreadOutboxEnvironment } from "../state/thread-outbox";
-import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
+import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { clearMobileEnvironmentOwnedData } from "./environment-owned-data-cleanup";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
-  if (state.isConnected === false || state.isInternetReachable === false) {
+  if (state.isConnected === false) {
     return "offline";
   }
   if (state.isConnected === true) {
@@ -53,27 +53,47 @@ const connectivityLayer = Connectivity.layer({
   ),
   changes: Stream.callback((queue) =>
     Effect.acquireRelease(
-      Effect.sync(() =>
-        Network.addNetworkStateListener((state) => {
+      Effect.sync(() => {
+        let active = true;
+        const networkSubscription = Network.addNetworkStateListener((state) => {
           Queue.offerUnsafe(queue, networkStatus(state));
-        }),
-      ),
-      (subscription) => Effect.sync(() => subscription.remove()),
+        });
+        const appStateSubscription = AppState.addEventListener("change", (state) => {
+          if (state !== "active") return;
+          void Network.getNetworkStateAsync()
+            .then((current) => {
+              if (active) Queue.offerUnsafe(queue, networkStatus(current));
+            })
+            .catch(() => undefined);
+        });
+        return () => {
+          active = false;
+          networkSubscription.remove();
+          appStateSubscription.remove();
+        };
+      }),
+      (close) => Effect.sync(close),
     ).pipe(Effect.asVoid),
   ),
 });
 
 const wakeupsLayer = Wakeups.layer({
   changes: Stream.merge(
-    Stream.callback<"application-active">((queue) =>
+    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
       Effect.acquireRelease(
-        Effect.sync(() =>
-          AppState.addEventListener("change", (state) => {
-            if (state === "active") {
-              Queue.offerUnsafe(queue, "application-active");
+        Effect.sync(() => {
+          let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+          return AppState.addEventListener("change", (state) => {
+            if (state === "background") {
+              backgroundedAtMs = Date.now();
+              return;
             }
-          }),
-        ),
+            if (state === "active") {
+              Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
+              backgroundedAtMs = null;
+            }
+          });
+        }),
         (subscription) => Effect.sync(() => subscription.remove()),
       ).pipe(Effect.asVoid),
     ),
@@ -92,7 +112,7 @@ const capabilitiesLayer = Layer.succeedContext(
         if (session === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "Sign in to T3 Cloud to connect this environment.",
+            detail: "Sign in to T3 Connect to connect this environment.",
           });
         }
         const token = yield* session.readClerkToken().pipe(
@@ -107,7 +127,7 @@ const capabilitiesLayer = Layer.succeedContext(
         if (token === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "The T3 Cloud session is unavailable.",
+            detail: "The T3 Connect session is unavailable.",
           });
         }
         return token;
@@ -172,17 +192,11 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   EnvironmentOwnedDataCleanup,
   EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
-      Effect.all(
-        [
-          Effect.promise(() => clearThreadOutboxEnvironment(environmentId)),
-          Effect.promise(() => clearComposerDraftsEnvironment(environmentId)),
-        ],
-        { concurrency: "unbounded", discard: true },
-      ).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not clear mobile environment-owned data.", {
+      clearMobileEnvironmentOwnedData(environmentId).pipe(
+        Effect.tapError((error) =>
+          Effect.logError("Could not clear mobile environment-owned data.", {
             environmentId,
-            cause,
+            error,
           }),
         ),
       ),

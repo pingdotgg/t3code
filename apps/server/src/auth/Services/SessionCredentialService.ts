@@ -73,6 +73,9 @@ export interface SessionCredentialServiceShape {
     SessionCredentialError
   >;
   readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+  readonly waitUntilInactive: (
+    sessionId: AuthSessionId,
+  ) => Effect.Effect<void, SessionCredentialError>;
   readonly revoke: (sessionId: AuthSessionId) => Effect.Effect<boolean, SessionCredentialError>;
   readonly revokeAllExcept: (
     sessionId: AuthSessionId,

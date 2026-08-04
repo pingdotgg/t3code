@@ -25,6 +25,8 @@ This document covers the unified release workflow for stable and nightly desktop
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
 - Signing is optional and auto-detected per platform from secrets.
+- `pnpm release:cli-smoke` installs the packed artifact and checks `t3 pair --help` alongside the T3 Connect command surface.
+- PR release smoke also runs the production Direct Connect acceptance, including the HTTPS/WSS-shaped client seam, reconnect, resnapshot, and owner revocation.
 
 ## Nightly builds
 

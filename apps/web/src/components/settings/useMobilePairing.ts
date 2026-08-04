@@ -1,13 +1,12 @@
 import { useCallback, useState } from "react";
 import type { DesktopServerExposureState } from "@t3tools/contracts";
 
+import { buildRemotePairingUrl } from "@t3tools/shared/remote";
 import { setPairingTokenOnUrl } from "../../pairingUrl";
 import {
   createServerPairingCredential,
   type ServerPairingCredentialRecord,
 } from "~/environments/primary";
-
-const MOBILE_PAIRING_SCHEME = "t3code://mobile/pair";
 
 export type MobilePairingDialogState = {
   readonly payload: string;
@@ -15,12 +14,8 @@ export type MobilePairingDialogState = {
   readonly pairingCredential: ServerPairingCredentialRecord;
 };
 
-function resolveMobilePairingPayload(endpointUrl: string, credential: string): string {
-  const payload = new URL(MOBILE_PAIRING_SCHEME);
-  payload.searchParams.set("v", "1");
-  payload.searchParams.set("server", endpointUrl);
-  payload.searchParams.set("token", credential);
-  return payload.toString();
+export function resolveMobilePairingPayload(endpointUrl: string, credential: string): string {
+  return buildRemotePairingUrl(endpointUrl, credential);
 }
 
 export function resolveCurrentOriginPairingUrl(credential: string): string {

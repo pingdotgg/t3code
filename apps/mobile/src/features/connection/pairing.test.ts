@@ -1,10 +1,28 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPairingUrl,
   extractPairingUrlFromQrPayload,
   PairingQrPayloadEmptyError,
   parsePairingUrl,
 } from "./pairing";
+
+describe("buildPairingUrl", () => {
+  it("uses HTTP for bare IPv4 and IPv6 literals", () => {
+    expect(buildPairingUrl("192.168.1.100:3773", "pairing-token")).toBe(
+      "http://192.168.1.100:3773/pair#token=pairing-token",
+    );
+    expect(buildPairingUrl("[fd7a:115c:a1e0::1]:3773", "pairing-token")).toBe(
+      "http://[fd7a:115c:a1e0::1]:3773/pair#token=pairing-token",
+    );
+  });
+
+  it("keeps HTTPS as the default for named hosts", () => {
+    expect(buildPairingUrl("remote.example.com", "pairing-token")).toBe(
+      "https://remote.example.com/pair#token=pairing-token",
+    );
+  });
+});
 
 describe("extractPairingUrlFromQrPayload", () => {
   it("trims raw pairing urls from qr payloads", () => {

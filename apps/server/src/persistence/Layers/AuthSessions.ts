@@ -15,6 +15,7 @@ import {
   CreateAuthSessionInput,
   GetAuthSessionByIdInput,
   ListActiveAuthSessionsInput,
+  ListInactiveAuthSessionIdsInput,
   RevokeAuthSessionInput,
   RevokeOtherAuthSessionsInput,
   SetAuthSessionLastConnectedAtInput,
@@ -157,6 +158,18 @@ const makeAuthSessionRepository = Effect.gen(function* () {
       `,
   });
 
+  const listInactiveSessionIds = SqlSchema.findAll({
+    Request: ListInactiveAuthSessionIdsInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionIds, now }) =>
+      sql`
+        SELECT session_id AS "sessionId"
+        FROM auth_sessions
+        WHERE ${sql.in("session_id", sessionIds)}
+          AND (revoked_at IS NOT NULL OR expires_at <= ${now})
+      `,
+  });
+
   const setLastConnectedAtRow = SqlSchema.void({
     Request: SetAuthSessionLastConnectedAtInput,
     execute: ({ sessionId, lastConnectedAt }) =>
@@ -231,6 +244,19 @@ const makeAuthSessionRepository = Effect.gen(function* () {
       Effect.flatMap((rows) => Effect.succeed(rows.map((row) => toAuthSessionRecord(row)))),
     );
 
+  const listInactiveIds: AuthSessionRepositoryShape["listInactiveIds"] = (input) =>
+    input.sessionIds.length === 0
+      ? Effect.succeed([])
+      : listInactiveSessionIds(input).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "AuthSessionRepository.listInactiveIds:query",
+              "AuthSessionRepository.listInactiveIds:decodeRows",
+            ),
+          ),
+          Effect.map((rows) => rows.map((row) => row.sessionId)),
+        );
+
   const revoke: AuthSessionRepositoryShape["revoke"] = (input) =>
     revokeSessionRows(input).pipe(
       Effect.mapError(
@@ -267,6 +293,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
     create,
     getById,
     listActive,
+    listInactiveIds,
     revoke,
     revokeAllExcept,
     setLastConnectedAt,

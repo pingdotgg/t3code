@@ -157,6 +157,32 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
           },
         );
         const ownerToken = ownerBootstrap.body.sessionToken;
+        const securePublicOrigin = "https://direct-connect.test";
+        const nativeFetch = globalThis.fetch;
+        const secureFetch = ((
+          input: Parameters<typeof globalThis.fetch>[0],
+          init?: RequestInit,
+        ) => {
+          const requestedUrl = new URL(input instanceof Request ? input.url : String(input));
+          if (requestedUrl.origin !== securePublicOrigin) return nativeFetch(input, init);
+          const targetUrl = new URL(
+            `${requestedUrl.pathname}${requestedUrl.search}${requestedUrl.hash}`,
+            origin,
+          ).toString();
+          return nativeFetch(
+            input instanceof Request ? new Request(targetUrl, input) : targetUrl,
+            init,
+          );
+        }) as typeof globalThis.fetch;
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            globalThis.fetch = secureFetch;
+          }),
+          () =>
+            Effect.sync(() => {
+              globalThis.fetch = nativeFetch;
+            }),
+        );
         const createPairingCredential = Effect.gen(function* () {
           const result = yield* fetchJson<{ readonly credential: string }>(
             `${origin}/api/auth/pairing-token`,
@@ -170,11 +196,11 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
 
         const mobileCredential = yield* createPairingCredential;
         const registration = yield* preparePairingRegistration({
-          pairingUrl: `${origin}/pair#token=${encodeURIComponent(mobileCredential)}`,
+          pairingUrl: `${securePublicOrigin}/pair#token=${encodeURIComponent(mobileCredential)}`,
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              remoteHttpClientLayer(globalThis.fetch),
+              remoteHttpClientLayer(secureFetch),
               Layer.succeed(
                 ClientPresentation,
                 ClientPresentation.of({
@@ -189,6 +215,8 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
             ),
           ),
         );
+        expect(registration.profile.httpBaseUrl).toBe(`${securePublicOrigin}/`);
+        expect(registration.profile.wsBaseUrl).toBe("wss://direct-connect.test/");
         const unauthorizedSnapshot = yield* Effect.promise(() =>
           fetch(`${origin}/api/orchestration/shell-snapshot`),
         );
@@ -203,6 +231,7 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
 
         const opened = yield* Deferred.make<void>();
         const disconnected = yield* Deferred.make<void>();
+        const revoked = yield* Deferred.make<void>();
         const reconnected = yield* Deferred.make<void>();
         const ready = yield* Deferred.make<void>();
         const initialSnapshot = yield* Deferred.make<void>();
@@ -215,7 +244,13 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
             Object.defineProperty(globalThis, "WebSocket", {
               configurable: true,
               value: function WebSocket(socketUrl: string | URL, protocols?: string | string[]) {
-                const socket = new NodeSocket.NodeWS.WebSocket(socketUrl, protocols);
+                const requestedUrl = new URL(socketUrl);
+                if (requestedUrl.origin === "wss://direct-connect.test") {
+                  const localOrigin = new URL(origin);
+                  requestedUrl.protocol = localOrigin.protocol === "https:" ? "wss:" : "ws:";
+                  requestedUrl.host = localOrigin.host;
+                }
+                const socket = new NodeSocket.NodeWS.WebSocket(requestedUrl, protocols);
                 sockets.push(socket);
                 return socket;
               },
@@ -232,6 +267,7 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
 
         let wsTokenIssueCount = 0;
         let openCount = 0;
+        let involuntaryCloseCount = 0;
         const snapshots: number[] = [];
         const liveProjectSequences: number[] = [];
         const transport = yield* Effect.acquireRelease(
@@ -245,7 +281,7 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
                       httpBaseUrl: registration.profile.httpBaseUrl,
                       wsBaseUrl: registration.profile.wsBaseUrl,
                       bearerToken: registration.credential.token,
-                    }).pipe(Effect.provide(remoteHttpClientLayer(globalThis.fetch))),
+                    }).pipe(Effect.provide(remoteHttpClientLayer(secureFetch))),
                   );
                 },
                 {
@@ -257,7 +293,13 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
                   },
                   onClose: (_details, context) => {
                     if (!context.intentional) {
-                      Effect.runFork(Deferred.succeed(disconnected, undefined));
+                      involuntaryCloseCount += 1;
+                      Effect.runFork(
+                        Deferred.succeed(
+                          involuntaryCloseCount === 1 ? disconnected : revoked,
+                          undefined,
+                        ),
+                      );
                     }
                   },
                 },
@@ -395,6 +437,40 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
 
         unsubscribeShell();
         unsubscribeLifecycle();
+
+        const clients = yield* fetchJson<
+          ReadonlyArray<{
+            readonly sessionId: string;
+            readonly method: string;
+            readonly role?: string;
+            readonly current: boolean;
+          }>
+        >(`${origin}/api/auth/clients`, {
+          headers: { authorization: ["Bearer", ownerToken].join(" ") },
+        });
+        const mobileSession = clients.body.find(
+          (session) =>
+            session.method === "bearer-session-token" &&
+            session.role === "client" &&
+            !session.current,
+        );
+        expect(mobileSession).toBeDefined();
+        yield* fetchJson<{ readonly revoked: boolean }>(`${origin}/api/auth/clients/revoke`, {
+          method: "POST",
+          headers: {
+            authorization: ["Bearer", ownerToken].join(" "),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ sessionId: mobileSession?.sessionId }),
+        });
+        yield* Deferred.await(revoked).pipe(Effect.timeout("10 seconds"));
+        const revokedSnapshot = yield* Effect.promise(() =>
+          fetch(`${origin}/api/orchestration/shell-snapshot`, {
+            headers: { authorization: ["Bearer", registration.credential.token].join(" ") },
+          }),
+        );
+        expect(revokedSnapshot.status).toBe(401);
+
         yield* Effect.promise(() => transport.dispose()).pipe(Effect.timeout("10 seconds"));
         yield* Effect.promise(() => context.close());
         yield* Effect.promise(() => browser.close());

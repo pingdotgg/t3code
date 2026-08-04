@@ -1,6 +1,7 @@
 import { networkInterfaces } from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
+import { buildRemotePairingUrl } from "@t3tools/shared/remote";
 import { Effect } from "effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -90,11 +91,7 @@ export const resolveListeningPort = (address: unknown, fallbackPort: number): nu
 };
 
 export const buildPairingUrl = (connectionString: string, token: string): string => {
-  const url = new URL(connectionString);
-  url.pathname = "/pair";
-  url.searchParams.delete("token");
-  url.hash = new URLSearchParams([["token", token]]).toString();
-  return url.toString();
+  return buildRemotePairingUrl(connectionString, token);
 };
 
 export const renderTerminalQrCode = (value: string, margin = 2): string => {

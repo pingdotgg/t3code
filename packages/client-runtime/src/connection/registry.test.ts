@@ -135,6 +135,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly beforeRegistrationRemove?: (
       target: ConnectionTarget,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly beforeOwnedDataCleanup?: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, Persistence.EnvironmentOwnedDataCleanupError>;
   },
 ) {
   const storedTargets = yield* Ref.make(
@@ -260,7 +263,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   });
   const ownedDataCleanup = Persistence.EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
-      Ref.update(ownedDataClears, (environmentIds) => [...environmentIds, environmentId]),
+      (options?.beforeOwnedDataCleanup?.(environmentId) ?? Effect.void).pipe(
+        Effect.andThen(
+          Ref.update(ownedDataClears, (environmentIds) => [...environmentIds, environmentId]),
+        ),
+      ),
   });
   const networkStatus = yield* SubscriptionRef.make<"unknown" | "offline" | "online">("online");
   const connectivity = Connectivity.Connectivity.of({
@@ -717,7 +724,49 @@ describe("EnvironmentRegistry", () => {
         );
         expect((yield* Ref.get(harness.storedTargets)).has(RELAY_TARGET.environmentId)).toBe(true);
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
-        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([RELAY_TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps the registry intact until environment-owned cleanup succeeds", () =>
+    Effect.gen(function* () {
+      let cleanupAttempts = 0;
+      const harness = yield* makeHarness([TARGET], [], [], {
+        beforeOwnedDataCleanup: (environmentId) =>
+          Effect.sync(() => cleanupAttempts++).pipe(
+            Effect.flatMap((attempt) =>
+              attempt === 0
+                ? Effect.fail(
+                    new Persistence.EnvironmentOwnedDataCleanupError({
+                      environmentId,
+                      failures: [
+                        {
+                          resource: "thread-outbox",
+                          cause: new Error("storage unavailable"),
+                        },
+                      ],
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const error = yield* registry.remove(TARGET.environmentId).pipe(Effect.flip);
+        expect(error._tag).toBe("EnvironmentOwnedDataCleanupError");
+        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(true);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(true);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+
+        yield* registry.remove(TARGET.environmentId);
+        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(
+          false,
+        );
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([TARGET.environmentId]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

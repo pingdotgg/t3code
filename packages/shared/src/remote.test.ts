@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveRemotePairingTarget } from "./remote.ts";
+import { buildRemotePairingUrl, resolveRemotePairingTarget } from "./remote.ts";
 
 describe("remote", () => {
+  it("builds the canonical pairing URL", () => {
+    expect(buildRemotePairingUrl("https://machine.tailnet.ts.net/base?old=1", "PAIR")).toBe(
+      "https://machine.tailnet.ts.net/pair?old=1#token=PAIR",
+    );
+  });
+
   it("derives backend urls and token from a pairing url", () => {
     expect(
       resolveRemotePairingTarget({
