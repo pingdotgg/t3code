@@ -64,6 +64,25 @@ describe("diffPanelStore", () => {
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
   });
 
+  it("carries the base ref between the two base-relative scopes", () => {
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "since-fork");
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "since-fork", baseRef: "origin/main" });
+
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/develop");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "since-fork", baseRef: "origin/develop" });
+
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/develop" });
+  });
+
   it("reconciles a missing turn selection to the latest available turn", () => {
     const missingTurnId = TurnId.make("turn-missing");
     const latestTurnId = TurnId.make("turn-latest");

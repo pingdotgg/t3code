@@ -803,6 +803,49 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
       }),
     );
+
+    it.effect("covers committed and uncommitted work in the since-fork preview", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/since-fork"]);
+        yield* writeTextFile(cwd, "committed.txt", "committed\n");
+        yield* git(cwd, ["add", "committed.txt"]);
+        yield* git(cwd, ["commit", "-m", "add committed file"]);
+        yield* writeTextFile(cwd, "README.md", "# dirty tracked edit\n");
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+        const sinceFork = preview.sources.find((source) => source.kind === "since-fork");
+        const branchRange = preview.sources.find((source) => source.kind === "branch-range");
+
+        assert.isDefined(sinceFork);
+        assert.include(sinceFork.diff, "committed.txt");
+        assert.include(sinceFork.diff, "README.md");
+        assert.include(sinceFork.diff, "untracked.txt");
+        assert.strictEqual(sinceFork.baseRef, initialBranch);
+
+        // The committed-only view stays narrow so both scopes remain distinguishable.
+        assert.include(branchRange?.diff ?? "", "committed.txt");
+        assert.notInclude(branchRange?.diff ?? "", "untracked.txt");
+      }),
+    );
+
+    it.effect("keeps the since-fork preview empty when no base branch resolves", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "README.md", "# dirty\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef: "does-not-exist" });
+        const sinceFork = preview.sources.find((source) => source.kind === "since-fork");
+
+        assert.isDefined(sinceFork);
+        assert.strictEqual(sinceFork.diff, "");
+      }),
+    );
   });
 
   describe("repository status", () => {

@@ -5,7 +5,7 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 
-export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
+export type ReviewSectionKind = "turn" | "working-tree" | "branch-range" | "since-fork";
 
 const DIRTY_WORKTREE_SECTION_ID = "git:working-tree";
 const DIRTY_WORKTREE_TITLE = "Dirty worktree";
@@ -160,7 +160,9 @@ function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
     return DIRTY_WORKTREE_SUBTITLE;
   }
   if (section.baseRef) {
-    return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
+    return section.kind === "since-fork"
+      ? `${section.baseRef} ... worktree`
+      : `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
   }
   return "Base branch unavailable";
 }

@@ -2136,6 +2136,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const EMPTY_GIT_RESULT = {
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
   ) {
@@ -2175,15 +2183,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
         appendTruncationMarker: true,
       },
-    ).pipe(
-      Effect.orElseSucceed(() => ({
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-        stdoutTruncated: false,
-        stderrTruncated: false,
-      })),
-    );
+    ).pipe(Effect.orElseSucceed(() => EMPTY_GIT_RESULT));
     const dirtyUntracked = yield* readUntrackedReviewDiffs(input.cwd).pipe(
       Effect.orElseSucceed(() => ({ diff: "", truncated: false })),
     );
@@ -2210,17 +2210,51 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
               appendTruncationMarker: true,
             },
-          ).pipe(
-            Effect.orElseSucceed(() => ({
-              exitCode: 0,
-              stdout: "",
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            })),
-          )
+          ).pipe(Effect.orElseSucceed(() => EMPTY_GIT_RESULT))
         : null;
     const baseDiff = baseResult?.stdout ?? "";
+
+    // `git diff A...B` has no working-tree form, so resolve the fork point explicitly and diff it
+    // against the worktree to cover committed and uncommitted work in a single patch.
+    const mergeBaseResult =
+      baseRef && branch
+        ? yield* executeGit(
+            "GitVcsDriver.getReviewDiffPreview.mergeBase",
+            input.cwd,
+            ["merge-base", baseRef, "HEAD"],
+            { allowNonZeroExit: true },
+          ).pipe(Effect.orElseSucceed(() => ({ ...EMPTY_GIT_RESULT, exitCode: 1 })))
+        : null;
+    const mergeBaseSha =
+      mergeBaseResult?.exitCode === 0 && mergeBaseResult.stdout.trim().length > 0
+        ? mergeBaseResult.stdout.trim()
+        : null;
+    const sinceForkResult = mergeBaseSha
+      ? yield* executeGit(
+          "GitVcsDriver.getReviewDiffPreview.sinceFork",
+          input.cwd,
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+            mergeBaseSha,
+            "--",
+          ],
+          {
+            maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        ).pipe(Effect.orElseSucceed(() => EMPTY_GIT_RESULT))
+      : null;
+    const sinceForkDiff = sinceForkResult
+      ? [sinceForkResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
+          .filter((diff) => diff.length > 0)
+          .join("\n")
+      : "";
     const hashDiff = (diff: string) =>
       crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
         Effect.map(Encoding.encodeHex),
@@ -2235,9 +2269,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
         ),
       );
-    const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
+    const [dirtyDiffHash, baseDiffHash, sinceForkDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff),
       hashDiff(baseDiff),
+      hashDiff(sinceForkDiff),
     ]);
 
     const sources: ReviewDiffPreviewSource[] = [
@@ -2260,6 +2295,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         diff: baseDiff,
         diffHash: baseDiffHash,
         truncated: baseResult?.stdoutTruncated ?? false,
+      },
+      {
+        id: "since-fork",
+        kind: "since-fork",
+        title: baseRef ? `All changes since ${baseRef}` : "All changes since base branch",
+        baseRef,
+        headRef: branch ?? "HEAD",
+        diff: sinceForkDiff,
+        diffHash: sinceForkDiffHash,
+        truncated: (sinceForkResult?.stdoutTruncated ?? false) || dirtyUntracked.truncated,
       },
     ];
 

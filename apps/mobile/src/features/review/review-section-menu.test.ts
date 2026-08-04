@@ -20,19 +20,24 @@ describe("buildReviewSectionMenu", () => {
     const turn27 = section("turn:27", "turn");
     const workingTree = section("git:working-tree", "working-tree");
     const branchChanges = section("git:branch-range", "branch-range");
+    const sinceFork = section("git:since-fork", "since-fork");
 
-    expect(buildReviewSectionMenu([turn28, turn27, workingTree, branchChanges])).toEqual({
-      workingTree,
-      branchChanges,
-      latestTurn: turn28,
-      turns: [turn28, turn27],
-    });
+    expect(buildReviewSectionMenu([turn28, turn27, workingTree, branchChanges, sinceFork])).toEqual(
+      {
+        workingTree,
+        branchChanges,
+        sinceFork,
+        latestTurn: turn28,
+        turns: [turn28, turn27],
+      },
+    );
   });
 
   it("keeps unavailable scopes empty while data loads", () => {
     expect(buildReviewSectionMenu([])).toEqual({
       workingTree: null,
       branchChanges: null,
+      sinceFork: null,
       latestTurn: null,
       turns: [],
     });
