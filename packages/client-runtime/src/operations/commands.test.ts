@@ -232,6 +232,7 @@ describe("V2 environment commands", () => {
         },
         runtimeMode: "full-access",
         interactionMode: "default",
+        titleSeed: "Implement the plan",
         sourceProposedPlan: {
           threadId: ThreadId.make("thread-plan"),
           planId: PlanId.make("plan-1"),
@@ -243,6 +244,7 @@ describe("V2 environment commands", () => {
         type: "message.dispatch",
         commandId: "implement-plan",
         threadId: v2ThreadId,
+        titleSeed: "Implement the plan",
         sourcePlanRef: { threadId: "thread-plan", planId: "plan-1" },
         dispatchMode: { type: "start_immediately" },
       });
@@ -265,6 +267,7 @@ describe("V2 environment commands", () => {
         },
         runtimeMode: "full-access",
         interactionMode: "default",
+        titleSeed: "Continue here",
         bootstrap: {
           createThread: {
             projectId: ProjectId.make("project-1"),
@@ -281,6 +284,8 @@ describe("V2 environment commands", () => {
 
       expect(launches[0]).toMatchObject({
         threadId: v2ThreadId,
+        title: "Continue here",
+        generateTitle: true,
         workspaceStrategy: {
           type: "existing_worktree",
           worktreePath: "/workspace/project-worktrees/feature",
