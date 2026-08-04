@@ -987,8 +987,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                       // would keep the controls pinned over the status label
                       // once the pointer moves away (e.g. after a failed
                       // settle) instead of cross-fading back.
-                      "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-hover/v2-row:static group-hover/v2-row:opacity-100",
-                      snoozeMenuOpen && "static opacity-100",
+                      "pointer-events-none absolute inset-y-0 right-0 z-10 flex items-stretch opacity-0 transition-opacity has-[:focus-visible]:static has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/v2-row:static group-hover/v2-row:pointer-events-auto group-hover/v2-row:opacity-100",
+                      snoozeMenuOpen && "static pointer-events-auto opacity-100",
                     )}
                   >
                     {showSnoozeButton ? (
