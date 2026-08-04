@@ -151,6 +151,14 @@ function hasAgentPipelineMarker(payload: Record<string, unknown>): boolean {
 
 /** True when this activity's payload describes a non-agent background task. */
 export function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
+  // Server-stamped rows are self-describing: trust the stamp outright.
+  // Everything below is the legacy fallback for pre-stamp rows.
+  if (payload.agentKind === "agent") {
+    return false;
+  }
+  if (payload.agentKind === "background") {
+    return true;
+  }
   const taskType = typeof payload.taskType === "string" ? payload.taskType : undefined;
   const ownedByAgent = typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
   // A subagent's internal SHELLS are background (its own liveness covers

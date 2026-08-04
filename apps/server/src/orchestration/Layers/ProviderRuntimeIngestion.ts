@@ -7,6 +7,8 @@ import {
   type OrchestrationMessage,
   type OrchestrationProposedPlanId,
   CheckpointRef,
+  classifyTaskAgentKind,
+  EventId,
   isToolLifecycleItemType,
   ThreadId,
   type ThreadTokenUsageSnapshot,
@@ -314,7 +316,16 @@ function requestKindFromCanonicalRequestType(
  * client folds survive activity retention; absent fields stay absent.
  */
 function taskLinkageActivityFields(payload: Record<string, unknown>): Record<string, unknown> {
-  const fields: Record<string, unknown> = {};
+  const fields: Record<string, unknown> = {
+    // Server-stamped classification: persisted rows are self-describing, so
+    // clients trust the stamp instead of re-deriving agent-vs-background
+    // from taskType denylists and marker heuristics (legacy rows without a
+    // stamp keep the client fallback).
+    agentKind: classifyTaskAgentKind({
+      taskType: typeof payload.taskType === "string" ? payload.taskType : undefined,
+      agentId: typeof payload.agentId === "string" ? payload.agentId : undefined,
+    }),
+  };
   for (const key of [
     "taskType",
     "agentId",
@@ -554,7 +565,13 @@ export function runtimeEventToActivities(
     case "task.progress": {
       return [
         {
-          id: event.eventId,
+          // Stable per-task id: progress is "latest state", not history, so
+          // each tick REPLACES the last via the activity upsert (PK + the
+          // replace-by-id apply in projector and client reducer). Keeps one
+          // progress row per task instead of thousands, so a large fleet's
+          // ticks can no longer evict its own start/terminal rows out of
+          // the 500-row retention window.
+          id: EventId.make(`task-progress:${event.payload.taskId}`),
           createdAt: event.createdAt,
           tone: "info",
           kind: "task.progress",
@@ -618,7 +635,9 @@ export function runtimeEventToActivities(
       }
       return [
         {
-          id: event.eventId,
+          // Same stable-id treatment as task.progress: a heartbeat is
+          // "what is this agent doing right now", so one row per task.
+          id: EventId.make(`tool-progress:${event.payload.taskId}`),
           createdAt: event.createdAt,
           tone: "info",
           kind: "tool.progress",

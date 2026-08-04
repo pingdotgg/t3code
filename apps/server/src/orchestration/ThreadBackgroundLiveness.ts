@@ -15,6 +15,7 @@
  *
  * @module ThreadBackgroundLivenessService
  */
+import { INERT_TASK_TYPES, MONITOR_TASK_TYPES } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,20 +27,11 @@ interface ThreadLivenessState {
   readonly monitors: Set<string>;
 }
 
-/**
- * Watch-loop bucket. Monitor-tool tasks, plus background shells: a shell
- * that outlives its turn is in practice a watch loop (PR babysitting, log
- * tails) — pacing sleeps complete inside the turn, where the session-running
- * check already presents Working, so they never surface from here.
- */
-const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
-  "monitor",
-  "monitor_mcp",
-  "local_bash",
-  "shell",
-]);
-/** Task types that are neither agents nor monitors (never affect liveness). */
-const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream"]);
+// Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
+// watch loops — monitor tasks plus background shells, which in practice are
+// PR babysitting/log tails since pacing sleeps complete inside the turn;
+// INERT_TASK_TYPES: plan-mode bookkeeping) so this registry, ingestion's
+// agentKind stamp, and the client fold can never drift apart.
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "completed",

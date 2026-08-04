@@ -490,6 +490,21 @@ describe("background task exclusion", () => {
     expect(agents).toHaveLength(1);
   });
 
+  it("server agentKind stamp beats client heuristics in both directions", () => {
+    const agents = fold([
+      // Stamped background: marker fields present but the server says no.
+      activity("task.started", {
+        taskId: "bg-1",
+        agentKind: "background",
+        role: "watcher",
+        model: "sonnet",
+      }),
+      // Stamped agent: legacy-looking row (no markers) but the server says yes.
+      activity("task.started", { taskId: "ag-1", agentKind: "agent", detail: "plain row" }),
+    ]);
+    expect(agents.map((agent) => agent.id)).toEqual(["ag-1"]);
+  });
+
   it("legacy rows (no taskType, no pipeline markers) keep pre-upgrade behavior", () => {
     // Pre-upgrade activity rows carried only taskId + detail; a historical
     // "tailing logs" shell must not become a running subagent.
