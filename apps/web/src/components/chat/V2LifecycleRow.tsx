@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  ArrowRightLeftIcon,
   ArrowRightIcon,
   BotIcon,
   ChevronDownIcon,
@@ -17,7 +18,6 @@ import {
   MinusIcon,
   type LucideIcon,
   XIcon,
-  ZapIcon,
 } from "lucide-react";
 
 import { getProviderInstanceEntry } from "../../providerInstances";
@@ -142,7 +142,8 @@ export function V2LifecycleRow(props: {
     return (
       <TimelineSystemDivider
         label="Context handoff"
-        icon={ZapIcon}
+        icon={ArrowRightLeftIcon}
+        showDetailSeparator={false}
         tone={item.status === "failed" ? "danger" : "neutral"}
         detail={
           <span className="inline-flex min-w-0 items-center gap-1.5">

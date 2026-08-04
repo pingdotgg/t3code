@@ -89,6 +89,20 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("hides synthetic workspace preparation activity", () => {
+    const workspacePreparation = projected(
+      {
+        ...command(),
+        title: "Workspace ready",
+        input: "Preparing workspace",
+        output: "Workspace preparation completed.",
+      },
+      0,
+    );
+
+    expect(buildThreadFeed([workspacePreparation])).toEqual([]);
+  });
+
   it("does not treat a queued-only run as live feed activity", () => {
     expect(
       threadFeedRunIsUnsettled({
@@ -129,6 +143,33 @@ describe("buildThreadFeed", () => {
     expect(
       promotedEntries[0]?.type === "message" ? promotedEntries[0].message.inputIntent : undefined,
     ).toBe("turn_start");
+  });
+
+  it("hides the interruption request and keeps the terminal result", () => {
+    const request = projected(
+      {
+        ...base("item-interrupt-request", "2026-06-20T00:00:02.000Z", 1),
+        type: "run_interrupt_request",
+        message: "Interrupt requested",
+      },
+      0,
+    );
+    const result = projected(
+      {
+        ...base("item-interrupt-result", "2026-06-20T00:00:03.000Z", 2),
+        type: "run_interrupt_result",
+        message: "Run interrupted before provider start",
+      },
+      1,
+    );
+
+    const activities = buildThreadFeed([request, result]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]?.summary).toBe("Run interrupted");
+    expect(activities[0]?.detail).toBe("Run interrupted before provider start");
   });
 
   it("preserves authoritative V2 order instead of sorting reconstructed collections", () => {
