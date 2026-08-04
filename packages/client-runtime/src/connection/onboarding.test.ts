@@ -118,6 +118,27 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("pairs through a reverse-proxy base path", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        pairingUrl:
+          "https://app.matrix-os.com/vm/alice/api/integrations/t3/pair#token=pairing-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))));
+
+      expect(calls.map((call) => new URL(call.url).pathname)).toEqual([
+        "/vm/alice/api/integrations/t3/.well-known/t3/environment",
+        "/vm/alice/api/integrations/t3/oauth/token",
+      ]);
+      expect(registration.profile.httpBaseUrl).toBe(
+        "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+      );
+      expect(registration.profile.wsBaseUrl).toBe(
+        "wss://app.matrix-os.com/vm/alice/api/integrations/t3/",
+      );
+    }),
+  );
+
   it.effect("does not consume a pairing credential when descriptor discovery fails", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];

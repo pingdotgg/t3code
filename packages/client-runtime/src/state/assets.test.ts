@@ -8,6 +8,7 @@ import {
   createAssetEnvironmentAtoms,
   InvalidAssetCollectionKeyError,
   parseAssetCollectionKey,
+  resolveAssetUrl,
 } from "./assets.ts";
 
 describe("asset collection keys", () => {
@@ -29,6 +30,17 @@ describe("asset collection keys", () => {
     const key = JSON.stringify(["environment-1", [{ _tag: "unknown" }]]);
 
     expect(() => parseAssetCollectionKey(key)).toThrowError(InvalidAssetCollectionKeyError);
+  });
+});
+
+describe("asset urls", () => {
+  it("keeps server-relative assets beneath a reverse-proxy base path", () => {
+    expect(
+      resolveAssetUrl(
+        "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+        "/api/assets/asset-1",
+      ),
+    ).toBe("https://app.matrix-os.com/vm/alice/api/integrations/t3/api/assets/asset-1");
   });
 });
 

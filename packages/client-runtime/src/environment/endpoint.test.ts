@@ -4,6 +4,8 @@ import {
   classifyHostedHttpsCompatibility,
   createAdvertisedEndpoint,
   deriveWsBaseUrl,
+  environmentEndpointUrl,
+  environmentWebSocketUrl,
   normalizeHttpBaseUrl,
 } from "./endpoint.ts";
 
@@ -20,6 +22,24 @@ describe("advertised endpoint helpers", () => {
     expect(normalizeHttpBaseUrl("wss://example.com/socket")).toBe("https://example.com/");
     expect(deriveWsBaseUrl("https://example.com/api")).toBe("wss://example.com/");
     expect(deriveWsBaseUrl("http://127.0.0.1:3773")).toBe("ws://127.0.0.1:3773/");
+  });
+
+  it("resolves environment endpoints beneath a reverse-proxy base path", () => {
+    expect(
+      environmentEndpointUrl(
+        "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+        "/api/auth/session",
+      ),
+    ).toBe("https://app.matrix-os.com/vm/alice/api/integrations/t3/api/auth/session");
+    expect(
+      environmentWebSocketUrl(
+        "wss://app.matrix-os.com/vm/alice/api/integrations/t3/?stale=1#fragment",
+      ).toString(),
+    ).toBe("wss://app.matrix-os.com/vm/alice/api/integrations/t3/ws");
+    expect(environmentWebSocketUrl("wss://example.com/ws").toString()).toBe("wss://example.com/ws");
+    expect(environmentWebSocketUrl("wss://example.com/proxy/ws/").toString()).toBe(
+      "wss://example.com/proxy/ws",
+    );
   });
 
   it("marks HTTP endpoints as blocked from hosted HTTPS apps", () => {

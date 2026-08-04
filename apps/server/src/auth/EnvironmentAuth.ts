@@ -28,12 +28,13 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
+import * as ServerConfig from "../config.ts";
+import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
-import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sqlite.ts";
 
 export const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -555,6 +556,7 @@ function parseDpopToken(request: HttpServerRequest.HttpServerRequest): string | 
 }
 
 export const make = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
@@ -613,6 +615,7 @@ export const make = Effect.gen(function* () {
             request,
             expectedThumbprint: session.proofKeyThumbprint,
             expectedAccessToken: dpopToken,
+            ...(serverConfig.pairingBaseUrl ? { pairingBaseUrl: serverConfig.pairingBaseUrl } : {}),
           }).pipe(
             Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
             Effect.provideService(Crypto.Crypto, crypto),

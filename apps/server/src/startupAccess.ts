@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import { QrCode } from "@t3tools/shared/qrCode";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
@@ -89,9 +90,20 @@ export const resolveListeningPort = (address: unknown, fallbackPort: number): nu
   return fallbackPort;
 };
 
-export const buildPairingUrl = (connectionString: string, token: string): string => {
+export const buildPairingUrl = (
+  connectionString: string,
+  token: string,
+  hostedAppUrl?: string,
+): string => {
+  if (hostedAppUrl) {
+    const url = new URL("/pair", hostedAppUrl);
+    url.searchParams.set("host", connectionString);
+    url.hash = new URLSearchParams([["token", token]]).toString();
+    return url.toString();
+  }
   const url = new URL(connectionString);
-  url.pathname = "/pair";
+  const basePath = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
+  url.pathname = `${basePath}pair`;
   url.searchParams.delete("token");
   url.hash = new URLSearchParams([["token", token]]).toString();
   return url.toString();
@@ -138,11 +150,16 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+  const pairingBaseUrl = serverConfig.pairingBaseUrl?.toString() ?? connectionString;
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
     connectionString,
     token: issued.credential,
-    pairingUrl: buildPairingUrl(connectionString, issued.credential),
+    pairingUrl: buildPairingUrl(
+      pairingBaseUrl,
+      issued.credential,
+      serverConfig.pairingBaseUrl ? DEFAULT_HOSTED_APP_URL : undefined,
+    ),
   } satisfies HeadlessServeAccessInfo;
 });

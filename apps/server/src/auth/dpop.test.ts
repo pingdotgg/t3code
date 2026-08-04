@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as PlatformError from "effect/PlatformError";
 
 import { SecretStorePersistError } from "./ServerSecretStore.ts";
-import { mapDpopReplayStoreError } from "./dpop.ts";
+import { mapDpopReplayStoreError, resolveDpopRequestUrl } from "./dpop.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new SecretStorePersistError({
@@ -33,5 +33,17 @@ describe("mapDpopReplayStoreError", () => {
     if (error._tag === "ServerAuthDpopReplayStateRecordError") {
       expect(error.message).toBe("Failed to record DPoP proof replay state.");
     }
+  });
+});
+
+describe("resolveDpopRequestUrl", () => {
+  it("uses the configured reverse-proxy base instead of forwarded headers", () => {
+    expect(
+      resolveDpopRequestUrl({
+        localUrl: new URL("http://127.0.0.1:3773/oauth/token?code=one-time"),
+        originalUrl: "/oauth/token?code=one-time",
+        pairingBaseUrl: new URL("https://app.matrix-os.com/vm/alice/api/integrations/t3/"),
+      }),
+    ).toBe("https://app.matrix-os.com/vm/alice/api/integrations/t3/oauth/token?code=one-time");
   });
 });

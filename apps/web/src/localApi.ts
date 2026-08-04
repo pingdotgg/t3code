@@ -30,7 +30,19 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
-        window.open(url, "_blank", "noopener,noreferrer");
+        // Browsers may return null for successful `noopener` launches, which is
+        // indistinguishable from a blocked popup. Open a blank tab first so we
+        // can detect blocking, sever its opener synchronously, then navigate
+        // through a noreferrer link created inside the new tab.
+        const opened = window.open("about:blank", "_blank");
+        if (!opened) {
+          throw new Error("Unable to open link.");
+        }
+        opened.opener = null;
+        const link = opened.document.createElement("a");
+        link.href = url;
+        link.rel = "noopener noreferrer";
+        link.click();
       },
     },
     contextMenu: {

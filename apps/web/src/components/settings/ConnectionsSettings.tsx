@@ -43,6 +43,7 @@ import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import { MatrixOsConnectRow } from "./MatrixOsConnectRow";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -3415,6 +3416,7 @@ export function ConnectionsSettings() {
           </Dialog>
         }
       >
+        <MatrixOsConnectRow />
         {savedEnvironments.map((environment) => (
           <SavedBackendListRow
             key={environment.environmentId}

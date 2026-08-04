@@ -1689,6 +1689,47 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("validates token exchange DPoP against the configured reverse-proxy URL", () =>
+    Effect.gen(function* () {
+      const pairingBaseUrl = new URL("https://app.matrix-os.com/vm/alice/api/integrations/t3/");
+      yield* buildAppUnderTest({ config: { pairingBaseUrl } });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const credentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({}),
+      });
+      const credential = (yield* credentialResponse.json) as { readonly credential: string };
+      const localTokenUrl = yield* getHttpServerUrl("/oauth/token");
+      const now = yield* DateTime.now;
+      const tokenProof = makeDpopProof({
+        method: "POST",
+        url: new URL("oauth/token", pairingBaseUrl).href,
+        iat: Math.floor(now.epochMilliseconds / 1_000),
+        jti: "reverse-proxy-token-exchange-proof",
+      });
+
+      const tokenResponse = yield* fetchEffect(localTokenUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          dpop: tokenProof.proof,
+        },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token: credential.credential,
+          subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+          requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          scope: "orchestration:read orchestration:operate terminal:operate review:write",
+        }).toString(),
+      });
+
+      assert.equal(tokenResponse.status, 200);
+      const token = yield* responseJsonEffect<{ readonly token_type: string }>(tokenResponse);
+      assert.equal(token.token_type, "DPoP");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects replayed DPoP proofs across token exchanges", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

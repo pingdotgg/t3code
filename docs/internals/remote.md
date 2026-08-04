@@ -140,6 +140,16 @@ how the server got started or who manages the process.
 It works for desktop, mobile, and web with no client-side process management. Browser security rules
 are part of it: a hosted HTTPS client cannot connect to plain `ws://` or `http://` LAN backends.
 
+A trusted reverse proxy may publish the server below a URL path prefix, for example
+`https://host.example/vm/alice/t3/`. Pairing preserves that prefix and resolves the environment
+descriptor, OAuth exchange, API calls, assets, and WebSocket endpoint beneath it. Start a headless
+server with `--pairing-base-url` to advertise that public base while still binding the server to a
+private or loopback interface. `t3 pair --pairing-base-url ...` mints another one-time link for an
+already-running server. Those links open the hosted T3 client with the public backend base encoded
+as the target, so the proxy does not need to publish T3's static web assets or `/pair` page. The
+reverse proxy is responsible for forwarding the complete T3 protocol namespace and preserving T3
+authorization headers and WebSocket tickets.
+
 ### Relay-tunneled access
 
 Managed T3 Connect relay tunnels use `RelayConnectionTarget` and are the answer when the host is
@@ -189,6 +199,9 @@ it separate from access.
 - **Client-managed local publish.** A local server is published through the relay with
   `t3 connect link`, exposing a desktop-hosted environment to mobile without router or firewall
   changes.
+- **Trusted reverse-proxy publish.** The operator starts T3 on a private interface and advertises a
+  public, possibly path-prefixed base URL with `--pairing-base-url`; the proxy owns reachability and
+  T3 continues to own pairing and session authentication.
 
 The same `ExecutionEnvironment` can be reached several of these ways. Only the launch and access
 paths differ.

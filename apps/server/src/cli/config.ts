@@ -74,6 +74,29 @@ export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+export const PairingBaseUrl = Schema.URLFromString.pipe(
+  Schema.refine((url): url is URL => url.protocol === "http:" || url.protocol === "https:", {
+    message: "Expected an HTTP(S) URL",
+  }),
+);
+
+export const normalizePairingBaseUrl = (value: URL): URL => {
+  const normalized = new URL(value);
+  if (!normalized.pathname.endsWith("/")) {
+    normalized.pathname = `${normalized.pathname}/`;
+  }
+  normalized.search = "";
+  normalized.hash = "";
+  return normalized;
+};
+
+export const pairingBaseUrlFlag = Flag.string("pairing-base-url").pipe(
+  Flag.withSchema(PairingBaseUrl),
+  Flag.withDescription(
+    "Public HTTP(S) base URL advertised in the headless pairing link when a trusted reverse proxy fronts this server.",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -139,6 +162,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  pairingBaseUrl: Config.schema(PairingBaseUrl, "T3CODE_PAIRING_BASE_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -154,6 +181,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly pairingBaseUrl?: Option.Option<URL>;
 }
 
 export interface CliAuthLocationFlags {
@@ -188,6 +216,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  pairingBaseUrl: pairingBaseUrlFlag,
 } as const;
 
 export const authLocationFlags = sharedServerLocationFlags;
@@ -233,6 +262,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      pairingBaseUrl: flags.pairingBaseUrl ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -338,6 +368,14 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const pairingBaseUrlValue = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        normalizedFlags.pairingBaseUrl,
+        Option.fromUndefinedOr(env.pairingBaseUrl),
+      ),
+    );
+    const pairingBaseUrl =
+      pairingBaseUrlValue === undefined ? undefined : normalizePairingBaseUrl(pairingBaseUrlValue);
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -386,6 +424,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(pairingBaseUrl ? { pairingBaseUrl } : {}),
     };
 
     return config;
@@ -409,6 +448,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      pairingBaseUrl: Option.none(),
     },
     cliLogLevel,
   );

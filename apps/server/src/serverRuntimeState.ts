@@ -17,6 +17,8 @@ export const PersistedServerRuntimeState = Schema.Struct({
   // Present when the server fronts a dev web server (VITE_DEV_SERVER_URL).
   // Dev is single-origin: browsers must pair through this URL, not `origin`.
   devUrl: Schema.optional(Schema.String),
+  // Public reverse-proxy base used by the running server for DPoP URL binding.
+  pairingBaseUrl: Schema.optional(Schema.String),
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
@@ -48,7 +50,8 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
+  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl"> &
+    Partial<Pick<ServerConfig.ServerConfig["Service"], "pairingBaseUrl">>;
   readonly port: number;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
@@ -58,6 +61,9 @@ export const makePersistedServerRuntimeState = (input: {
     port: input.port,
     origin: runtimeOriginForConfig(input.config, input.port),
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
+    ...(input.config.pairingBaseUrl
+      ? { pairingBaseUrl: input.config.pairingBaseUrl.toString() }
+      : {}),
     startedAt: DateTime.formatIso(now),
   }));
 

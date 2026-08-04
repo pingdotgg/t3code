@@ -26,10 +26,20 @@ export const mapDpopReplayStoreError = (
         cause: error,
       });
 
+export function resolveDpopRequestUrl(input: {
+  readonly localUrl: URL;
+  readonly originalUrl: string;
+  readonly pairingBaseUrl?: URL;
+}): string {
+  if (!input.pairingBaseUrl) return input.localUrl.href;
+  return new URL(input.originalUrl.replace(/^\/+/, ""), input.pairingBaseUrl).href;
+}
+
 export const verifyRequestDpopProof = (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly expectedThumbprint?: string;
   readonly expectedAccessToken?: string;
+  readonly pairingBaseUrl?: URL;
 }) =>
   Effect.gen(function* () {
     const proof = input.request.headers.dpop;
@@ -39,11 +49,16 @@ export const verifyRequestDpopProof = (input: {
         diagnostic: "Invalid DPoP request URL.",
       });
     }
+    const requestUrl = resolveDpopRequestUrl({
+      localUrl: url.value,
+      originalUrl: input.request.originalUrl,
+      ...(input.pairingBaseUrl ? { pairingBaseUrl: input.pairingBaseUrl } : {}),
+    });
     const now = yield* DateTime.now;
     const result = verifyDpopProof({
       proof,
       method: input.request.method,
-      url: url.value.href,
+      url: requestUrl,
       nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
       ...(input.expectedThumbprint ? { expectedThumbprint: input.expectedThumbprint } : {}),
       ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),

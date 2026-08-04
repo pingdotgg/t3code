@@ -58,6 +58,18 @@ it("builds a pairing URL that embeds the token in the hash", () => {
   );
 });
 
+it("builds a hosted pairing URL from an advertised reverse-proxy base", () => {
+  expect(
+    buildPairingUrl(
+      "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+      "PAIRCODE",
+      "https://app.t3.codes",
+    ),
+  ).toBe(
+    "https://app.t3.codes/pair?host=https%3A%2F%2Fapp.matrix-os.com%2Fvm%2Falice%2Fapi%2Fintegrations%2Ft3%2F#token=PAIRCODE",
+  );
+});
+
 it("renders terminal QR codes as a multi-line unicode block grid", () => {
   const qrCode = renderTerminalQrCode("http://192.168.1.42:3773/pair#token=PAIRCODE");
 

@@ -77,6 +77,44 @@ describe("LocalApi", () => {
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
   });
 
+  it("rejects external links when the browser blocks the popup", async () => {
+    Object.defineProperty(testWindow(), "open", {
+      configurable: true,
+      value: vi.fn(() => null),
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(
+      createLocalApi().shell.openExternal("https://app.matrix-os.com/?launch=__terminal__"),
+    ).rejects.toThrow("Unable to open link.");
+  });
+
+  it("opens browser external links without exposing the opener", async () => {
+    const targetUrl = "https://app.matrix-os.com/?launch=__terminal__";
+    const click = vi.fn();
+    const anchor = { href: "", rel: "", click };
+    const createElement = vi.fn(() => anchor);
+    const popup = {
+      opener: testWindow(),
+      document: { createElement },
+    };
+    const open = vi.fn(() => popup);
+    Object.defineProperty(testWindow(), "open", {
+      configurable: true,
+      value: open,
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().shell.openExternal(targetUrl)).resolves.toBeUndefined();
+
+    expect(open).toHaveBeenCalledExactlyOnceWith("about:blank", "_blank");
+    expect(popup.opener).toBeNull();
+    expect(createElement).toHaveBeenCalledExactlyOnceWith("a");
+    expect(anchor.href).toBe(targetUrl);
+    expect(anchor.rel).toBe("noopener noreferrer");
+    expect(click).toHaveBeenCalledOnce();
+  });
+
   it("delegates host capabilities and persistence to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     const pickFolder = vi.fn().mockResolvedValue("/tmp/project");

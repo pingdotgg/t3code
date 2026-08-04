@@ -206,6 +206,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./matrixOsConnect": {
+      "types": "./src/matrixOsConnect.ts",
+      "import": "./src/matrixOsConnect.ts"
     }
   },
   "scripts": {

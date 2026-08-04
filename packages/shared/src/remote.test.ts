@@ -21,6 +21,32 @@ describe("remote", () => {
     });
   });
 
+  it("preserves a reverse-proxy base path while removing the pairing page", () => {
+    expect(
+      resolveRemotePairingTarget({
+        pairingUrl:
+          "https://app.matrix-os.com/vm/alice/api/integrations/t3/pair#token=pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+      wsBaseUrl: "wss://app.matrix-os.com/vm/alice/api/integrations/t3/",
+    });
+  });
+
+  it("preserves a reverse-proxy base path from a hosted pairing request", () => {
+    expect(
+      resolveRemotePairingTarget({
+        pairingUrl:
+          "https://app.t3.codes/pair?host=https%3A%2F%2Fapp.matrix-os.com%2Fvm%2Falice%2Fapi%2Fintegrations%2Ft3%2F#token=pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+      wsBaseUrl: "wss://app.matrix-os.com/vm/alice/api/integrations/t3/",
+    });
+  });
+
   it("accepts pairing urls that still use a query token", () => {
     expect(
       resolveRemotePairingTarget({

@@ -2,6 +2,7 @@ import { Linking } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { tryOpenExternalUrl } from "./openExternalUrl";
+import { MATRIX_OS_CONNECT_URL } from "@t3tools/shared/matrixOsConnect";
 
 vi.mock("react-native", () => ({
   Linking: { openURL: vi.fn() },
@@ -54,5 +55,16 @@ describe("tryOpenExternalUrl", () => {
       .join("\n");
     expect(diagnosticText).not.toContain("token=secret");
     expect(diagnosticText).not.toContain("browser-unavailable-secret-sentinel");
+  });
+});
+
+describe("Matrix OS handoff", () => {
+  it("opens the fixed Matrix OS setup URL", async () => {
+    openURL.mockResolvedValueOnce(undefined);
+
+    await expect(tryOpenExternalUrl(MATRIX_OS_CONNECT_URL, "matrix-os-connect")).resolves.toBe(
+      true,
+    );
+    expect(openURL).toHaveBeenCalledExactlyOnceWith(MATRIX_OS_CONNECT_URL);
   });
 });

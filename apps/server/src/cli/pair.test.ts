@@ -173,6 +173,112 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("rejects a pairing URL that differs from the running server", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-pair-proxy-mismatch-test-"),
+        );
+        const port = Number(new URL(origin).port);
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: yield* makePersistedServerRuntimeState({
+            config: {
+              host: "127.0.0.1",
+              devUrl: undefined,
+              pairingBaseUrl: new URL("https://example.com/expected/"),
+            },
+            port,
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli([
+            "pair",
+            "--base-dir",
+            baseDir,
+            "--pairing-base-url",
+            "https://example.com/different/",
+          ]).pipe(Effect.flip),
+        );
+        const rendered = String(
+          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+        );
+        assert.include(rendered, "does not match the running server");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("advertises a trusted reverse-proxy base URL", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-proxy-test-"));
+        const port = Number(new URL(origin).port);
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: yield* makePersistedServerRuntimeState({
+            config: {
+              host: "127.0.0.1",
+              devUrl: undefined,
+              pairingBaseUrl: new URL("https://example.com/vm/alice/api/integrations/t3/"),
+            },
+            port,
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli([
+            "pair",
+            "--base-dir",
+            baseDir,
+            "--pairing-base-url",
+            "https://example.com/vm/alice/api/integrations/t3/",
+          ]),
+        );
+
+        assert.include(
+          output,
+          "Pairing URL: https://app.t3.codes/pair?host=https%3A%2F%2Fexample.com%2Fvm%2Falice%2Fapi%2Fintegrations%2Ft3%2F#token=",
+        );
+        assert.notInclude(output, "only reachable from this machine");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects Tailscale pairing for a server configured behind another proxy", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-pair-proxy-tailscale-test-"),
+        );
+        const port = Number(new URL(origin).port);
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: yield* makePersistedServerRuntimeState({
+            config: {
+              host: "127.0.0.1",
+              devUrl: undefined,
+              pairingBaseUrl: new URL("https://example.com/proxy/"),
+            },
+            port,
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(Effect.flip),
+        );
+        const rendered = String(
+          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+        );
+        assert.include(rendered, "cannot use --tailscale");
+        assert.include(rendered, "Restart the server without --pairing-base-url");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("pairs through the recorded dev web URL for dev servers", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {

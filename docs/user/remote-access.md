@@ -84,6 +84,16 @@ For `https://app.t3.codes`, prefer an HTTPS Tailnet or other HTTPS endpoint. A p
 
 Use this when you want to run the server without a GUI, for example on a remote machine over SSH.
 
+If your remote machine runs Matrix OS, choose **Settings** → **Connections** → **Matrix OS** in
+the desktop or web client, or **Add Environment** → **Open Matrix OS setup** on mobile. T3 Code
+opens the Matrix OS Terminal with a pinned T3 CLI setup ready to run. Review and confirm the
+command. Matrix OS either prints a fresh one-time pairing link for the running T3 server or starts
+the server and prints its pairing link and QR code. Scan the QR code on mobile, or paste the full
+pairing URL into the desktop or web client. No T3 account is required: Matrix OS exposes the local
+server through a scoped reverse proxy while T3 Code continues to authenticate the pairing link,
+device session, and WebSocket connection. Keep the Matrix Terminal session running to keep the
+environment reachable.
+
 Run the server with `t3 serve`.
 
 ```bash
@@ -105,6 +115,16 @@ From there, connect from another device in either of these ways:
 - in the hosted web app, open a hosted pairing URL when the backend is reachable over HTTPS
 
 Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
+
+If a trusted reverse proxy exposes the server at a different or path-prefixed public URL, keep T3
+bound to the private interface and advertise the public base explicitly. The printed link opens the
+hosted T3 client and points it at that backend, so the proxy only needs to expose the T3 protocol:
+
+```bash
+npx t3 serve --host 127.0.0.1 --pairing-base-url https://example.com/path/to/t3/
+```
+
+Use the same `--pairing-base-url` with `t3 pair` to print a fresh link for that running server.
 
 For hosted web pairing over Tailscale HTTPS, opt in to Tailscale Serve:
 

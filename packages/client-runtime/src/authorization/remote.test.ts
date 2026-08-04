@@ -126,6 +126,34 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("appends auth and websocket endpoints beneath a reverse-proxy base path", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({
+          ticket: "ws-ticket",
+          expiresAt: "2026-05-01T12:05:00.000Z",
+        }),
+      );
+
+      const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
+        httpBaseUrl: "https://app.matrix-os.com/vm/alice/api/integrations/t3/",
+        wsBaseUrl: "wss://app.matrix-os.com/vm/alice/api/integrations/t3/",
+        bearerToken: "bearer-token",
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expectFetchCall(fetch.calls, 1, {
+        url: "https://app.matrix-os.com/vm/alice/api/integrations/t3/api/auth/websocket-ticket",
+        method: "POST",
+        headers: {
+          authorization: "Bearer bearer-token",
+        },
+      });
+      expect(socketUrl).toBe(
+        "wss://app.matrix-os.com/vm/alice/api/integrations/t3/ws?wsTicket=ws-ticket",
+      );
+    }),
+  );
+
   it.effect("exchanges managed credentials and admits websocket requests with DPoP", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(

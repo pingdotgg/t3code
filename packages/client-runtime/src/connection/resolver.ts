@@ -30,6 +30,7 @@ import type {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "./model.ts";
+import { environmentWebSocketUrl } from "../environment/endpoint.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 
@@ -47,11 +48,7 @@ const isSshProfile = Schema.is(SshConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 
 function primarySocketUrl(target: PrimaryConnectionTarget): string {
-  const url = new URL(target.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
-  return url.toString();
+  return environmentWebSocketUrl(target.wsBaseUrl).toString();
 }
 
 const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary")(function* () {

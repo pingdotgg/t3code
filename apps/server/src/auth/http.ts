@@ -37,6 +37,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
+import * as ServerConfig from "../config.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
@@ -203,6 +204,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const serverConfig = yield* ServerConfig.ServerConfig;
 
     return handlers
       .handle(
@@ -277,7 +279,12 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
             const proofKeyThumbprint = args.headers.dpop
-              ? yield* verifyRequestDpopProof({ request }).pipe(
+              ? yield* verifyRequestDpopProof({
+                  request,
+                  ...(serverConfig.pairingBaseUrl
+                    ? { pairingBaseUrl: serverConfig.pairingBaseUrl }
+                    : {}),
+                }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, () =>
                     appendDpopChallengeHeader.pipe(
                       Effect.andThen(failEnvironmentAuthInvalid("invalid_credential")),
