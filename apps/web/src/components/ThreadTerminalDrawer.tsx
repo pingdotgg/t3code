@@ -736,7 +736,12 @@ export function TerminalViewport({
         if (terminalRef.current?.hasSelection()) {
           return;
         }
-        clearSelectionAction();
+        // Ghostty also reports selection changes when buffer synchronization
+        // clears an already-empty selection. Do not invalidate an unrelated
+        // context-menu paste unless a selection action is actually pending.
+        if (selectionActionTimerRef.current !== null || selectionActionMenuOpenRef.current) {
+          clearSelectionAction();
+        }
       }
 
       const handleMouseUp = (event: MouseEvent) => {
