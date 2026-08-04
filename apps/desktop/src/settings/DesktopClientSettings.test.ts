@@ -22,6 +22,7 @@ const clientSettings: ClientSettings = {
   environmentIdentificationMode: "artwork",
   favorites: [],
   glassOpacity: 80,
+  progressiveThreadHistoryEnabled: false,
   providerModelPreferences: {},
   sidebarAutoSettleAfterDays: 3,
   sidebarProjectGroupingMode: "repository_path",

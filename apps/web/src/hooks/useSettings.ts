@@ -28,6 +28,8 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { APP_STAGE_LABEL } from "~/branding";
 import { resolveSidebarV2Enabled } from "~/branding.logic";
 import { ensureLocalApi } from "~/localApi";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { progressiveThreadHistoryEnabledAtom } from "~/state/clientSettings";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
@@ -62,6 +64,10 @@ function getClientSettingsSnapshot(): ClientSettings {
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
+  appAtomRegistry.set(
+    progressiveThreadHistoryEnabledAtom,
+    settings.progressiveThreadHistoryEnabled,
+  );
   emitClientSettingsChange();
 }
 
@@ -335,6 +341,10 @@ export function useUpdateClientSettings() {
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  appAtomRegistry.set(
+    progressiveThreadHistoryEnabledAtom,
+    DEFAULT_CLIENT_SETTINGS.progressiveThreadHistoryEnabled,
+  );
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
   clientSettingsListeners.clear();
@@ -344,6 +354,10 @@ export function __resetClientSettingsPersistenceForTests(): void {
 export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = settings;
+  appAtomRegistry.set(
+    progressiveThreadHistoryEnabledAtom,
+    settings.progressiveThreadHistoryEnabled,
+  );
   clientSettingsHydrated = true;
   clientSettingsHydrationPromise = null;
 }

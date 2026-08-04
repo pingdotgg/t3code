@@ -66,6 +66,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -212,7 +213,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreads, threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -1165,6 +1166,21 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const requestThreadGoal = useAtomCommand(threadEnvironment.requestGoal, { reportFailure: false });
+  const loadMessagesAround = useAtomCommand(environmentThreads.loadMessagesAround, {
+    reportFailure: false,
+  });
+  const loadPreviousMessages = useAtomCommand(environmentThreads.loadPreviousMessages, {
+    reportFailure: false,
+  });
+  const loadNextMessages = useAtomCommand(environmentThreads.loadNextMessages, {
+    reportFailure: false,
+  });
+  const cancelMessagesAround = useAtomCommand(environmentThreads.cancelMessagesAround, {
+    reportFailure: false,
+  });
+  const showLatestMessages = useAtomCommand(environmentThreads.showLatestMessages, {
+    reportFailure: false,
+  });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -1197,6 +1213,19 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const routeServerThreadShell = useThreadShell(routeKind === "server" ? routeThreadRef : null);
   const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
+  const subscribeToThreadHistory = routeKind === "server" || serverThread !== null;
+  const environmentThreadState = useEnvironmentThread(
+    subscribeToThreadHistory ? environmentId : null,
+    subscribeToThreadHistory ? threadId : null,
+  );
+  const liveServerThread = Option.getOrNull(environmentThreadState.liveData);
+  const [historyTarget, setHistoryTarget] = useState<{
+    readonly threadKey: string;
+    readonly messageId: MessageId | null;
+  }>({ threadKey: routeThreadKey, messageId: null });
+  if (historyTarget.threadKey !== routeThreadKey) {
+    setHistoryTarget({ threadKey: routeThreadKey, messageId: null });
+  }
   const loadingServerThread = useMemo(
     () =>
       threadDetailLoading && routeServerThreadShell
@@ -1264,6 +1293,7 @@ function ChatViewContent(props: ChatViewProps) {
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [latestMessagesRequest, setLatestMessagesRequest] = useState(0);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
@@ -1439,6 +1469,48 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const operationalThread = isServerThread ? liveServerThread : activeThread;
+  const handleSelectHistoryMessage = useCallback(
+    (messageId: MessageId) => {
+      if (environmentThreadState.history.kind !== "ready") {
+        return;
+      }
+      setHistoryTarget({ threadKey: routeThreadKey, messageId });
+      void loadMessagesAround({
+        environmentId,
+        input: { threadId, messageId },
+      }).then((result) => {
+        if (result._tag === "Success" && result.value) {
+          return;
+        }
+        setHistoryTarget((current) =>
+          current.threadKey === routeThreadKey && current.messageId === messageId
+            ? { ...current, messageId: null }
+            : current,
+        );
+      });
+    },
+    [environmentId, environmentThreadState.history, loadMessagesAround, routeThreadKey, threadId],
+  );
+  const handleHistoryTargetReady = useCallback(() => {
+    setHistoryTarget((current) =>
+      current.messageId === null ? current : { ...current, messageId: null },
+    );
+  }, []);
+  const handleLoadPreviousMessages = useCallback(async () => {
+    const result = await loadPreviousMessages({
+      environmentId,
+      input: { threadId },
+    });
+    return result._tag === "Success" && result.value;
+  }, [environmentId, loadPreviousMessages, threadId]);
+  const handleLoadNextMessages = useCallback(async () => {
+    const result = await loadNextMessages({
+      environmentId,
+      input: { threadId },
+    });
+    return result._tag === "Success" && result.value;
+  }, [environmentId, loadNextMessages, threadId]);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2035,14 +2107,15 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const operationalActivities = operationalThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
-    () => derivePendingApprovals(threadActivities),
-    [threadActivities],
+    () => derivePendingApprovals(operationalActivities),
+    [operationalActivities],
   );
   const pendingUserInputs = useMemo(
-    () => derivePendingUserInputs(threadActivities),
-    [threadActivities],
+    () => derivePendingUserInputs(operationalActivities),
+    [operationalActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
@@ -2082,10 +2155,10 @@ function ChatViewContent(props: ChatViewProps) {
       return null;
     }
     return findLatestProposedPlan(
-      activeThread?.proposedPlans ?? [],
+      operationalThread?.proposedPlans ?? [],
       activeLatestTurn?.turnId ?? null,
     );
-  }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
+  }, [activeLatestTurn?.turnId, latestTurnSettled, operationalThread?.proposedPlans]);
   const sidebarProposedPlan = useMemo(
     () =>
       findSidebarProposedPlan({
@@ -2097,8 +2170,8 @@ function ChatViewContent(props: ChatViewProps) {
     [activeLatestTurn, activeThread?.id, latestTurnSettled, threadPlanCatalog],
   );
   const activePlan = useMemo(
-    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveActivePlanState(operationalActivities, activeLatestTurn?.turnId ?? undefined),
+    [activeLatestTurn?.turnId, operationalActivities],
   );
   const planSidebarLabel =
     sidebarProposedPlan || interactionMode === "plan"
@@ -3507,6 +3580,24 @@ function ChatViewContent(props: ChatViewProps) {
       anchorScrollRestoreFrameRef.current = null;
     }
   }, []);
+  const handleTimelineManualNavigation = useCallback(
+    (cancelHistoryLoad: boolean) => {
+      cancelTimelineLiveFollowForUserNavigation();
+      if (cancelHistoryLoad && environmentThreadState.history.kind === "ready") {
+        void cancelMessagesAround({
+          environmentId,
+          input: { threadId },
+        });
+      }
+    },
+    [
+      cancelMessagesAround,
+      cancelTimelineLiveFollowForUserNavigation,
+      environmentId,
+      environmentThreadState.history.kind,
+      threadId,
+    ],
+  );
   const cancelTimelineLiveFollowForUserNavigationRef = useRef(
     cancelTimelineLiveFollowForUserNavigation,
   );
@@ -3564,16 +3655,54 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    void legendListRef.current?.scrollToEnd?.({ animated });
-  }, []);
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      const userScrollGeneration = anchorUserScrollGenerationRef.current;
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = userScrollGeneration;
+      pendingTimelineAnchorRef.current = null;
+      positionedTimelineAnchorRef.current = null;
+      settledTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      pendingAnchorScrollRestoreRef.current = null;
+      if (anchorScrollRestoreFrameRef.current !== null) {
+        cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
+        anchorScrollRestoreFrameRef.current = null;
+      }
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+
+      if (activeThread?.messageHistory === undefined) {
+        void legendListRef.current?.scrollToEnd?.({ animated });
+        return;
+      }
+
+      setLatestMessagesRequest((request) => request + 1);
+      if (!activeThread.messageHistory.hasMoreAfter) {
+        return;
+      }
+      void showLatestMessages({
+        environmentId,
+        input: { threadId },
+      }).then((result) => {
+        if (
+          result._tag !== "Success" ||
+          !result.value ||
+          liveFollowUserScrollGenerationRef.current !== userScrollGeneration
+        ) {
+          if (liveFollowUserScrollGenerationRef.current === userScrollGeneration) {
+            isAtEndRef.current = false;
+            timelineScrollModeRef.current = "free-scrolling";
+            liveFollowUserScrollGenerationRef.current = null;
+            setShowScrollToBottom(true);
+          }
+          return;
+        }
+      });
+    },
+    [activeThread?.messageHistory, environmentId, showLatestMessages, threadId],
+  );
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     const frame = requestAnimationFrame(() => {
@@ -4836,6 +4965,12 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
+    if (activeThread.messageHistory?.hasMoreAfter === true) {
+      await showLatestMessages({
+        environmentId,
+        input: { threadId: threadIdForSend },
+      });
+    }
     // Sending always returns to the live edge. The new row becomes the
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
@@ -5986,9 +6121,31 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
                 onIsAtEndChange={onIsAtEndChange}
-                onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                onManualNavigation={handleTimelineManualNavigation}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
+                {...(activeThread.messageHistory === undefined
+                  ? {}
+                  : { messageHistory: activeThread.messageHistory })}
+                isLoadingPreviousMessages={
+                  environmentThreadState.history.kind === "ready" &&
+                  environmentThreadState.history.loading === "before"
+                }
+                isLoadingNextMessages={
+                  environmentThreadState.history.kind === "ready" &&
+                  environmentThreadState.history.loading === "after"
+                }
+                latestMessagesRequest={latestMessagesRequest}
+                historyOutline={
+                  environmentThreadState.history.kind === "ready"
+                    ? environmentThreadState.history.outline
+                    : null
+                }
+                historyTargetMessageId={historyTarget.messageId}
+                onSelectHistoryMessage={handleSelectHistoryMessage}
+                onHistoryTargetReady={handleHistoryTargetReady}
+                onLoadPreviousMessages={handleLoadPreviousMessages}
+                onLoadNextMessages={handleLoadNextMessages}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6048,8 +6205,8 @@ function ChatViewContent(props: ChatViewProps) {
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
-                  {threadSyncPhase && !activeEnvironmentUnavailable ? (
-                    <ThreadSyncStatusPill phase={threadSyncPhase} />
+                  {threadDetailLoading && !activeEnvironmentUnavailable ? (
+                    <ThreadSyncStatusPill phase="loading" />
                   ) : null}
                   <div
                     className="relative"

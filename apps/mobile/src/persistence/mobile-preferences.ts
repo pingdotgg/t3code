@@ -30,6 +30,7 @@ export interface Preferences {
    * see `resolveThreadListV2Enabled`.
    */
   readonly threadListV2Enabled?: boolean;
+  readonly progressiveThreadHistoryEnabled?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -70,18 +71,7 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
 function sanitizePreferences(parsed: Preferences): Preferences {
-  const preferences: {
-    liveActivitiesEnabled?: boolean;
-    baseFontSize?: number;
-    terminalFontSize?: number | null;
-    markdownFontSize?: number;
-    codeFontSize?: number | null;
-    codeWordBreak?: boolean;
-    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
-    collapsedProjectGroups?: readonly string[];
-    projectGroupingEnabled?: boolean;
-    threadListV2Enabled?: boolean;
-  } = {};
+  const preferences: { -readonly [Key in keyof Preferences]: Preferences[Key] } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
@@ -112,6 +102,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;
+  }
+  if (
+    parsed.progressiveThreadHistoryEnabled === true ||
+    parsed.progressiveThreadHistoryEnabled === false
+  ) {
+    preferences.progressiveThreadHistoryEnabled = parsed.progressiveThreadHistoryEnabled;
   }
   return preferences;
 }

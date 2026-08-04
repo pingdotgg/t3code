@@ -925,6 +925,100 @@ index c2e0f38..5313086 100644
        onScroll: onScrollHandler,
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
+diff --git a/react.js b/react.js
+--- a/react.js
++++ b/react.js
+@@ -1624,7 +1624,10 @@ function prepareMVCP(ctx, dataChanged) {
+     } else if (scrollTarget !== void 0) {
+       targetId = getId(state, scrollTarget);
+     } else if (idsInView.length > 0 && state.didContainersLayout && !dataChanged) {
+-      targetId = idsInView.find((id) => indexByKey.get(id) !== void 0);
++      targetId = idsInView.find((id) => {
++        const index = indexByKey.get(id);
++        return index !== void 0 && (shouldRestorePosition === void 0 || shouldRestorePosition(state.props.data[index], index, state.props.data));
++      });
+     }
+     if (dataChanged && idsInView.length > 0 && state.didContainersLayout) {
+       for (let i = 0; i < idsInView.length; i++) {
+@@ -1638,6 +1641,22 @@ function prepareMVCP(ctx, dataChanged) {
+         }
+       }
+     }
++    if (dataChanged && state.didContainersLayout && scrollTarget === void 0) {
++      const cachedViewportStartIndex = findPositionIndexAtOrBeforeOffset(ctx, prevScroll);
++      if (cachedViewportStartIndex !== void 0) {
++        const viewportEnd = prevScroll + state.scrollLength;
++        for (let index = cachedViewportStartIndex; index < positions.length; index++) {
++          const position = positions[index];
++          if (position === void 0 || position > viewportEnd) {
++            break;
++          }
++          const id = state.idCache[index];
++          if (id !== void 0 && !idsInViewWithPositions.some((candidate) => candidate.id === id)) {
++            idsInViewWithPositions.push({ id, position });
++          }
++        }
++      }
++    }
+     if (targetId !== void 0 && prevPosition === void 0) {
+       const targetIndex = indexByKey.get(targetId);
+       if (targetIndex !== void 0) {
+@@ -1650,7 +1669,7 @@ function prepareMVCP(ctx, dataChanged) {
+       let anchorPositionForLock;
+       let skipTargetAnchor = false;
+       const data = state.props.data;
+-      const shouldValidateLockedAnchor = dataChanged && mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
++      const shouldValidateLockedAnchor = mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
+       if (shouldValidateLockedAnchor && targetId !== void 0) {
+         const index = indexByKey.get(targetId);
+         if (index !== void 0) {
+diff --git a/react.mjs b/react.mjs
+--- a/react.mjs
++++ b/react.mjs
+@@ -1603,7 +1603,10 @@ function prepareMVCP(ctx, dataChanged) {
+     } else if (scrollTarget !== void 0) {
+       targetId = getId(state, scrollTarget);
+     } else if (idsInView.length > 0 && state.didContainersLayout && !dataChanged) {
+-      targetId = idsInView.find((id) => indexByKey.get(id) !== void 0);
++      targetId = idsInView.find((id) => {
++        const index = indexByKey.get(id);
++        return index !== void 0 && (shouldRestorePosition === void 0 || shouldRestorePosition(state.props.data[index], index, state.props.data));
++      });
+     }
+     if (dataChanged && idsInView.length > 0 && state.didContainersLayout) {
+       for (let i = 0; i < idsInView.length; i++) {
+@@ -1617,6 +1620,22 @@ function prepareMVCP(ctx, dataChanged) {
+         }
+       }
+     }
++    if (dataChanged && state.didContainersLayout && scrollTarget === void 0) {
++      const cachedViewportStartIndex = findPositionIndexAtOrBeforeOffset(ctx, prevScroll);
++      if (cachedViewportStartIndex !== void 0) {
++        const viewportEnd = prevScroll + state.scrollLength;
++        for (let index = cachedViewportStartIndex; index < positions.length; index++) {
++          const position = positions[index];
++          if (position === void 0 || position > viewportEnd) {
++            break;
++          }
++          const id = state.idCache[index];
++          if (id !== void 0 && !idsInViewWithPositions.some((candidate) => candidate.id === id)) {
++            idsInViewWithPositions.push({ id, position });
++          }
++        }
++      }
++    }
+     if (targetId !== void 0 && prevPosition === void 0) {
+       const targetIndex = indexByKey.get(targetId);
+       if (targetIndex !== void 0) {
+@@ -1629,7 +1648,7 @@ function prepareMVCP(ctx, dataChanged) {
+       let anchorPositionForLock;
+       let skipTargetAnchor = false;
+       const data = state.props.data;
+-      const shouldValidateLockedAnchor = dataChanged && mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
++      const shouldValidateLockedAnchor = mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
+       if (shouldValidateLockedAnchor && targetId !== void 0) {
+         const index = indexByKey.get(targetId);
+         if (index !== void 0) {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
 index 940da28..28dccbe 100644
 --- a/reanimated.d.ts

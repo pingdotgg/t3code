@@ -2,6 +2,7 @@ import type {
   OrchestrationEvent,
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
+  OrchestrationThreadHistoryPage,
 } from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -159,6 +160,13 @@ export function projectActivityPayload(
   activity: OrchestrationThreadActivity,
 ): OrchestrationThreadActivity {
   const payload = asRecord(activity.payload);
+  if (payload && (activity.kind === "goal.updated" || activity.kind === "goal.cleared")) {
+    const detail = asTrimmedString(payload.detail);
+    return {
+      ...activity,
+      payload: detail ? { detail } : {},
+    };
+  }
   const data = asRecord(payload?.data);
   if (!payload || !data || payload.itemType === "mcp_tool_call") {
     return activity;
@@ -218,7 +226,7 @@ function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity
 
 /**
  * Drops all but the last resolvable context-window activity per turn from a
- * snapshot. Clients only ever read the latest usage value (walking the array
+ * thread payload. Clients only ever read the latest usage value (walking the array
  * backwards), so shipping the full history — often thousands of rows on long
  * threads — buys nothing. Retention is per turn rather than per thread because
  * a live `thread.reverted` makes the client discard whole turns; keeping each
@@ -247,6 +255,14 @@ function dropStaleContextWindowActivities(
   );
 }
 
+function projectThreadActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  return dropStaleContextWindowActivities(activities)
+    .filter((activity) => activity.kind !== "tool.started" && activity.kind !== "task.started")
+    .map(projectActivityPayload);
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {
@@ -254,10 +270,17 @@ export function projectThreadDetailSnapshot(
     ...snapshot,
     thread: {
       ...snapshot.thread,
-      activities: dropStaleContextWindowActivities(snapshot.thread.activities).map(
-        projectActivityPayload,
-      ),
+      activities: projectThreadActivities(snapshot.thread.activities),
     },
+  };
+}
+
+export function projectThreadHistoryPage(
+  page: OrchestrationThreadHistoryPage,
+): OrchestrationThreadHistoryPage {
+  return {
+    ...page,
+    activities: projectThreadActivities(page.activities),
   };
 }
 

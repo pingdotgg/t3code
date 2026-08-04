@@ -9,14 +9,27 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { progressiveThreadHistoryEnabledAtom } from "./clientSettings";
 import { environmentSnapshotAtom } from "./shell";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(connectionAtomRuntime);
-export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
+export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime, {
+  messagePagination: {
+    enabled: () => appAtomRegistry.get(progressiveThreadHistoryEnabledAtom),
+    changes: Stream.suspend(() =>
+      AtomRegistry.toStream(appAtomRegistry, progressiveThreadHistoryEnabledAtom).pipe(
+        Stream.changes,
+        Stream.drop(1),
+      ),
+    ),
+  },
+});
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );

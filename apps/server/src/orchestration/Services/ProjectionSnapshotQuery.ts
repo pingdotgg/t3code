@@ -17,7 +17,11 @@ import type {
   OrchestrationShellSnapshot,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
+  OrchestrationThreadHistoryOutline,
+  OrchestrationThreadHistoryPage,
+  OrchestrationThreadMessageCursor,
   OrchestrationThreadShell,
+  MessageId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -177,7 +181,30 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getThreadDetailSnapshot: (
     threadId: ThreadId,
+    turnLimit?: number,
   ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>, ProjectionRepositoryError>;
+
+  readonly getThreadMessagePage: (input: {
+    readonly threadId: ThreadId;
+    readonly before: OrchestrationThreadMessageCursor;
+    readonly turnLimit: number;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadHistoryPage>, ProjectionRepositoryError>;
+
+  readonly getThreadMessagePageAfter: (input: {
+    readonly threadId: ThreadId;
+    readonly after: OrchestrationThreadMessageCursor;
+    readonly turnLimit: number;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadHistoryPage>, ProjectionRepositoryError>;
+
+  readonly getThreadMessagePageAround: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly turnLimit: number;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadHistoryPage>, ProjectionRepositoryError>;
+
+  readonly getThreadHistoryOutline: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadHistoryOutline>, ProjectionRepositoryError>;
 }
 
 /**

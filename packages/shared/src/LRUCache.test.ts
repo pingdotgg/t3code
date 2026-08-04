@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { LRUCache } from "./lruCache";
+import { LRUCache } from "./LRUCache.ts";
 
 describe("LRUCache", () => {
   it("returns null for missing keys", () => {

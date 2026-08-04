@@ -7,7 +7,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
-import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
+import {
+  projectThreadDetailSnapshot,
+  projectThreadHistoryPage,
+} from "./ActivityPayloadProjection.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
@@ -66,7 +69,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           const snapshot = yield* projectionSnapshotQuery
-            .getThreadDetailSnapshot(args.params.threadId)
+            .getThreadDetailSnapshot(args.params.threadId, args.query.turnLimit)
             .pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
@@ -76,6 +79,96 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             return yield* failEnvironmentNotFound("thread_not_found");
           }
           return projectThreadDetailSnapshot(snapshot.value);
+        }),
+      )
+      .handle(
+        "threadMessages",
+        Effect.fn("environment.orchestration.threadMessages")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const page = yield* projectionSnapshotQuery
+            .getThreadMessagePage({
+              threadId: args.params.threadId,
+              before: {
+                createdAt: args.query.beforeCreatedAt,
+                messageId: args.query.beforeMessageId,
+              },
+              turnLimit: args.query.turnLimit,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(page)) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          return projectThreadHistoryPage(page.value);
+        }),
+      )
+      .handle(
+        "threadMessagesAfter",
+        Effect.fn("environment.orchestration.threadMessagesAfter")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const page = yield* projectionSnapshotQuery
+            .getThreadMessagePageAfter({
+              threadId: args.params.threadId,
+              after: {
+                createdAt: args.query.afterCreatedAt,
+                messageId: args.query.afterMessageId,
+              },
+              turnLimit: args.query.turnLimit,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(page)) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          return projectThreadHistoryPage(page.value);
+        }),
+      )
+      .handle(
+        "threadMessagesAround",
+        Effect.fn("environment.orchestration.threadMessagesAround")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const page = yield* projectionSnapshotQuery
+            .getThreadMessagePageAround({
+              threadId: args.params.threadId,
+              messageId: args.params.messageId,
+              turnLimit: args.query.turnLimit,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(page)) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          return projectThreadHistoryPage(page.value);
+        }),
+      )
+      .handle(
+        "threadHistoryOutline",
+        Effect.fn("environment.orchestration.threadHistoryOutline")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const outline = yield* projectionSnapshotQuery
+            .getThreadHistoryOutline(args.params.threadId)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(outline)) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          return outline.value;
         }),
       )
       .handle(

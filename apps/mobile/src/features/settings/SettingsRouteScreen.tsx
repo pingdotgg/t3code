@@ -554,7 +554,11 @@ function GeneralSettingsSection() {
  */
 function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const progressiveThreadHistoryEnabled =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.progressiveThreadHistoryEnabled === true;
 
   return (
     <View className="gap-3">
@@ -565,10 +569,16 @@ function BetaSettingsSection() {
           value={threadListV2Enabled}
           onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
         />
+        <SettingsSwitchRow
+          icon="doc.text"
+          label="Progressive Thread History"
+          value={progressiveThreadHistoryEnabled}
+          onValueChange={(value) => savePreferences({ progressiveThreadHistoryEnabled: value })}
+        />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        One flat thread list in creation order. Active work renders as cards; settled threads
-        collapse to compact rows. Switch back any time.
+        Thread List v2 simplifies navigation. Progressive Thread History loads large conversations
+        in pages instead of downloading the full thread.
       </Text>
     </View>
   );

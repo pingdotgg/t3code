@@ -20,6 +20,7 @@ const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
 const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 2;
 const SERVER_CONFIG_CACHE_SCHEMA_VERSION = 1;
 const VCS_REFS_CACHE_SCHEMA_VERSION = 1;
+const THREAD_CACHE_KEY_NAMESPACE = "tarik02:bounded-v1";
 
 const StoredShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
@@ -60,6 +61,10 @@ const decodeStoredVcsRefs = Schema.decodeUnknownEffect(Schema.fromJsonString(Sto
 const encodeStoredVcsRefs = Schema.encodeEffect(Schema.fromJsonString(StoredVcsRefs));
 
 type CacheOperation = ConnectionPersistenceError["operation"];
+
+function threadCacheKey(threadId: string) {
+  return `${THREAD_CACHE_KEY_NAMESPACE}:${threadId}`;
+}
 
 function persistenceError(operation: CacheOperation, cause: unknown) {
   return new ConnectionPersistenceError({
@@ -140,7 +145,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         database,
         environmentId,
         kind: "thread",
-        cacheKey: threadId,
+        cacheKey: threadCacheKey(threadId),
         operation: "load-thread",
         decode: decodeStoredThreadSnapshot,
         select: (stored) =>
@@ -158,12 +163,18 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         snapshot,
       }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
       yield* database
-        .saveCache(environmentId, "thread", threadId, THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION, payload)
+        .saveCache(
+          environmentId,
+          "thread",
+          threadCacheKey(threadId),
+          THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION,
+          payload,
+        )
         .pipe(Effect.mapError(mapDatabaseError("save-thread")));
     }),
     removeThread: Effect.fn("MobileEnvironmentCache.removeThread")((environmentId, threadId) =>
       database
-        .removeCache(environmentId, "thread", threadId)
+        .removeCache(environmentId, "thread", threadCacheKey(threadId))
         .pipe(Effect.mapError(mapDatabaseError("remove-thread"))),
     ),
     loadServerConfig: Effect.fn("MobileEnvironmentCache.loadServerConfig")((environmentId) =>

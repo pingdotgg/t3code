@@ -1,4 +1,11 @@
-import type { OrchestrationThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
+import type {
+  MessageId,
+  OrchestrationThreadDetailSnapshot,
+  OrchestrationThreadHistoryOutline,
+  OrchestrationThreadHistoryPage,
+  OrchestrationThreadMessageCursor,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,10 +23,12 @@ import {
 } from "../rpc/http.ts";
 import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
 
-// Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
-// fallback for long. The cached thread renders while this runs, so the wait only
-// delays the transition to live data on the first open, not the initial paint.
-const DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
+// The timeout covers response decoding and schema validation as well as the
+// request itself. Dense turns can contain thousands of tool activities, so a
+// short timeout can discard an already-delivered page and repeat the same work
+// through the socket fallback.
+const DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS = 30_000;
+export const THREAD_TURN_PAGE_SIZE = 10;
 
 /**
  * Load a thread's detail snapshot over HTTP instead of embedding it in the
@@ -32,11 +41,175 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly turnLimit?: number;
+  readonly timeoutMs?: number;
+}) {
+  const requestUrl = new URL(
+    environmentEndpointUrl(
+      input.prepared.httpBaseUrl,
+      `/api/orchestration/threads/${input.threadId}`,
+    ),
+  );
+  if (input.turnLimit !== undefined) {
+    requestUrl.searchParams.set("turnLimit", String(input.turnLimit));
+  }
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl.toString(),
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl.toString(),
+    input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.orchestration.threadSnapshot({
+        params: { threadId: input.threadId },
+        query: input.turnLimit === undefined ? {} : { turnLimit: input.turnLimit },
+        headers,
+      }),
+    ),
+  );
+});
+
+export const fetchEnvironmentThreadMessagesBefore = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadMessagesBefore",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly before: OrchestrationThreadMessageCursor;
+  readonly turnLimit: number;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly timeoutMs?: number;
+}) {
+  const requestUrl = new URL(
+    environmentEndpointUrl(
+      input.prepared.httpBaseUrl,
+      `/api/orchestration/threads/${input.threadId}/messages`,
+    ),
+  );
+  requestUrl.searchParams.set("beforeCreatedAt", input.before.createdAt);
+  requestUrl.searchParams.set("beforeMessageId", input.before.messageId);
+  requestUrl.searchParams.set("turnLimit", String(input.turnLimit));
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl.toString(),
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl.toString(),
+    input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.orchestration.threadMessages({
+        params: { threadId: input.threadId },
+        query: {
+          beforeCreatedAt: input.before.createdAt,
+          beforeMessageId: input.before.messageId,
+          turnLimit: input.turnLimit,
+        },
+        headers,
+      }),
+    ),
+  );
+});
+
+export const fetchEnvironmentThreadMessagesAfter = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadMessagesAfter",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly after: OrchestrationThreadMessageCursor;
+  readonly turnLimit: number;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly timeoutMs?: number;
+}) {
+  const requestUrl = new URL(
+    environmentEndpointUrl(
+      input.prepared.httpBaseUrl,
+      `/api/orchestration/threads/${input.threadId}/messages/after`,
+    ),
+  );
+  requestUrl.searchParams.set("afterCreatedAt", input.after.createdAt);
+  requestUrl.searchParams.set("afterMessageId", input.after.messageId);
+  requestUrl.searchParams.set("turnLimit", String(input.turnLimit));
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl.toString(),
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl.toString(),
+    input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.orchestration.threadMessagesAfter({
+        params: { threadId: input.threadId },
+        query: {
+          afterCreatedAt: input.after.createdAt,
+          afterMessageId: input.after.messageId,
+          turnLimit: input.turnLimit,
+        },
+        headers,
+      }),
+    ),
+  );
+});
+
+export const fetchEnvironmentThreadMessagesAround = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadMessagesAround",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly timeoutMs?: number;
+}) {
+  const requestUrl = new URL(
+    environmentEndpointUrl(
+      input.prepared.httpBaseUrl,
+      `/api/orchestration/threads/${input.threadId}/messages/${input.messageId}/around`,
+    ),
+  );
+  requestUrl.searchParams.set("turnLimit", String(THREAD_TURN_PAGE_SIZE));
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl.toString(),
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl.toString(),
+    input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.orchestration.threadMessagesAround({
+        params: { threadId: input.threadId, messageId: input.messageId },
+        query: { turnLimit: THREAD_TURN_PAGE_SIZE },
+        headers,
+      }),
+    ),
+  );
+});
+
+export const fetchEnvironmentThreadHistoryOutline = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadHistoryOutline",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly timeoutMs?: number;
 }) {
   const requestUrl = environmentEndpointUrl(
     input.prepared.httpBaseUrl,
-    `/api/orchestration/threads/${input.threadId}`,
+    `/api/orchestration/threads/${input.threadId}/history/outline`,
   );
   const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
   const headers = yield* buildEnvironmentAuthHeaders(
@@ -50,7 +223,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
     input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
     withEnvironmentCredentials(
       input.prepared.httpAuthorization,
-      client.orchestration.threadSnapshot({
+      client.orchestration.threadHistoryOutline({
         params: { threadId: input.threadId },
         headers,
       }),
@@ -72,7 +245,29 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
+      turnLimit?: number,
     ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+    readonly loadPreviousMessages: (
+      prepared: PreparedConnection,
+      threadId: ThreadId,
+      before: OrchestrationThreadMessageCursor,
+      turnLimit: number,
+    ) => Effect.Effect<Option.Option<OrchestrationThreadHistoryPage>>;
+    readonly loadNextMessages: (
+      prepared: PreparedConnection,
+      threadId: ThreadId,
+      after: OrchestrationThreadMessageCursor,
+      turnLimit: number,
+    ) => Effect.Effect<Option.Option<OrchestrationThreadHistoryPage>>;
+    readonly loadMessagesAround: (
+      prepared: PreparedConnection,
+      threadId: ThreadId,
+      messageId: MessageId,
+    ) => Effect.Effect<Option.Option<OrchestrationThreadHistoryPage>>;
+    readonly loadHistoryOutline: (
+      prepared: PreparedConnection,
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<OrchestrationThreadHistoryOutline>>;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
 
@@ -89,8 +284,13 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     // connections work without one).
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
     return ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId) =>
-        fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
+      load: (prepared: PreparedConnection, threadId: ThreadId, turnLimit?: number) =>
+        fetchEnvironmentThreadSnapshot({
+          prepared,
+          threadId,
+          signer,
+          ...(turnLimit === undefined ? {} : { turnLimit }),
+        }).pipe(
           Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           // A genuinely missing thread (404) is expected — the socket
@@ -112,6 +312,104 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
               Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+            ),
+          ),
+        ),
+      loadPreviousMessages: (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+        before: OrchestrationThreadMessageCursor,
+        turnLimit: number,
+      ) =>
+        fetchEnvironmentThreadMessagesBefore({
+          prepared,
+          threadId,
+          before,
+          turnLimit,
+          signer,
+        }).pipe(
+          Effect.map(Option.some<OrchestrationThreadHistoryPage>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug("Thread message history was not found.").pipe(
+                Effect.annotateLogs({ threadId }),
+                Effect.as(Option.none<OrchestrationThreadHistoryPage>()),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not load previous thread messages.").pipe(
+              Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<OrchestrationThreadHistoryPage>()),
+            ),
+          ),
+        ),
+      loadNextMessages: (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+        after: OrchestrationThreadMessageCursor,
+        turnLimit: number,
+      ) =>
+        fetchEnvironmentThreadMessagesAfter({
+          prepared,
+          threadId,
+          after,
+          turnLimit,
+          signer,
+        }).pipe(
+          Effect.map(Option.some<OrchestrationThreadHistoryPage>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug("Thread message history was not found.").pipe(
+                Effect.annotateLogs({ threadId }),
+                Effect.as(Option.none<OrchestrationThreadHistoryPage>()),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not load next thread messages.").pipe(
+              Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<OrchestrationThreadHistoryPage>()),
+            ),
+          ),
+        ),
+      loadMessagesAround: (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+        messageId: MessageId,
+      ) =>
+        fetchEnvironmentThreadMessagesAround({ prepared, threadId, messageId, signer }).pipe(
+          Effect.map(Option.some<OrchestrationThreadHistoryPage>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug("Thread message history target was not found.").pipe(
+                Effect.annotateLogs({ threadId, messageId }),
+                Effect.as(Option.none<OrchestrationThreadHistoryPage>()),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not load thread messages around the target.").pipe(
+              Effect.annotateLogs({ threadId, messageId, cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<OrchestrationThreadHistoryPage>()),
+            ),
+          ),
+        ),
+      loadHistoryOutline: (prepared: PreparedConnection, threadId: ThreadId) =>
+        fetchEnvironmentThreadHistoryOutline({ prepared, threadId, signer }).pipe(
+          Effect.map(Option.some<OrchestrationThreadHistoryOutline>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug("Thread history outline was not found.").pipe(
+                Effect.annotateLogs({ threadId }),
+                Effect.as(Option.none<OrchestrationThreadHistoryOutline>()),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not load the thread history outline.").pipe(
+              Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<OrchestrationThreadHistoryOutline>()),
             ),
           ),
         ),

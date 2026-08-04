@@ -9,14 +9,39 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "./atom-registry";
+import { mobilePreferencesAtom } from "./preferences";
 import { environmentSnapshotAtom } from "./shell";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(connectionAtomRuntime);
-export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
+export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime, {
+  loadHistoryOutline: false,
+  messagePagination: {
+    enabled: () => {
+      const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+      return (
+        AsyncResult.isSuccess(preferences) &&
+        preferences.value.progressiveThreadHistoryEnabled === true
+      );
+    },
+    changes: Stream.suspend(() =>
+      AtomRegistry.toStream(appAtomRegistry, mobilePreferencesAtom).pipe(
+        Stream.map(
+          (preferences) =>
+            AsyncResult.isSuccess(preferences) &&
+            preferences.value.progressiveThreadHistoryEnabled === true,
+        ),
+        Stream.changes,
+        Stream.drop(1),
+      ),
+    ),
+  },
+});
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );

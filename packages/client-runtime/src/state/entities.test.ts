@@ -332,8 +332,10 @@ describe("environment entity projections", () => {
       harness.threadStateAtom(THREAD_ID),
       AsyncResult.success<EnvironmentThreadState>({
         data: Option.some(detail),
+        liveData: Option.some(detail),
         status: "live",
         error: Option.none(),
+        history: { kind: "disabled" },
       }),
     );
 
@@ -360,8 +362,10 @@ describe("environment entity projections", () => {
             updatedAt: "2026-06-01T00:01:00.000Z",
           },
         }),
+        liveData: Option.some(detail),
         status: "live",
         error: Option.none(),
+        history: { kind: "disabled" },
       }),
     );
 

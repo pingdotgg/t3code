@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   EventId,
+  MessageId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
@@ -11,6 +12,7 @@ import {
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -36,6 +38,7 @@ import {
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
+import { THREAD_TURN_PAGE_SIZE } from "./threadSnapshotHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -104,15 +107,17 @@ type TestThreadInput = OrchestrationThreadStreamItem | Error;
 
 function testSession(
   client: WsRpcProtocolClient,
-  options?: { readonly completionMarker?: boolean },
+  options?: {
+    readonly completionMarker?: boolean;
+    readonly messagePagination?: boolean;
+  },
 ): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed(
-      options?.completionMarker === true
-        ? ({ threadResumeCompletionMarker: true } as never)
-        : ({} as never),
-    ),
+    initialConfig: Effect.succeed({
+      ...(options?.completionMarker === true ? { threadResumeCompletionMarker: true } : {}),
+      ...(options?.messagePagination === true ? { threadMessagePagination: true } : {}),
+    } as never),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -133,7 +138,9 @@ function awaitThreadState(
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationThread;
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
+  readonly httpSnapshotEffect?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
   readonly completionMarker?: boolean;
+  readonly messagePagination?: boolean;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -141,6 +148,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
   const loaderCalls = yield* Ref.make(0);
+  const lastLoaderTurnLimit = yield* Ref.make<number | undefined>(undefined);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make<boolean | undefined>(undefined);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
@@ -172,7 +180,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     Option.some(
       testSession(
         client,
-        options?.completionMarker === true ? { completionMarker: true } : undefined,
+        options?.completionMarker === true || options?.messagePagination === true
+          ? {
+              ...(options.completionMarker === true ? { completionMarker: true } : {}),
+              ...(options.messagePagination === true ? { messagePagination: true } : {}),
+            }
+          : undefined,
       ),
     ),
   );
@@ -180,14 +193,22 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     Option.some(PREPARED),
   );
   const snapshotLoader = ThreadSnapshotLoader.of({
-    load: (_prepared, threadId) =>
+    load: (_prepared, threadId, turnLimit) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
+        Effect.andThen(Ref.set(lastLoaderTurnLimit, turnLimit)),
+        Effect.andThen(
           threadId === THREAD_ID
-            ? (options?.httpSnapshot ?? Option.none<OrchestrationThreadDetailSnapshot>())
-            : Option.none<OrchestrationThreadDetailSnapshot>(),
+            ? (options?.httpSnapshotEffect ??
+                Effect.succeed(
+                  options?.httpSnapshot ?? Option.none<OrchestrationThreadDetailSnapshot>(),
+                ))
+            : Effect.succeed(Option.none<OrchestrationThreadDetailSnapshot>()),
         ),
       ),
+    loadPreviousMessages: () => Effect.succeed(Option.none()),
+    loadNextMessages: () => Effect.succeed(Option.none()),
+    loadMessagesAround: () => Effect.succeed(Option.none()),
+    loadHistoryOutline: () => Effect.succeed(Option.none()),
   });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
@@ -245,6 +266,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     retryCount,
     subscriptionCount,
     loaderCalls,
+    lastLoaderTurnLimit,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     supervisorState,
@@ -257,7 +279,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Option.some(
         testSession(
           client,
-          options?.completionMarker === true ? { completionMarker: true } : undefined,
+          options?.completionMarker === true || options?.messagePagination === true
+            ? {
+                ...(options.completionMarker === true ? { completionMarker: true } : {}),
+                ...(options.messagePagination === true ? { messagePagination: true } : {}),
+              }
+            : undefined,
         ),
       ),
     ),
@@ -323,6 +350,72 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.getOrThrow(state.data)).toEqual(BASE_THREAD);
       expect(Option.isNone(state.error)).toBe(true);
+    }),
+  );
+
+  it.effect("does not publish an unbounded legacy cache before loading a paginated snapshot", () =>
+    Effect.gen(function* () {
+      const messages = Array.from({ length: THREAD_TURN_PAGE_SIZE * 2 + 2 }, (_, index) => ({
+        id: MessageId.make(`message-${index.toString().padStart(3, "0")}`),
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        text: `message ${index}`,
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      }));
+      const snapshotReady =
+        yield* Deferred.make<Option.Option<OrchestrationThreadDetailSnapshot>>();
+      const boundedMessages = messages.slice(-THREAD_TURN_PAGE_SIZE * 2);
+      const boundedThread: OrchestrationThread = {
+        ...BASE_THREAD,
+        messages: boundedMessages,
+        messageHistory: {
+          hasMoreBefore: true,
+          hasMoreAfter: false,
+          startIndex: 2,
+          endIndex: THREAD_TURN_PAGE_SIZE * 2 + 2,
+          totalMessages: THREAD_TURN_PAGE_SIZE * 2 + 2,
+          cursor: {
+            createdAt: boundedMessages[0]!.createdAt,
+            messageId: boundedMessages[0]!.id,
+          },
+        },
+      };
+      const harness = yield* makeHarness({
+        cached: { ...BASE_THREAD, messages },
+        httpSnapshotEffect: Deferred.await(snapshotReady),
+        messagePagination: true,
+      });
+
+      const provisional = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isNone(value.data),
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.loaderCalls)) > 0) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(Option.isNone(provisional.data)).toBe(true);
+      expect(yield* Ref.get(harness.lastLoaderTurnLimit)).toBe(THREAD_TURN_PAGE_SIZE);
+
+      yield* Deferred.succeed(
+        snapshotReady,
+        Option.some({
+          snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+          thread: boundedThread,
+        }),
+      );
+      const loaded = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.messageHistory !== undefined,
+      );
+
+      expect(Option.getOrThrow(loaded.data).messages).toHaveLength(THREAD_TURN_PAGE_SIZE * 2);
+      expect(Option.getOrThrow(loaded.data).messageHistory?.totalMessages).toBe(
+        THREAD_TURN_PAGE_SIZE * 2 + 2,
+      );
     }),
   );
 

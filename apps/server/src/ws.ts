@@ -971,16 +971,21 @@ const makeWsRpcLayer = (
           );
       };
 
-      const loadThreadSnapshot = Effect.fn("Ws.loadThreadSnapshot")(function* (threadId: ThreadId) {
-        const snapshot = yield* projectionSnapshotQuery.getThreadDetailSnapshot(threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationGetSnapshotError({
-                message: `Failed to load thread ${threadId}`,
-                cause,
-              }),
-          ),
-        );
+      const loadThreadSnapshot = Effect.fn("Ws.loadThreadSnapshot")(function* (
+        threadId: ThreadId,
+        turnLimit?: number,
+      ) {
+        const snapshot = yield* projectionSnapshotQuery
+          .getThreadDetailSnapshot(threadId, turnLimit)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: `Failed to load thread ${threadId}`,
+                  cause,
+                }),
+            ),
+          );
 
         return Option.map(snapshot, projectThreadDetailSnapshot);
       });
@@ -1024,7 +1029,10 @@ const makeWsRpcLayer = (
           const headSequence = yield* orchestrationEngine.latestSequence;
           const replayGap = headSequence - afterSequence;
           if (replayGap < 0 || replayGap > THREAD_RESUME_MAX_GAP) {
-            const snapshot = yield* loadThreadSnapshot(input.request.threadId);
+            const snapshot = yield* loadThreadSnapshot(
+              input.request.threadId,
+              input.request.turnLimit,
+            );
             if (Option.isNone(snapshot)) {
               if (input.missingThread === "not-found") {
                 return Stream.concat(
@@ -1060,7 +1068,7 @@ const makeWsRpcLayer = (
           return Stream.concat(catchUpStream, synchronizedThenLive);
         }
 
-        const snapshot = yield* loadThreadSnapshot(input.request.threadId);
+        const snapshot = yield* loadThreadSnapshot(input.request.threadId, input.request.turnLimit);
         if (Option.isNone(snapshot)) {
           return yield* new OrchestrationGetSnapshotError({
             message: `Thread ${input.request.threadId} was not found`,
@@ -1106,6 +1114,7 @@ const makeWsRpcLayer = (
           settings,
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
+          threadMessagePagination: true,
         };
       });
 

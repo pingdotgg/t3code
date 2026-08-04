@@ -3135,6 +3135,9 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
+  const progressiveThreadHistoryEnabled = useClientSettings(
+    (s) => s.progressiveThreadHistoryEnabled,
+  );
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -3618,8 +3621,9 @@ export default function Sidebar() {
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
   const prewarmedSidebarThreadKeys = useMemo(
-    () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
-    [visibleSidebarThreadKeys],
+    () =>
+      progressiveThreadHistoryEnabled ? [] : getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
+    [progressiveThreadHistoryEnabled, visibleSidebarThreadKeys],
   );
   const prewarmedSidebarThreadRefs = useMemo(
     () =>

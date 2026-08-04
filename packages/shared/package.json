@@ -63,6 +63,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./LRUCache": {
+      "types": "./src/LRUCache.ts",
+      "import": "./src/LRUCache.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"

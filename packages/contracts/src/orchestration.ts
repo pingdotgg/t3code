@@ -14,6 +14,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -365,6 +366,39 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT = 20;
+
+export const OrchestrationThreadMessageCursor = Schema.Struct({
+  createdAt: IsoDateTime,
+  messageId: MessageId,
+});
+export type OrchestrationThreadMessageCursor = typeof OrchestrationThreadMessageCursor.Type;
+
+export const OrchestrationThreadMessageHistory = Schema.Struct({
+  hasMoreBefore: Schema.Boolean,
+  hasMoreAfter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  startIndex: NonNegativeInt,
+  endIndex: NonNegativeInt,
+  totalMessages: NonNegativeInt,
+  cursor: Schema.NullOr(OrchestrationThreadMessageCursor),
+});
+export type OrchestrationThreadMessageHistory = typeof OrchestrationThreadMessageHistory.Type;
+
+export const OrchestrationThreadHistoryLandmark = Schema.Struct({
+  messageId: MessageId,
+  ordinal: NonNegativeInt,
+  messageIndex: Schema.optional(NonNegativeInt),
+  createdAt: IsoDateTime,
+  preview: Schema.String,
+});
+export type OrchestrationThreadHistoryLandmark = typeof OrchestrationThreadHistoryLandmark.Type;
+
+export const OrchestrationThreadHistoryOutline = Schema.Struct({
+  totalUserMessages: NonNegativeInt,
+  landmarks: Schema.Array(OrchestrationThreadHistoryLandmark),
+});
+export type OrchestrationThreadHistoryOutline = typeof OrchestrationThreadHistoryOutline.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -403,6 +437,7 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   messages: Schema.Array(OrchestrationMessage),
+  messageHistory: Schema.optional(OrchestrationThreadMessageHistory),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -529,6 +564,9 @@ export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShel
 
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
+  turnLimit: Schema.optionalKey(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT)),
+  ),
   /**
    * When provided, the server skips the initial snapshot frame and instead
    * replays events after this sequence before streaming live events. Clients
@@ -550,6 +588,14 @@ export const OrchestrationThreadDetailSnapshot = Schema.Struct({
   thread: OrchestrationThread,
 });
 export type OrchestrationThreadDetailSnapshot = typeof OrchestrationThreadDetailSnapshot.Type;
+
+export const OrchestrationThreadHistoryPage = Schema.Struct({
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  messageHistory: OrchestrationThreadMessageHistory,
+});
+export type OrchestrationThreadHistoryPage = typeof OrchestrationThreadHistoryPage.Type;
 
 export const ProjectCreateCommand = Schema.Struct({
   type: Schema.Literal("project.create"),

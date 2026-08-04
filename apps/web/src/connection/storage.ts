@@ -10,6 +10,7 @@ import {
   removeCatalogValue,
   removeConnectionFromCatalog,
   replaceCatalogValue,
+  ThreadHistoryCacheStore,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -33,11 +34,14 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { makeWebThreadHistoryCacheStore } from "./threadHistoryCache.ts";
+
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
+const THREAD_CACHE_KEY_NAMESPACE = "tarik02:bounded-v1";
 const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
@@ -101,6 +105,8 @@ function persistenceError(
     | "load-thread"
     | "save-thread"
     | "remove-thread"
+    | "load-thread-history"
+    | "save-thread-history"
     | "load-server-config"
     | "save-server-config"
     | "load-vcs-refs"
@@ -227,7 +233,7 @@ function removeDatabaseValuesInRange(database: IDBDatabase, storeName: string, r
 }
 
 function threadCacheKey(environmentId: EnvironmentId, threadId: ThreadId) {
-  return `${environmentId}:${threadId}`;
+  return `${THREAD_CACHE_KEY_NAMESPACE}:${environmentId}:${threadId}`;
 }
 
 function vcsRefsCacheKey(environmentId: EnvironmentId, cwd: string) {
@@ -365,6 +371,7 @@ export const connectionStorageLayer = Layer.effectContext(
     const database = yield* Effect.acquireRelease(openDatabase(), (database) =>
       Effect.sync(() => database.close()),
     );
+    const threadHistoryCacheStore = yield* makeWebThreadHistoryCacheStore();
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
 
     const targetStore = ConnectionTargetStore.of({
@@ -648,23 +655,32 @@ export const connectionStorageLayer = Layer.effectContext(
               THREAD_STORE_NAME,
               IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
             ),
+            removeDatabaseValuesInRange(
+              database,
+              THREAD_STORE_NAME,
+              IDBKeyRange.bound(
+                `${THREAD_CACHE_KEY_NAMESPACE}:${environmentId}:`,
+                `${THREAD_CACHE_KEY_NAMESPACE}:${environmentId}:\uffff`,
+              ),
+            ),
             removeDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId),
             removeDatabaseValuesInRange(
               database,
               VCS_REFS_STORE_NAME,
               IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
             ),
+            threadHistoryCacheStore.clear(environmentId),
           ],
           { concurrency: "unbounded", discard: true },
         ).pipe(Effect.mapError((cause) => persistenceError("clear-environment", cause))),
     });
-
     return Context.make(ConnectionTargetStore, targetStore).pipe(
       Context.add(ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
       Context.add(EnvironmentCacheStore, cacheStore),
+      Context.add(ThreadHistoryCacheStore, threadHistoryCacheStore),
     );
   }),
 );

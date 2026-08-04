@@ -163,6 +163,12 @@ export interface ThreadFeedProps {
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
+  readonly hasPreviousMessages?: boolean;
+  readonly hasNextMessages?: boolean;
+  readonly isLoadingPreviousMessages?: boolean;
+  readonly isLoadingNextMessages?: boolean;
+  readonly onLoadPreviousMessages?: () => void;
+  readonly onLoadNextMessages?: () => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
@@ -1842,7 +1848,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // anchor scrolls also lets it correct a scroll that landed on a
             // stale end target once the anchor row finishes measuring.
             maintainScrollAtEnd={
-              disclosureToggleSettling
+              disclosureToggleSettling || props.hasNextMessages
                 ? false
                 : {
                     animated: true,
@@ -1890,10 +1896,36 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // overflow the viewport (the padding clamps to zero).
             alignItemsAtEnd
             initialScrollAtEnd
+            onStartReached={props.hasPreviousMessages ? props.onLoadPreviousMessages : undefined}
+            onStartReachedThreshold={0.8}
+            onEndReached={props.hasNextMessages ? props.onLoadNextMessages : undefined}
+            onEndReachedThreshold={0.8}
             onScroll={handleScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={
-              usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
+              props.isLoadingPreviousMessages ? (
+                <View
+                  className="items-center justify-center"
+                  style={usesNativeAutomaticInsets ? undefined : { paddingTop: topContentInset }}
+                >
+                  <View className="my-2 flex-row items-center gap-2">
+                    <ActivityIndicator size="small" />
+                    <Text className="text-muted-foreground text-xs">
+                      Loading earlier messages...
+                    </Text>
+                  </View>
+                </View>
+              ) : usesNativeAutomaticInsets ? null : (
+                <View style={{ height: topContentInset }} />
+              )
+            }
+            ListFooterComponent={
+              props.isLoadingNextMessages ? (
+                <View className="my-2 flex-row items-center justify-center gap-2">
+                  <ActivityIndicator size="small" />
+                  <Text className="text-muted-foreground text-xs">Loading newer messages...</Text>
+                </View>
+              ) : null
             }
             contentContainerStyle={{
               paddingTop: 12,
