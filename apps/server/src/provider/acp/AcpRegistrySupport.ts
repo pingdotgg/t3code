@@ -54,7 +54,7 @@ const AcpRegistryIndex = Schema.Struct({
 export type AcpRegistryIndex = typeof AcpRegistryIndex.Type;
 
 const decodeRegistryIndex = Schema.decodeUnknownEffect(AcpRegistryIndex);
-const decodeJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const AcpRegistryErrorReason = Schema.Literals([
   "agent_not_configured",

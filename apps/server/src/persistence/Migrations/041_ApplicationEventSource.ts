@@ -27,8 +27,8 @@ interface ProjectProjectionRow {
   readonly deleted_at: string | null;
 }
 
-const decodeJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
-const encodeJson = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
