@@ -90,6 +90,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
+  Schema.Struct({
+    type: Schema.Literal("thread-title.generate"),
+    kind: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
+      Schema.Struct({ type: Schema.Literal("regenerate") }),
+    ]),
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -99,6 +106,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "terminal.cleanup",
   "attachment.cleanup",
+  "thread-title.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
@@ -265,6 +273,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    // Title generation is correlated metadata work, so it has its own
+    // per-thread lane and cannot delay provider lifecycle effects.
     const claimableCandidatePredicate = (availableBefore?: string) =>
       sql`
         ${
@@ -278,6 +288,17 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           FROM orchestration_v2_effect_outbox AS active
           WHERE active.thread_id = candidate.thread_id
             AND active.status = 'running'
+            AND (
+              (
+                candidate.effect_type = 'thread-title.generate'
+                AND active.effect_type = 'thread-title.generate'
+              )
+              OR
+              (
+                candidate.effect_type != 'thread-title.generate'
+                AND active.effect_type != 'thread-title.generate'
+              )
+            )
         )
       `;
 

@@ -108,6 +108,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
