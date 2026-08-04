@@ -47,6 +47,7 @@ describe("parseIntegratedBrowserUrlPattern", () => {
       "gist*.github.com",
       "*.gist*.github.com",
       "*",
+      "*.",
     ]) {
       expect(parseIntegratedBrowserUrlPattern(raw)).toBeNull();
     }

@@ -39,10 +39,14 @@ export function parseIntegratedBrowserUrlPattern(raw: string): IntegratedBrowser
   if (host.length === 0 || !HOST_PATTERN_CHARS.test(host)) {
     return null;
   }
-  // `*` is only meaningful as a leading `*.` wildcard; reject it anywhere else
-  // so a pattern that would silently never match is flagged at entry.
-  if (host.includes("*") && (!host.startsWith("*.") || host.slice(2).includes("*"))) {
-    return null;
+  // `*` is only meaningful as a leading `*.` wildcard with a non-empty apex;
+  // reject it anywhere else so a pattern that would silently never match is
+  // flagged at entry.
+  if (host.includes("*")) {
+    const apex = host.startsWith("*.") ? host.slice(2) : "";
+    if (apex.length === 0 || apex.includes("*")) {
+      return null;
+    }
   }
 
   if (rawPath === null || rawPath === "/") {
