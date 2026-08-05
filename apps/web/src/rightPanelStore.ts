@@ -40,12 +40,14 @@ export type RightPanelSurface =
   | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 7;
+const RIGHT_PANEL_STORAGE_VERSION = 8;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
+  /** Set after the user closes Plan so automatic plan updates do not reopen it. */
+  planSidebarAutoOpenDisabled?: boolean;
 }
 
 interface RightPanelStoreState {
@@ -124,13 +126,52 @@ const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
   activate = true,
-): ThreadRightPanelState => ({
-  isOpen: true,
-  surfaces: current.surfaces.some((entry) => entry.id === surface.id)
-    ? current.surfaces
-    : [...current.surfaces, surface],
-  activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
+): ThreadRightPanelState => {
+  const next = {
+    ...current,
+    isOpen: true,
+    surfaces: current.surfaces.some((entry) => entry.id === surface.id)
+      ? current.surfaces
+      : [...current.surfaces, surface],
+    activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
+  };
+
+  if (surface.kind === "plan") {
+    const { planSidebarAutoOpenDisabled: _disabled, ...withoutDisabled } = next;
+    return withoutDisabled;
+  }
+
+  return next;
+};
+
+const withPlanAutoOpenDisabled = (state: ThreadRightPanelState): ThreadRightPanelState => ({
+  ...state,
+  planSidebarAutoOpenDisabled: true,
 });
+
+const withPlanAutoOpenEnabled = (state: ThreadRightPanelState): ThreadRightPanelState => {
+  if (!state.planSidebarAutoOpenDisabled) return state;
+  const { planSidebarAutoOpenDisabled: _disabled, ...withoutDisabled } = state;
+  return withoutDisabled;
+};
+
+const selectFallbackSurface = (
+  current: ThreadRightPanelState,
+  surfaces: RightPanelSurface[],
+  preferredIndex: number,
+): RightPanelSurface | null => {
+  const fallbackCandidate =
+    surfaces[Math.min(Math.max(preferredIndex, 0), surfaces.length - 1)] ?? null;
+  if (!current.planSidebarAutoOpenDisabled || fallbackCandidate?.kind !== "plan") {
+    return fallbackCandidate;
+  }
+  return surfaces.find((surface) => surface.kind !== "plan") ?? fallbackCandidate;
+};
+
+const isDismissedPlanFallback = (
+  current: ThreadRightPanelState,
+  surface: RightPanelSurface | null,
+): boolean => current.planSidebarAutoOpenDisabled === true && surface?.kind === "plan";
 
 const updateThread = (
   byThreadKey: Record<string, ThreadRightPanelState>,
@@ -139,7 +180,12 @@ const updateThread = (
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   const next = updater(current);
-  if (!next.isOpen && next.activeSurfaceId === null && next.surfaces.length === 0) {
+  if (
+    !next.isOpen &&
+    next.activeSurfaceId === null &&
+    next.surfaces.length === 0 &&
+    !next.planSidebarAutoOpenDisabled
+  ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
     const { [threadKey]: _removed, ...rest } = byThreadKey;
     return rest;
@@ -153,7 +199,10 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
-export function migratePersistedRightPanelState(persistedState: unknown): {
+export function migratePersistedRightPanelState(
+  persistedState: unknown,
+  version?: number,
+): {
   byThreadKey: Record<string, ThreadRightPanelState>;
 } {
   if (!persistedState || typeof persistedState !== "object") {
@@ -227,7 +276,22 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 typeof validThreadState?.isOpen === "boolean"
                   ? validThreadState.isOpen
                   : activeSurfaceId !== null;
-              return [threadKey, { isOpen, surfaces, activeSurfaceId }];
+              const planSidebarAutoOpenDisabled =
+                validThreadState?.planSidebarAutoOpenDisabled === true ||
+                (typeof version === "number" &&
+                  version < RIGHT_PANEL_STORAGE_VERSION &&
+                  validThreadState?.isOpen === false &&
+                  validThreadState?.activeSurfaceId === "plan" &&
+                  surfaces.some((surface) => surface.kind === "plan"));
+              return [
+                threadKey,
+                {
+                  isOpen,
+                  surfaces,
+                  activeSurfaceId,
+                  ...(planSidebarAutoOpenDisabled ? { planSidebarAutoOpenDisabled: true } : {}),
+                },
+              ];
             },
           ),
         )
@@ -275,7 +339,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
             );
-            return {
+            const next = {
+              ...current,
               isOpen: true,
               activeSurfaceId: surface.id,
               surfaces: existing
@@ -284,6 +349,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   )
                 : [...withoutStandaloneExplorer, surface],
             };
+            return next;
           }),
         })),
       openTerminal: (ref, terminalId) =>
@@ -337,15 +403,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (terminalIds.length === 0) {
               const index = current.surfaces.findIndex((entry) => entry.id === surfaceId);
               const surfaces = current.surfaces.filter((entry) => entry.id !== surfaceId);
-              const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+              const fallback = selectFallbackSurface(current, surfaces, index);
+              const activeSurfaceRemoved = current.activeSurfaceId === surfaceId;
               return {
                 ...current,
-                isOpen: surfaces.length > 0 && current.isOpen,
+                isOpen:
+                  surfaces.length > 0 &&
+                  current.isOpen &&
+                  !(activeSurfaceRemoved && isDismissedPlanFallback(current, fallback)),
                 surfaces,
-                activeSurfaceId:
-                  current.activeSurfaceId === surfaceId
-                    ? (fallback?.id ?? null)
-                    : current.activeSurfaceId,
+                activeSurfaceId: activeSurfaceRemoved
+                  ? (fallback?.id ?? null)
+                  : current.activeSurfaceId,
               };
             }
             return {
@@ -367,28 +436,35 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         })),
       activateSurface: (ref, surfaceId) =>
         set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            current.surfaces.some((surface) => surface.id === surfaceId)
-              ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
-              : current,
-          ),
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const surface = current.surfaces.find((entry) => entry.id === surfaceId);
+            if (!surface) return current;
+            const next = { ...current, isOpen: true, activeSurfaceId: surfaceId };
+            return surface.kind === "plan" ? withPlanAutoOpenEnabled(next) : next;
+          }),
         })),
       closeSurface: (ref, surfaceId) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0) return current;
+            const closingPlan = current.surfaces[index]?.kind === "plan";
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
             if (current.activeSurfaceId !== surfaceId) {
-              return { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
+              const next = { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
+              return closingPlan ? withPlanAutoOpenDisabled(next) : next;
             }
-            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
-            return {
+            const fallback = selectFallbackSurface(current, surfaces, index);
+            const next = {
               ...current,
-              isOpen: surfaces.length > 0 && current.isOpen,
+              isOpen:
+                surfaces.length > 0 &&
+                current.isOpen &&
+                !isDismissedPlanFallback(current, fallback),
               surfaces,
               activeSurfaceId: fallback?.id ?? null,
             };
+            return closingPlan ? withPlanAutoOpenDisabled(next) : next;
           }),
         })),
       closeOtherSurfaces: (ref, surfaceId) =>
@@ -396,12 +472,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find((entry) => entry.id === surfaceId);
             if (!surface || current.surfaces.length === 1) return current;
-            return {
+            const next = {
               ...current,
               isOpen: true,
               surfaces: [surface],
               activeSurfaceId: surface.id,
             };
+            return current.surfaces.some((entry) => entry.kind === "plan") &&
+              surface.kind !== "plan"
+              ? withPlanAutoOpenDisabled(next)
+              : surface.kind === "plan"
+                ? withPlanAutoOpenEnabled(next)
+                : next;
           }),
         })),
       closeSurfacesToRight: (ref, surfaceId) =>
@@ -409,15 +491,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0 || index === current.surfaces.length - 1) return current;
+            const surface = current.surfaces[index];
             const surfaces = current.surfaces.slice(0, index + 1);
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );
-            return {
+            const next = {
               ...current,
               surfaces,
               activeSurfaceId: activeStillExists ? current.activeSurfaceId : surfaceId,
             };
+            if (!activeStillExists && surface?.kind === "plan") {
+              return withPlanAutoOpenEnabled(next);
+            }
+            return current.surfaces.some((entry) => entry.kind === "plan") &&
+              !surfaces.some((entry) => entry.kind === "plan")
+              ? withPlanAutoOpenDisabled(next)
+              : next;
           }),
         })),
       closeAllSurfaces: (ref) =>
@@ -425,7 +515,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
             current.surfaces.length === 0
               ? current
-              : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
+              : current.surfaces.some((surface) => surface.kind === "plan")
+                ? withPlanAutoOpenDisabled({
+                    ...current,
+                    isOpen: false,
+                    surfaces: [],
+                    activeSurfaceId: null,
+                  })
+                : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
         })),
       reconcileBrowserSurfaces: (ref, tabIds) =>
@@ -448,12 +545,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface) => surface.id === current.activeSurfaceId,
             );
             const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
+            const fallback = selectFallbackSurface(
+              current,
+              surfaces,
+              fallbackBrowser ? surfaces.indexOf(fallbackBrowser) : 0,
+            );
             return {
               ...current,
+              isOpen: activeStillExists
+                ? current.isOpen
+                : surfaces.length > 0 &&
+                  current.isOpen &&
+                  !isDismissedPlanFallback(current, fallback),
               surfaces,
-              activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
-                : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : (fallback?.id ?? null),
             };
           }),
         })),
@@ -468,32 +573,53 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );
+            const fallback = selectFallbackSurface(current, surfaces, surfaces.length - 1);
             return {
               ...current,
-              isOpen: surfaces.length > 0 ? current.isOpen : false,
+              isOpen: activeStillExists
+                ? current.isOpen
+                : surfaces.length > 0 &&
+                  current.isOpen &&
+                  !isDismissedPlanFallback(current, fallback),
               surfaces,
-              activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
-                : (surfaces.at(-1)?.id ?? null),
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : (fallback?.id ?? null),
             };
           }),
         })),
       show: (ref) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            current.isOpen ? current : { ...current, isOpen: true },
+            current.isOpen
+              ? current
+              : current.surfaces.find((entry) => entry.id === current.activeSurfaceId)?.kind ===
+                  "plan"
+                ? { ...withPlanAutoOpenEnabled(current), isOpen: true }
+                : { ...current, isOpen: true },
           ),
         })),
       close: (ref) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            current.isOpen ? { ...current, isOpen: false } : current,
+            current.isOpen
+              ? {
+                  ...(current.surfaces.find((entry) => entry.id === current.activeSurfaceId)
+                    ?.kind === "plan"
+                    ? withPlanAutoOpenDisabled(current)
+                    : current),
+                  isOpen: false,
+                }
+              : current,
           ),
         })),
       toggleVisibility: (ref) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => ({
-            ...current,
+            ...(current.isOpen
+              ? current
+              : current.surfaces.find((entry) => entry.id === current.activeSurfaceId)?.kind ===
+                  "plan"
+                ? withPlanAutoOpenEnabled(current)
+                : current),
             isOpen: !current.isOpen,
           })),
         })),
@@ -504,7 +630,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface) => surface.id === current.activeSurfaceId,
             );
             if (current.isOpen && active?.kind === kind) {
-              return { ...current, isOpen: false };
+              return kind === "plan"
+                ? withPlanAutoOpenDisabled({ ...current, isOpen: false })
+                : { ...current, isOpen: false };
             }
             if (kind === "preview") {
               const existing = current.surfaces.find((surface) => surface.kind === "preview");

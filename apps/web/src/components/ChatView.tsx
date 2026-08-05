@@ -1518,6 +1518,7 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
+  const planSidebarAutoOpenDisabled = rightPanelState.planSidebarAutoOpenDisabled;
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
@@ -3844,6 +3845,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!autoOpenPlanSidebar) return;
     if (!activePlan) return;
     if (planSidebarOpen) return;
+    if (planSidebarAutoOpenDisabled) return;
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -3857,6 +3859,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     autoOpenPlanSidebar,
     planSidebarOpen,
+    planSidebarAutoOpenDisabled,
     sidebarProposedPlan?.turnId,
   ]);
 
@@ -5304,10 +5307,18 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        const currentRightPanelState = activeThreadRef
+          ? selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, activeThreadRef)
+          : null;
+
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
-        if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
+        if (
+          nextInteractionMode === "default" &&
+          autoOpenPlanSidebar &&
+          !currentRightPanelState?.planSidebarAutoOpenDisabled
+        ) {
           planSidebarDismissedForTurnRef.current = null;
           if (activeThreadRef) {
             useRightPanelStore.getState().open(activeThreadRef, "plan");

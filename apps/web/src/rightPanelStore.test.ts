@@ -102,6 +102,66 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("preserves a saved Plan auto-open dismissal", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: false,
+            activeSurfaceId: null,
+            surfaces: [],
+            planSidebarAutoOpenDisabled: true,
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+          planSidebarAutoOpenDisabled: true,
+        },
+      },
+    });
+  });
+
+  it("infers a closed Plan dismissal when migrating pre-v8 storage", () => {
+    const persistedState = {
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
+        },
+      },
+    };
+    const expectedState = {
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
+          planSidebarAutoOpenDisabled: true,
+        },
+      },
+    };
+
+    for (const version of [6, 7]) {
+      expect(migratePersistedRightPanelState(persistedState, version)).toEqual(expectedState);
+    }
+
+    expect(migratePersistedRightPanelState(persistedState, 8)).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -235,6 +295,26 @@ describe("rightPanelStore", () => {
       isOpen: false,
       activeSurfaceId: "plan",
       surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
+  it("remembers when the user closes Plan so auto-open does not override it", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().closeSurface(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+      planSidebarAutoOpenDisabled: true,
+    });
+
+    useRightPanelStore.getState().open(refA, "plan");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
     });
   });
 
@@ -364,6 +444,21 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("does not reopen dismissed Plan when closing the final terminal pane", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
   it("closing the active surface activates a neighboring surface", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
@@ -407,6 +502,21 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("re-enables Plan auto-open when closing other surfaces around it", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().activateSurface(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+
+    useRightPanelStore.getState().closeOtherSurfaces(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
+  });
+
   it("closing surfaces to the right activates the selected surface when active was removed", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
@@ -418,6 +528,35 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "browser:tab-a",
       surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
+    });
+  });
+
+  it("re-enables Plan auto-open when closing surfaces to the right activates Plan", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().closeSurfacesToRight(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
+  });
+
+  it("does not reopen dismissed Plan as a close-surface fallback", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().closeSurface(refA, "browser:tab-a");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
     });
   });
 
@@ -445,5 +584,35 @@ describe("rightPanelStore", () => {
         (surface) => surface.id,
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
+  });
+
+  it("does not reopen dismissed Plan when browser surfaces reconcile away", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, []);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
+  it("does not reopen dismissed Plan when file surfaces reconcile away", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().close(refA);
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
   });
 });
