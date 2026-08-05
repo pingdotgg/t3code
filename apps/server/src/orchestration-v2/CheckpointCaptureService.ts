@@ -122,6 +122,11 @@ export const layer: Layer.Layer<
         appRunOrdinal: run.ordinal,
         capturedAt,
       });
+      // Match RunExecutionService: capture loaded the waiting run before
+      // materializing baselines. Omit delegatedCompletion so a newer cohort
+      // write during capture is not overwritten by this stale snapshot
+      // (ProjectionStore preserves the field when absent from the payload).
+      const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
       yield* eventSink.commitCommand({
         commandId,
@@ -196,7 +201,7 @@ export const layer: Layer.Layer<
             providerInstanceId: run.providerInstanceId,
             occurredAt: capturedAt,
             payload: {
-              ...run,
+              ...runWithoutDelegatedCompletion,
               status: "completed",
               completedAt: capturedAt,
               checkpointId: checkpoint.id,

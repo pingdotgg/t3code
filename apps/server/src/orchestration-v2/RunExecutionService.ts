@@ -564,8 +564,13 @@ export const layer: Layer.Layer<
             : [];
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
+        // Completion cohorts are advanced by Orchestrator while a provider
+        // turn is in flight. Do not replay the run snapshot captured at start
+        // over a newer acknowledgement, successor, or Stop barrier.
+        const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
+          input.run;
         const finalizedRun: OrchestrationV2Run = {
-          ...input.run,
+          ...runWithoutDelegatedCompletion,
           status: persistedStatus,
           completedAt: input.terminal.status === "completed" ? null : completedAt,
         };
