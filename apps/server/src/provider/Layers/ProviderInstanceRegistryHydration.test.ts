@@ -1,5 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -7,6 +14,12 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "../ProviderDriver.ts";
+import { makeProviderInstanceEnvironmentSource } from "../ProviderInstanceEnvironment.ts";
+import {
+  makePackageManagedProviderMaintenanceResolver,
+  makeProviderMaintenanceCapabilitiesSource,
+  normalizeCommandPath,
+} from "../providerMaintenance.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { refreshProviderInstancesAfterEnvironmentHydration } from "./ProviderInstanceRegistryHydration.ts";
 
@@ -115,4 +128,116 @@ it.effect("does not restore a stale instance when settings overlap profile hydra
 
     expect(yield* registry.getInstance(instanceId)).toBe(newest);
   }),
+);
+
+it.effect("refreshes a profile-only CLI through an existing provider environment", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-profile-provider-"))),
+    (tempDir) =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcessPlatform;
+        const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
+        const executableName = platform === "win32" ? "profile-tool.exe" : "profile-tool";
+        const executable = NodePath.join(nativeBinDir, executableName);
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        NodeFS.writeFileSync(executable, platform === "win32" ? "MZ" : "#!/bin/sh\n");
+        if (platform !== "win32") NodeFS.chmodSync(executable, 0o755);
+
+        const baseEnv: NodeJS.ProcessEnv = {
+          PATH: tempDir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          PROFILE_VALUE: "host-before",
+        };
+        const environmentSource = makeProviderInstanceEnvironmentSource(
+          [
+            { name: "UNRELATED", value: "custom", sensitive: false },
+            { name: "PROFILE_VALUE", value: "instance", sensitive: false },
+          ],
+          baseEnv,
+        );
+        const capturedEnvironment = environmentSource.environment;
+        const driverKind = ProviderDriverKind.make("profileTool");
+        const maintenance = yield* makeProviderMaintenanceCapabilitiesSource(
+          makePackageManagedProviderMaintenanceResolver({
+            provider: driverKind,
+            npmPackageName: "@example/profile-tool",
+            homebrewFormula: null,
+            nativeUpdate: {
+              executable: "profile-tool",
+              args: ["update"],
+              lockKey: "profile-tool-native",
+              isCommandPath: (commandPath) =>
+                normalizeCommandPath(commandPath).includes("/.local/bin/profile-tool"),
+            },
+          }),
+          { binaryPath: "profile-tool", env: capturedEnvironment },
+        );
+        const state = yield* Ref.make({ installed: false, maintenance: "npm-global" });
+        const refreshSnapshot = resolveCommandPath("profile-tool", {
+          env: capturedEnvironment,
+        }).pipe(
+          Effect.option,
+          Effect.flatMap((resolved) =>
+            maintenance.refresh.pipe(Effect.as(resolved._tag === "Some")),
+          ),
+          Effect.flatMap((installed) =>
+            Ref.set(state, {
+              installed,
+              maintenance: maintenance.get().update?.lockKey ?? "manual",
+            }),
+          ),
+        );
+        const instanceId = ProviderInstanceId.make("profile-tool");
+        const instance = {
+          instanceId,
+          driverKind,
+          continuationIdentity: { driverKind, continuationKey: "profileTool:profile-tool" },
+          displayName: "Profile tool",
+          enabled: true,
+          refreshEnvironment: environmentSource.refresh.pipe(
+            Effect.andThen(maintenance.invalidate),
+          ),
+          snapshot: {
+            getSnapshot: Effect.die("unused"),
+            refresh: refreshSnapshot,
+          } as unknown as ProviderInstance["snapshot"],
+          adapter: {} as ProviderInstance["adapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const registry = ProviderInstanceRegistry.of({
+          getInstance: () => Effect.succeed(instance),
+          listInstances: Effect.succeed([instance]),
+          listUnavailable: Effect.succeed([]),
+          streamChanges: Stream.empty,
+          subscribeChanges: Effect.die("unused"),
+        });
+
+        yield* refreshSnapshot;
+        expect(yield* Ref.get(state)).toEqual({ installed: false, maintenance: "npm-global" });
+
+        const releaseProfile = yield* Deferred.make<void>();
+        const profilePatch = yield* Deferred.await(releaseProfile).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              baseEnv.PATH = nativeBinDir;
+              baseEnv.PROFILE_VALUE = "host-after";
+            }),
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(releaseProfile, undefined);
+        yield* Fiber.join(profilePatch);
+        yield* refreshProviderInstancesAfterEnvironmentHydration(registry);
+
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        expect(environmentSource.environment).toBe(capturedEnvironment);
+        expect(capturedEnvironment.UNRELATED).toBe("custom");
+        expect(capturedEnvironment.PROFILE_VALUE).toBe("instance");
+        expect(yield* Ref.get(state)).toEqual({
+          installed: true,
+          maintenance: "profile-tool-native",
+        });
+      }),
+    (tempDir) => Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

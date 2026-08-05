@@ -116,7 +116,8 @@ export const refreshProviderInstancesAfterEnvironmentHydration = Effect.fn(
   yield* Effect.forEach(
     instances,
     (instance) =>
-      instance.snapshot.refresh.pipe(
+      (instance.refreshEnvironment ?? Effect.void).pipe(
+        Effect.andThen(instance.snapshot.refresh),
         Effect.catchCause((cause) =>
           Effect.logError("Provider instance failed to refresh after environment hydration", {
             instanceId: instance.instanceId,

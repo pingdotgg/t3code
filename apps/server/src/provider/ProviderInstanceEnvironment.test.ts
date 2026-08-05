@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
-import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import * as Effect from "effect/Effect";
+
+import {
+  makeProviderInstanceEnvironmentSource,
+  mergeProviderInstanceEnvironment,
+} from "./ProviderInstanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
   it("overrides inherited environment values and preserves empty strings", () => {
@@ -18,4 +23,29 @@ describe("mergeProviderInstanceEnvironment", () => {
       PATH: "/bin",
     });
   });
+
+  it.effect("refreshes inherited values in place while explicit overrides keep precedence", () =>
+    Effect.gen(function* () {
+      const baseEnv = { PATH: "C:\\baseline", PROFILE_VALUE: "host-before" };
+      const source = makeProviderInstanceEnvironmentSource(
+        [
+          { name: "UNRELATED", value: "custom", sensitive: false },
+          { name: "PROFILE_VALUE", value: "instance", sensitive: false },
+        ],
+        baseEnv,
+      );
+      const captured = source.environment;
+
+      baseEnv.PATH = "C:\\profile";
+      baseEnv.PROFILE_VALUE = "host-after";
+      yield* source.refresh;
+
+      expect(source.environment).toBe(captured);
+      expect(captured).toMatchObject({
+        PATH: "C:\\profile",
+        PROFILE_VALUE: "instance",
+        UNRELATED: "custom",
+      });
+    }),
+  );
 });

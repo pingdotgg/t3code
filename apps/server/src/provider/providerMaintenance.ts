@@ -387,6 +387,7 @@ export interface ProviderMaintenanceCapabilitiesSource {
   readonly get: () => ProviderMaintenanceCapabilities;
   readonly resolve: Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly refresh: Effect.Effect<void>;
+  readonly invalidate: Effect.Effect<void>;
 }
 
 export const makeProviderMaintenanceCapabilitiesSource = Effect.fn(
@@ -417,6 +418,7 @@ export const makeProviderMaintenanceCapabilitiesSource = Effect.fn(
     get: () => current,
     resolve,
     refresh: resolve.pipe(Effect.asVoid),
+    invalidate: Cache.invalidate(cache, "capabilities"),
   } satisfies ProviderMaintenanceCapabilitiesSource;
 });
 

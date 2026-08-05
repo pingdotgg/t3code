@@ -39,7 +39,7 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { makeProviderInstanceEnvironmentSource } from "../ProviderInstanceEnvironment.ts";
 import {
   makeProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilitiesSource,
@@ -108,7 +108,8 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const environmentSource = makeProviderInstanceEnvironmentSource(environment);
+      const processEnv = environmentSource.environment;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -184,6 +185,9 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         displayName,
         accentColor,
         enabled,
+        refreshEnvironment: environmentSource.refresh.pipe(
+          Effect.andThen(maintenanceCapabilities.invalidate),
+        ),
         snapshot,
         adapter,
         textGeneration,
