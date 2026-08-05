@@ -1056,7 +1056,10 @@ export const makeCodexSessionRuntime = (
             // Merge-late semantics: when thread/started registered first, a
             // later subAgentActivity still carries the real agentPath (and a
             // derived nickname) — fill missing fields, never clobber known
-            // ones or the original spawnTurnId (review finding).
+            // ones. spawnTurnId is registration-time-only: for an already
+            // registered child, a later activity during an UNRELATED turn
+            // must not backfill that turn as the spawn batch (review
+            // finding); an unset spawn turn stays unset.
             next.set(item.agentThreadId, {
               agentThreadId: item.agentThreadId,
               nickname:
@@ -1066,7 +1069,7 @@ export const makeCodexSessionRuntime = (
               agentPath: existing?.agentPath ?? item.agentPath,
               depth: existing?.depth,
               parentThreadId: existing?.parentThreadId,
-              spawnTurnId: existing?.spawnTurnId ?? activitySpawnTurnId,
+              spawnTurnId: existing ? existing.spawnTurnId : activitySpawnTurnId,
             });
             return next;
           });

@@ -1492,6 +1492,8 @@ const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "not-found": "Script not found.",
   "outside-root": "Script path is outside the workflow scripts root.",
   "not-js": "Resolved script is not a .js file.",
+  "not-regular-file": "Script is not a regular file.",
+  "changed-during-read": "Script changed between resolution and open.",
   "read-failed": "Script read failed.",
 } as const;
 
@@ -1504,6 +1506,8 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
       "not-found",
       "outside-root",
       "not-js",
+      "not-regular-file",
+      "changed-during-read",
       "read-failed",
     ]),
     scriptPath: Schema.String,

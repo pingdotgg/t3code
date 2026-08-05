@@ -76,6 +76,7 @@ const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollab
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(buildScript()), "utf8");
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),

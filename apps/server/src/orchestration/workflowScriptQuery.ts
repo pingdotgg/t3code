@@ -72,21 +72,24 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
 
   // TOCTOU-safe read (review finding): open FIRST, then verify what was
   // actually opened via the file descriptor. Re-checking the path after
-  // open would race against a swap; fstat on the handle cannot.
+  // open would race against a swap; fstat on the handle cannot. The two
+  // containment checks fail with their own tagged reasons (not manufactured
+  // Errors folded into read-failed); "read-failed" is reserved for genuine
+  // platform failures with the real cause attached.
   const read = yield* Effect.tryPromise({
     try: async () => {
       const handle = await NodeFSP.open(resolved, "r");
       try {
         const stat = await handle.stat();
         if (!stat.isFile()) {
-          throw new Error("not a regular file");
+          return { failure: "not-regular-file" as const };
         }
         // The opened inode must be the same one realpath resolved to: a
         // process swapping the path between realpath and open changes the
         // inode, which this comparison catches.
         const pathStat = await NodeFSP.lstat(resolved);
         if (stat.ino !== pathStat.ino || stat.dev !== pathStat.dev) {
-          throw new Error("file changed between resolution and open");
+          return { failure: "changed-during-read" as const };
         }
         const truncated = stat.size > SCRIPT_BYTE_CAP;
         const buffer = Buffer.alloc(Math.min(stat.size, SCRIPT_BYTE_CAP));
@@ -106,6 +109,12 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
         cause,
       }),
   });
+  if ("failure" in read) {
+    return yield* new OrchestrationGetWorkflowScriptError({
+      reason: read.failure,
+      scriptPath: resolved,
+    });
+  }
 
   return {
     scriptPath: resolved,
