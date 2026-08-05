@@ -18,6 +18,7 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  shouldDeferConfirmedThreadOutboxDelivery,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
@@ -510,6 +511,28 @@ describe("thread outbox", () => {
         activeTurnMessageBehavior: "steer",
       }),
     ).toBe("send");
+  });
+
+  it("keeps steer delivery eligible when a thread becomes busy during persistence", () => {
+    const input = {
+      deliveryAction: "send" as const,
+      isCreation: false,
+      threadBusy: true,
+    };
+
+    expect(shouldDeferConfirmedThreadOutboxDelivery(input)).toBe(true);
+    expect(
+      shouldDeferConfirmedThreadOutboxDelivery({
+        ...input,
+        activeTurnMessageBehavior: "queue",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferConfirmedThreadOutboxDelivery({
+        ...input,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe(false);
   });
 
   it("sends queued creations once connected and live, removing already-created ones", () => {

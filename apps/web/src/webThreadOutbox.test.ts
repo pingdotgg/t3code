@@ -43,6 +43,17 @@ function resetOutbox(): void {
   writeWebThreadOutboxStorageForTest("");
 }
 
+function persistedOutbox(messages: ReadonlyArray<QueuedWebThreadMessage>): string {
+  return JSON.stringify({
+    version: 1,
+    state: {
+      queuesByThreadKey: {
+        [webThreadOutboxKey(environmentId, threadId)]: messages,
+      },
+    },
+  });
+}
+
 afterEach(resetOutbox);
 
 describe("web thread outbox", () => {
@@ -69,6 +80,47 @@ describe("web thread outbox", () => {
     store.enqueue(first);
     store.enqueue(second);
     store.enqueue({ ...first, text: "Updated" });
+    store.remove(first);
+
+    const queue =
+      useWebThreadOutboxStore.getState().queuesByThreadKey[
+        webThreadOutboxKey(environmentId, threadId)
+      ];
+    expect(queue?.map((entry) => entry.messageId)).toEqual([second.messageId]);
+  });
+
+  it("merges another tab's durable messages before enqueueing", () => {
+    const first = message(1);
+    const second = message(2);
+    const third = message(3);
+    const store = useWebThreadOutboxStore.getState();
+    store.enqueue(first);
+
+    writeWebThreadOutboxStorageForTest(persistedOutbox([first, second]), {
+      syncStore: false,
+    });
+    store.enqueue(third);
+
+    const queue =
+      useWebThreadOutboxStore.getState().queuesByThreadKey[
+        webThreadOutboxKey(environmentId, threadId)
+      ];
+    expect(queue?.map((entry) => entry.messageId)).toEqual([
+      first.messageId,
+      second.messageId,
+      third.messageId,
+    ]);
+  });
+
+  it("preserves another tab's messages when removing a delivered message", () => {
+    const first = message(1);
+    const second = message(2);
+    const store = useWebThreadOutboxStore.getState();
+    store.enqueue(first);
+
+    writeWebThreadOutboxStorageForTest(persistedOutbox([first, second]), {
+      syncStore: false,
+    });
     store.remove(first);
 
     const queue =

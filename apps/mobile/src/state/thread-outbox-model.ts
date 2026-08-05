@@ -158,6 +158,20 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
 
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
 
+export function shouldDeferConfirmedThreadOutboxDelivery(input: {
+  readonly deliveryAction: ThreadOutboxDeliveryAction;
+  readonly isCreation: boolean;
+  readonly threadBusy: boolean;
+  readonly activeTurnMessageBehavior?: ActiveTurnMessageBehaviorType;
+}): boolean {
+  return (
+    input.deliveryAction === "send" &&
+    !input.isCreation &&
+    input.threadBusy &&
+    input.activeTurnMessageBehavior !== "steer"
+  );
+}
+
 export function resolveThreadOutboxDeliveryAction(input: {
   readonly isCreation: boolean;
   readonly threadExists: boolean;

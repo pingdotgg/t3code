@@ -43,7 +43,7 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
-import { mobilePreferencesAtom } from "./preferences";
+import { awaitActiveTurnMessageBehavior, mobilePreferencesAtom } from "./preferences";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -145,6 +145,10 @@ export function useThreadComposerState() {
       return null;
     }
 
+    const sendBehavior = await awaitActiveTurnMessageBehavior(
+      appAtomRegistry,
+      mobilePreferencesAtom,
+    );
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
     const thread = selectedThreadDetail ?? selectedThreadShell;
@@ -171,7 +175,7 @@ export function useThreadComposerState() {
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
-      activeTurnMessageBehavior,
+      activeTurnMessageBehavior: sendBehavior,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -187,7 +191,7 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [activeTurnMessageBehavior, selectedThreadDetail, selectedThreadShell]);
+  }, [selectedThreadDetail, selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {

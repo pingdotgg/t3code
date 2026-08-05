@@ -68,6 +68,30 @@ function readQueue(
   return Object.hasOwn(queues, threadKey) ? (queues[threadKey] ?? []) : [];
 }
 
+function mergeQueues(
+  ...sources: ReadonlyArray<Record<string, ReadonlyArray<QueuedWebThreadMessage>>>
+): Record<string, ReadonlyArray<QueuedWebThreadMessage>> {
+  const merged: Record<string, ReadonlyArray<QueuedWebThreadMessage>> = {};
+  const threadKeys = new Set(sources.flatMap((source) => Object.keys(source)));
+  for (const threadKey of threadKeys) {
+    const messagesById = new Map<MessageId, QueuedWebThreadMessage>();
+    for (const source of sources) {
+      for (const message of readQueue(source, threadKey)) {
+        messagesById.set(message.messageId, message);
+      }
+    }
+    const queue = [...messagesById.values()].sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        String(left.messageId).localeCompare(String(right.messageId)),
+    );
+    if (queue.length > 0) {
+      merged[threadKey] = queue;
+    }
+  }
+  return merged;
+}
+
 function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
   try {
     if (typeof localStorage !== "undefined") {
@@ -114,6 +138,13 @@ function readPersistedQueues(): Record<string, ReadonlyArray<QueuedWebThreadMess
   }
 }
 
+function mergeWithPersistedQueues(
+  queues: Record<string, ReadonlyArray<QueuedWebThreadMessage>>,
+): Record<string, ReadonlyArray<QueuedWebThreadMessage>> {
+  const persisted = readPersistedQueues();
+  return persisted === null ? queues : mergeQueues(queues, persisted);
+}
+
 interface WebThreadOutboxState {
   readonly queuesByThreadKey: Record<string, ReadonlyArray<QueuedWebThreadMessage>>;
   readonly pausedMessageIds: Readonly<Record<MessageId, true>>;
@@ -128,7 +159,10 @@ export const useWebThreadOutboxStore = create<WebThreadOutboxState>()((set, get)
   pausedMessageIds: {},
   enqueue: (message) => {
     const threadKey = webThreadOutboxKey(message.environmentId, message.threadId);
-    const queues = get().queuesByThreadKey;
+    // Another tab may have updated the shared outbox since this store last
+    // rendered. Merge its durable snapshot before applying this mutation so a
+    // full-key localStorage write cannot discard the other tab's messages.
+    const queues = mergeWithPersistedQueues(get().queuesByThreadKey);
     const queue = readQueue(queues, threadKey);
     const nextQueue = [
       ...queue.filter((candidate) => candidate.messageId !== message.messageId),
@@ -143,7 +177,7 @@ export const useWebThreadOutboxStore = create<WebThreadOutboxState>()((set, get)
   },
   remove: (message) => {
     const threadKey = webThreadOutboxKey(message.environmentId, message.threadId);
-    const queues = get().queuesByThreadKey;
+    const queues = mergeWithPersistedQueues(get().queuesByThreadKey);
     const nextQueue = readQueue(queues, threadKey).filter(
       (candidate) => candidate.messageId !== message.messageId,
     );
@@ -185,6 +219,15 @@ export const EMPTY_WEB_THREAD_OUTBOX_QUEUE: ReadonlyArray<QueuedWebThreadMessage
   if (persisted) {
     useWebThreadOutboxStore.setState({ queuesByThreadKey: persisted });
   }
+}
+
+if (storageIsDurable && typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== WEB_THREAD_OUTBOX_STORAGE_KEY) {
+      return;
+    }
+    useWebThreadOutboxStore.setState({ queuesByThreadKey: readPersistedQueues() ?? {} });
+  });
 }
 
 const dispatchingMessageIds = new Set<MessageId>();
@@ -232,8 +275,14 @@ export function shouldQueueWebThreadMessage(input: {
   );
 }
 
-export function writeWebThreadOutboxStorageForTest(raw: string): void {
+export function writeWebThreadOutboxStorageForTest(
+  raw: string,
+  options?: { readonly syncStore?: boolean },
+): void {
   baseOutboxStorage.setItem(WEB_THREAD_OUTBOX_STORAGE_KEY, raw);
+  if (options?.syncStore === false) {
+    return;
+  }
   useWebThreadOutboxStore.setState({
     queuesByThreadKey: readPersistedQueues() ?? {},
     pausedMessageIds: {},
