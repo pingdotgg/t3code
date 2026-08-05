@@ -434,12 +434,27 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
 
     case "reasoning":
-      return (
-        a.workedFor === (b as typeof a).workedFor &&
-        a.rows === (b as typeof a).rows &&
-        a.createdAt === (b as typeof a).createdAt
-      );
+      return areReasoningRowsUnchanged(a, b as typeof a);
   }
+}
+
+function areReasoningRowsUnchanged(
+  a: Extract<MessagesTimelineRow, { kind: "reasoning" }>,
+  b: Extract<MessagesTimelineRow, { kind: "reasoning" }>,
+): boolean {
+  if (a.workedFor !== b.workedFor || a.createdAt !== b.createdAt) return false;
+  if (a.rows === b.rows) return true;
+  if (a.rows.length !== b.rows.length) return false;
+  // collapseReasoningRows always allocates a fresh nested array, so compare
+  // child rows by content the same way work groups compare groupedEntries.
+  for (let index = 0; index < a.rows.length; index += 1) {
+    const previous = a.rows[index];
+    const next = b.rows[index];
+    if (!previous || !next || !isRowUnchanged(previous, next)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function areWorkRowsUnchanged(

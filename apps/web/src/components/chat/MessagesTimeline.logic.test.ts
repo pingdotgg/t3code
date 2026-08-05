@@ -785,6 +785,180 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(repeated).toBe(initial);
     expect(repeated.result[0]).toBe(initial.result[0]);
   });
+
+  it("reuses equivalent reasoning rows when nested row arrays are recreated", () => {
+    const userMessage = {
+      id: "user-1" as never,
+      role: "user" as const,
+      text: "Investigate",
+      turnId: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      streaming: false,
+    };
+    const assistantMessage = {
+      id: "assistant-1" as never,
+      role: "assistant" as const,
+      text: "Done",
+      turnId: "turn-1" as never,
+      createdAt: "2026-01-01T00:00:20Z",
+      completedAt: "2026-01-01T00:00:21Z",
+      streaming: false,
+    };
+    const workEntry = {
+      id: "work-1",
+      createdAt: "2026-01-01T00:00:05Z",
+      label: "Read files",
+      tone: "tool" as const,
+      isComplete: true,
+    };
+
+    const buildRows = () =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "entry-user-1",
+            kind: "message",
+            createdAt: userMessage.createdAt,
+            message: userMessage,
+          },
+          {
+            id: "work-entry-1",
+            kind: "work",
+            createdAt: workEntry.createdAt,
+            entry: { ...workEntry },
+          },
+          {
+            id: "entry-assistant-1",
+            kind: "message",
+            createdAt: assistantMessage.createdAt,
+            message: assistantMessage,
+          },
+        ],
+        completionDividerBeforeEntryId: null,
+        isWorking: false,
+        activeTurnId: null,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+
+    const firstRows = buildRows();
+    const secondRows = buildRows();
+    const reasoningA = firstRows.find((row) => row.kind === "reasoning");
+    const reasoningB = secondRows.find((row) => row.kind === "reasoning");
+    expect(reasoningA).toBeDefined();
+    expect(reasoningB).toBeDefined();
+    // Fresh collapse always allocates a new nested array even when content matches.
+    expect(reasoningA?.rows).not.toBe(reasoningB?.rows);
+
+    const initial = computeStableMessagesTimelineRows(firstRows, {
+      byId: new Map(),
+      result: [],
+    });
+    const repeated = computeStableMessagesTimelineRows(secondRows, initial);
+    const stableReasoning = repeated.result.find((row) => row.kind === "reasoning");
+    const initialReasoning = initial.result.find((row) => row.kind === "reasoning");
+
+    expect(repeated).toBe(initial);
+    expect(stableReasoning).toBe(initialReasoning);
+  });
+
+  it("keeps prior reasoning rows stable when a later streaming message changes", () => {
+    const userMessage = {
+      id: "user-1" as never,
+      role: "user" as const,
+      text: "First",
+      turnId: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      streaming: false,
+    };
+    const completedAssistant = {
+      id: "assistant-1" as never,
+      role: "assistant" as const,
+      text: "First answer",
+      turnId: "turn-1" as never,
+      createdAt: "2026-01-01T00:00:10Z",
+      completedAt: "2026-01-01T00:00:11Z",
+      streaming: false,
+    };
+    const secondUser = {
+      id: "user-2" as never,
+      role: "user" as const,
+      text: "Continue",
+      turnId: null,
+      createdAt: "2026-01-01T00:00:20Z",
+      streaming: false,
+    };
+    const streamingAssistant = {
+      id: "assistant-2" as never,
+      role: "assistant" as const,
+      text: "Streaming",
+      turnId: "turn-2" as never,
+      createdAt: "2026-01-01T00:00:30Z",
+      streaming: true,
+    };
+    const workEntry = {
+      id: "work-1",
+      createdAt: "2026-01-01T00:00:05Z",
+      label: "Read files",
+      tone: "tool" as const,
+      isComplete: true,
+    };
+
+    const buildRows = (assistantText: string) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "entry-user-1",
+            kind: "message",
+            createdAt: userMessage.createdAt,
+            message: userMessage,
+          },
+          {
+            id: "work-entry-1",
+            kind: "work",
+            createdAt: workEntry.createdAt,
+            entry: { ...workEntry },
+          },
+          {
+            id: "entry-assistant-1",
+            kind: "message",
+            createdAt: completedAssistant.createdAt,
+            message: completedAssistant,
+          },
+          {
+            id: "entry-user-2",
+            kind: "message",
+            createdAt: secondUser.createdAt,
+            message: secondUser,
+          },
+          {
+            id: "entry-assistant-2",
+            kind: "message",
+            createdAt: streamingAssistant.createdAt,
+            message: { ...streamingAssistant, text: assistantText },
+          },
+        ],
+        completionDividerBeforeEntryId: null,
+        isWorking: true,
+        activeTurnId: "turn-2" as never,
+        activeTurnStartedAt: streamingAssistant.createdAt,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+
+    const initial = computeStableMessagesTimelineRows(buildRows("Streaming"), {
+      byId: new Map(),
+      result: [],
+    });
+    const next = computeStableMessagesTimelineRows(buildRows("Streaming more"), initial);
+    const initialReasoning = initial.result.find((row) => row.kind === "reasoning");
+    const nextReasoning = next.result.find((row) => row.kind === "reasoning");
+
+    expect(initialReasoning).toBeDefined();
+    expect(nextReasoning).toBe(initialReasoning);
+    expect(next).not.toBe(initial);
+  });
 });
 
 describe("workspace handoff rows", () => {
