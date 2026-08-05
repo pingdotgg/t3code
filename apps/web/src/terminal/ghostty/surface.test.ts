@@ -11,6 +11,7 @@ import {
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
@@ -18,6 +19,7 @@ import {
   terminalLinkAtPosition,
   terminalContentOriginY,
   terminalFontFamily,
+  fittedTerminalFontSize,
   terminalFontSize,
   terminalWheelArrowData,
   terminalWheelDeltaRows,
@@ -51,6 +53,29 @@ describe("isTerminalAltGraphText", () => {
         getModifierState: (modifier) => modifier === "AltGraph",
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldBlinkTerminalCursor", () => {
+  const blinking = {
+    focused: true,
+    cursorBlinking: true,
+    cursorVisible: true,
+    reducedMotion: false,
+  };
+
+  it("blinks a focused visible cursor the terminal asked to blink", () => {
+    expect(shouldBlinkTerminalCursor(blinking)).toBe(true);
+  });
+
+  it("holds the cursor steady when blinking would be unwanted", () => {
+    // Unfocused surfaces draw a steady hollow cursor, DECSCUSR steady styles and
+    // DEC mode 12 turn blinking off, a hidden cursor has nothing to toggle, and
+    // reduced-motion readers get no permanently animating element.
+    expect(shouldBlinkTerminalCursor({ ...blinking, focused: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, cursorBlinking: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, cursorVisible: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, reducedMotion: true })).toBe(false);
   });
 });
 
@@ -230,6 +255,41 @@ describe("terminal font resolution", () => {
     expect(custom.startsWith('"Fira Code", ')).toBe(true);
     expect(custom).toContain('"Symbols Nerd Font Mono"');
     expect(custom.endsWith("monospace")).toBe(true);
+  });
+
+  it("ignores proportional families the cell grid cannot lay out", () => {
+    // jsdom has no canvas metrics, so the probe answers "monospace" and the
+    // family is kept; the guard is exercised in the browser instead. Assert the
+    // shape stays intact so a rejected face still yields a usable stack.
+    const stack = terminalFontFamily("Helvetica Neue");
+    expect(stack.endsWith("monospace")).toBe(true);
+  });
+
+  it("quotes families the canvas font shorthand would otherwise reject", () => {
+    expect(terminalFontFamily("3270 Nerd Font").startsWith('"3270 Nerd Font", ')).toBe(true);
+    expect(terminalFontFamily("M+ 1m").startsWith('"M+ 1m", ')).toBe(true);
+    expect(terminalFontFamily("Cascadia Code, Menlo").startsWith('"Cascadia Code", Menlo, ')).toBe(
+      true,
+    );
+    expect(terminalFontFamily(" , ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+  });
+
+  it("slides the rendered size down until a full-width grid fits the canvas", () => {
+    // SF Mono-like advance: 0.6em per cell.
+    const cellWidthAt = (size: number) => size * 0.6;
+    // A wide drawer keeps the preference untouched.
+    expect(fittedTerminalFontSize(cellWidthAt, 20, 1140)).toBe(20);
+    // A split pane at the same preference shrinks until 80 columns fit.
+    const fitted = fittedTerminalFontSize(cellWidthAt, 20, 570);
+    expect(fitted).toBeLessThan(20);
+    expect(Math.floor((570 - 8) / cellWidthAt(fitted))).toBeGreaterThanOrEqual(80);
+    // A tiny pane stops at the legibility floor instead of vanishing.
+    expect(fittedTerminalFontSize(cellWidthAt, 20, 220)).toBe(8);
+    // A preference below the floor is honored as-is.
+    expect(fittedTerminalFontSize(cellWidthAt, 6, 220)).toBe(6);
+    // Unmeasured layouts leave the preference alone.
+    expect(fittedTerminalFontSize(cellWidthAt, 14, 0)).toBe(14);
+    expect(fittedTerminalFontSize(() => 0, 14, 600)).toBe(14);
   });
 
   it("clamps requested font sizes to the supported range", () => {

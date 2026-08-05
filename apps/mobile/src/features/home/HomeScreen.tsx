@@ -111,6 +111,8 @@ interface HomeScreenProps {
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onPinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onUnpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
@@ -516,6 +518,18 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [props.onUnsnoozeThread],
   );
+  const handlePinThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void props.onPinThread(thread);
+    },
+    [props.onPinThread],
+  );
+  const handleUnpinThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void props.onUnpinThread(thread);
+    },
+    [props.onUnpinThread],
+  );
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
   // The settled tail renders in pages; expansion resets when the filter
@@ -570,6 +584,15 @@ export function HomeScreen(props: HomeScreenProps) {
     const supported = new Set<EnvironmentId>();
     for (const [environmentId, config] of serverConfigs) {
       if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
+  const pinningEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadPinning === true) {
         supported.add(environmentId);
       }
     }
@@ -718,6 +741,7 @@ export function HomeScreen(props: HomeScreenProps) {
           thread={thread}
           variant={item.item.variant}
           snoozed={item.item.snoozed}
+          pinned={item.item.pinned}
           snoozePresetMinute={nowMinute}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           project={
@@ -753,9 +777,12 @@ export function HomeScreen(props: HomeScreenProps) {
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+          pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
+          onPinThread={handlePinThread}
+          onUnpinThread={handleUnpinThread}
           onChangeRequestState={handleChangeRequestState}
           projectCwd={
             projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
@@ -768,12 +795,15 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       handleChangeRequestState,
       handleDeleteThread,
+      handlePinThread,
       handleSettleThread,
       handleSnoozeThread,
+      handleUnpinThread,
       handleUnsnoozeThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
       handleUnsettleThread,
+      pinningEnvironmentIds,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,

@@ -8,6 +8,7 @@ import {
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
+  type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
@@ -171,6 +172,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -4354,6 +4356,10 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
+        event.stopPropagation();
+        return;
+      }
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
@@ -4556,8 +4562,24 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    directAnnotation?: {
+      annotation: PreviewAnnotationPayload;
+      image: ComposerImageAttachment | null;
+    },
+  ) => {
     e?.preventDefault();
+    const notifyDirectAnnotationAttached = () => {
+      if (!directAnnotation) return;
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Annotation attached to draft",
+          description: "Sending is unavailable right now. Finish the current action, then send.",
+        }),
+      );
+    };
     if (
       !activeThread ||
       isSendBusy ||
@@ -4565,19 +4587,28 @@ function ChatViewContent(props: ChatViewProps) {
       threadDetailLoading ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
-    )
+    ) {
+      notifyDirectAnnotationAttached();
       return;
+    }
     if (activePendingProgress) {
+      if (directAnnotation) {
+        notifyDirectAnnotationAttached();
+        return;
+      }
       onAdvanceActivePendingUserInput();
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) return;
+    if (!sendCtx?.providerAvailable) {
+      notifyDirectAnnotationAttached();
+      return;
+    }
     const {
-      images: composerImages,
+      images: sendContextImages,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
-      previewAnnotations: composerPreviewAnnotations,
+      previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
@@ -4585,6 +4616,26 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const composerImages =
+      directAnnotation?.image &&
+      !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
+        ? [...sendContextImages, directAnnotation.image]
+        : sendContextImages;
+    const composerPreviewAnnotations =
+      directAnnotation &&
+      !sendContextPreviewAnnotations.some(
+        (annotation) => annotation.id === directAnnotation.annotation.id,
+      )
+        ? [
+            ...sendContextPreviewAnnotations,
+            {
+              ...directAnnotation.annotation,
+              screenshot: directAnnotation.annotation.screenshot
+                ? { ...directAnnotation.annotation.screenshot, dataUrl: "" }
+                : null,
+            },
+          ]
+        : sendContextPreviewAnnotations;
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -4600,7 +4651,7 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
+    if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -5643,7 +5694,14 @@ function ChatViewContent(props: ChatViewProps) {
     />
   );
   const panelLayoutControls = (
-    <div className="workspace-titlebar-controls z-50 mr-px gap-1 [-webkit-app-region:no-drag]">
+    <div
+      className={cn(
+        "workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]",
+        rightPanelOpen && !shouldUsePlanSidebarSheet
+          ? "right-2 wco:right-[var(--workspace-controls-right)]"
+          : "mr-px",
+      )}
+    >
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
@@ -5662,6 +5720,9 @@ function ChatViewContent(props: ChatViewProps) {
           tabId={activeRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
           visible
+          onSendAnnotation={(annotation, image) => {
+            void onSend(undefined, { annotation, image });
+          }}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "terminal" ? (
