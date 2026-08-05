@@ -6,11 +6,10 @@ import * as Ref from "effect/Ref";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import {
   type ProviderContinuationRequest,
+  PROVIDER_CONTINUATION_MESSAGE_TEXT,
   ProviderContinuationRequests,
 } from "./ProviderContinuationRequests.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
-
-const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
@@ -141,12 +140,13 @@ export const workerLive = Layer.effectDiscard(
           ordinal: projection.messages.length + 1,
         });
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
+        const text = request.messageText ?? request.detail ?? PROVIDER_CONTINUATION_MESSAGE_TEXT;
         const dispatch = threads.dispatch({
           type: "message.dispatch",
           commandId,
           threadId: request.threadId,
           messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+          text,
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
@@ -196,8 +196,20 @@ export const workerLive = Layer.effectDiscard(
                   ),
                   Effect.forkScoped,
                 );
+                return;
               }
-            }),
+              if (request.failIfCurrent !== undefined) {
+                yield* request.failIfCurrent(cause);
+              }
+            }).pipe(
+              Effect.catchCause((cleanupCause) =>
+                Effect.logWarning("orchestration-v2.provider-continuation.failure-cleanup-failed", {
+                  threadId: request.threadId,
+                  providerThreadId: request.providerThreadId,
+                  cause: cleanupCause,
+                }),
+              ),
+            ),
           ),
         ),
       ),
