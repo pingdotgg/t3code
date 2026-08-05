@@ -93,6 +93,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       attempts: [],
       nodes: [],
       subagents: [],
+      subagentActivations: [],
       providerSessions: [],
       providerThreads: [],
       providerTurns: [],

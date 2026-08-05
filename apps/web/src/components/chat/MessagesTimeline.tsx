@@ -1,6 +1,8 @@
 import {
   type EnvironmentId,
   type MessageId,
+  type NodeId,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ScopedThreadRef,
@@ -10,6 +12,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  deriveOrchestrationV2WorkflowRunCard,
+  orchestrationV2WorkflowMemberIds,
+} from "@t3tools/client-runtime/state/orchestration-v2-subagents";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
@@ -68,6 +74,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { WorkflowRunCardV2 } from "../WorkflowRunCardV2";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -163,6 +170,10 @@ interface TimelineRowSharedState {
   }) => void;
   onToggleTurnFold: (runId: RunId) => void;
   onToggleAttemptFold: (attemptId: RunAttemptId) => void;
+  /** Opens the right-panel Agents surface; null when the host view has none. */
+  onOpenAgentsPanel: (() => void) | null;
+  /** Requests a stop for one workflow/subagent task; null when unavailable. */
+  onStopWorkflow: ((subagentId: NodeId) => void) | null;
 }
 
 interface TimelineRowActivityState {
@@ -174,12 +185,19 @@ interface TimelineRowActivityState {
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+/**
+ * Live projection subagents, kept out of TimelineRowCtx on purpose: they
+ * churn on every progress tick, and only subagent rows (workflow run cards)
+ * should re-render for that — not every row in the list.
+ */
+const TimelineSubagentsCtx = createContext<ReadonlyArray<OrchestrationV2Subagent>>([]);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_TIMELINE_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
+const EMPTY_TIMELINE_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -224,6 +242,10 @@ interface MessagesTimelineProps {
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   providerStatuses?: ReadonlyArray<ServerProvider>;
   runs?: ReadonlyArray<HandoffTimelineRun>;
+  /** Live projection subagents — feeds the inline workflow run cards. */
+  subagents?: ReadonlyArray<OrchestrationV2Subagent>;
+  onOpenAgentsPanel?: (() => void) | null;
+  onStopWorkflow?: ((subagentId: NodeId) => void) | null;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -265,6 +287,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   skills = EMPTY_TIMELINE_SKILLS,
   providerStatuses = EMPTY_TIMELINE_PROVIDERS,
   runs: runsProp = EMPTY_TIMELINE_RUNS,
+  subagents = EMPTY_TIMELINE_SUBAGENTS,
+  onOpenAgentsPanel = null,
+  onStopWorkflow = null,
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
@@ -484,6 +509,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
+      onOpenAgentsPanel,
+      onStopWorkflow,
     }),
     [
       timestampFormat,
@@ -503,6 +530,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
+      onOpenAgentsPanel,
+      onStopWorkflow,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -563,51 +592,53 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
-          <LegendList<MessagesTimelineRow>
-            ref={listRef}
-            data={rows}
-            keyExtractor={keyExtractor}
-            getItemType={getItemType}
-            renderItem={renderItem}
-            estimatedItemSize={90}
-            initialScrollAtEnd
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            contentInsetEndAdjustment={contentInsetEndAdjustment}
-            // The app owns end-following (ChatView live-follow + scroll-to-end
-            // pill), which respects the user's scroll gestures. LegendList's
-            // internal maintainScrollAtEnd races post-mount measurement: it
-            // caches its at-end flag while a maintain cycle is active, so
-            // overlapping item-layout reconciliations keep snapping the view
-            // to stale content ends even after the user scrolled away.
-            maintainScrollAtEnd={false}
-            maintainVisibleContentPosition={maintainVisibleContentPosition}
-            onScroll={handleScroll}
-            className={cn(
-              "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
-              topFadeEnabled && "chat-timeline-scroll-fade",
-            )}
-            ListHeaderComponent={
-              topFadeEnabled && parentThreadLink === null ? TIMELINE_LIST_FADE_HEADER : listHeader
-            }
-            ListFooterComponent={TIMELINE_LIST_FOOTER}
-          />
-          <TimelineMinimap
-            items={minimapItems}
-            bottomInset={contentInsetEndAdjustment}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
-        </div>
+        <TimelineSubagentsCtx value={subagents}>
+          <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+            <LegendList<MessagesTimelineRow>
+              ref={listRef}
+              data={rows}
+              keyExtractor={keyExtractor}
+              getItemType={getItemType}
+              renderItem={renderItem}
+              estimatedItemSize={90}
+              initialScrollAtEnd
+              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+              contentInsetEndAdjustment={contentInsetEndAdjustment}
+              // The app owns end-following (ChatView live-follow + scroll-to-end
+              // pill), which respects the user's scroll gestures. LegendList's
+              // internal maintainScrollAtEnd races post-mount measurement: it
+              // caches its at-end flag while a maintain cycle is active, so
+              // overlapping item-layout reconciliations keep snapping the view
+              // to stale content ends even after the user scrolled away.
+              maintainScrollAtEnd={false}
+              maintainVisibleContentPosition={maintainVisibleContentPosition}
+              onScroll={handleScroll}
+              className={cn(
+                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+                topFadeEnabled && "chat-timeline-scroll-fade",
+              )}
+              ListHeaderComponent={
+                topFadeEnabled && parentThreadLink === null ? TIMELINE_LIST_FADE_HEADER : listHeader
+              }
+              ListFooterComponent={TIMELINE_LIST_FOOTER}
+            />
+            <TimelineMinimap
+              items={minimapItems}
+              bottomInset={contentInsetEndAdjustment}
+              hasPersistentGutter={minimapHasPersistentGutter}
+              hitStripWidth={minimapHitStripWidth}
+              stripMap={minimapStripMap}
+              onSelect={(item) => {
+                onManualNavigation();
+                void listRef.current?.scrollToIndex({
+                  index: item.rowIndex,
+                  animated: true,
+                  viewOffset: 24,
+                });
+              }}
+            />
+          </div>
+        </TimelineSubagentsCtx>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
@@ -1412,9 +1443,59 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
   }
 }
 
+/**
+ * A subagent event row that knows about workflows: a coordinator renders as
+ * the inline run card, a member of a present coordinator renders nothing
+ * (the card already shows it), and everything else falls back to the plain
+ * lifecycle card. Split from V2EventTimelineRow so only subagent rows
+ * subscribe to the live subagents context.
+ */
+function V2SubagentEventRow(props: {
+  readonly item: Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+  readonly createdAt: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const subagents = use(TimelineSubagentsCtx);
+  const card = useMemo(
+    () =>
+      deriveOrchestrationV2WorkflowRunCard({
+        coordinatorId: props.item.subagentId,
+        subagents,
+      }),
+    [props.item.subagentId, subagents],
+  );
+  const hiddenMemberIds = useMemo(() => orchestrationV2WorkflowMemberIds(subagents), [subagents]);
+  if (card !== null) {
+    const onStopWorkflow = ctx.onStopWorkflow;
+    return (
+      <WorkflowRunCardV2
+        card={card}
+        onOpenDetails={ctx.onOpenAgentsPanel ?? undefined}
+        onStop={onStopWorkflow === null ? undefined : () => onStopWorkflow(props.item.subagentId)}
+      />
+    );
+  }
+  if (hiddenMemberIds.has(props.item.subagentId)) {
+    return null;
+  }
+  return (
+    <V2LifecycleRow
+      item={props.item}
+      createdAt={props.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      providerStatuses={ctx.providerStatuses}
+      runs={ctx.runs}
+      onOpenThread={ctx.onOpenThread}
+    />
+  );
+}
+
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
+  if (item.type === "subagent") {
+    return <V2SubagentEventRow item={item} createdAt={row.createdAt} />;
+  }
   if (isV2LifecycleItem(item)) {
     return (
       <V2LifecycleRow

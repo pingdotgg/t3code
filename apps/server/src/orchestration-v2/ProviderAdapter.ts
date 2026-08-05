@@ -16,6 +16,7 @@ import {
   OrchestrationV2ProviderTurn,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
+  OrchestrationV2SubagentActivation,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderInteractionMode,
@@ -31,6 +32,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -103,6 +105,11 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("subagent.updated"),
     driver: ProviderDriverKind,
     subagent: OrchestrationV2Subagent,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("subagent_activation.updated"),
+    driver: ProviderDriverKind,
+    activation: OrchestrationV2SubagentActivation,
   }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
@@ -385,6 +392,21 @@ export interface ProviderAdapterV2EnsureThreadInput {
   readonly existingProviderThread?: OrchestrationV2ProviderThread;
 }
 
+/**
+ * A reusable subagent that already exists in the projection, supplied so an
+ * adapter whose in-memory registry was lost (session reap, server restart) can
+ * still recognise the agent thread and re-activate the same identity instead of
+ * spawning a duplicate.
+ */
+export interface ProviderAdapterV2ExistingSubagent {
+  readonly subagent: OrchestrationV2Subagent;
+  readonly childThread: OrchestrationV2AppThread;
+  readonly childProviderThread: OrchestrationV2ProviderThread;
+  readonly turnItemId: TurnItemId;
+  readonly turnItemOrdinal: number;
+  readonly ordinal: number;
+}
+
 export interface ProviderAdapterV2TurnInput {
   readonly appThread: OrchestrationV2AppThread;
   readonly threadId: ThreadId;
@@ -397,6 +419,7 @@ export interface ProviderAdapterV2TurnInput {
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  readonly existingSubagents?: ReadonlyArray<ProviderAdapterV2ExistingSubagent>;
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -512,6 +535,14 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Stop one background task (e.g. a workflow run) by its native task id
+   * without interrupting the turn that launched it. Absent on providers
+   * whose runtime has no task-level stop.
+   */
+  readonly stopTask?: (input: {
+    readonly nativeTaskId: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;

@@ -86,6 +86,7 @@ const emptyProjection = {
   attempts: [],
   nodes: [],
   subagents: [],
+  subagentActivations: [],
   providerSessions: [],
   providerThreads: [],
   providerTurns: [],

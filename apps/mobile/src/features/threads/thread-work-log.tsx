@@ -12,7 +12,6 @@ import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import Animated, { FadeIn } from "react-native-reanimated";
-import { useV2ItemSupport } from "../../state/v2-item-support";
 import { ThreadActivityInspector } from "./ThreadActivityInspector";
 import { threadWorkLogOverflowNoun } from "./thread-work-log-labels";
 
@@ -115,11 +114,6 @@ function ThreadActivityThreadLink(props: {
   readonly iconColor: import("react-native").ColorValue;
 }) {
   const row = props.activity.projectedItem;
-  const support = useV2ItemSupport({
-    environmentId: props.environmentId,
-    sourceThreadId: row.sourceThreadId,
-    sourceItemId: row.sourceItemId,
-  });
   const navigation = useNavigation();
   const item = row.item;
   let targetThreadId: ThreadId | null = null;
@@ -128,9 +122,6 @@ function ThreadActivityThreadLink(props: {
   if (item.type === "thread_created") {
     targetThreadId = item.targetThreadId;
     label = "Open created thread";
-  } else if (item.type === "subagent") {
-    targetThreadId = support.subagent?.childThreadId ?? item.childThreadId;
-    label = "Open subagent thread";
   } else if (item.type === "fork") {
     targetThreadId =
       item.targetThreadId === row.sourceThreadId && item.source.type === "run"

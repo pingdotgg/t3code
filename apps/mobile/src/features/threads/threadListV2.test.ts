@@ -5,6 +5,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -267,6 +268,7 @@ describe("buildThreadListV2Items", () => {
     const forkId = ThreadId.make("fork");
     const settledChildId = ThreadId.make("settled-child");
     const snoozedChildId = ThreadId.make("snoozed-child");
+    const nodeChildId = ThreadId.make("node-child");
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: rootThreadId, title: "Root" }),
@@ -309,6 +311,14 @@ describe("buildThreadListV2Items", () => {
           },
           snoozedUntil: "2026-06-03T09:00:00.000Z",
           snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: nodeChildId,
+          title: "Node child",
+          forkedFrom: {
+            type: "node",
+            nodeId: NodeId.make("node:mobile-thread-list:child"),
+          },
         }),
       ],
       environmentId: null,

@@ -93,6 +93,7 @@ function makeProjection(input: {
     ],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     providerSessions: [],
     providerThreads: [input.providerThread],
     providerTurns: [
@@ -283,4 +284,106 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect("stops a task through the live session and tolerates a released one", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:stop-task");
+    const sessionId = ProviderSessionId.make("provider-session:stop-task");
+    const noStopSessionId = ProviderSessionId.make("provider-session:stop-task:no-stop");
+    const stoppedTaskIds = yield* Ref.make<ReadonlyArray<string>>([]);
+    const providerSession = {
+      id: sessionId,
+      driver,
+      providerInstanceId,
+      status: "running" as const,
+      cwd: "/workspace",
+      model: modelSelection.model,
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const baseRuntime: ProviderAdapterV2SessionRuntime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId: sessionId,
+      providerSession,
+      events: Stream.empty,
+      ensureThread: () => Effect.die("unused ensureThread"),
+      resumeThread: () => Effect.die("unused resumeThread"),
+      startTurn: () => Effect.die("unused startTurn"),
+      steerTurn: () => Effect.die("unused steerTurn"),
+      interruptTurn: () => Effect.die("unused interruptTurn"),
+      respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
+      readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+      rollbackThread: () => Effect.die("unused rollbackThread"),
+      forkThread: () => Effect.die("unused forkThread"),
+    };
+    const runtime: ProviderAdapterV2SessionRuntime = {
+      ...baseRuntime,
+      stopTask: ({ nativeTaskId }) =>
+        Ref.update(stoppedTaskIds, (current) => [...current, nativeTaskId]),
+    };
+    const projectionLayer = Layer.succeed(
+      ProjectionStoreV2,
+      ProjectionStoreV2.of({
+        apply: () => Effect.void,
+        getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+        getThreadShell: () => Effect.die("unused getThreadShell"),
+        getThreadProjection: () => Effect.die("stopTask must not read the projection"),
+        getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
+      }),
+    );
+    const sessionManagerLayer = Layer.succeed(
+      ProviderSessionManagerV2,
+      ProviderSessionManagerV2.of({
+        shutdown: Effect.void,
+        open: () => Effect.die("unused open"),
+        get: (providerSessionId) =>
+          Effect.succeed(
+            providerSessionId === sessionId
+              ? Option.some(runtime)
+              : providerSessionId === noStopSessionId
+                ? Option.some(baseRuntime)
+                : Option.none(),
+          ),
+        close: () => Effect.void,
+        release: () => Effect.void,
+        detach: () => Effect.void,
+      }),
+    );
+    const controlLayer = providerTurnControlLayer.pipe(
+      Layer.provide(Layer.merge(projectionLayer, sessionManagerLayer)),
+    );
+
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlServiceV2;
+      yield* control.stopTask({
+        threadId,
+        providerSessionId: sessionId,
+        nativeTaskId: "wf-task-1",
+      });
+      // A released session cannot be running the task any more — the stop is
+      // a no-op success, not a durable-effect failure that retries forever.
+      yield* control.stopTask({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session:stop-task:gone"),
+        nativeTaskId: "wf-task-2",
+      });
+      // A runtime without task-level stop must fail loudly rather than
+      // silently pretending it stopped something.
+      const unsupported = yield* Effect.exit(
+        control.stopTask({
+          threadId,
+          providerSessionId: noStopSessionId,
+          nativeTaskId: "wf-task-3",
+        }),
+      );
+      assert.isTrue(Exit.isFailure(unsupported));
+    }).pipe(Effect.provide(controlLayer));
+
+    assert.deepEqual(yield* Ref.get(stoppedTaskIds), ["wf-task-1"]);
+  }),
 );

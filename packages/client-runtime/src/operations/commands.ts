@@ -6,6 +6,7 @@ import {
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
   type PlanId,
@@ -152,6 +153,10 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
   readonly runId?: RunId;
   /** Temporary caller compatibility while UI naming moves from turns to runs. */
   readonly turnId?: string;
+}
+
+export interface StopThreadSubagentInput extends ThreadCommandInput {
+  readonly subagentId: NodeId;
 }
 
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
@@ -638,6 +643,17 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId,
+  });
+});
+
+export const stopThreadSubagent = Effect.fn("EnvironmentCommands.stopThreadSubagent")(function* (
+  input: StopThreadSubagentInput,
+) {
+  return yield* dispatch({
+    type: "subagent.stop",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    subagentId: input.subagentId,
   });
 });
 

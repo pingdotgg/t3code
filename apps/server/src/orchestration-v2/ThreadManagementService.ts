@@ -7,6 +7,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ListAllThreadRefsResult,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -283,6 +284,10 @@ export interface ThreadManagementServiceShape {
     OrchestrationV2ThreadShellSnapshot,
     OrchestratorV2Error
   >;
+  readonly listAllThreadRefs: () => Effect.Effect<
+    OrchestrationV2ListAllThreadRefsResult,
+    OrchestratorV2Error
+  >;
   readonly getThreadShell: OrchestratorV2["Service"]["getThreadShell"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
@@ -307,6 +312,16 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementService,
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
+
+export const isInternalSubagentThread = (
+  thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage">,
+) => thread.lineage.relationshipToParent === "subagent" || thread.forkedFrom?.type === "node";
+
+export const userFacingShellSnapshot = (snapshot: OrchestrationV2ThreadShellSnapshot) => ({
+  ...snapshot,
+  threads: snapshot.threads.filter((thread) => !isInternalSubagentThread(thread)),
+  archivedThreads: snapshot.archivedThreads.filter((thread) => !isInternalSubagentThread(thread)),
+});
 
 export function isActiveRun(run: OrchestrationV2Run): boolean {
   return (
@@ -452,16 +467,29 @@ const make = Effect.gen(function* () {
       Effect.map((snapshot) =>
         snapshot.threads
           .filter((thread) => thread.projectId === input.projectId)
-          .filter(
-            (thread) =>
-              input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
-          )
+          .filter((thread) => input.includeSubagents || !isInternalSubagentThread(thread))
           .toSorted(
             (left, right) =>
               DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
               right.id.localeCompare(left.id),
           ),
       ),
+    );
+
+  const listAllThreadRefs: ThreadManagementServiceShape["listAllThreadRefs"] = () =>
+    orchestrator.getShellSnapshot().pipe(
+      Effect.map((snapshot) => ({
+        // Worktree cleanup treats this as the complete set: an archived thread
+        // still holds its worktree, so omitting the archive would classify it
+        // as orphaned and remove it.
+        threadRefs: [...snapshot.threads, ...snapshot.archivedThreads].map(
+          ({ id, projectId, worktreePath }) => ({
+            threadId: id,
+            projectId,
+            worktreePath,
+          }),
+        ),
+      })),
     );
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
@@ -650,6 +678,7 @@ const make = Effect.gen(function* () {
     getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
+    listAllThreadRefs,
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,

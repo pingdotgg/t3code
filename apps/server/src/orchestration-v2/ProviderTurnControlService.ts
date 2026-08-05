@@ -36,7 +36,18 @@ export class ProviderTurnControlError extends Schema.TaggedErrorClass<ProviderTu
   },
 ) {}
 
+export class ProviderTaskStopError extends Schema.TaggedErrorClass<ProviderTaskStopError>()(
+  "ProviderTaskStopError",
+  {
+    threadId: ThreadId,
+    providerSessionId: ProviderSessionId,
+    nativeTaskId: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
+export const isProviderTaskStopError = Schema.is(ProviderTaskStopError);
 
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
@@ -60,6 +71,11 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerTurnId: ProviderTurnId;
     readonly interruptedAttemptId: RunAttemptId;
   }) => Effect.Effect<void, ProviderTurnControlError>;
+  readonly stopTask: (input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly nativeTaskId: string;
+  }) => Effect.Effect<void, ProviderTaskStopError>;
 }
 
 export class ProviderTurnControlServiceV2 extends Context.Service<
@@ -244,6 +260,44 @@ export const layer: Layer.Layer<
                   threadId: input.threadId,
                   operation: "restart",
                   providerTurnId: input.providerTurnId,
+                  cause,
+                }),
+          ),
+        ),
+      stopTask: (input) =>
+        Effect.gen(function* () {
+          const session = yield* sessions.get(input.providerSessionId);
+          if (Option.isNone(session)) {
+            // The task's session was already released — the task cannot be
+            // running under it any more, so there is nothing left to stop.
+            yield* Effect.logWarning(
+              "Provider task stop found no live session; treating as already stopped",
+              {
+                threadId: input.threadId,
+                providerSessionId: input.providerSessionId,
+                nativeTaskId: input.nativeTaskId,
+              },
+            );
+            return;
+          }
+          const stop = session.value.stopTask;
+          if (stop === undefined) {
+            return yield* new ProviderTaskStopError({
+              threadId: input.threadId,
+              providerSessionId: input.providerSessionId,
+              nativeTaskId: input.nativeTaskId,
+              cause: "The provider runtime for this session does not support stopping tasks.",
+            });
+          }
+          yield* stop({ nativeTaskId: input.nativeTaskId });
+        }).pipe(
+          Effect.mapError((cause) =>
+            isProviderTaskStopError(cause)
+              ? cause
+              : new ProviderTaskStopError({
+                  threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
+                  nativeTaskId: input.nativeTaskId,
                   cause,
                 }),
           ),

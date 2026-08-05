@@ -709,7 +709,9 @@ const makeWsRpcLayer = (
             const base = yield* sql.withTransaction(
               Effect.gen(function* () {
                 const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-                const threads = yield* threadManagement.getShellSnapshot();
+                const threads = yield* threadManagement
+                  .getShellSnapshot()
+                  .pipe(Effect.map(ThreadManagementService.userFacingShellSnapshot));
                 return {
                   schemaVersion: threads.schemaVersion,
                   snapshotSequence: yield* applicationEvents.latestApplicationSequence,
@@ -767,7 +769,16 @@ const makeWsRpcLayer = (
                     return yield* projectItem(stored);
                   }
                   const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
-                  return shellStreamItemFromThreadShell({ stored, shell });
+                  // An internal subagent thread is not part of the user-facing
+                  // stream; treating its shell as absent emits a removal the
+                  // client reducer absorbs.
+                  return shellStreamItemFromThreadShell({
+                    stored,
+                    shell:
+                      shell !== null && ThreadManagementService.isInternalSubagentThread(shell)
+                        ? null
+                        : shell,
+                  });
                 }),
               { concurrency: 8 },
             );
@@ -892,7 +903,9 @@ const makeWsRpcLayer = (
         .withTransaction(
           Effect.gen(function* () {
             const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-            const threads = yield* threadManagement.getShellSnapshot();
+            const threads = yield* threadManagement
+              .getShellSnapshot()
+              .pipe(Effect.map(ThreadManagementService.userFacingShellSnapshot));
             return {
               schemaVersion: threads.schemaVersion,
               snapshotSequence: yield* applicationEvents.latestApplicationSequence,
@@ -928,13 +941,17 @@ const makeWsRpcLayer = (
               Effect.forEach(
                 coalesceStoredThreadEvents(Array.from(events)),
                 (stored) =>
-                  threadManagement
-                    .getThreadShell(stored.event.threadId)
-                    .pipe(
-                      Effect.map((shell) =>
-                        archivedShellStreamItemFromThreadShell({ stored, shell }),
-                      ),
+                  threadManagement.getThreadShell(stored.event.threadId).pipe(
+                    Effect.map((shell) =>
+                      archivedShellStreamItemFromThreadShell({
+                        stored,
+                        shell:
+                          shell !== null && ThreadManagementService.isInternalSubagentThread(shell)
+                            ? null
+                            : shell,
+                      }),
                     ),
+                  ),
                 { concurrency: 8 },
               ),
             ),
@@ -1101,6 +1118,20 @@ const makeWsRpcLayer = (
             ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
             getOrchestrationV2ArchivedShellSnapshot,
             { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.listAllThreadRefs]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.listAllThreadRefs,
+            threadManagement.listAllThreadRefs().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Failed to list orchestration V2 thread references",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestrationV2" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(

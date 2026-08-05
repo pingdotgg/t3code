@@ -17,6 +17,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         label: "environment-data:orchestration-v2:dispatch-command",
         tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       }),
+      listAllThreadRefs: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:orchestration-v2:list-all-thread-refs",
+        tag: ORCHESTRATION_V2_WS_METHODS.listAllThreadRefs,
+      }),
       threadProjection: createEnvironmentRpcQueryAtomFamily(runtime, {
         label: "environment-data:orchestration-v2:thread-projection",
         tag: ORCHESTRATION_V2_WS_METHODS.getThreadProjection,

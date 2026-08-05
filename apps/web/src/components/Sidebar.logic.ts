@@ -1,6 +1,9 @@
 import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { isInternalSubagentThread as isSidebarSubagentThread } from "../threadVisibility";
+
+export { isSidebarSubagentThread };
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -97,12 +100,8 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
-  return thread.lineage.relationshipToParent === "subagent";
-}
-
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "forkedFrom" | "lineage"> & {
     environmentId: string;
     projectId: string;
   },
@@ -944,7 +943,7 @@ export function sortLogicalProjectsForSidebar<
 
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
-  TThread extends ScopedSidebarThread & Pick<SidebarThreadSummary, "lineage">,
+  TThread extends ScopedSidebarThread & Pick<SidebarThreadSummary, "forkedFrom" | "lineage">,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

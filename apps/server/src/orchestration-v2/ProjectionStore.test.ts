@@ -214,6 +214,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       };
       const task = {
         id: taskId,
+        kind: "subagent" as const,
+        role: { name: "general-purpose", source: "app_default" as const },
+        usage: null,
+        currentActivationId: null,
+        activationCount: 1,
+        workflow: null,
+        workflowMembership: null,
+        recentActivity: [],
         threadId,
         runId,
         parentNodeId: rootNodeId,

@@ -213,6 +213,23 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
+          case "subagent.stop":
+            return providerTurnControl
+              .stopTask({
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                nativeTaskId: effect.request.nativeTaskId,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "runtime-request.respond":
             return runtimeRequests
               .respond({

@@ -19,6 +19,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  SubagentActivationId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -409,6 +410,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       const eventSink = yield* EventSinkV2;
       const projectionStore = yield* ProjectionStoreV2;
       const maintenance = yield* ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
       const parentThreadId = ThreadId.make("thread:foundation-cross-thread:parent");
       const childThreadId = ThreadId.make("thread:foundation-cross-thread:child");
@@ -416,6 +418,9 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         "provider-thread:foundation-cross-thread:child",
       );
       const subagentId = NodeId.make("subagent:foundation-cross-thread");
+      const activationId = SubagentActivationId.make(
+        "subagent:foundation-cross-thread:activation:1",
+      );
       const spawnTransferId = ContextTransferId.make("transfer:foundation-cross-thread:spawn");
       const resultTransferId = ContextTransferId.make("transfer:foundation-cross-thread:result");
       const parentThread = makeThread(parentThreadId, now);
@@ -464,8 +469,37 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
               prompt: "Inspect the child flow",
               title: "Cross-thread child",
               model: modelSelection.model,
+              kind: "subagent",
+              role: { name: "general-purpose", source: "app_default" },
               status: "completed",
               result: "done",
+              usage: null,
+              currentActivationId: null,
+              activationCount: 1,
+              workflow: null,
+              workflowMembership: null,
+              recentActivity: [],
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-cross-thread:subagent-activation"),
+            type: "subagent-activation.updated",
+            threadId: parentThreadId,
+            nodeId: subagentId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: activationId,
+              threadId: parentThreadId,
+              subagentId,
+              runId: null,
+              providerTurnId: null,
+              ordinal: 1,
+              status: "completed",
+              usage: { totalTokens: 240, toolUses: 2 },
               startedAt: now,
               completedAt: now,
               updatedAt: now,
@@ -566,11 +600,57 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           [childProviderThreadId],
         );
         assert.equal(child.thread.activeProviderThreadId, childProviderThreadId);
+        assert.deepEqual(
+          parent.subagentActivations.map((activation) => ({
+            id: activation.id,
+            totalTokens: activation.usage?.totalTokens,
+          })),
+          [
+            {
+              id: activationId,
+              totalTokens: 240,
+            },
+          ],
+        );
       });
 
       yield* assertCrossThreadProjection;
       assert.isTrue((yield* maintenance.verify).valid);
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_subagent_activations (
+          activation_id,
+          thread_id,
+          subagent_id,
+          run_id,
+          provider_turn_id,
+          ordinal,
+          status,
+          started_at,
+          completed_at,
+          updated_at,
+          payload_json
+        )
+        VALUES (
+          'activation:foundation-cross-thread:stale',
+          ${parentThreadId},
+          ${subagentId},
+          NULL,
+          NULL,
+          99,
+          'completed',
+          NULL,
+          NULL,
+          '2026-07-26T00:00:00.000Z',
+          '{}'
+        )
+      `;
       assert.isTrue((yield* maintenance.rebuild).valid);
+      const staleActivationRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM orchestration_v2_projection_subagent_activations
+        WHERE activation_id = 'activation:foundation-cross-thread:stale'
+      `;
+      assert.equal(staleActivationRows[0]?.count, 0);
       yield* assertCrossThreadProjection;
     }),
   );

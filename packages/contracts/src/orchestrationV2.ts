@@ -23,6 +23,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  SubagentActivationId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -481,6 +482,35 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+export const OrchestrationV2SubagentUsage = Schema.Struct({
+  totalTokens: NonNegativeInt,
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  toolUses: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentUsage = typeof OrchestrationV2SubagentUsage.Type;
+
+export const OrchestrationV2SubagentRole = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  source: Schema.Literals(["provider", "app_default"]),
+});
+export type OrchestrationV2SubagentRole = typeof OrchestrationV2SubagentRole.Type;
+
+export const OrchestrationV2SubagentActivity = Schema.Struct({
+  at: Schema.DateTimeUtc,
+  summary: TrimmedNonEmptyString,
+});
+export type OrchestrationV2SubagentActivity = typeof OrchestrationV2SubagentActivity.Type;
+
+export const OrchestrationV2WorkflowPhase = Schema.Struct({
+  index: NonNegativeInt,
+  title: TrimmedNonEmptyString,
+});
+export type OrchestrationV2WorkflowPhase = typeof OrchestrationV2WorkflowPhase.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -503,6 +533,73 @@ export const OrchestrationV2Subagent = Schema.Struct({
   // blocking tool call). Absent on legacy records; treated as settled_only.
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  kind: Schema.Literals(["subagent", "workflow", "workflow_agent"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("subagent" as const)),
+  ),
+  role: OrchestrationV2SubagentRole.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ name: "general-purpose", source: "app_default" as const }),
+    ),
+  ),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "waiting",
+    "idle",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ]),
+  progress: Schema.optional(Schema.String),
+  result: Schema.NullOr(Schema.String),
+  usage: Schema.NullOr(OrchestrationV2SubagentUsage).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  currentActivationId: Schema.NullOr(SubagentActivationId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  activationCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
+  workflow: Schema.NullOr(
+    Schema.Struct({
+      phases: Schema.Array(OrchestrationV2WorkflowPhase),
+      // Run handles from the Workflow tool result. `scriptPath` and
+      // `transcriptDir` are server-local paths clients echo back to
+      // inspection RPCs, which re-validate them before touching disk.
+      // `sessionUrl` replaces the local handles for remote runs and is
+      // scheme-restricted to http(s) at the adapter.
+      name: Schema.optional(TrimmedNonEmptyString),
+      runId: Schema.optional(TrimmedNonEmptyString),
+      scriptPath: Schema.optional(TrimmedNonEmptyString),
+      transcriptDir: Schema.optional(TrimmedNonEmptyString),
+      sessionUrl: Schema.optional(TrimmedNonEmptyString),
+      warning: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  workflowMembership: Schema.NullOr(
+    Schema.Struct({
+      workflowSubagentId: NodeId,
+      agentIndex: NonNegativeInt,
+      phaseIndex: Schema.NullOr(NonNegativeInt),
+      attempt: PositiveInt,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  recentActivity: Schema.Array(OrchestrationV2SubagentActivity).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+
+export const OrchestrationV2SubagentActivation = Schema.Struct({
+  id: SubagentActivationId,
+  threadId: ThreadId,
+  subagentId: NodeId,
+  runId: Schema.NullOr(RunId),
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  ordinal: PositiveInt,
   status: Schema.Literals([
     "pending",
     "running",
@@ -512,13 +609,12 @@ export const OrchestrationV2Subagent = Schema.Struct({
     "cancelled",
     "interrupted",
   ]),
-  progress: Schema.optional(Schema.String),
-  result: Schema.NullOr(Schema.String),
+  usage: Schema.NullOr(OrchestrationV2SubagentUsage),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
 });
-export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+export type OrchestrationV2SubagentActivation = typeof OrchestrationV2SubagentActivation.Type;
 
 export const OrchestrationV2CheckpointScope = Schema.Struct({
   id: CheckpointScopeId,
@@ -783,6 +879,33 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
   "interrupted",
 ]);
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
+
+/**
+ * How a subagent's status projects onto its timeline row.
+ *
+ * A subagent identity is reusable and rests at "idle" between activations, but
+ * a turn item records one completed activation and has no such state. Producers
+ * must translate rather than copy: writing a raw subagent status onto a turn
+ * item can emit an event that its own schema cannot decode, which is
+ * unrecoverable because the projection rebuild fails on every later startup.
+ *
+ * The `Record` type is the safeguard — adding a subagent status without giving
+ * it a timeline meaning here is a compile error, not a runtime brick.
+ */
+export const orchestrationV2SubagentStatusAsTurnItemStatus: Record<
+  typeof OrchestrationV2Subagent.Type.status,
+  OrchestrationV2TurnItemStatus
+> = {
+  pending: "pending",
+  running: "running",
+  waiting: "waiting",
+  // Resting between activations: the row for the activation that just ended.
+  idle: "completed",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  interrupted: "interrupted",
+};
 
 export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "provider_error",
@@ -1140,6 +1263,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("subagent-activation.updated"),
+    payload: OrchestrationV2SubagentActivation,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literals(["provider-session.attached", "provider-session.updated"]),
     payload: OrchestrationV2ProviderSession,
   }),
@@ -1217,6 +1345,7 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   attempts: Schema.Array(OrchestrationV2RunAttempt),
   nodes: Schema.Array(OrchestrationV2ExecutionNode),
   subagents: Schema.Array(OrchestrationV2Subagent),
+  subagentActivations: Schema.Array(OrchestrationV2SubagentActivation),
   providerSessions: Schema.Array(OrchestrationV2ProviderSession),
   providerThreads: Schema.Array(OrchestrationV2ProviderThread),
   providerTurns: Schema.Array(OrchestrationV2ProviderTurn),
@@ -1431,11 +1560,28 @@ export type OrchestrationV2ExecutionNodeJson = typeof OrchestrationV2ExecutionNo
 
 export const OrchestrationV2SubagentJson = OrchestrationV2Subagent.mapFields((fields) => ({
   ...fields,
+  recentActivity: Schema.Array(
+    OrchestrationV2SubagentActivity.mapFields((activityFields) => ({
+      ...activityFields,
+      at: Schema.DateTimeUtcFromString,
+    })),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   updatedAt: Schema.DateTimeUtcFromString,
 }));
 export type OrchestrationV2SubagentJson = typeof OrchestrationV2SubagentJson.Type;
+
+export const OrchestrationV2SubagentActivationJson = OrchestrationV2SubagentActivation.mapFields(
+  (fields) => ({
+    ...fields,
+    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2SubagentActivationJson =
+  typeof OrchestrationV2SubagentActivationJson.Type;
 
 export const OrchestrationV2CheckpointScopeJson = OrchestrationV2CheckpointScope.mapFields(
   (fields) => ({
@@ -1725,6 +1871,9 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     attempts: Schema.Array(OrchestrationV2RunAttemptJson),
     nodes: Schema.Array(OrchestrationV2ExecutionNodeJson),
     subagents: Schema.Array(OrchestrationV2SubagentJson),
+    subagentActivations: Schema.Array(OrchestrationV2SubagentActivationJson).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+    ),
     providerSessions: Schema.Array(OrchestrationV2ProviderSessionJson),
     providerThreads: Schema.Array(OrchestrationV2ProviderThreadJson),
     providerTurns: Schema.Array(OrchestrationV2ProviderTurnJson),
@@ -1857,6 +2006,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("subagent.updated"),
     payload: OrchestrationV2SubagentJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("subagent-activation.updated"),
+    payload: OrchestrationV2SubagentActivationJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -2114,6 +2268,14 @@ export const OrchestrationV2Command = Schema.Union([
     reason: Schema.optional(Schema.String),
   }),
   Schema.Struct({
+    /** Stop one background subagent task (e.g. a workflow run) without
+     * interrupting the run that launched it. */
+    type: Schema.Literal("subagent.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    subagentId: NodeId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -2235,6 +2397,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  listAllThreadRefs: "orchestration.listAllThreadRefs",
   getThreadProjection: "orchestration.getThreadProjection",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -2268,6 +2431,19 @@ export const OrchestrationV2ArchivedShellStreamItem = Schema.Union([
 ]);
 export type OrchestrationV2ArchivedShellStreamItem =
   typeof OrchestrationV2ArchivedShellStreamItem.Type;
+
+export const OrchestrationV2ThreadRef = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationV2ThreadRef = typeof OrchestrationV2ThreadRef.Type;
+
+export const OrchestrationV2ListAllThreadRefsResult = Schema.Struct({
+  threadRefs: Schema.Array(OrchestrationV2ThreadRef),
+});
+export type OrchestrationV2ListAllThreadRefsResult =
+  typeof OrchestrationV2ListAllThreadRefsResult.Type;
 
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
@@ -2444,6 +2620,10 @@ export const OrchestrationV2RpcSchemas = {
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationV2ArchivedShellSnapshot,
+  },
+  listAllThreadRefs: {
+    input: Schema.Struct({}),
+    output: OrchestrationV2ListAllThreadRefsResult,
   },
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,

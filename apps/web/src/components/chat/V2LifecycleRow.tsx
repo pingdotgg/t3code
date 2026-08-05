@@ -211,7 +211,7 @@ export function V2LifecycleRow(props: {
         title={subagentDisplayTitle(item.title ?? "Subagent")}
         detail={detail}
         badge={item.status}
-        threadId={item.childThreadId}
+        threadId={null}
         expandedDetail={finalResult}
         onOpenThread={props.onOpenThread}
       />

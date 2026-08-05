@@ -265,12 +265,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </Button>
       ) : null}
 
-      {item.type === "subagent" && item.childThreadId !== null ? (
-        <Button size="xs" variant="outline" onClick={() => props.onOpenThread(item.childThreadId!)}>
-          Open subagent thread
-        </Button>
-      ) : null}
-
       {item.type === "handoff" ? (
         <div className="space-y-1 rounded-md border border-border/45 p-2 text-muted-foreground">
           <p>

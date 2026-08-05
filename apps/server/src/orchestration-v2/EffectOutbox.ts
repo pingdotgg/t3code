@@ -73,6 +73,12 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     answers: Schema.optional(ProviderUserInputAnswers),
   }),
   Schema.Struct({
+    type: Schema.Literal("subagent.stop"),
+    providerSessionId: ProviderSessionId,
+    /** The provider's own task id — what the runtime's stop call accepts. */
+    nativeTaskId: Schema.String,
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider-thread.rollback"),
     providerThreadId: ProviderThreadId,
     checkpointId: CheckpointId,
@@ -115,6 +121,7 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.steer",
   "provider-turn.restart",
   "runtime-request.respond",
+  "subagent.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const OrchestrationEffectStatusV2 = Schema.Literals([

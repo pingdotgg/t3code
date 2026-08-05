@@ -22,6 +22,7 @@ import {
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   ProviderInstanceId,
@@ -65,6 +66,11 @@ import {
   subagentResultForRun,
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
+import {
+  appendSubagentActivity,
+  defaultSubagentRole,
+  subagentActivationId,
+} from "./SubagentObservability.ts";
 import { ThreadForkServiceV2 } from "./ThreadForkService.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedErrorClass<OrchestratorDispatchError>()(
@@ -210,6 +216,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "prepared-run.progress":
     case "prepared-run.fail":
     case "run.interrupt":
+    case "subagent.stop":
     case "queued-message.promote-to-steer":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -289,7 +296,10 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
 
 function delegatedTaskTerminalStatus(
   status: OrchestrationV2Run["status"],
-): OrchestrationV2Subagent["status"] | null {
+): Extract<
+  OrchestrationV2Subagent["status"],
+  "completed" | "failed" | "cancelled" | "interrupted"
+> | null {
   switch (status) {
     case "completed":
     case "failed":
@@ -306,6 +316,12 @@ function delegatedTaskTerminalStatus(
       return null;
   }
 }
+
+const isTerminalSubagentActivation = (activation: OrchestrationV2SubagentActivation) =>
+  activation.status === "completed" ||
+  activation.status === "failed" ||
+  activation.status === "cancelled" ||
+  activation.status === "interrupted";
 
 function nextQueuedRun(
   projection: OrchestrationV2ThreadProjection,
@@ -351,6 +367,29 @@ function providerThreadForRun(
   return run.providerThreadId === null
     ? undefined
     : projection.providerThreads.find((candidate) => candidate.id === run.providerThreadId);
+}
+
+export function providerSessionIdForSubagentStop(input: {
+  readonly runId: OrchestrationV2Subagent["runId"];
+  readonly activeProviderThreadId: OrchestrationV2AppThread["activeProviderThreadId"];
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "providerThreadId">>;
+  readonly providerThreads: ReadonlyArray<
+    Pick<OrchestrationV2ProviderThread, "id" | "providerSessionId">
+  >;
+}) {
+  const run =
+    input.runId === null ? undefined : input.runs.find((candidate) => candidate.id === input.runId);
+  const runSessionId =
+    run?.providerThreadId === null || run?.providerThreadId === undefined
+      ? null
+      : (input.providerThreads.find((candidate) => candidate.id === run.providerThreadId)
+          ?.providerSessionId ?? null);
+  if (runSessionId !== null) return runSessionId;
+  if (input.activeProviderThreadId === null) return null;
+  return (
+    input.providerThreads.find((candidate) => candidate.id === input.activeProviderThreadId)
+      ?.providerSessionId ?? null
+  );
 }
 
 function providerTurnForRun(
@@ -4490,6 +4529,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
       };
+      const activationId = subagentActivationId(taskNodeId, 1);
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
         threadId: command.parentThreadId,
@@ -4506,8 +4546,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        kind: "subagent",
+        role: defaultSubagentRole("delegated-worker"),
         status: "running",
         result: null,
+        usage: null,
+        currentActivationId: activationId,
+        activationCount: 1,
+        workflow: null,
+        workflowMembership: null,
+        recentActivity: [],
         startedAt: now,
         completedAt: null,
         updatedAt: now,
@@ -4530,6 +4578,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: null,
       };
       const parentProviderTurn = providerTurnForRun(parentProjection, parentRun);
+      const activation = {
+        id: activationId,
+        threadId: command.parentThreadId,
+        subagentId: taskNodeId,
+        runId: parentRun.id,
+        providerTurnId: parentProviderTurn?.id ?? null,
+        ordinal: 1,
+        status: "running",
+        usage: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      } satisfies OrchestrationV2SubagentActivation;
       const taskTurnItem: OrchestrationV2TurnItem = {
         id: taskTurnItemId,
         threadId: command.parentThreadId,
@@ -4583,6 +4644,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: command.modelSelection.instanceId,
         occurredAt: now,
         payload: task,
+      });
+      yield* emitEvent({
+        type: "subagent-activation.updated",
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        nodeId: taskNodeId,
+        driver: targetAdapter.driver,
+        providerInstanceId: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: activation,
       });
       yield* emitEvent({
         type: "turn-item.updated",
@@ -5909,6 +5980,89 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return undefined;
     });
 
+  const dispatchSubagentStop = (
+    command: Extract<OrchestrationV2Command, { readonly type: "subagent.stop" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) =>
+    Effect.gen(function* () {
+      const projection = yield* loadProjectionForCommand(command);
+      const subagent = projection.subagents.find(
+        (candidate) => candidate.id === command.subagentId,
+      );
+      if (subagent === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Subagent ${command.subagentId} does not exist.`,
+        });
+      }
+      if (
+        subagent.status !== "pending" &&
+        subagent.status !== "running" &&
+        subagent.status !== "waiting"
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Subagent ${command.subagentId} is not active (${subagent.status}).`,
+        });
+      }
+      const nativeTaskId = subagent.nativeTaskRef?.nativeId;
+      if (nativeTaskId === undefined || nativeTaskId === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Subagent ${command.subagentId} has no native task reference to stop.`,
+        });
+      }
+      const providerSessionId = providerSessionIdForSubagentStop({
+        runId: subagent.runId,
+        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        runs: projection.runs,
+        providerThreads: projection.providerThreads,
+      });
+      if (providerSessionId === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Subagent ${command.subagentId} has no active provider session to stop it.`,
+        });
+      }
+
+      // The provider's task_notification is what terminalizes the subagent;
+      // this only records the user's intent so the panel and card reflect
+      // the request immediately.
+      const now = yield* DateTime.now;
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.threadId,
+        ...(subagent.runId === null ? {} : { runId: subagent.runId }),
+        nodeId: subagent.id,
+        driver: subagent.driver,
+        occurredAt: now,
+        payload: {
+          ...subagent,
+          recentActivity: appendSubagentActivity(subagent.recentActivity, "Stop requested", now),
+          updatedAt: now,
+        },
+      });
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:subagent.stop:${subagent.id}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "subagent.stop",
+            providerSessionId,
+            nativeTaskId,
+          },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    });
+
   const dispatchCheckpointRollback = (
     command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -6320,6 +6474,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
+        currentActivationId: null,
         completedAt: now,
         updatedAt: now,
       };
@@ -6330,6 +6485,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedTask,
         now,
       });
+      const currentActivation =
+        task.currentActivationId === null
+          ? undefined
+          : parentProjection.subagentActivations.find(
+              (activation) => activation.id === task.currentActivationId,
+            );
+      const terminalActivation =
+        task.currentActivationId === null || currentActivation?.status === terminalStatus
+          ? null
+          : currentActivation === undefined
+            ? ({
+                id: task.currentActivationId,
+                threadId: task.threadId,
+                subagentId: task.id,
+                runId: task.runId,
+                providerTurnId: null,
+                ordinal: Math.max(1, task.activationCount),
+                status: terminalStatus,
+                usage: task.usage,
+                startedAt: task.startedAt,
+                completedAt: now,
+                updatedAt: now,
+              } satisfies OrchestrationV2SubagentActivation)
+            : isTerminalSubagentActivation(currentActivation)
+              ? null
+              : ({
+                  ...currentActivation,
+                  status: terminalStatus,
+                  completedAt: now,
+                  updatedAt: now,
+                } satisfies OrchestrationV2SubagentActivation);
       const resultTransferId = yield* idAllocator.allocate.contextTransfer({
         sourceThreadId: childThreadId,
         targetThreadId: parentThreadId,
@@ -6446,6 +6632,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   parentProjection.thread.providerInstanceId,
                 occurredAt: now,
                 payload: completionPlan.message,
+              },
+            ]),
+        ...(terminalActivation === null
+          ? []
+          : [
+              {
+                type: "subagent-activation.updated" as const,
+                threadId: parentThreadId,
+                ...(task.runId === null ? {} : { runId: task.runId }),
+                nodeId: task.id,
+                driver: task.driver,
+                occurredAt: now,
+                payload: terminalActivation,
               },
             ]),
         ...(parentNode === undefined
@@ -6722,6 +6921,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
+        break;
+      case "subagent.stop":
+        yield* dispatchSubagentStop(command, events, effects);
         break;
       case "queued-message.promote-to-steer":
         yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);

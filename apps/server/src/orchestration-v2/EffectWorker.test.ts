@@ -95,6 +95,7 @@ function makeExecutorLayer(input: {
       ProviderTurnControlServiceV2.of({
         interrupt: () => Effect.void,
         steer: () => Effect.void,
+        stopTask: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined

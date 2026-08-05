@@ -58,6 +58,7 @@ import Migration0042 from "./Migrations/042_ApplicationEventSource.ts";
 import Migration0043 from "./Migrations/043_OrchestrationV2EffectCancellation.ts";
 import Migration0044 from "./Migrations/044_ScheduledTasks.ts";
 import Migration0045 from "./Migrations/045_LegacyV1ImportState.ts";
+import Migration0046 from "./Migrations/046_OrchestrationV2SubagentObservability.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -115,6 +116,7 @@ export const migrationEntries = [
   [43, "OrchestrationV2EffectCancellation", Migration0043],
   [44, "ScheduledTasks", Migration0044],
   [45, "LegacyV1ImportState", Migration0045],
+  [46, "OrchestrationV2SubagentObservability", Migration0046],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

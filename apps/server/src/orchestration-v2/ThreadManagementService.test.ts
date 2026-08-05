@@ -5,6 +5,7 @@ import {
   NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -26,6 +27,7 @@ import {
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementThreadArchivedError,
   ThreadManagementNoSteerableRunError,
+  userFacingShellSnapshot,
   withCreationProvenance,
 } from "./ThreadManagementService.ts";
 
@@ -316,5 +318,124 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     expect(error).toBeInstanceOf(ThreadManagementThreadNotFoundError);
     expect(error).toMatchObject({ projectId, threadId });
     expect("cause" in error).toBe(false);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it("removes internal subagent children from active and archived shell collections", () => {
+  const rootId = ThreadId.make("thread:thread-management:root");
+  const forkId = ThreadId.make("thread:thread-management:fork");
+  const lineageSubagentId = ThreadId.make("thread:thread-management:lineage-subagent");
+  const nodeSubagentId = ThreadId.make("thread:thread-management:node-subagent");
+  const shell = (
+    id: ThreadId,
+    lineage: OrchestrationV2ThreadShell["lineage"],
+    forkedFrom: OrchestrationV2ThreadShell["forkedFrom"],
+  ) =>
+    ({
+      id,
+      lineage,
+      forkedFrom,
+    }) as OrchestrationV2ThreadShell;
+  const rootLineage = {
+    rootThreadId: rootId,
+    parentThreadId: null,
+    relationshipToParent: null,
+  } as const;
+  const snapshot = userFacingShellSnapshot({
+    schemaVersion: 3,
+    snapshotSequence: 10,
+    threads: [
+      shell(rootId, rootLineage, null),
+      shell(
+        forkId,
+        {
+          rootThreadId: rootId,
+          parentThreadId: rootId,
+          relationshipToParent: "fork",
+        },
+        { type: "run", threadId: rootId, runId: RunId.make("run:thread-management:fork") },
+      ),
+      shell(
+        lineageSubagentId,
+        {
+          rootThreadId: rootId,
+          parentThreadId: rootId,
+          relationshipToParent: "subagent",
+        },
+        null,
+      ),
+    ],
+    archivedThreads: [
+      shell(nodeSubagentId, rootLineage, {
+        type: "node",
+        nodeId: NodeId.make("node:thread-management:subagent"),
+      }),
+    ],
+  });
+
+  expect(snapshot.threads.map((thread) => thread.id)).toEqual([rootId, forkId]);
+  expect(snapshot.archivedThreads).toEqual([]);
+});
+
+it.effect("lists compact references for every active thread, including hidden subagents", () => {
+  const projectId = ProjectId.make("project:thread-management:refs");
+  const rootId = ThreadId.make("thread:thread-management:refs-root");
+  const lineageChildId = ThreadId.make("thread:thread-management:refs-lineage-child");
+  const nodeChildId = ThreadId.make("thread:thread-management:refs-node-child");
+  const worktreePath = "/workspace/project/.worktrees/feature";
+  const shell = (
+    id: ThreadId,
+    lineage: OrchestrationV2ThreadShell["lineage"],
+    forkedFrom: OrchestrationV2ThreadShell["forkedFrom"],
+  ) => ({ id, projectId, worktreePath, lineage, forkedFrom }) as OrchestrationV2ThreadShell;
+  const rootLineage = {
+    rootThreadId: rootId,
+    parentThreadId: null,
+    relationshipToParent: null,
+  } as const;
+  const archivedId = ThreadId.make("thread:thread-management:refs-archived");
+  const threads = [
+    shell(rootId, rootLineage, null),
+    shell(
+      lineageChildId,
+      {
+        rootThreadId: rootId,
+        parentThreadId: rootId,
+        relationshipToParent: "subagent",
+      },
+      null,
+    ),
+    shell(nodeChildId, rootLineage, {
+      type: "node",
+      nodeId: NodeId.make("node:thread-management:refs-child"),
+    }),
+  ];
+  const testLayer = layer.pipe(
+    Layer.provide(
+      Layer.mock(OrchestratorV2)({
+        getShellSnapshot: () =>
+          Effect.succeed({
+            schemaVersion: 3,
+            snapshotSequence: 10,
+            threads,
+            // An archived thread still holds its worktree; worktree cleanup
+            // treats this RPC as the complete set, so omitting the archive
+            // would classify that worktree as orphaned and remove it.
+            archivedThreads: [shell(archivedId, rootLineage, null)],
+          }),
+      }),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService;
+
+    expect(yield* service.listAllThreadRefs()).toEqual({
+      threadRefs: [...threads, shell(archivedId, rootLineage, null)].map((thread) => ({
+        threadId: thread.id,
+        projectId,
+        worktreePath,
+      })),
+    });
   }).pipe(Effect.provide(testLayer));
 });
