@@ -43,7 +43,10 @@ export interface ProviderInstanceRegistryMutatorShape {
    * `makeProviderInstanceRegistry`. This keeps settings-watcher loops from
    * erroring out on a single bad entry.
    */
-  readonly reconcile: (configMap: ProviderInstanceConfigMap) => Effect.Effect<void>;
+  readonly reconcile: (
+    configMap: ProviderInstanceConfigMap,
+    options?: { readonly force?: boolean },
+  ) => Effect.Effect<void>;
 }
 
 export class ProviderInstanceRegistryMutator extends Context.Service<

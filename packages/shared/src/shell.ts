@@ -339,6 +339,60 @@ export const WindowsShellEnvironment = Context.Reference<WindowsShellEnvironment
   },
 );
 
+export type AsyncWindowsShellEnvironmentReader = (
+  names: ReadonlyArray<string>,
+  options?: WindowsEnvironmentProbeOptions,
+) => Effect.Effect<Partial<Record<string, string>>>;
+
+function execFileOutput(
+  file: string,
+  args: ReadonlyArray<string>,
+  timeout: number,
+): Effect.Effect<string, Error> {
+  return Effect.callback<string, Error>((resume) => {
+    const child = NodeChildProcess.execFile(
+      file,
+      [...args],
+      { encoding: "utf8", timeout, windowsHide: true },
+      (error, stdout) => {
+        resume(error ? Effect.fail(error) : Effect.succeed(stdout));
+      },
+    );
+    return Effect.sync(() => child.kill());
+  });
+}
+
+export const readEnvironmentFromWindowsShellAsync: AsyncWindowsShellEnvironmentReader = Effect.fn(
+  "shell.readEnvironmentFromWindowsShellAsync",
+)(function* (names, options = {}) {
+  if (names.length === 0) return {};
+
+  const args = [
+    "-NoLogo",
+    ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
+    "-NonInteractive",
+    "-Command",
+    buildWindowsEnvironmentCaptureCommand(names),
+  ];
+  for (const shell of WINDOWS_SHELL_CANDIDATES) {
+    const output = yield* execFileOutput(shell, args, 5000).pipe(Effect.option);
+    if (output._tag === "None") continue;
+
+    const environment: Partial<Record<string, string>> = {};
+    for (const name of names) {
+      const value = extractEnvironmentValue(output.value, name);
+      if (value !== undefined) environment[name] = value;
+    }
+    return environment;
+  }
+  return {};
+});
+
+export const AsyncWindowsShellEnvironment = Context.Reference<AsyncWindowsShellEnvironmentReader>(
+  "@t3tools/shared/shell/AsyncWindowsShellEnvironment",
+  { defaultValue: () => readEnvironmentFromWindowsShellAsync },
+);
+
 export const CommandAvailability = Context.Reference<CommandAvailabilityChecker>(
   "@t3tools/shared/shell/CommandAvailability",
   {
@@ -753,6 +807,29 @@ function mergeWindowsEnv(
   }
   return nextEnv;
 }
+
+export function resolveWindowsBaselineEnvironment(
+  env: NodeJS.ProcessEnv,
+): Partial<NodeJS.ProcessEnv> {
+  const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
+  const path = mergePathValues(knownCliPath, readEnvPath(env), "win32");
+  return path ? { PATH: path } : {};
+}
+
+export const resolveWindowsProfileEnvironment = Effect.fn("shell.resolveWindowsProfileEnvironment")(
+  function* (env: NodeJS.ProcessEnv) {
+    const readEnvironment = yield* AsyncWindowsShellEnvironment;
+    const profile = yield* readEnvironment(["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"], {
+      loadProfile: true,
+    });
+    const path = mergePathValues(profile.PATH, readEnvPath(env), "win32");
+    return {
+      ...(path ? { PATH: path } : {}),
+      ...(profile.FNM_DIR ? { FNM_DIR: profile.FNM_DIR } : {}),
+      ...(profile.FNM_MULTISHELL_PATH ? { FNM_MULTISHELL_PATH: profile.FNM_MULTISHELL_PATH } : {}),
+    } satisfies Partial<NodeJS.ProcessEnv>;
+  },
+);
 
 export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironment")(function* (
   env: NodeJS.ProcessEnv,

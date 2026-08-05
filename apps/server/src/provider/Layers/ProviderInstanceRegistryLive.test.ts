@@ -178,7 +178,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
         drivers: [CodexDriver],
         configMap,
       });
@@ -220,6 +220,12 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
+
+      yield* mutator.reconcile(configMap, { force: true });
+      const rebuiltPersonal = yield* registry.getInstance(personalId);
+      const rebuiltWork = yield* registry.getInstance(workId);
+      expect(rebuiltPersonal).not.toBe(personal);
+      expect(rebuiltWork).not.toBe(work);
     }).pipe(Effect.provide(testLayer)),
   );
 

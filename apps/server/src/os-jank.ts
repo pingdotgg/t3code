@@ -4,10 +4,16 @@ import {
   mergePathEntries,
   readPathFromLoginShell,
   readPathFromLaunchctl,
+  resolveWindowsBaselineEnvironment,
   resolveWindowsEnvironment,
+  resolveWindowsProfileEnvironment,
 } from "@t3tools/shared/shell";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as NodeOS from "node:os";
 
@@ -90,6 +96,47 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
     ),
   );
 });
+
+export const HostEnvironmentHydration = Context.Reference<{
+  readonly windowsProfile: Option.Option<Effect.Effect<void>>;
+}>("t3/os-jank/HostEnvironmentHydration", {
+  defaultValue: () => ({ windowsProfile: Option.none() }),
+});
+
+function applyEnvironmentPatch(env: NodeJS.ProcessEnv, patch: Partial<NodeJS.ProcessEnv>): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) env[key] = value;
+  }
+}
+
+export const hostEnvironmentHydrationLayer = Layer.effect(
+  HostEnvironmentHydration,
+  Effect.gen(function* () {
+    const platform = yield* HostProcessPlatform;
+    const env = yield* HostProcessEnvironment;
+    if (platform !== "win32") {
+      yield* fixPath();
+      return { windowsProfile: Option.none() };
+    }
+
+    yield* Effect.sync(() => applyEnvironmentPatch(env, resolveWindowsBaselineEnvironment(env)));
+    const completed = yield* Deferred.make<void>();
+    yield* resolveWindowsProfileEnvironment(env).pipe(
+      Effect.tap((patch) => Effect.sync(() => applyEnvironmentPatch(env, patch))),
+      Effect.catchCause((cause) =>
+        Effect.sync(() =>
+          logPathHydrationWarning("Failed to hydrate PATH from the PowerShell profile.", cause),
+        ),
+      ),
+      Effect.ensuring(Deferred.succeed(completed, undefined)),
+      Effect.forkScoped,
+    );
+
+    return {
+      windowsProfile: Option.some(Deferred.await(completed)),
+    };
+  }),
+);
 
 export const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;

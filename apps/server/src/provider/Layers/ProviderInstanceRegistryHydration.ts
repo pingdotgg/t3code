@@ -49,8 +49,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { HostEnvironmentHydration } from "../../os-jank.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
@@ -118,6 +120,7 @@ const SettingsWatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator;
     const serverSettings = yield* ServerSettingsService;
+    const environmentHydration = yield* HostEnvironmentHydration;
     yield* serverSettings.streamChanges.pipe(
       Stream.runForEach((next) =>
         mutator
@@ -130,6 +133,21 @@ const SettingsWatcherLive = Layer.effectDiscard(
       ),
       Effect.forkScoped,
     );
+    if (Option.isSome(environmentHydration.windowsProfile)) {
+      yield* environmentHydration.windowsProfile.value.pipe(
+        Effect.andThen(serverSettings.getSettings),
+        Effect.flatMap((settings) =>
+          mutator.reconcile(deriveProviderInstanceConfigMap(settings), { force: true }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logError(
+            "Provider instances failed to refresh after environment hydration",
+            cause,
+          ),
+        ),
+        Effect.forkScoped,
+      );
+    }
   }),
 );
 
