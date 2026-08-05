@@ -34,14 +34,15 @@ This document covers the unified release workflow for stable and nightly desktop
 
 ## Required release credentials
 
-The release workflow requires these GitHub Actions secrets in addition to the platform and deployment
+Stable releases require these GitHub Actions secrets in addition to the platform and deployment
 credentials documented below:
 
 - `RELEASE_APP_ID`
 - `RELEASE_APP_PRIVATE_KEY`
 
-The GitHub Release job uses them to mint the token that publishes release assets. Stable releases use
-them again in the finalize job, which can commit and push aligned package versions to `main`.
+The finalize job uses them to commit and push aligned package versions to `main` as the Release App.
+GitHub Release publication uses the repository-scoped workflow token so it has a rate-limit quota
+independent from the shared Release App installation.
 
 ## T3 Connect relay deployment
 
