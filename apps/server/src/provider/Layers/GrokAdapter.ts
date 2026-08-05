@@ -60,11 +60,15 @@ import {
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
 import {
+  extractGrokPlanMarkdownFromToolCallData,
   extractXAiAskUserQuestions,
+  extractXAiExitPlanMarkdown,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  makeXAiExitPlanModeCapturedResponse,
   promptResponseHasMissingXAiStopReason,
   XAiAskUserQuestionRequest,
+  XAiExitPlanModeRequest,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -109,6 +113,8 @@ interface GrokSessionContext {
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
+  /** Latest plan.md body seen from tool writes / exit_plan_mode. */
+  lastKnownProposedPlanMarkdown: string | undefined;
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -495,6 +501,38 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       });
 
+    /** Surface Grok plan.md as T3's proposed-plan card (while writing + on exit). */
+    const emitProposedPlanCompleted = (
+      ctx: GrokSessionContext,
+      turnId: TurnId | undefined,
+      stamp: { readonly eventId: EventId; readonly createdAt: string },
+      planMarkdown: string,
+      raw: { readonly method: string; readonly payload: unknown },
+    ) =>
+      Effect.gen(function* () {
+        const trimmed = planMarkdown.trim();
+        if (trimmed.length === 0) {
+          return;
+        }
+        if (ctx.lastKnownProposedPlanMarkdown === trimmed) {
+          return;
+        }
+        ctx.lastKnownProposedPlanMarkdown = trimmed;
+        yield* offerRuntimeEvent({
+          type: "turn.proposed.completed",
+          ...stamp,
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          payload: { planMarkdown: trimmed },
+          raw: {
+            source: "acp.grok.extension",
+            method: raw.method,
+            payload: raw.payload,
+          },
+        });
+      });
+
     const requireSession = (
       threadId: ThreadId,
     ): Effect.Effect<GrokSessionContext, ProviderAdapterSessionNotFoundError> => {
@@ -663,6 +701,51 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ),
               { discard: true },
             );
+            // Grok intercepts exit_plan_mode and reverse-requests client approval.
+            // Capture plan into T3 proposed-plan UI and abandon the native gate so
+            // the turn does not hang (Claude ExitPlanMode pattern).
+            yield* Effect.forEach(
+              ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"] as const,
+              (method) =>
+                acp.handleExtRequest(method, XAiExitPlanModeRequest, (params) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, params);
+                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                      const ctx = sessions.get(input.threadId);
+                      const planMarkdown = extractXAiExitPlanMarkdown(
+                        params,
+                        ctx?.lastKnownProposedPlanMarkdown,
+                      );
+                      if (ctx) {
+                        yield* emitProposedPlanCompleted(
+                          ctx,
+                          turnId,
+                          yield* makeEventStamp(),
+                          planMarkdown,
+                          { method, payload: params },
+                        );
+                      } else {
+                        yield* offerRuntimeEvent({
+                          type: "turn.proposed.completed",
+                          ...(yield* makeEventStamp()),
+                          provider: PROVIDER,
+                          threadId: input.threadId,
+                          turnId,
+                          payload: { planMarkdown },
+                          raw: {
+                            source: "acp.grok.extension",
+                            method,
+                            payload: params,
+                          },
+                        });
+                      }
+                      return makeXAiExitPlanModeCapturedResponse();
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
             yield* acp.handleRequestPermission((params) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
@@ -774,6 +857,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             pendingUserInputs,
             turns: [],
             lastPlanFingerprint: undefined,
+            lastKnownProposedPlanMarkdown: undefined,
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
@@ -844,7 +928,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       "session/update",
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp,
@@ -855,7 +939,26 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    // While plan mode is active, Grok writes plan.md via write/edit
+                    // tools. Surface that as a proposed plan so the user can see it
+                    // before exit_plan_mode (which only then opens the TUI gate).
+                    const planMarkdown = extractGrokPlanMarkdownFromToolCallData(
+                      event.toolCall.data,
+                    );
+                    if (planMarkdown) {
+                      yield* emitProposedPlanCompleted(
+                        ctx,
+                        notificationTurnId,
+                        stamp,
+                        planMarkdown,
+                        {
+                          method: "session/update",
+                          payload: event.rawPayload,
+                        },
+                      );
+                    }
                     return;
+                  }
                   case "ContentDelta":
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
