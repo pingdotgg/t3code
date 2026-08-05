@@ -91,4 +91,47 @@ describe("t3code/no-global-process-runtime", () => {
       export const isWindows = os.platform() === "win32";
     `,
   );
+
+  rule.valid(
+    "allows unrelated node process imports",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const nodeEnv = NodeProcess.env.NODE_ENV;
+      export const args = NodeProcess.argv.slice(2);
+    `,
+  );
+
+  rule.invalid(
+    "reports node process namespace platform reads",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const isWindows = NodeProcess.platform === "win32";
+    `,
+    (output) => {
+      assert.match(output, /Use HostProcessPlatform/);
+    },
+  );
+
+  rule.invalid(
+    "reports node process namespace architecture reads",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const isArm = NodeProcess.arch === "arm64";
+    `,
+    (output) => {
+      assert.match(output, /Use HostProcessArchitecture/);
+    },
+  );
+
+  rule.invalid(
+    "reports default node process platform reads",
+    `
+      import nodeProcess from "node:process";
+
+      export const isWindows = nodeProcess.platform === "win32";
+    `,
+  );
 });

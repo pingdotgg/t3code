@@ -6,6 +6,7 @@ import { getPropertyName, isIdentifier, unwrapExpression } from "../utils.ts";
 const RUNTIME_PROPERTIES = new Set(["platform", "arch"]);
 const HOST_PROCESS_REFERENCE_FILE = "packages/shared/src/hostProcess.ts";
 const NODE_OS_MODULES = new Set(["node:os", "os"]);
+const NODE_PROCESS_MODULES = new Set(["node:process", "process"]);
 
 const normalizePath = (path: string) => path.replaceAll("\\", "/");
 
@@ -54,10 +55,12 @@ export default defineRule({
   createOnce(context) {
     const nodeOsNamespaces = new Set<string>();
     const nodeOsRuntimeImports = new Map<string, string>();
+    const nodeProcessNamespaces = new Set<string>();
 
     const resetBindings = () => {
       nodeOsNamespaces.clear();
       nodeOsRuntimeImports.clear();
+      nodeProcessNamespaces.clear();
     };
 
     const trackImportDeclaration = (node: unknown) => {
@@ -65,7 +68,10 @@ export default defineRule({
       if (!("source" in node)) return;
 
       const source = getLiteralStringValue(node.source);
-      if (Option.isNone(source) || !NODE_OS_MODULES.has(source.value)) return;
+      if (Option.isNone(source)) return;
+      const isNodeOsModule = NODE_OS_MODULES.has(source.value);
+      const isNodeProcessModule = NODE_PROCESS_MODULES.has(source.value);
+      if (!isNodeOsModule && !isNodeProcessModule) return;
       if (!("specifiers" in node) || !Array.isArray(node.specifiers)) return;
 
       for (const specifier of node.specifiers) {
@@ -80,10 +86,15 @@ export default defineRule({
           specifier.type === "ImportNamespaceSpecifier" ||
           specifier.type === "ImportDefaultSpecifier"
         ) {
-          nodeOsNamespaces.add(localName);
+          if (isNodeProcessModule) {
+            nodeProcessNamespaces.add(localName);
+          } else {
+            nodeOsNamespaces.add(localName);
+          }
           continue;
         }
 
+        if (!isNodeOsModule) continue;
         if (specifier.type !== "ImportSpecifier" || !("imported" in specifier)) continue;
 
         const imported = getPropertyName(specifier.imported);
@@ -113,6 +124,17 @@ export default defineRule({
       );
     };
 
+    const isProcessRuntimeObject = (node: unknown): boolean => {
+      if (isGlobalProcessObject(node)) return true;
+
+      const expression = unwrapExpression(node);
+      return (
+        Option.isSome(expression) &&
+        expression.value.type === "Identifier" &&
+        nodeProcessNamespaces.has(expression.value.name)
+      );
+    };
+
     return {
       before: resetBindings,
       ImportDeclaration: trackImportDeclaration,
@@ -121,7 +143,7 @@ export default defineRule({
 
         const property = getPropertyName(node.property);
         if (Option.isNone(property) || !RUNTIME_PROPERTIES.has(property.value)) return;
-        if (!isGlobalProcessObject(node.object)) return;
+        if (!isProcessRuntimeObject(node.object)) return;
 
         context.report({
           node,
