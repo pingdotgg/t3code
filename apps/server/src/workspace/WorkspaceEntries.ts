@@ -10,6 +10,7 @@ import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
 
 import type {
+  FilesystemBrowseEntry,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   ProjectListEntriesInput,
@@ -216,23 +217,39 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const requestedKinds = new Set(input.kinds ?? ["directory"]);
+      const entries: FilesystemBrowseEntry[] = [];
       for (const dirent of dirents) {
+        const kind = dirent.isDirectory() ? "directory" : dirent.isFile() ? "file" : null;
         if (
-          dirent.isDirectory() &&
+          kind !== null &&
+          requestedKinds.has(kind) &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
           (showHidden || !dirent.name.startsWith("."))
         ) {
           entries.push({
             name: dirent.name,
             fullPath: path.join(parentPath, dirent.name),
+            kind,
           });
         }
       }
 
+      const byName = (left: FilesystemBrowseEntry, right: FilesystemBrowseEntry) =>
+        left.name.localeCompare(right.name);
+      const directories = entries.filter((entry) => entry.kind === "directory").toSorted(byName);
+      const files = entries.filter((entry) => entry.kind !== "directory").toSorted(byName);
+
+      // Truncating the directories-first order would hide every file behind a
+      // large enough set of directories, so each kind keeps a share of the limit.
+      const limit = input.limit ?? directories.length + files.length;
+      const fileCount = Math.min(files.length, Math.max(0, limit - directories.length));
+      const keptFiles = files.slice(0, Math.max(fileCount, Math.min(files.length, limit >> 1)));
+      const keptDirectories = directories.slice(0, limit - keptFiles.length);
+
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: [...keptDirectories, ...keptFiles],
       };
     },
   );
