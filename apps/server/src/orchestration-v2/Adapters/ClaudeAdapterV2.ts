@@ -110,6 +110,7 @@ import {
   ProviderContinuationRequests,
 } from "../ProviderContinuationRequests.ts";
 import {
+  hasSubagentPromptText,
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -3228,6 +3229,11 @@ export function makeClaudeAdapterV2(
               completedAt: input.status === "running" ? null : now,
               updatedAt: now,
             } satisfies OrchestrationV2Subagent;
+            // A task_progress frame can register a subagent before any frame
+            // carries its prompt, so the opening message waits for the first
+            // prompt that actually has text instead of being tied to isNew.
+            const emitPromptMessage =
+              hasSubagentPromptText(task.prompt) && !hasSubagentPromptText(priorTask?.prompt);
             const subagent = {
               ...(registered ?? {
                 childThreadId,
@@ -3293,14 +3299,14 @@ export function makeClaudeAdapterV2(
               pendingResumeTaskIds,
             });
             return [
-              { subagent, isNew, lifecycleChanged, terminalNativeItemId },
+              { subagent, isNew, lifecycleChanged, terminalNativeItemId, emitPromptMessage },
               { byNativeThreadId },
             ] as const;
           });
           if (installation === undefined) {
             return;
           }
-          const { subagent, isNew, lifecycleChanged } = installation;
+          const { subagent, isNew, lifecycleChanged, emitPromptMessage } = installation;
           const task = subagent.task;
           const nodeId = task.id;
           const childRootNodeId = subagent.childRootNodeId;
@@ -3382,7 +3388,7 @@ export function makeClaudeAdapterV2(
               },
             });
           }
-          if (existingSubagent === undefined) {
+          if (emitPromptMessage) {
             const promptNativeItemId = `${nativeItemId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
               messageId: idAllocator.derive.messageFromProviderItem({

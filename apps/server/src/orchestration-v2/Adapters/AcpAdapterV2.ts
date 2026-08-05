@@ -66,6 +66,7 @@ import { type ProviderContinuationRequest } from "../ProviderContinuationRequest
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
+  hasSubagentPromptText,
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -2199,36 +2200,38 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 creationSource: "provider",
               }),
             });
-            const promptNativeItemId = `${nativeTaskId}:prompt`;
-            const promptArtifacts = makeSubagentConversationArtifacts({
-              messageId: idAllocator.derive.messageFromProviderItem({
+            if (hasSubagentPromptText(update.prompt)) {
+              const promptNativeItemId = `${nativeTaskId}:prompt`;
+              const promptArtifacts = makeSubagentConversationArtifacts({
+                messageId: idAllocator.derive.messageFromProviderItem({
+                  driver,
+                  nativeItemId: promptNativeItemId,
+                }),
+                turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                  driver,
+                  nativeItemId: promptNativeItemId,
+                }),
+                threadId: childThreadId,
+                rootNodeId: childRootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: { driver, nativeId: promptNativeItemId, strength: "weak" },
+                role: "user",
+                text: update.prompt,
+                ordinal: 100,
+                now,
+              });
+              yield* emitProviderEvent({
+                type: "message.updated",
                 driver,
-                nativeItemId: promptNativeItemId,
-              }),
-              turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                message: promptArtifacts.message,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
                 driver,
-                nativeItemId: promptNativeItemId,
-              }),
-              threadId: childThreadId,
-              rootNodeId: childRootNodeId,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: { driver, nativeId: promptNativeItemId, strength: "weak" },
-              role: "user",
-              text: update.prompt,
-              ordinal: 100,
-              now,
-            });
-            yield* emitProviderEvent({
-              type: "message.updated",
-              driver,
-              message: promptArtifacts.message,
-            });
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver,
-              turnItem: promptArtifacts.turnItem,
-            });
+                turnItem: promptArtifacts.turnItem,
+              });
+            }
           }
 
           if (update.childSessionId !== null && subagent.childSessionId === null) {
