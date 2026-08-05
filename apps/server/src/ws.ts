@@ -1049,6 +1049,8 @@ const makeWsRpcLayer = (
                   ? command.targetThreadId
                   : command.type === "delegated_task.request" ||
                       command.type === "delegated_task.wake-policy" ||
+                      command.type === "delegated_task.completion-delivery.acknowledge" ||
+                      command.type === "delegated_task.completion-delivery.dispose" ||
                       command.type === "thread.created.record"
                     ? command.parentThreadId
                     : command.threadId,

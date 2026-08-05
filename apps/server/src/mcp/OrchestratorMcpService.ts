@@ -328,6 +328,50 @@ function isTerminalTaskStatus(
   );
 }
 
+function directAppOwnedChildTask(
+  parent: OrchestrationV2ThreadProjection,
+  target: OrchestrationV2ThreadProjection,
+): OrchestrationV2Subagent | undefined {
+  if (
+    target.thread.lineage.parentThreadId !== parent.thread.id ||
+    target.thread.lineage.relationshipToParent !== "subagent"
+  ) {
+    return undefined;
+  }
+  return parent.subagents.find(
+    (task) =>
+      task.origin === "app_owned" &&
+      task.threadId === parent.thread.id &&
+      task.childThreadId === target.thread.id,
+  );
+}
+
+function pageIncludesTerminalTaskResult(input: {
+  readonly page: ReadonlyArray<OrchestrationV2ThreadProjection["visibleTurnItems"][number]>;
+  readonly task: OrchestrationV2Subagent;
+  readonly target: OrchestrationV2ThreadProjection;
+  readonly maxChars: number;
+}): boolean {
+  const run = delegatedTaskRun(input.target, input.task);
+  if (run === undefined || !isTerminalTaskStatus(taskStatusForRun(run))) return false;
+
+  const result = subagentResultForRun(input.target, run);
+  if (result.messageId === null && result.turnItemId === null) return false;
+
+  return input.page.some((row) => {
+    if (row.sourceThreadId !== input.target.thread.id) return false;
+    const matchesResult =
+      (result.turnItemId !== null && row.sourceItemId === result.turnItemId) ||
+      (result.messageId !== null &&
+        row.item.type === "assistant_message" &&
+        row.item.messageId === result.messageId);
+    if (!matchesResult) return false;
+
+    const text = turnItemText(row.item);
+    return text !== null && text.length <= input.maxChars;
+  });
+}
+
 function runtimeModeRank(mode: RuntimeMode): number {
   switch (mode) {
     case "approval-required":
@@ -792,6 +836,8 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     taskId: NodeId,
     waitTimedOut = false,
+    acknowledgeTerminal = false,
+    acknowledgementOperation = "task-status-acknowledge",
   ): Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
@@ -824,7 +870,7 @@ const make = Effect.gen(function* () {
             transfer.sourceThreadId === task.childThreadId &&
             transfer.targetThreadId === scope.threadId,
         ) ?? null;
-      return {
+      const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
         childRunId: childRun?.id ?? null,
@@ -835,13 +881,46 @@ const make = Effect.gen(function* () {
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
         waitTimedOut,
-      };
+      } satisfies OrchestratorMcpDelegateTaskResult;
+      if (
+        acknowledgeTerminal &&
+        isTerminalTaskStatus(status) &&
+        task.completionDelivery?.state !== "acknowledged" &&
+        task.completionDelivery?.state !== "disposed"
+      ) {
+        const observingRun = latestActiveRun(parentProjection);
+        const acknowledgementRequestKey = yield* requestKey(undefined);
+        yield* threadManagement
+          .dispatch({
+            type: "delegated_task.completion-delivery.acknowledge",
+            commandId: stableCommandId({
+              scope,
+              requestKey: acknowledgementRequestKey,
+              operation: acknowledgementOperation,
+            }),
+            parentThreadId: scope.threadId,
+            taskId,
+            observedByRunId:
+              observingRun?.providerInstanceId === scope.providerInstanceId
+                ? observingRun.id
+                : null,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to acknowledge delegated task ${taskId}: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+      }
+      return response;
     });
 
   const waitForTask = (scope: McpInvocationScope, taskId: NodeId, timeoutMs: number) =>
     Effect.gen(function* () {
       while (true) {
-        const result = yield* readTask(scope, taskId);
+        const result = yield* readTask(scope, taskId, false, true);
         if (isTerminalTaskStatus(result.status)) return result;
         yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
       }
@@ -1113,7 +1192,7 @@ const make = Effect.gen(function* () {
         const taskId = taskEvent.event.payload.id;
 
         if (input.mode !== "wait") {
-          return yield* readTask(scope, taskId);
+          return yield* readTask(scope, taskId, false, true);
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -1162,13 +1241,42 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true);
+        return yield* readTask(scope, taskId, true, true);
       }),
-    taskStatus: (scope, taskId) => readTask(scope, taskId),
+    taskStatus: (scope, taskId) => readTask(scope, taskId, false, true),
     cancelTask: (scope, input) =>
       Effect.gen(function* () {
         const current = yield* readTask(scope, input.taskId);
+        const key = yield* requestKey(input.clientRequestId);
+        const parentProjection = yield* loadProjection(scope.threadId);
+        const parentTask = parentProjection.subagents.find(
+          (task) => task.id === input.taskId && task.origin === "app_owned",
+        );
+        const disposeCompletionDelivery =
+          parentTask?.completionDelivery?.state === "disposed"
+            ? Effect.void
+            : threadManagement
+                .dispatch({
+                  type: "delegated_task.completion-delivery.dispose",
+                  commandId: stableCommandId({
+                    scope,
+                    requestKey: key,
+                    operation: "cancel-task-completion-delivery",
+                  }),
+                  parentThreadId: scope.threadId,
+                  taskId: input.taskId,
+                })
+                .pipe(
+                  Effect.asVoid,
+                  Effect.mapError((error) =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to dispose delegated task ${input.taskId} completion delivery: ${errorMessage(error)}`,
+                    ),
+                  ),
+                );
         if (isTerminalTaskStatus(current.status)) {
+          yield* disposeCompletionDelivery;
           return {
             taskId: input.taskId,
             status: current.status,
@@ -1184,7 +1292,6 @@ const make = Effect.gen(function* () {
             `Delegated task ${input.taskId} has no interruptible child run.`,
           );
         }
-        const key = yield* requestKey(input.clientRequestId);
         yield* threadManagement
           .dispatch({
             type: "run.interrupt",
@@ -1205,6 +1312,14 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+        yield* disposeCompletionDelivery.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestrator-mcp.cancel-task.delivery-dispose-failed", {
+              taskId: input.taskId,
+              cause,
+            }),
+          ),
+        );
         return {
           taskId: input.taskId,
           status: "cancel_requested",
@@ -1393,7 +1508,7 @@ const make = Effect.gen(function* () {
       }),
     readThread: (scope, input) =>
       Effect.gen(function* () {
-        const { target } = yield* loadScopedThread(scope, input.threadId);
+        const { parent, target } = yield* loadScopedThread(scope, input.threadId);
         const view = input.view ?? "messages";
         const afterPosition = input.afterPosition ?? -1;
         const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
@@ -1429,6 +1544,13 @@ const make = Effect.gen(function* () {
             (projection) => [projection.thread.id, projection.messages] as const,
           ),
         ]);
+        const task = directAppOwnedChildTask(parent, target);
+        if (
+          task !== undefined &&
+          pageIncludesTerminalTaskResult({ page, task, target, maxChars })
+        ) {
+          yield* readTask(scope, task.id, false, true, "thread-read-acknowledge");
+        }
         return {
           thread: threadDetail(target),
           recentRuns: target.runs

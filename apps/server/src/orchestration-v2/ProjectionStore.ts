@@ -2,6 +2,8 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Run,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadShell,
@@ -137,6 +139,26 @@ function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, 
   return updated;
 }
 
+function preserveDelegatedCompletion(
+  current: OrchestrationV2Run | undefined,
+  next: OrchestrationV2Run,
+): OrchestrationV2Run {
+  if (next.delegatedCompletion !== undefined || current?.delegatedCompletion === undefined) {
+    return next;
+  }
+  return { ...next, delegatedCompletion: current.delegatedCompletion };
+}
+
+function preserveCompletionDelivery(
+  current: OrchestrationV2Subagent | undefined,
+  next: OrchestrationV2Subagent,
+): OrchestrationV2Subagent {
+  if (next.completionDelivery !== undefined || current?.completionDelivery === undefined) {
+    return next;
+  }
+  return { ...next, completionDelivery: current.completionDelivery };
+}
+
 export function emptyProjection(
   event: Extract<OrchestrationV2DomainEvent, { readonly type: "thread.created" }>,
 ): OrchestrationV2ThreadProjection {
@@ -205,7 +227,13 @@ export function applyToProjection(
     case "run.updated":
       return withLocalVisibleTurnItems({
         ...base,
-        runs: upsertById(base.runs, event.payload),
+        runs: upsertById(
+          base.runs,
+          preserveDelegatedCompletion(
+            base.runs.find((run) => run.id === event.payload.id),
+            event.payload,
+          ),
+        ),
       });
     case "run-attempt.created":
     case "run-attempt.updated":
@@ -221,7 +249,13 @@ export function applyToProjection(
     case "subagent.updated":
       return {
         ...base,
-        subagents: upsertById(base.subagents, event.payload),
+        subagents: upsertById(
+          base.subagents,
+          preserveCompletionDelivery(
+            base.subagents.find((task) => task.id === event.payload.id),
+            event.payload,
+          ),
+        ),
       };
     case "provider-session.attached":
     case "provider-session.updated":
@@ -1149,7 +1183,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN json_type(excluded.payload_json, '$.delegatedCompletion') IS NULL
+                    AND json_type(orchestration_v2_projection_runs.payload_json, '$.delegatedCompletion') IS NOT NULL
+                  THEN json_set(
+                    excluded.payload_json,
+                    '$.delegatedCompletion',
+                    json_extract(
+                      orchestration_v2_projection_runs.payload_json,
+                      '$.delegatedCompletion'
+                    )
+                  )
+                  ELSE excluded.payload_json
+                END
             `;
             break;
           }
@@ -1305,7 +1351,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 started_at = excluded.started_at,
                 completed_at = excluded.completed_at,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN json_type(excluded.payload_json, '$.completionDelivery') IS NULL
+                    AND json_type(orchestration_v2_projection_subagents.payload_json, '$.completionDelivery') IS NOT NULL
+                  THEN json_set(
+                    excluded.payload_json,
+                    '$.completionDelivery',
+                    json_extract(
+                      orchestration_v2_projection_subagents.payload_json,
+                      '$.completionDelivery'
+                    )
+                  )
+                  ELSE excluded.payload_json
+                END
             `;
             break;
           }
