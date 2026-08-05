@@ -57,11 +57,36 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
 
   return (
     <View className="p-4">
-      <Text style={[lineStyle, { color: theme.foreground }]}>$ npm run dev</Text>
-      <Text style={[lineStyle, { color: theme.palette[2] }]}>✓ Ready in 430ms</Text>
       <Text style={[lineStyle, { color: theme.foreground }]}>
-        Local: http://localhost:3000{" "}
-        <Text style={[lineStyle, { color: theme.cursorForeground }]}>▏</Text>
+        <Text style={{ color: theme.palette[2] }}>→ </Text>
+        <Text style={{ color: theme.palette[6] }}>t3code </Text>
+        <Text style={{ color: theme.palette[4] }}>git:(</Text>
+        <Text style={{ color: theme.palette[1] }}>main</Text>
+        <Text style={{ color: theme.palette[4] }}>)</Text>
+        <Text style={{ color: theme.palette[3] }}> ✗</Text>
+        <Text> vpr dev</Text>
+      </Text>
+      <Text style={[lineStyle, { color: theme.foreground }]}>
+        <Text style={{ color: theme.palette[2] }}>VITE v7.1.1</Text>
+        <Text style={{ color: theme.mutedForeground }}> ready in</Text>
+        <Text> 1.24s</Text>
+      </Text>
+      <Text style={[lineStyle, { color: theme.foreground }]}>
+        <Text style={{ color: theme.palette[2] }}>→ </Text>
+        <Text style={{ color: theme.mutedForeground }}>Local: </Text>
+        <Text style={{ color: theme.palette[6], textDecorationLine: "underline" }}>
+          http://127.0.0.1:5173/
+        </Text>
+      </Text>
+      <Text style={[lineStyle, { color: theme.foreground }]}>
+        <Text style={{ color: theme.palette[2] }}>✓ 85 passed</Text>
+        <Text style={{ color: theme.palette[3] }}> △ 2 warnings</Text>
+        <Text style={{ color: theme.palette[1] }}> ✗ 0 failed</Text>
+      </Text>
+      <Text style={[lineStyle, { color: theme.foreground }]}>
+        <Text style={{ backgroundColor: theme.palette[2], color: theme.background }}> READY </Text>
+        <Text style={{ color: theme.mutedForeground }}> watching for changes</Text>{" "}
+        <Text style={{ color: theme.cursorForeground }}>▏</Text>
       </Text>
     </View>
   );
