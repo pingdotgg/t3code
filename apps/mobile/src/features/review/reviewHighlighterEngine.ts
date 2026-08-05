@@ -11,7 +11,7 @@ export function resolveReviewHighlighterEnginePreference(
     case "native":
       return "native";
     default:
-      return "native";
+      return "javascript";
   }
 }
 
