@@ -1,11 +1,11 @@
 diff --git a/dist/unstable/ai/McpServer.js b/dist/unstable/ai/McpServer.js
-index 2830482842c07f2f0fb412076c901e52830b7e24..cd92160578fd152c6b6399ad8a328c4ddd7d300c 100644
+index 755e41c..dc431aa 100644
 --- a/dist/unstable/ai/McpServer.js
 +++ b/dist/unstable/ai/McpServer.js
-@@ -230,6 +230,26 @@ export const run = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+@@ -262,6 +262,26 @@ const runWithProtocolState = /*#__PURE__*/Effect.fnUntraced(function* (options,
    const server = yield* McpServer;
    const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter));
-   const clientSessions = protocolState.clientSessions;
+   const sessions = protocolState.sessions;
 +  if (isHttp && options.path !== undefined) {
 +    const router = yield* HttpRouter.HttpRouter;
 +    yield* router.add("DELETE", options.path, Effect.gen(function* () {
@@ -16,7 +16,7 @@ index 2830482842c07f2f0fb412076c901e52830b7e24..cd92160578fd152c6b6399ad8a328c4d
 +          status: 400
 +        });
 +      }
-+      if (!clientSessions.delete(sessionId)) {
++      if (!sessions.bySessionId.delete(sessionId)) {
 +        return HttpServerResponse.empty({
 +          status: 404
 +        });
@@ -26,20 +26,20 @@ index 2830482842c07f2f0fb412076c901e52830b7e24..cd92160578fd152c6b6399ad8a328c4d
 +      });
 +    }));
 +  }
-   const handlers = yield* Layer.build(layerHandlers(options)).pipe(Effect.provideService(McpProtocolState, protocolState));
-   const clients = yield* RcMap.make({
-     lookup: Effect.fnUntraced(function* (clientId) {
-@@ -493,7 +513,7 @@ export const layerHttp = options => {
-       allow: "POST"
-     }
-   });
--  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowedResponse), HttpRouter.add("PUT", options.path, methodNotAllowedResponse), HttpRouter.add("PATCH", options.path, methodNotAllowedResponse), HttpRouter.add("DELETE", options.path, methodNotAllowedResponse));
-+  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowedResponse), HttpRouter.add("PUT", options.path, methodNotAllowedResponse), HttpRouter.add("PATCH", options.path, methodNotAllowedResponse));
+   const clientProtocols = new Map();
+   const cancelledRequests = new Map();
+   const handlers = yield* Layer.build(layerHandlers(options, {
+@@ -719,7 +739,7 @@ export const layerHttp = options => {
+   const methodNotAllowed = request => Effect.succeed(request.headers.origin !== undefined && !options.allowedOrigins?.includes(request.headers.origin) ? HttpServerResponse.empty({
+     status: 403
+   }) : methodNotAllowedResponse);
+-  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowed), HttpRouter.add("PUT", options.path, methodNotAllowed), HttpRouter.add("PATCH", options.path, methodNotAllowed), HttpRouter.add("DELETE", options.path, methodNotAllowed), HttpRouter.add("OPTIONS", options.path, methodNotAllowed));
++  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowed), HttpRouter.add("PUT", options.path, methodNotAllowed), HttpRouter.add("PATCH", options.path, methodNotAllowed), HttpRouter.add("OPTIONS", options.path, methodNotAllowed));
    return Layer.merge(layerWithProtocolState(options), routes).pipe(Layer.provide(layerMcpProtocolHttp(options)), Layer.provide(protocolState), Layer.provide(RpcSerialization.layerJsonRpc()));
  };
  const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.gen(function* () {
 diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
-index a70061a638faabdd663eca25cb79585fec06e03c..15c940b61860830f11cad86b155e3b76f43d34ea 100644
+index aba2779..581d267 100644
 --- a/dist/unstable/rpc/RpcClient.d.ts
 +++ b/dist/unstable/rpc/RpcClient.d.ts
 @@ -2,6 +2,7 @@ import * as Cause from "../../Cause.ts";
@@ -92,7 +92,7 @@ index a70061a638faabdd663eca25cb79585fec06e03c..15c940b61860830f11cad86b155e3b76
  /**
   * Represents optional client protocol hooks that run when a transport connects
 diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
-index b6ddbacbde74fb0ce98c79452b95a1c8fc0e65ed..154fe9a1ec64e5a47cd2ea89536186d6a73a74f6 100644
+index b536d0a..12ffac0 100644
 --- a/dist/unstable/rpc/RpcClient.js
 +++ b/dist/unstable/rpc/RpcClient.js
 @@ -47,6 +47,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
@@ -261,9 +261,9 @@ index b6ddbacbde74fb0ce98c79452b95a1c8fc0e65ed..154fe9a1ec64e5a47cd2ea89536186d6
 -              return Effect.void;
 +              return pinger.onPong;
              }
-             if ("requestId" in response) {
-               const clientId = requestClientMap.get(response.requestId);
-@@ -639,12 +668,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+             if (Object.hasOwn(response, "requestId")) {
+               const requestId = response.requestId;
+@@ -640,12 +669,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
        }
      }, {
        onOpen
@@ -278,7 +278,7 @@ index b6ddbacbde74fb0ce98c79452b95a1c8fc0e65ed..154fe9a1ec64e5a47cd2ea89536186d6
    }).pipe(Effect.flatMap(() => Effect.fail(new Socket.SocketError({
      reason: new Socket.SocketCloseError({
        code: 1000
-@@ -686,20 +715,20 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+@@ -687,20 +716,20 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
    };
  }));
  const defaultRetryPolicy = /*#__PURE__*/Schedule.min([/*#__PURE__*/Schedule.exponential(500, 1.5), /*#__PURE__*/Schedule.spaced(5000)]);
@@ -303,7 +303,7 @@ index b6ddbacbde74fb0ce98c79452b95a1c8fc0e65ed..154fe9a1ec64e5a47cd2ea89536186d6
    }).pipe(Effect.delay("5 seconds"), Effect.ignore, Effect.forever, Effect.interruptible, Effect.forkScoped);
    return {
      timeout: latch.await,
-@@ -842,6 +871,11 @@ export const makeProtocolWorker = options => Protocol.make(Effect.fnUntraced(fun
+@@ -843,6 +872,11 @@ export const makeProtocolWorker = options => Protocol.make(Effect.fnUntraced(fun
   * @since 4.0.0
   */
  export const layerProtocolWorker = /*#__PURE__*/flow(makeProtocolWorker, /*#__PURE__*/Layer.effect(Protocol));

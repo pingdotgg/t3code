@@ -43,13 +43,14 @@ import {
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import { buildModelMenuActions, resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
+import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 
 function formatWorkspaceLabel(input: {
@@ -89,7 +90,7 @@ export function NewTaskDraftScreen(props: {
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
-  const { logicalProjects, selectedProject, setProject } = flow;
+  const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -277,24 +278,25 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    if (selectedProject) {
+    const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes);
+    if (selection.kind === "preserve") {
       return;
     }
-
-    if (logicalProjects.length === 1) {
-      setProject(logicalProjects[0]!.project);
+    if (selection.kind === "select") {
+      setProject(selection.project);
       return;
     }
 
     navigation.dispatch(StackActions.replace("NewTask"));
   }, [
-    logicalProjects,
+    projectScopes,
     projects,
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
     navigation,
     selectedProject,
+    selectedProjectKey,
     setProject,
   ]);
 
@@ -543,27 +545,7 @@ export function NewTaskDraftScreen(props: {
   );
 
   const modelMenuActions = useMemo(
-    () =>
-      flow.providerGroups.map((group) => ({
-        id: `provider:${group.providerKey}`,
-        title: group.providerLabel,
-        subtitle: group.models.find(
-          (model) =>
-            flow.selectedModel &&
-            model.selection.instanceId === flow.selectedModel.instanceId &&
-            model.selection.model === flow.selectedModel.model,
-        )?.label,
-        subactions: group.models.map((option) => ({
-          id: `model:${option.key}`,
-          title: option.label,
-          state:
-            flow.selectedModel &&
-            option.selection.instanceId === flow.selectedModel.instanceId &&
-            option.selection.model === flow.selectedModel.model
-              ? ("on" as const)
-              : undefined,
-        })),
-      })),
+    () => buildModelMenuActions(flow.providerGroups, flow.selectedModel),
     [flow.providerGroups, flow.selectedModel],
   );
   const providerOptionDescriptors = useMemo(
