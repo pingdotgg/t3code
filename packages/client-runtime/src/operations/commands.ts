@@ -77,6 +77,9 @@ export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
 }
 
+export type PinThreadInput = ThreadCommandInput;
+export type UnpinThreadInput = ThreadCommandInput;
+
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
 }
@@ -340,7 +343,13 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 });
 
 function simpleThreadCommand(
-  type: "thread.delete" | "thread.archive" | "thread.unarchive" | "thread.settle",
+  type:
+    | "thread.delete"
+    | "thread.archive"
+    | "thread.unarchive"
+    | "thread.settle"
+    | "thread.pin"
+    | "thread.unpin",
   input: ThreadCommandInput,
 ) {
   return allocateCommandId(input).pipe(
@@ -370,6 +379,18 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
   input: SettleThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.settle", input);
+});
+
+export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
+  input: PinThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.pin", input);
+});
+
+export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function* (
+  input: UnpinThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.unpin", input);
 });
 
 export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
