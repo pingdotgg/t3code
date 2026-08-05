@@ -150,11 +150,15 @@ function withOptionalT3PreviewInstructions(base: string, includeT3PreviewTools: 
   if (!includeT3PreviewTools) {
     return base;
   }
-  return base.replace(
-    "</collaboration_mode>",
-    `${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
-</collaboration_mode>`,
-  );
+  // Target the final closing tag only. Default-mode prose mentions
+  // `</collaboration_mode>` inside an inline code span earlier in the body.
+  const closingTag = "</collaboration_mode>";
+  const closingTagIndex = base.lastIndexOf(closingTag);
+  if (closingTagIndex === -1) {
+    return base;
+  }
+  return `${base.slice(0, closingTagIndex)}${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${closingTag}`;
 }
 
 /** Plan-mode developer instructions without T3 Preview routing. */

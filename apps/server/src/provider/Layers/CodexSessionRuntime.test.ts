@@ -310,10 +310,41 @@ describe("buildCodexDeveloperInstructions", () => {
 
       NodeAssert.doesNotMatch(withoutPreview, /preview_status/);
       NodeAssert.doesNotMatch(withoutPreview, /t3-code/);
+      NodeAssert.doesNotMatch(withoutPreview, /## T3 Code collaborative browser/);
       NodeAssert.match(withPreview, /t3-code/);
       NodeAssert.match(withPreview, /preview_status/);
       NodeAssert.match(withPreview, /preview_open/);
       NodeAssert.match(withPreview, /Do not switch to global browser skills/);
+
+      // Preview instructions must land after the mode body and immediately before
+      // the final collaboration-mode closing tag — not at the first literal match
+      // (Default mode mentions that tag inside an earlier inline code span).
+      const previewHeading = "## T3 Code collaborative browser";
+      const closingTag = "</collaboration_mode>";
+      const previewIndex = withPreview.indexOf(previewHeading);
+      const lastClosingIndex = withPreview.lastIndexOf(closingTag);
+      NodeAssert.ok(previewIndex > 0);
+      NodeAssert.ok(lastClosingIndex > previewIndex);
+      const previewThroughClose = withPreview.slice(
+        previewIndex,
+        lastClosingIndex + closingTag.length,
+      );
+      NodeAssert.ok(previewThroughClose.startsWith(previewHeading));
+      NodeAssert.ok(previewThroughClose.endsWith(closingTag));
+      NodeAssert.equal(
+        previewThroughClose.indexOf(closingTag),
+        previewThroughClose.lastIndexOf(closingTag),
+      );
+      NodeAssert.doesNotMatch(
+        withPreview.slice(lastClosingIndex + closingTag.length),
+        /## T3 Code collaborative browser/,
+      );
+      if (mode === "default") {
+        const inlineReference = "`<collaboration_mode>...</collaboration_mode>`";
+        const inlineIndex = withPreview.indexOf(inlineReference);
+        NodeAssert.ok(inlineIndex !== -1);
+        NodeAssert.ok(inlineIndex < previewIndex);
+      }
     }
   });
 });
