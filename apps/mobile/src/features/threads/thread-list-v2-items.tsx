@@ -128,7 +128,6 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       accessibilityLabel={props.count === 1 ? "1 snoozed thread" : `${props.count} snoozed threads`}
       accessibilityRole="button"
       accessibilityState={{ expanded: props.expanded }}
-      testID="thread-list-v2-snoozed-shelf"
       className={cn(
         "mb-1.5 mt-4 flex-row items-center gap-2.5",
         props.pane === "sidebar" ? "px-3" : "px-5",
