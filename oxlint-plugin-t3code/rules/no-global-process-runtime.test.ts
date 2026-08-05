@@ -93,6 +93,42 @@ describe("t3code/no-global-process-runtime", () => {
   );
 
   rule.valid(
+    "allows a shadowed node os namespace parameter",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = (NodeOS: { platform: () => string }) => NodeOS.platform();
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node os namespace local const",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = () => {
+        const NodeOS = { platform: () => "win32" };
+        return NodeOS.platform();
+      };
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node os namespace catch param",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = () => {
+        try {
+          return "ok";
+        } catch (NodeOS) {
+          return (NodeOS as { platform: () => string }).platform();
+        }
+      };
+    `,
+  );
+
+  rule.valid(
     "allows unrelated node process imports",
     `
       import * as NodeProcess from "node:process";
