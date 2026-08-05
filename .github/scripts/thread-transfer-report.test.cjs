@@ -1,7 +1,12 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { renderComment, resolve, validateResult } = require("./thread-transfer-report.cjs");
+const {
+  renderComment,
+  resolve,
+  upsertCommentForCurrentHead,
+  validateResult,
+} = require("./thread-transfer-report.cjs");
 
 function result(overrides = {}) {
   const observed = {
@@ -138,4 +143,40 @@ test("resolves the current PR artifact and exact main baseline", async () => {
   assert.equal(outputs.pr_artifact, "true");
   assert.equal(outputs.baseline_run_id, "1");
   assert.equal(outputs.baseline_matches_base, "true");
+});
+
+test("does not publish a stale result after the PR head advances", async () => {
+  let listedComments = false;
+  const info = [];
+  const published = await upsertCommentForCurrentHead(
+    {
+      paginate: async () => {
+        listedComments = true;
+        return [];
+      },
+      rest: {
+        issues: {
+          listComments: () => {},
+          createComment: () => {
+            throw new Error("must not create a stale comment");
+          },
+          updateComment: () => {
+            throw new Error("must not update a stale comment");
+          },
+        },
+        pulls: {
+          get: async () => ({ data: { head: { sha: "new-head-sha" } } }),
+        },
+      },
+    },
+    { repo: { owner: "pingdotgg", repo: "t3code" } },
+    { info: (message) => info.push(message) },
+    5350,
+    "old-head-sha",
+    "stale body",
+  );
+
+  assert.equal(published, false);
+  assert.equal(listedComments, false);
+  assert.deepEqual(info, ["Skipping stale CI result old-head-sha; PR head is new-head-sha."]);
 });

@@ -317,6 +317,22 @@ async function upsertComment(github, context, pullNumber, body) {
   }
 }
 
+async function upsertCommentForCurrentHead(github, context, core, pullNumber, expectedSha, body) {
+  const { owner, repo } = context.repo;
+  const { data: pull } = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  if (pull.head.sha !== expectedSha) {
+    core.info(`Skipping stale CI result ${expectedSha}; PR head is ${pull.head.sha}.`);
+    return false;
+  }
+
+  await upsertComment(github, context, pullNumber, body);
+  return true;
+}
+
 async function publish({ github, context, core }) {
   const pullNumber = Number(process.env.PR_NUMBER);
   if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
@@ -330,10 +346,12 @@ async function publish({ github, context, core }) {
     url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.PR_RUN_ID}`,
   };
   if (!current) {
-    await upsertComment(
+    await upsertCommentForCurrentHead(
       github,
       context,
+      core,
       pullNumber,
+      currentRun.sha,
       [
         COMMENT_MARKER,
         "## Thread transfer impact",
@@ -355,8 +373,17 @@ async function publish({ github, context, core }) {
       }
     : undefined;
   const body = renderComment({ current, baseline, currentRun, baselineRun });
-  await upsertComment(github, context, pullNumber, body);
-  core.info(`Updated thread transfer report on PR #${pullNumber}.`);
+  const published = await upsertCommentForCurrentHead(
+    github,
+    context,
+    core,
+    pullNumber,
+    currentRun.sha,
+    body,
+  );
+  if (published) {
+    core.info(`Updated thread transfer report on PR #${pullNumber}.`);
+  }
 }
 
 module.exports = {
@@ -364,5 +391,6 @@ module.exports = {
   readResult,
   renderComment,
   resolve,
+  upsertCommentForCurrentHead,
   validateResult,
 };

@@ -47,6 +47,7 @@ const waitForTurnQuiesced = Effect.fn("TransferBudget.waitForTurnQuiesced")(func
       receipt.checkpointTurnCount === checkpointTurnCount,
   );
   yield* harness.drainProviderRuntime;
+  yield* harness.drainCheckpointReactor;
   return receipt;
 });
 
