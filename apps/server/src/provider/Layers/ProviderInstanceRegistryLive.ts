@@ -110,6 +110,7 @@ const decodedConfigEnabled = (config: unknown): boolean | undefined => {
 const buildEntry = <R>(input: {
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
   readonly parentScope: Scope.Scope;
+  readonly onScopeOpened: (scope: Scope.Closeable) => void;
   readonly instanceId: ProviderInstanceId;
   readonly rawInstanceId: string;
   readonly entry: ProviderInstanceConfig;
@@ -120,7 +121,7 @@ const buildEntry = <R>(input: {
   R
 > =>
   Effect.gen(function* () {
-    const { driversById, parentScope, instanceId, rawInstanceId, entry } = input;
+    const { driversById, parentScope, onScopeOpened, instanceId, rawInstanceId, entry } = input;
     const driver = driversById.get(entry.driver);
     if (!driver) {
       return {
@@ -158,13 +159,26 @@ const buildEntry = <R>(input: {
     }
 
     const typedConfig = decodeResult.success;
-    const childScope = yield* Scope.make();
-    // Attach the child scope to the registry's parent scope: if the
-    // registry scope closes, each surviving instance's child scope is
-    // closed through this finalizer. `reconcile` manually closes the
-    // child scope on remove/replace; subsequent close via the parent's
-    // finalizer is a no-op because `Scope.close` is idempotent.
-    yield* Scope.addFinalizer(parentScope, Scope.close(childScope, Exit.void).pipe(Effect.ignore));
+    const childScope = yield* Effect.acquireUseRelease(
+      Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        // Register ownership before acquisition completes. If driver
+        // creation is interrupted, reconcile can close this unpublished
+        // scope immediately instead of leaving it alive until the registry
+        // itself shuts down.
+        yield* Effect.sync(() => onScopeOpened(scope));
+        // Attach the child scope to the registry's parent scope: if the
+        // registry scope closes, each surviving instance's child scope is
+        // closed through this finalizer. `reconcile` manually closes the
+        // child scope on remove/replace; subsequent close via the parent's
+        // finalizer is a no-op because `Scope.close` is idempotent.
+        yield* Scope.addFinalizer(parentScope, Scope.close(scope, Exit.void).pipe(Effect.ignore));
+        return scope;
+      }),
+      Effect.succeed,
+      (scope, exit) =>
+        Exit.isFailure(exit) ? Scope.close(scope, Exit.void).pipe(Effect.ignore) : Effect.void,
+    );
 
     const createResult = yield* driver
       .create({
@@ -219,103 +233,139 @@ const makeReconcile = <R>(input: {
 ) => Effect.Effect<void, never, R>) => {
   const { state, driversById, parentScope } = input;
   return (configMap: ProviderInstanceConfigMap, options) =>
-    Effect.gen(function* () {
-      const previousEntries = yield* Ref.get(state.entries);
-      const previousUnavailable = yield* Ref.get(state.unavailable);
-      const nextRaw = Object.entries(configMap);
-      const nextKeys = new Set<ProviderInstanceId>(
-        nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
-      );
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const previousEntries = yield* Ref.get(state.entries);
+        const previousUnavailable = yield* Ref.get(state.unavailable);
+        const nextRaw = Object.entries(configMap);
+        const nextKeys = new Set<ProviderInstanceId>(
+          nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
+        );
 
-      // 1. Close scopes for instances that disappeared or whose config
-      //    changed. Do this BEFORE creating replacements so ids map 1-to-1
-      //    to live scopes at all times.
-      const removedIds: Array<ProviderInstanceId> = [];
-      const replacedIds = new Set<ProviderInstanceId>();
-      for (const [instanceId, live] of previousEntries) {
-        if (!nextKeys.has(instanceId)) {
-          removedIds.push(instanceId);
-          continue;
-        }
-        const nextEntry = configMap[instanceId];
-        if (
-          nextEntry !== undefined &&
-          (options?.force === true || !entryEqual(live.entry, nextEntry))
-        ) {
-          replacedIds.add(instanceId);
-        }
-      }
-      for (const id of [...removedIds, ...replacedIds]) {
-        const live = previousEntries.get(id);
-        if (live) {
-          yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
-        }
-      }
-
-      // 2. Build additions and replacements. Walk `nextRaw` so the final
-      //    entry order follows settings-author order.
-      const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
-      const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
-      let orderChanged = false;
-      const previousOrder = [...previousEntries.keys()];
-      const nextOrder: Array<ProviderInstanceId> = [];
-
-      for (const [rawInstanceId, entry] of nextRaw) {
-        const instanceId = ProviderInstanceId.make(rawInstanceId);
-        nextOrder.push(instanceId);
-
-        const existing = previousEntries.get(instanceId);
-        if (existing !== undefined && !replacedIds.has(instanceId)) {
-          // No-op update: keep the existing live entry and scope.
-          builtEntries.set(instanceId, existing);
-          continue;
-        }
-
-        const result = yield* buildEntry({
-          driversById,
-          parentScope,
-          instanceId,
-          rawInstanceId,
-          entry,
-        });
-        if (result.kind === "live") {
-          builtEntries.set(instanceId, result.live);
-        } else {
-          builtUnavailable.set(instanceId, result.snapshot);
-        }
-      }
-
-      if (previousOrder.length === nextOrder.length) {
-        for (let i = 0; i < previousOrder.length; i++) {
-          if (previousOrder[i] !== nextOrder[i]) {
-            orderChanged = true;
-            break;
+        // Stage the public state before teardown so readers can never receive
+        // an instance whose scope has already closed. Unavailable snapshots
+        // are rebuilt below because they do not retain their source envelope.
+        const removedIds: Array<ProviderInstanceId> = [];
+        const replacedIds = new Set<ProviderInstanceId>();
+        for (const [instanceId, live] of previousEntries) {
+          if (!nextKeys.has(instanceId)) {
+            removedIds.push(instanceId);
+            continue;
+          }
+          const nextEntry = configMap[instanceId];
+          if (
+            nextEntry !== undefined &&
+            (options?.force === true || !entryEqual(live.entry, nextEntry))
+          ) {
+            replacedIds.add(instanceId);
           }
         }
-      } else {
-        orderChanged = true;
-      }
+        const stagedEntries = new Map<ProviderInstanceId, LiveEntry>();
+        const previousOrder = [...previousEntries.keys()];
+        const nextOrder: Array<ProviderInstanceId> = [];
+        const openedScopes: Array<Scope.Closeable> = [];
 
-      const entriesChanged =
-        orderChanged ||
-        removedIds.length > 0 ||
-        replacedIds.size > 0 ||
-        builtEntries.size !== previousEntries.size;
-      const unavailableChanged =
-        builtUnavailable.size !== previousUnavailable.size ||
-        [...builtUnavailable].some(([id, snapshot]) => {
-          const prev = previousUnavailable.get(id);
-          return prev === undefined || !Equal.equals(prev, snapshot);
-        }) ||
-        [...previousUnavailable].some(([id]) => !builtUnavailable.has(id));
+        for (const [rawInstanceId] of nextRaw) {
+          const instanceId = ProviderInstanceId.make(rawInstanceId);
+          nextOrder.push(instanceId);
+          const existing = previousEntries.get(instanceId);
+          if (existing !== undefined && !replacedIds.has(instanceId)) {
+            stagedEntries.set(instanceId, existing);
+          }
+        }
 
-      yield* Ref.set(state.entries, builtEntries);
-      yield* Ref.set(state.unavailable, builtUnavailable);
+        const stagedEntriesChanged =
+          stagedEntries.size !== previousEntries.size ||
+          [...stagedEntries].some(
+            ([id, live], index) => previousOrder[index] !== id || previousEntries.get(id) !== live,
+          );
+        const stagedStateChanged = stagedEntriesChanged || previousUnavailable.size > 0;
 
-      if (entriesChanged || unavailableChanged) {
-        yield* PubSub.publish(state.changes, undefined);
-      }
-    });
+        yield* Ref.set(state.entries, stagedEntries);
+        yield* Ref.set(state.unavailable, new Map());
+
+        for (const id of [...removedIds, ...replacedIds]) {
+          const live = previousEntries.get(id);
+          if (live) {
+            yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
+          }
+        }
+
+        // Driver creation is the only interruptible phase. The old scopes are
+        // already closed and unpublished; if cancellation arrives, close every
+        // newly opened scope before releasing the reconcile semaphore.
+        const builtEntries = new Map(stagedEntries);
+        const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
+        yield* restore(
+          Effect.gen(function* () {
+            for (const [rawInstanceId, entry] of nextRaw) {
+              const instanceId = ProviderInstanceId.make(rawInstanceId);
+              if (builtEntries.has(instanceId)) {
+                continue;
+              }
+
+              const result = yield* buildEntry({
+                driversById,
+                parentScope,
+                onScopeOpened: (scope) => openedScopes.push(scope),
+                instanceId,
+                rawInstanceId,
+                entry,
+              });
+              if (result.kind === "live") {
+                builtEntries.set(instanceId, result.live);
+              } else {
+                builtUnavailable.set(instanceId, result.snapshot);
+              }
+            }
+          }),
+        ).pipe(
+          Effect.onInterrupt(() =>
+            Effect.forEach(openedScopes, (scope) =>
+              Scope.close(scope, Exit.void).pipe(Effect.ignore),
+            ).pipe(
+              Effect.andThen(
+                stagedStateChanged ? PubSub.publish(state.changes, undefined) : Effect.void,
+              ),
+              Effect.asVoid,
+            ),
+          ),
+        );
+
+        let orderChanged = false;
+
+        if (previousOrder.length === nextOrder.length) {
+          for (let i = 0; i < previousOrder.length; i++) {
+            if (previousOrder[i] !== nextOrder[i]) {
+              orderChanged = true;
+              break;
+            }
+          }
+        } else {
+          orderChanged = true;
+        }
+
+        const entriesChanged =
+          orderChanged ||
+          removedIds.length > 0 ||
+          replacedIds.size > 0 ||
+          builtEntries.size !== previousEntries.size;
+        const unavailableChanged =
+          builtUnavailable.size !== previousUnavailable.size ||
+          [...builtUnavailable].some(([id, snapshot]) => {
+            const prev = previousUnavailable.get(id);
+            return prev === undefined || !Equal.equals(prev, snapshot);
+          }) ||
+          [...previousUnavailable].some(([id]) => !builtUnavailable.has(id));
+
+        yield* Ref.set(state.entries, builtEntries);
+        yield* Ref.set(state.unavailable, builtUnavailable);
+
+        if (entriesChanged || unavailableChanged) {
+          yield* PubSub.publish(state.changes, undefined);
+        }
+      }),
+    );
 };
 
 /**

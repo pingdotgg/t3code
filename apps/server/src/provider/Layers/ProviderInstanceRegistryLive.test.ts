@@ -37,6 +37,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -140,6 +141,104 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
 });
 
 describe("ProviderInstanceRegistryLive — reconcile lifecycle", () => {
+  it.effect("keeps scope ownership safe when replacement is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("test_default");
+        const driverKind = ProviderDriverKind.make("test");
+        const enteredInitialClose = yield* Deferred.make<void>();
+        const releaseInitialClose = yield* Deferred.make<void>();
+        const enteredBlockedCreate = yield* Deferred.make<void>();
+        const created = yield* Ref.make<ReadonlyArray<string>>([]);
+        const finalized = yield* Ref.make<ReadonlyArray<string>>([]);
+        const openScopes = yield* Ref.make(0);
+
+        const driver = {
+          driverKind,
+          metadata: { displayName: "Test" },
+          configSchema: Schema.Struct({ version: Schema.String }),
+          defaultConfig: () => ({ version: "default" }),
+          create: Effect.fn("InterruptibleTestDriver.create")(function* (input) {
+            const version = input.config.version;
+            yield* Ref.update(created, (versions) => [...versions, version]);
+            yield* Ref.update(openScopes, (count) => count + 1);
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                if (version === "initial") {
+                  yield* Deferred.succeed(enteredInitialClose, undefined);
+                  yield* Deferred.await(releaseInitialClose);
+                }
+                yield* Ref.update(openScopes, (count) => count - 1);
+                yield* Ref.update(finalized, (versions) => [...versions, version]);
+              }),
+            );
+            if (version === "blocked-create") {
+              yield* Deferred.succeed(enteredBlockedCreate, undefined);
+              return yield* Effect.never;
+            }
+            return {
+              instanceId: input.instanceId,
+              driverKind,
+              continuationIdentity: {
+                driverKind,
+                continuationKey: `test:${version}`,
+              },
+              displayName: version,
+              enabled: true,
+              snapshot: {} as ProviderInstance["snapshot"],
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+          }),
+        } satisfies ProviderDriver<{ readonly version: string }>;
+
+        const configMap = (version: string): ProviderInstanceConfigMap => ({
+          [instanceId]: {
+            driver: driverKind,
+            config: { version },
+          },
+        });
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: configMap("initial"),
+        });
+
+        const interruptedClose = yield* Effect.forkChild(
+          mutator.reconcile(configMap("not-created")),
+        );
+        yield* Deferred.await(enteredInitialClose);
+        expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+
+        yield* Effect.sync(() => interruptedClose.interruptUnsafe());
+        expect(interruptedClose.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(releaseInitialClose, undefined);
+        expect(Exit.hasInterrupts(yield* Fiber.await(interruptedClose))).toBe(true);
+        expect(yield* Ref.get(created)).toEqual(["initial"]);
+        expect(yield* Ref.get(finalized)).toEqual(["initial"]);
+        expect(yield* Ref.get(openScopes)).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+
+        yield* mutator.reconcile(configMap("steady"));
+        const interruptedCreate = yield* Effect.forkChild(
+          mutator.reconcile(configMap("blocked-create")),
+        );
+        yield* Deferred.await(enteredBlockedCreate);
+        expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+        expect(yield* Ref.get(openScopes)).toBe(1);
+
+        yield* Fiber.interrupt(interruptedCreate);
+        expect(Exit.hasInterrupts(yield* Fiber.await(interruptedCreate))).toBe(true);
+        expect(yield* Ref.get(finalized)).toEqual(["initial", "steady", "blocked-create"]);
+        expect(yield* Ref.get(openScopes)).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+
+        yield* mutator.reconcile(configMap("recovered"));
+        expect((yield* registry.getInstance(instanceId))?.displayName).toBe("recovered");
+        expect(yield* Ref.get(openScopes)).toBe(1);
+      }),
+    ),
+  );
+
   it.effect("serializes concurrent replacements and leaves only the newest scope live", () =>
     Effect.scoped(
       Effect.gen(function* () {
