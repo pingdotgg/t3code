@@ -62,7 +62,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
 
 export const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read the latest durable state and final summary for a T3-owned delegated task created by this parent thread.",
+    "Read the latest durable state and final summary for a T3-owned delegated task created by this parent thread. Reading a terminal result acknowledges its automatic parent delivery.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -70,13 +70,13 @@ export const TaskStatusTool = Tool.make("task_status", {
   dependencies,
 })
   .annotate(Tool.Title, "Get delegated task status")
-  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
 export const TaskCancelTool = Tool.make("task_cancel", {
   description:
-    "Request interruption of an active T3-owned delegated task. Completed tasks are returned unchanged.",
+    "Request interruption of an active T3-owned delegated task and dispose its automatic parent delivery. Completed task results remain available.",
   parameters: OrchestratorMcpTaskCancelInput,
   success: OrchestratorMcpTaskCancelResult,
   failure: OrchestratorMcpFailure,
@@ -178,7 +178,7 @@ export const ThreadListTool = Tool.make("t3_thread_list", {
 
 export const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
-    "Read durable state and a paginated timeline from a T3 thread in the calling project. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Continue with afterPosition=nextPosition.",
+    "Read durable state and a paginated timeline from a T3 thread in the calling project. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,
@@ -186,7 +186,7 @@ export const ThreadReadTool = Tool.make("t3_thread_read", {
   dependencies,
 })
   .annotate(Tool.Title, "Read a T3 thread")
-  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
@@ -205,7 +205,7 @@ export const ThreadSendTool = Tool.make("t3_thread_send", {
 
 export const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
-    "Wait for a T3 thread run to reach a terminal durable state. Without runId, the latest run at call time is selected; an idle thread returns immediately. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true.",
+    "Wait for a T3 thread run to reach a terminal durable state. Without runId, the latest run at call time is selected; an idle thread returns immediately. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true. Waiting reports status only and does not acknowledge a delegated result.",
   parameters: OrchestratorMcpThreadWaitInput,
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,
