@@ -1902,7 +1902,7 @@ it.effect(
     Effect.gen(function* () {
       const issueSpy = vi
         .spyOn(McpSessionRegistry, "issueActiveMcpCredential")
-        .mockImplementation(() => Effect.void);
+        .mockImplementation(() => Effect.succeed(undefined));
 
       const codex = makeFakeCodexAdapter();
       const registry = makeAdapterRegistryMock({

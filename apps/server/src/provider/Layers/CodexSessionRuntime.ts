@@ -64,6 +64,13 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+/** True only when the product-native `t3-code` MCP server is configured in app-server args. */
+export function hasConfiguredT3CodeMcpServer(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): boolean {
+  return appServerArgs?.some((argument) => argument.includes("mcp_servers.t3-code.")) === true;
+}
+
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
@@ -1310,7 +1317,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-            includeT3PreviewTools: hasConfiguredMcpServer(options.appServerArgs),
+            includeT3PreviewTools: hasConfiguredT3CodeMcpServer(options.appServerArgs),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

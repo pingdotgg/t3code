@@ -17,6 +17,7 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
   hasConfiguredMcpServer,
+  hasConfiguredT3CodeMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
@@ -330,11 +331,30 @@ describe("T3 browser developer instructions", () => {
 });
 
 describe("hasConfiguredMcpServer", () => {
-  it("detects inline Codex MCP configuration arguments", () => {
+  it("detects any inline Codex MCP configuration arguments", () => {
     NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
     NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+    NodeAssert.equal(
+      hasConfiguredMcpServer(["-c", 'mcp_servers.other.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+});
+
+describe("hasConfiguredT3CodeMcpServer", () => {
+  it("detects only the product-native t3-code MCP server", () => {
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(["--model", "gpt-5.4"]), false);
+    NodeAssert.equal(
+      hasConfiguredT3CodeMcpServer(["-c", 'mcp_servers.other.url="http://127.0.0.1/mcp"']),
+      false,
+    );
+    NodeAssert.equal(
+      hasConfiguredT3CodeMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
     );
   });
