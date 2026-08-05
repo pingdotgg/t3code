@@ -1,8 +1,10 @@
 import { formatElapsed, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type TurnId, type WorkspaceHandoffOrigin } from "@t3tools/contracts";
+import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+export const EMPTY_REVIEW_OUTPUT_MESSAGE_IDS: ReadonlySet<string> = new Set();
 
 export interface TimelineDurationMessage {
   id: string;
@@ -74,6 +76,51 @@ export function resolveWorkGroupExpanded({
   if (expansionOverride === "expanded") return true;
   if (expansionOverride === "collapsed") return false;
   return !shouldAutoCollapse;
+}
+
+/**
+ * Collect assistant message ids whose body is structured review output.
+ * Returns a shared empty set when inactive/empty so timeline context stays
+ * referentially stable across streaming chunks that only change other rows.
+ */
+export function collectReviewOutputMessageIds(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  reviewResultActive: boolean,
+): ReadonlySet<string> {
+  if (!reviewResultActive) {
+    return EMPTY_REVIEW_OUTPUT_MESSAGE_IDS;
+  }
+
+  const ids = new Set<string>();
+  for (const entry of rows) {
+    if (
+      entry.kind === "message" &&
+      entry.message.role === "assistant" &&
+      isReviewOutputText(entry.message.text ?? "")
+    ) {
+      ids.add(entry.id);
+    }
+  }
+  return ids.size === 0 ? EMPTY_REVIEW_OUTPUT_MESSAGE_IDS : ids;
+}
+
+/** Reuse the previous set when membership is unchanged. */
+export function stabilizeReadonlyStringSet(
+  next: ReadonlySet<string>,
+  previous: ReadonlySet<string> | undefined,
+): ReadonlySet<string> {
+  if (previous === undefined || previous === next) {
+    return next;
+  }
+  if (previous.size !== next.size) {
+    return next;
+  }
+  for (const value of next) {
+    if (!previous.has(value)) {
+      return next;
+    }
+  }
+  return previous;
 }
 
 export function computeMessageDurationStart(

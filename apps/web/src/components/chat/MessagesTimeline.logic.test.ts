@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { MessageId, TurnId } from "@t3tools/contracts";
 import {
+  collectReviewOutputMessageIds,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  EMPTY_REVIEW_OUTPUT_MESSAGE_IDS,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveWorkGroupExpanded,
+  stabilizeReadonlyStringSet,
+  type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
@@ -1185,5 +1190,82 @@ describe("workspace handoff rows", () => {
     const repeated = computeStableMessagesTimelineRows(deriveHandoffRows(), initial);
 
     expect(findMarker(repeated)).toBe(findMarker(initial));
+  });
+});
+
+describe("collectReviewOutputMessageIds", () => {
+  const assistantRow = (id: string, text: string): MessagesTimelineRow => ({
+    kind: "message",
+    id,
+    createdAt: "2026-01-01T00:00:00Z",
+    message: {
+      id: MessageId.make(id),
+      role: "assistant",
+      text,
+      createdAt: "2026-01-01T00:00:00Z",
+      streaming: false,
+      turnId: TurnId.make("turn-1"),
+    },
+    durationStart: "2026-01-01T00:00:00Z",
+    showCompletionDivider: false,
+    showAssistantCopyButton: true,
+    showAssistantTerminalMetadata: true,
+  });
+
+  it("returns the shared empty set when review results are inactive", () => {
+    const rows = [assistantRow("a1", "ordinary reply")];
+    const first = collectReviewOutputMessageIds(rows, false);
+    const second = collectReviewOutputMessageIds(
+      [assistantRow("a1", "ordinary reply that grew while streaming")],
+      false,
+    );
+
+    expect(first).toBe(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS);
+    expect(second).toBe(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS);
+    expect(first).toBe(second);
+  });
+
+  it("returns the shared empty set when no review output rows are present", () => {
+    const ids = collectReviewOutputMessageIds([assistantRow("a1", "no findings here")], true);
+    expect(ids).toBe(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS);
+  });
+
+  it("collects assistant rows whose body is structured review output", () => {
+    const reviewText = JSON.stringify({
+      findings: [],
+      overall_correctness: "patch is correct",
+      overall_explanation: "No issues.",
+      overall_confidence_score: 0.9,
+    });
+    const ids = collectReviewOutputMessageIds(
+      [assistantRow("review-json", reviewText), assistantRow("follow-up", "Looks good otherwise.")],
+      true,
+    );
+
+    expect(ids).not.toBe(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS);
+    expect([...ids]).toEqual(["review-json"]);
+  });
+});
+
+describe("stabilizeReadonlyStringSet", () => {
+  it("reuses the previous set when membership is unchanged", () => {
+    const previous = new Set(["a", "b"]);
+    const next = new Set(["b", "a"]);
+
+    expect(stabilizeReadonlyStringSet(next, previous)).toBe(previous);
+  });
+
+  it("returns the next set when membership changes", () => {
+    const previous = new Set(["a"]);
+    const next = new Set(["a", "b"]);
+
+    expect(stabilizeReadonlyStringSet(next, previous)).toBe(next);
+  });
+
+  it("keeps the shared empty set stable across repeated empty collections", () => {
+    const first = stabilizeReadonlyStringSet(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS, undefined);
+    const second = stabilizeReadonlyStringSet(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS, first);
+    expect(second).toBe(first);
+    expect(second).toBe(EMPTY_REVIEW_OUTPUT_MESSAGE_IDS);
   });
 });
