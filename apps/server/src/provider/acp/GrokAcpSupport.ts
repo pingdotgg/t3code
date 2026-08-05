@@ -82,8 +82,6 @@ export function resolveGrokReasoningEffortSelection(
   );
 }
 
-
-
 /**
  * Grok has no ACP session modes on live 0.2.x. Plan mode is entered via the
  * `/plan` slash command (see Grok Build user guide). Map T3 interactionMode
@@ -104,6 +102,34 @@ export function applyGrokPlanModeToPromptText(input: {
     return `/plan ${trimmed}`;
   }
   return trimmed;
+}
+
+/**
+ * Detect Grok in-process subagent tools (spawn_subagent and relatives) so the
+ * adapter can emit T3 task.* events for multi-agent visibility.
+ */
+export function isGrokSubagentToolCall(toolCall: {
+  readonly toolCallId: string;
+  readonly title?: string;
+  readonly kind?: string;
+  readonly detail?: string;
+  readonly data: Record<string, unknown>;
+}): boolean {
+  const haystack = [
+    toolCall.toolCallId,
+    toolCall.title ?? "",
+    toolCall.kind ?? "",
+    toolCall.detail ?? "",
+    typeof toolCall.data.name === "string" ? toolCall.data.name : "",
+    typeof toolCall.data.toolName === "string" ? toolCall.data.toolName : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  return (
+    haystack.includes("spawn_subagent") ||
+    haystack.includes("subagent") ||
+    haystack.includes("spawn_agent")
+  );
 }
 
 function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {

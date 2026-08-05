@@ -7,6 +7,7 @@ import {
   applyGrokAcpModelSelection,
   applyGrokPlanModeToPromptText,
   buildGrokAcpSpawnInput,
+  isGrokSubagentToolCall,
   resolveGrokAcpBaseModelId,
   resolveGrokReasoningEffortSelection,
 } from "./GrokAcpSupport.ts";
@@ -230,5 +231,37 @@ describe("applyGrokPlanModeToPromptText", () => {
       undefined,
     );
     expect(applyGrokPlanModeToPromptText({ text: "   ", interactionMode: "plan" })).toBe("");
+  });
+});
+
+describe("isGrokSubagentToolCall", () => {
+  it("matches spawn_subagent by tool name", () => {
+    expect(
+      isGrokSubagentToolCall({
+        toolCallId: "tc_1",
+        data: { name: "spawn_subagent" },
+      }),
+    ).toBe(true);
+  });
+
+  it("matches titles that mention subagent", () => {
+    expect(
+      isGrokSubagentToolCall({
+        toolCallId: "tc_2",
+        title: "Spawn subagent: explore",
+        data: {},
+      }),
+    ).toBe(true);
+  });
+
+  it("does not match ordinary tools", () => {
+    expect(
+      isGrokSubagentToolCall({
+        toolCallId: "tc_3",
+        title: "Read file",
+        kind: "read",
+        data: { name: "read_file" },
+      }),
+    ).toBe(false);
   });
 });

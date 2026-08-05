@@ -62,6 +62,7 @@ import {
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
   applyGrokPlanModeToPromptText,
+  isGrokSubagentToolCall,
   resolveGrokReasoningEffortSelection,
   type GrokAcpSpawnOptions,
 } from "../acp/GrokAcpSupport.ts";
@@ -1267,6 +1268,58 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    // Surface Grok spawn_subagent (and similar) as T3 task rows
+                    // so multi-agent work is visible like Claude Task tools.
+                    if (isGrokSubagentToolCall(event.toolCall)) {
+                      const taskId = RuntimeTaskId.make(event.toolCall.toolCallId);
+                      const description =
+                        event.toolCall.title?.trim() ||
+                        event.toolCall.detail?.trim() ||
+                        "Grok subagent";
+                      if (
+                        event.toolCall.status === "pending" ||
+                        event.toolCall.status === "inProgress"
+                      ) {
+                        yield* offerRuntimeEvent({
+                          type: "task.started",
+                          ...stamp,
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: notificationTurnId,
+                          payload: {
+                            taskId,
+                            description,
+                            taskType: "subagent",
+                          },
+                          raw: {
+                            source: "acp.jsonrpc",
+                            method: "session/update",
+                            payload: event.rawPayload,
+                          },
+                        });
+                      } else if (
+                        event.toolCall.status === "completed" ||
+                        event.toolCall.status === "failed"
+                      ) {
+                        yield* offerRuntimeEvent({
+                          type: "task.completed",
+                          ...stamp,
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: notificationTurnId,
+                          payload: {
+                            taskId,
+                            status: event.toolCall.status === "failed" ? "failed" : "completed",
+                            ...(event.toolCall.detail ? { summary: event.toolCall.detail } : {}),
+                          },
+                          raw: {
+                            source: "acp.jsonrpc",
+                            method: "session/update",
+                            payload: event.rawPayload,
+                          },
+                        });
+                      }
+                    }
                     return;
                   }
                   case "ContentDelta":
