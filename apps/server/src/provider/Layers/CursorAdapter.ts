@@ -867,6 +867,11 @@ export function makeCursorAdapter(
                       }),
                     );
                     return;
+                  case "TokenUsageUpdated":
+                    // Parsed from ACP usage_update; Grok wires this to the context
+                    // meter. Cursor can emit the same makeAcpTokenUsageUpdatedEvent
+                    // path once verified against a real Cursor ACP install.
+                    return;
                 }
               }),
             ),

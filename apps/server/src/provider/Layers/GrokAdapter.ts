@@ -49,15 +49,20 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageUpdatedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
+  contextWindowForModelId,
+  contextWindowsFromSessionModels,
   currentGrokModelIdFromSessionSetup,
+  enrichGrokTokenUsage,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  tokenUsageFromGrokPromptMeta,
 } from "../acp/GrokAcpSupport.ts";
 import {
   extractXAiAskUserQuestions,
@@ -117,6 +122,8 @@ interface GrokSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   currentModelId: string | undefined;
+  /** modelId → totalContextTokens from Grok session model `_meta`. */
+  contextWindowsByModelId: ReadonlyMap<string, number>;
   stopped: boolean;
 }
 
@@ -745,6 +752,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          const contextWindowsByModelId = contextWindowsFromSessionModels(
+            started.sessionSetupResult.models,
+          );
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -778,6 +788,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
             currentModelId: boundModelId,
+            contextWindowsByModelId,
             stopped: false,
           };
 
@@ -791,12 +802,37 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
-                  event._tag === "ContentDelta"
+                  event._tag === "ContentDelta" ||
+                  event._tag === "TokenUsageUpdated"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
 
                 if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                // Session-level usage can arrive after activeTurnId is cleared; still
+                // surface it so the composer context meter can update between turns.
+                if (event._tag === "TokenUsageUpdated") {
+                  const usageTurnId = resolveNotificationTurnId(ctx);
+                  if (usageTurnId !== undefined && ctx.interruptedTurnIds.has(usageTurnId)) {
+                    return;
+                  }
+                  const maxTokens = contextWindowForModelId(
+                    ctx.contextWindowsByModelId,
+                    ctx.currentModelId,
+                  );
+                  yield* offerRuntimeEvent(
+                    makeAcpTokenUsageUpdatedEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      turnId: usageTurnId,
+                      usage: enrichGrokTokenUsage(event.usage, maxTokens),
+                      rawPayload: event.rawPayload,
+                    }),
+                  );
                   return;
                 }
 
@@ -1150,6 +1186,24 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 updatedAt: yield* nowIso,
                 ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
               };
+              // Grok streams fill via session/update _meta; prompt response
+              // carries the final totals as a reliable end-of-turn snapshot.
+              const promptUsage = tokenUsageFromGrokPromptMeta(
+                result._meta,
+                contextWindowForModelId(ctx.contextWindowsByModelId, ctx.currentModelId),
+              );
+              if (promptUsage) {
+                yield* offerRuntimeEvent(
+                  makeAcpTokenUsageUpdatedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    turnId: prepared.turnId,
+                    usage: promptUsage,
+                    rawPayload: result,
+                  }),
+                );
+              }
               const remainingPrompts = Math.max(0, ctx.promptsInFlight - 1);
               ctx.promptsInFlight = remainingPrompts;
 

@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type { ThreadTokenUsageSnapshot, ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -107,6 +107,11 @@ export type AcpParsedSessionEvent =
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
       readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "TokenUsageUpdated";
+      readonly usage: ThreadTokenUsageSnapshot;
       readonly rawPayload: unknown;
     };
 
@@ -574,9 +579,84 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
+    case "usage_update": {
+      // ACP Session Context Size and Cost: used = tokens in context, size = window.
+      // Ingestion only materializes context-window activities when usedTokens > 0.
+      const usage = tokenUsageFromAcpUsageUpdate(upd);
+      if (usage) {
+        events.push({
+          _tag: "TokenUsageUpdated",
+          usage,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
     default:
       break;
   }
 
+  // Prefer explicit usage_update above. Grok (and similar agents) also put the
+  // current context fill on SessionNotification._meta.totalTokens while streaming.
+  if (!events.some((event) => event._tag === "TokenUsageUpdated")) {
+    const usageFromMeta = tokenUsageFromSessionNotificationMeta(params._meta);
+    if (usageFromMeta) {
+      events.push({
+        _tag: "TokenUsageUpdated",
+        usage: usageFromMeta,
+        rawPayload: params,
+      });
+    }
+  }
+
   return { ...(modeId !== undefined ? { modeId } : {}), events };
+}
+
+function finiteNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const truncated = Math.trunc(value);
+  return truncated >= 0 ? truncated : undefined;
+}
+
+function finitePositiveInt(value: unknown): number | undefined {
+  const valueInt = finiteNonNegativeInt(value);
+  return valueInt !== undefined && valueInt > 0 ? valueInt : undefined;
+}
+
+function tokenUsageFromAcpUsageUpdate(update: {
+  readonly used: number;
+  readonly size: number;
+}): ThreadTokenUsageSnapshot | undefined {
+  const usedTokens = finitePositiveInt(update.used);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+  const maxTokens = finitePositiveInt(update.size);
+  return {
+    usedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+}
+
+/** Read context fill from ACP notification `_meta` (Grok streams this today). */
+export function tokenUsageFromSessionNotificationMeta(
+  meta: unknown,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  const usedTokens = finitePositiveInt(meta.totalTokens);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+  const maxTokens =
+    finitePositiveInt(meta.totalContextTokens) ??
+    finitePositiveInt(meta.contextWindow) ??
+    finitePositiveInt(meta.size);
+  return {
+    usedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
 }

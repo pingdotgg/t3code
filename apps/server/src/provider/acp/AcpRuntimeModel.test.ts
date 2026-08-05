@@ -336,6 +336,120 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects ACP usage_update into TokenUsageUpdated snapshots", () => {
+    const raw = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update" as const,
+        used: 12_345,
+        size: 200_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(raw).events).toEqual([
+      {
+        _tag: "TokenUsageUpdated",
+        usage: {
+          usedTokens: 12_345,
+          maxTokens: 200_000,
+        },
+        rawPayload: raw,
+      },
+    ]);
+
+    expect(
+      parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "usage_update",
+          used: 0,
+          size: 200_000,
+        },
+      } satisfies EffectAcpSchema.SessionNotification).events,
+    ).toEqual([]);
+
+    expect(
+      parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "usage_update",
+          used: 99,
+          size: 0,
+        },
+      } satisfies EffectAcpSchema.SessionNotification).events,
+    ).toEqual([
+      {
+        _tag: "TokenUsageUpdated",
+        usage: {
+          usedTokens: 99,
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 99,
+            size: 0,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("projects Grok-style session/update _meta.totalTokens into TokenUsageUpdated", () => {
+    const raw = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "hello",
+        },
+      },
+      _meta: {
+        totalTokens: 19_267,
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(raw).events).toEqual([
+      {
+        _tag: "ContentDelta",
+        text: "hello",
+        rawPayload: raw,
+      },
+      {
+        _tag: "TokenUsageUpdated",
+        usage: {
+          usedTokens: 19_267,
+        },
+        rawPayload: raw,
+      },
+    ]);
+
+    // Explicit usage_update wins over notification _meta when both exist.
+    const withBoth = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update" as const,
+        used: 1_000,
+        size: 50_000,
+      },
+      _meta: {
+        totalTokens: 9_999,
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(withBoth).events).toEqual([
+      {
+        _tag: "TokenUsageUpdated",
+        usage: {
+          usedTokens: 1_000,
+          maxTokens: 50_000,
+        },
+        rawPayload: withBoth,
+      },
+    ]);
+  });
+
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",

@@ -5,7 +5,12 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  contextWindowForModelId,
+  contextWindowsFromSessionModels,
+  enrichGrokTokenUsage,
   resolveGrokAcpBaseModelId,
+  tokenUsageFromGrokPromptMeta,
+  totalContextTokensFromModelMeta,
 } from "./GrokAcpSupport.ts";
 
 describe("resolveGrokAcpBaseModelId", () => {
@@ -106,4 +111,78 @@ describe("applyGrokAcpModelSelection", () => {
       expect(error).toBe(failure.message);
     }),
   );
+});
+
+describe("Grok context window helpers", () => {
+  it("reads totalContextTokens from model meta and session model state", () => {
+    expect(totalContextTokensFromModelMeta({ totalContextTokens: 500_000 })).toBe(500_000);
+    expect(totalContextTokensFromModelMeta({ totalContextTokens: 0 })).toBeUndefined();
+    expect(totalContextTokensFromModelMeta(null)).toBeUndefined();
+
+    const windows = contextWindowsFromSessionModels({
+      currentModelId: "model-a",
+      availableModels: [
+        {
+          modelId: "model-a",
+          name: "Model A",
+          _meta: { totalContextTokens: 500_000 },
+        },
+        {
+          modelId: "model-b",
+          name: "Model B",
+          _meta: { totalContextTokens: 128_000 },
+        },
+        {
+          modelId: "model-c",
+          name: "Model C",
+        },
+      ],
+    });
+
+    expect(contextWindowForModelId(windows, "model-a")).toBe(500_000);
+    expect(contextWindowForModelId(windows, "model-b")).toBe(128_000);
+    expect(contextWindowForModelId(windows, "model-c")).toBeUndefined();
+  });
+
+  it("maps prompt _meta usage into a ThreadTokenUsageSnapshot with model window", () => {
+    expect(
+      tokenUsageFromGrokPromptMeta(
+        {
+          totalTokens: 19_267,
+          inputTokens: 19_237,
+          outputTokens: 29,
+          cachedReadTokens: 2_560,
+          reasoningTokens: 18,
+          usage: {
+            inputTokens: 19_237,
+            outputTokens: 29,
+            totalTokens: 19_266,
+            cachedReadTokens: 2_560,
+            reasoningTokens: 18,
+          },
+        },
+        500_000,
+      ),
+    ).toEqual({
+      usedTokens: 19_267,
+      maxTokens: 500_000,
+      inputTokens: 19_237,
+      lastInputTokens: 19_237,
+      outputTokens: 29,
+      lastOutputTokens: 29,
+      cachedInputTokens: 2_560,
+      lastCachedInputTokens: 2_560,
+      reasoningOutputTokens: 18,
+      lastReasoningOutputTokens: 18,
+      lastUsedTokens: 19_267,
+      compactsAutomatically: true,
+    });
+
+    expect(tokenUsageFromGrokPromptMeta({}, 500_000)).toBeUndefined();
+    expect(enrichGrokTokenUsage({ usedTokens: 100 }, 200_000)).toEqual({
+      usedTokens: 100,
+      maxTokens: 200_000,
+      compactsAutomatically: true,
+    });
+  });
 });
