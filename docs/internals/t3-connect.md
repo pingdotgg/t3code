@@ -174,16 +174,16 @@ artifact.
 
 ## Desktop Passkeys
 
-The production macOS bundle ID is `com.t3tools.t3code`. To enable native passkeys:
+The production macOS bundle ID is `dev.incognitojam.t3code`. To enable native passkeys:
 
-1. Create an explicit macOS App ID for `com.t3tools.t3code` in the Apple Developer portal and enable
+1. Create an explicit macOS App ID for `dev.incognitojam.t3code` in the Apple Developer portal and enable
    **Associated Domains**.
 2. Create a compatible macOS provisioning profile for that App ID and the certificate used to sign
    the distributed app.
 3. In Clerk's Native API settings, add an iOS app with the same Apple Team ID and bundle ID. This is
    also the configuration point for Electron/macOS passkeys.
 4. Confirm Clerk serves `https://<frontend-api>/.well-known/apple-app-site-association` and that
-   `webcredentials.apps` contains `<TEAM_ID>.com.t3tools.t3code`.
+   `webcredentials.apps` contains `<TEAM_ID>.dev.incognitojam.t3code`.
 5. Set the local or CI signing configuration described below.
 
 For a local signed build, add these values to `.env.local` or export them before invoking the
