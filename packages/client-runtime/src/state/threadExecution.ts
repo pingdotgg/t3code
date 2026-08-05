@@ -1,7 +1,12 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
-import type { ThreadRunSummary, ThreadRuntimeSummary } from "./models.ts";
+import {
+  threadRuntimeIsActive,
+  type ThreadRunSummary,
+  type ThreadRuntimeSummary,
+} from "./models.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -62,6 +67,7 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
+  const latestRunProjection = latestMatchingRun(projection, () => true);
   const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
@@ -69,11 +75,16 @@ export function deriveThreadRuntime(
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const hasPendingBackgroundTasks =
+    derivePendingBackgroundWork({
+      latestRun: latestRunProjection,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+    }).length > 0;
   return {
-    // Queueing creates a newer run, but does not replace the provider work
-    // already in flight. Present the executing run's status until it reaches
-    // a terminal state so clients do not flash from "running" to "queued".
-    status: activityRun?.status ?? "idle",
+    status: hasPendingBackgroundTasks ? "idle" : (activityRun?.status ?? "idle"),
     activeRunId,
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
@@ -85,5 +96,9 @@ export function deriveThreadRuntime(
 export function threadRuntimeHasInterruptibleRun(
   runtime: ThreadRuntimeSummary | null | undefined,
 ): boolean {
-  return runtime?.activeRunId !== null && runtime?.activeRunId !== undefined;
+  return (
+    threadRuntimeIsActive(runtime) &&
+    runtime?.activeRunId !== null &&
+    runtime?.activeRunId !== undefined
+  );
 }

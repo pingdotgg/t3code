@@ -29,50 +29,81 @@ type ProtocolReplayEntry = Extract<
   { readonly type: "expect_outbound" | "emit_inbound" }
 >;
 
-const CODEX_REPLAY_FIXTURES = ORCHESTRATOR_REPLAY_FIXTURES.flatMap((fixture) =>
+interface CodexReplayFixtureRegistration {
+  readonly registrationScenario: string;
+  readonly recordedScenario: string;
+  readonly transcriptFile: URL;
+}
+
+const CODEX_REPLAY_FIXTURE_REGISTRATIONS = ORCHESTRATOR_REPLAY_FIXTURES.flatMap((fixture) =>
   fixture.providers
     .filter((provider) => provider.driver === "codex")
     .map((provider) => ({
-      scenario: fixture.name,
+      registrationScenario: fixture.name,
+      recordedScenario: provider.recordedScenario ?? fixture.name,
       transcriptFile: provider.transcriptFile,
     })),
 ).concat([
   {
-    scenario: "provider_thread_resume",
+    registrationScenario: "provider_thread_resume",
+    recordedScenario: "provider_thread_resume",
     transcriptFile: new URL(
       "./fixtures/provider_thread_resume/codex_transcript.ndjson",
       import.meta.url,
     ),
   },
   {
-    scenario: "thread_fork_native_continue",
+    registrationScenario: "thread_fork_native_continue",
+    recordedScenario: "thread_fork_native_continue",
     transcriptFile: new URL(
       "./fixtures/thread_fork_native_continue/codex_transcript.ndjson",
       import.meta.url,
     ),
   },
   {
-    scenario: "thread_fork_native_siblings",
+    registrationScenario: "thread_fork_native_siblings",
+    recordedScenario: "thread_fork_native_siblings",
     transcriptFile: new URL(
       "./fixtures/thread_fork_native_siblings/codex_transcript.ndjson",
       import.meta.url,
     ),
   },
   {
-    scenario: "thread_merge_back_continue",
+    registrationScenario: "thread_merge_back_continue",
+    recordedScenario: "thread_merge_back_continue",
     transcriptFile: new URL(
       "./fixtures/thread_merge_back_continue/codex_transcript.ndjson",
       import.meta.url,
     ),
   },
   {
-    scenario: "thread_merge_back_siblings",
+    registrationScenario: "thread_merge_back_siblings",
+    recordedScenario: "thread_merge_back_siblings",
     transcriptFile: new URL(
       "./fixtures/thread_merge_back_siblings/codex_transcript.ndjson",
       import.meta.url,
     ),
   },
 ]);
+
+function uniqueCanonicalTranscripts(
+  registrations: ReadonlyArray<CodexReplayFixtureRegistration>,
+): ReadonlyArray<CodexReplayFixtureRegistration> {
+  const canonicalTranscripts = new Map<string, CodexReplayFixtureRegistration>();
+  for (const registration of registrations) {
+    const canonicalUrl = registration.transcriptFile.href;
+    const existing = canonicalTranscripts.get(canonicalUrl);
+    if (existing !== undefined && existing.recordedScenario !== registration.recordedScenario) {
+      throw new Error(
+        `Codex replay transcript ${canonicalUrl} has conflicting recorded scenarios ${existing.recordedScenario} (${existing.registrationScenario}) and ${registration.recordedScenario} (${registration.registrationScenario}).`,
+      );
+    }
+    canonicalTranscripts.set(canonicalUrl, existing ?? registration);
+  }
+  return Array.from(canonicalTranscripts.values());
+}
+
+const CODEX_REPLAY_TRANSCRIPTS = uniqueCanonicalTranscripts(CODEX_REPLAY_FIXTURE_REGISTRATIONS);
 
 const scenarioExpectations = {
   simple: {
@@ -641,23 +672,25 @@ function assertSiblingMergeBackSemantics(transcript: ProviderReplayTranscript) {
 }
 
 describe("Codex replay fixtures", () => {
-  it.effect("loads every current Codex fixture as a codex app-server replay transcript", () =>
+  it.effect("loads each canonical Codex fixture as an app-server replay transcript", () =>
     Effect.gen(function* () {
-      for (const fixture of CODEX_REPLAY_FIXTURES) {
+      for (const fixture of CODEX_REPLAY_TRANSCRIPTS) {
         const transcript = yield* readTranscript(fixture.transcriptFile);
         const codexTranscript = yield* decodeCodexTranscript(transcript);
         const first = transcript.entries[0];
 
         assert.equal(codexTranscript.provider, "codex");
         assert.equal(codexTranscript.protocol, "codex.app-server");
-        assert.equal(codexTranscript.scenario, fixture.scenario);
+        assert.equal(codexTranscript.scenario, fixture.recordedScenario);
         assert.deepEqual(codexTranscript.entries.at(-1), {
           type: "runtime_exit",
           status: "success",
         });
         assert.equal(first?.type, "expect_outbound");
         if (first?.type !== "expect_outbound") {
-          throw new Error(`Expected ${fixture.scenario} to start with initialize outbound frame.`);
+          throw new Error(
+            `Expected ${fixture.recordedScenario} to start with initialize outbound frame.`,
+          );
         }
         assert.equal(first.label, "initialize");
 
@@ -671,16 +704,32 @@ describe("Codex replay fixtures", () => {
     }),
   );
 
-  it.effect("covers the expected replay suite exactly", () =>
-    Effect.gen(function* () {
-      const transcripts = yield* Effect.forEach(CODEX_REPLAY_FIXTURES, (fixture) =>
-        readTranscript(fixture.transcriptFile),
-      );
+  it("covers the expected replay suite exactly", () => {
+    assert.deepEqual(
+      CODEX_REPLAY_TRANSCRIPTS.map((fixture) => fixture.recordedScenario).toSorted(),
+      Object.keys(scenarioExpectations).toSorted(),
+    );
+  });
 
-      assert.deepEqual(
-        transcripts.map((transcript) => transcript.scenario).toSorted(),
-        Object.keys(scenarioExpectations).toSorted(),
-      );
-    }),
-  );
+  it("rejects conflicting recorded scenarios for one canonical transcript", () => {
+    const transcriptFile = new URL(
+      "./fixtures/queued_turn/codex_transcript.ndjson",
+      import.meta.url,
+    );
+
+    assert.throws(() =>
+      uniqueCanonicalTranscripts([
+        {
+          registrationScenario: "queued_turn",
+          recordedScenario: "queued_turn",
+          transcriptFile,
+        },
+        {
+          registrationScenario: "conflicting_alias",
+          recordedScenario: "different_recording",
+          transcriptFile,
+        },
+      ]),
+    );
+  });
 });
