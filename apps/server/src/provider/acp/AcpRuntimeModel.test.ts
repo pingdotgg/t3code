@@ -322,6 +322,7 @@ describe("AcpRuntimeModel", () => {
       {
         _tag: "ContentDelta",
         text: "hello from acp",
+        streamKind: "assistant_text",
         rawPayload: {
           sessionId: "session-1",
           update: {
@@ -334,6 +335,90 @@ describe("AcpRuntimeModel", () => {
         },
       },
     ]);
+  });
+
+  it("parses thought, usage, commands, config, session info, and user chunks", () => {
+    const thought = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "thinking" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(thought.events[0]).toMatchObject({
+      _tag: "ContentDelta",
+      text: "thinking",
+      streamKind: "reasoning_text",
+    });
+
+    const usage = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1200,
+        size: 256000,
+        cost: { amount: 0.01, currency: "USD" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(usage.events[0]).toMatchObject({
+      _tag: "UsageUpdated",
+      usage: { used: 1200, size: 256000, costAmount: 0.01, costCurrency: "USD" },
+    });
+
+    const commands = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: " review ", description: " Review code ", input: { hint: " path " } },
+          { name: "", description: "skip" },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(commands.events[0]).toMatchObject({
+      _tag: "AvailableCommandsUpdated",
+      commands: [{ name: "review", description: "Review code", inputHint: "path" }],
+    });
+
+    const config = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: [
+          {
+            id: "effort",
+            name: "Reasoning",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: [{ value: "high", name: "High" }],
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(config.events[0]?._tag).toBe("ConfigOptionsUpdated");
+
+    const info = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "session_info_update",
+        title: "My session",
+        updatedAt: "2026-08-05T00:00:00Z",
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(info.events[0]).toMatchObject({
+      _tag: "SessionInfoUpdated",
+      info: { title: "My session", updatedAt: "2026-08-05T00:00:00Z" },
+    });
+
+    const userChunk = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "echo" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(userChunk.events[0]?._tag).toBe("UserMessageChunk");
   });
 
   it("keeps permission request parsing compatible with loose extension payloads", () => {
