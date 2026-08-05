@@ -2032,31 +2032,10 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          {...searchableSetting("default-terminal-shell")}
-          description="Executable used for new terminals in this environment. Leave empty for the platform default; paths such as Git Bash are supported."
-          resetAction={
-            settings.defaultTerminalShell !== DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell ? (
-              <SettingResetButton
-                label="default terminal shell"
-                onClick={() =>
-                  updateSettings({
-                    defaultTerminalShell: DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <DraftInput
-              className="w-full sm:w-72"
-              value={settings.defaultTerminalShell}
-              onCommit={(next) => updateSettings({ defaultTerminalShell: next })}
-              placeholder={isElectron ? "pwsh.exe" : "Platform default"}
-              spellCheck={false}
-              aria-label="Default terminal shell"
-            />
-          }
+        <DefaultTerminalShellSettingRow
+          value={settings.defaultTerminalShell}
+          desktop={isElectron}
+          onChange={(defaultTerminalShell) => updateSettings({ defaultTerminalShell })}
         />
 
         <SettingsRow
@@ -2206,6 +2185,41 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+export function DefaultTerminalShellSettingRow({
+  value,
+  desktop,
+  onChange,
+}: {
+  readonly value: string;
+  readonly desktop: boolean;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <SettingsRow
+      {...searchableSetting("default-terminal-shell")}
+      description="Executable used for new terminals in this environment. Leave empty for the platform default; paths such as Git Bash are supported."
+      resetAction={
+        value !== DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell ? (
+          <SettingResetButton
+            label="default terminal shell"
+            onClick={() => onChange(DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell)}
+          />
+        ) : null
+      }
+      control={
+        <DraftInput
+          className="w-full sm:w-72"
+          value={value}
+          onCommit={onChange}
+          placeholder={desktop ? "pwsh.exe" : "Platform default"}
+          spellCheck={false}
+          aria-label="Default terminal shell"
+        />
+      }
+    />
   );
 }
 

@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
@@ -10,6 +11,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BuildCommandFailedError,
+  createStageDependencies,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -46,6 +48,24 @@ import {
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+function nsisMacroBody(installerInclude: string, name: string): string {
+  const lines = installerInclude.split(/\r?\n/u);
+  const start = lines.findIndex((line) => line.startsWith(`!macro ${name}`));
+  assert.isAtLeast(start, 0, `Missing NSIS macro ${name}`);
+  const endOffset = lines.slice(start + 1).findIndex((line) => line.trim() === "!macroend");
+  assert.isAtLeast(endOffset, 0, `Unterminated NSIS macro ${name}`);
+  return lines.slice(start + 1, start + 1 + endOffset).join("\n");
+}
+
+function assertInOrder(source: string, fragments: readonly string[]): void {
+  let cursor = 0;
+  for (const fragment of fragments) {
+    const index = source.indexOf(fragment, cursor);
+    assert.isAtLeast(index, cursor, `Expected ${JSON.stringify(fragment)} after offset ${cursor}`);
+    cursor = index + fragment.length;
+  }
+}
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -251,6 +271,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         os: ["darwin"],
         cpu: ["arm64", "x64"],
       },
+    });
+  });
+
+  it("only stages Linux native dependencies when a Windows artifact includes WSL", () => {
+    const base = {
+      platform: "win" as const,
+      arch: "x64" as const,
+      serverDependencies: { effect: "4.0.0" },
+      desktopRuntimeDependencies: { electron: "41.5.0" },
+      fffVersion: "0.9.4",
+    };
+
+    const withoutWsl = createStageDependencies({ ...base, includeWslRuntime: false });
+    assert.deepStrictEqual(withoutWsl, {
+      effect: "4.0.0",
+      electron: "41.5.0",
+      "@ff-labs/fff-bin-win32-x64": "0.9.4",
+    });
+
+    const withWsl = createStageDependencies({ ...base, includeWslRuntime: true });
+    assert.deepStrictEqual(withWsl, {
+      effect: "4.0.0",
+      electron: "41.5.0",
+      "@ff-labs/fff-bin-win32-x64": "0.9.4",
+      "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
+      "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
     });
   });
 
@@ -567,6 +613,45 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
       assert.deepStrictEqual(wslConfig.asarUnpack, WINDOWS_ASAR_UNPACK);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("wires installer hooks to truthful uninstall and install phases", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const installerInclude = yield* fs.readFileString("apps/desktop/resources/installer.nsh");
+      const phaseText = nsisMacroBody(installerInclude, "setInstallerPhaseText");
+      assert.include(phaseText, "!ifndef BUILD_UNINSTALLER");
+      assert.include(phaseText, "${IfNot} ${Silent}");
+      assert.include(phaseText, "${WM_SETTEXT}");
+
+      assertInOrder(nsisMacroBody(installerInclude, "customCheckAppRunning"), [
+        "!insertmacro IS_POWERSHELL_AVAILABLE",
+        "!insertmacro _CHECK_APP_RUNNING",
+        '!insertmacro setInstallerPhaseText "Removing the previous version..."',
+      ]);
+
+      assertInOrder(nsisMacroBody(installerInclude, "handleOldUninstallerResult"), [
+        "IfErrors",
+        "${If} $R0 != 0",
+        "SetErrorLevel 2",
+        "Quit",
+        '!insertmacro setInstallerPhaseText "${NEXT_TEXT}"',
+      ]);
+
+      const allUsersCheck = nsisMacroBody(installerInclude, "customUnInstallCheck");
+      assert.include(
+        allUsersCheck,
+        '!insertmacro handleOldUninstallerResult "Removing the previous version..."',
+      );
+      assert.include(
+        allUsersCheck,
+        '!insertmacro handleOldUninstallerResult "Installing the new version..."',
+      );
+      assert.include(
+        nsisMacroBody(installerInclude, "customUnInstallCheckCurrentUser"),
+        '!insertmacro handleOldUninstallerResult "Installing the new version..."',
+      );
+    }),
   );
 
   it("stages the resource monitor as an external executable resource", () => {

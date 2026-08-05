@@ -890,6 +890,24 @@ export function resolveFffNativeDependencies(
   );
 }
 
+export function createStageDependencies(input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly includeWslRuntime: boolean;
+  readonly serverDependencies: Record<string, string>;
+  readonly desktopRuntimeDependencies: Record<string, string>;
+  readonly fffVersion: string;
+}): Record<string, string> {
+  return {
+    ...input.serverDependencies,
+    ...input.desktopRuntimeDependencies,
+    ...resolveFffNativeDependencies(input.platform, input.arch, input.fffVersion),
+    ...(input.platform === "win" && input.includeWslRuntime
+      ? resolveFffNativeDependencies("linux", input.arch, input.fffVersion)
+      : {}),
+  };
+}
+
 export interface ClerkPasskeyNativeArtifact {
   readonly packageName: string;
   readonly binaryFileName: string;
@@ -1558,9 +1576,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // prebuild the WSL backend cannot start, so avoid expanding the full server
     // and node_modules payload onto disk. Smart unpack still extracts native
     // libraries required by the primary Windows backend.
-    ...(platform === "win" && includeWslRuntime
-      ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] }
-      : {}),
+    ...(platform === "win" && includeWslRuntime ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
     extraResources: DESKTOP_EXTRA_RESOURCES,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -1903,26 +1919,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
   }
 
-  const stageDependencies = {
-    ...resolvedServerDependencies,
-    ...resolvedDesktopRuntimeDependencies,
-    ...resolveFffNativeDependencies(
-      options.platform,
-      options.arch,
-      serverPackageJson.dependencies["@ff-labs/fff-node"],
-    ),
-    // Windows artifacts also bundle the same-architecture WSL Linux backend, which loads the
-    // fff native binary through ffi-rs. The platform fff binary above is the
-    // host's (win32), so promote the matching Linux fff binaries too; without
-    // them file-finding in WSL fails to load its Linux native package.
-    ...(options.platform === "win"
-      ? resolveFffNativeDependencies(
-          "linux",
-          options.arch,
-          serverPackageJson.dependencies["@ff-labs/fff-node"],
-        )
-      : {}),
-  };
+  const includeWslRuntime = options.platform === "win" && options.wslPrebuild !== undefined;
+  const stageDependencies = createStageDependencies({
+    platform: options.platform,
+    arch: options.arch,
+    includeWslRuntime,
+    serverDependencies: resolvedServerDependencies,
+    desktopRuntimeDependencies: resolvedDesktopRuntimeDependencies,
+    fffVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
+  });
   const stagePatchedDependencies = createStagePatchedDependencies(
     workspacePatchedDependencies,
     stageDependencies,
@@ -1950,7 +1955,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
-      options.platform === "win" && options.wslPrebuild !== undefined,
+      includeWslRuntime,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -1963,7 +1968,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageWorkspaceConfig = createStageWorkspaceConfig({
     platform: options.platform,
     arch: options.arch,
-    includeWslRuntime: options.platform === "win" && options.wslPrebuild !== undefined,
+    includeWslRuntime,
     allowBuilds: workspaceAllowBuilds,
     patchedDependencies: stagePatchedDependencies,
     overrides: resolvedOverrides,
