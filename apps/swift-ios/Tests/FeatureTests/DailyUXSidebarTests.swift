@@ -118,6 +118,20 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func pinActionsTolerateMissingCapabilitiesAndKeepPinsReversible() {
+        var legacyDescriptor = thread(id: "legacy", created: -20, updated: -10)
+        legacyDescriptor.supportsPinning = nil
+        #expect(legacyDescriptor.canTogglePin)
+
+        var explicitlyUnsupported = thread(id: "unsupported", created: -20, updated: -10)
+        explicitlyUnsupported.supportsPinning = false
+        #expect(!explicitlyUnsupported.canTogglePin)
+
+        explicitlyUnsupported.pinnedAt = now
+        #expect(explicitlyUnsupported.canTogglePin)
+    }
+
+    @Test
     func snoozedThreadsHaveAReachableReverseState() {
         var snoozed = thread(id: "snoozed", created: -20, updated: -10)
         snoozed.snoozedUntil = now.addingTimeInterval(3_600)

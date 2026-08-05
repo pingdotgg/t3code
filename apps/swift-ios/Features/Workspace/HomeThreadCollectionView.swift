@@ -204,7 +204,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 primaryAction.image = UIImage(systemName: "arrow.uturn.backward")
                 primaryAction.backgroundColor = .systemBlue
-            } else if thread.pinnedAt != nil, thread.supportsPinning == true {
+            } else if thread.pinnedAt != nil, thread.canTogglePin {
                 primaryAction = UIContextualAction(style: .normal, title: "Unpin") {
                     [weak self] _, _, finish in
                     self?.parent.onPin(thread, false)
@@ -379,7 +379,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             var actions: [UIMenuElement] = [rename, archive]
             if !isArchived {
-                if thread.supportsPinning == true {
+                if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
                     actions.append(
                         UIAction(

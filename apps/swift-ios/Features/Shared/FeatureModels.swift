@@ -215,6 +215,12 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode
     }
+
+    /// Older cached environment descriptors may omit the optional capability even
+    /// when their server supports pinning. Always keep an existing pin reversible.
+    public var canTogglePin: Bool {
+        pinnedAt != nil || supportsPinning != false
+    }
 }
 
 public enum FeatureMessageRole: String, Sendable, Codable {

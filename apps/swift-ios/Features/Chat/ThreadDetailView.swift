@@ -228,7 +228,7 @@ public struct ThreadDetailView: View {
                 }
             }
             Section {
-                if currentThread.supportsPinning == true, !currentThread.isArchived {
+                if currentThread.canTogglePin, !currentThread.isArchived {
                     Button {
                         Task {
                             await model.setPinned(
