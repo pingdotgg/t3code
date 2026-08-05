@@ -194,16 +194,16 @@ describe("Grok context window helpers", () => {
 
   it("resolves an initial window even when the bound model id is missing", () => {
     const windows = contextWindowsFromSessionModels({
-      currentModelId: "grok-4.5",
+      currentModelId: "model-a",
       availableModels: [
         {
-          modelId: "grok-4.5",
-          name: "Grok 4.5",
+          modelId: "model-a",
+          name: "Model A",
           _meta: { totalContextTokens: 500_000 },
         },
         {
-          modelId: "gpt-5.6-luna",
-          name: "Luna",
+          modelId: "model-b",
+          name: "Model B",
           _meta: { totalContextTokens: 200_000 },
         },
       ],
@@ -213,7 +213,7 @@ describe("Grok context window helpers", () => {
       resolveInitialGrokContextWindow({
         windows,
         boundModelId: undefined,
-        setupModelId: "grok-4.5",
+        setupModelId: "model-a",
       }),
     ).toBe(500_000);
 
