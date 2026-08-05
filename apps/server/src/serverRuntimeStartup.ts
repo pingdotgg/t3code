@@ -346,9 +346,6 @@ export const make = (options?: StartupOptions) =>
       );
 
       yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
-      // `forkParked` inside these starts detaches ambient ParentSpan so the
-      // short-lived `server.startup.reactors.start` span can end instead of
-      // staying pinned on long-lived reactor fibers for the process lifetime.
       yield* runStartupPhase(
         "reactors.start",
         Effect.gen(function* () {

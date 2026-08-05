@@ -579,10 +579,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
-  // Single layer-scoped polling fiber. Ticks are no-ops when no client is
-  // currently retained. Run detached from any ambient ParentSpan (e.g.
-  // PortDiscovery.make) and without tracing idle no-ops — otherwise every
-  // 3s tick parents under an immortal span and grows server private memory.
+  // Idle ticks are no-ops; keep them untraced and detached from ambient ParentSpan (#5410).
   yield* Effect.forkScoped(
     withoutAmbientParentSpan(
       pollTick().pipe(
