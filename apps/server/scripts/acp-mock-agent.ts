@@ -813,7 +813,8 @@ const program = Effect.gen(function* () {
       }
 
       if (emitXAiPlanMdWrite) {
-        const planPath = `/tmp/mock-grok-session/${requestedSessionId}/plan.md`;
+        // Match Grok's real session layout so isGrokPlanMarkdownPath accepts it.
+        const planPath = `/tmp/mock-home/.grok/sessions/${requestedSessionId}/plan.md`;
         const planBody = "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it\n";
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
