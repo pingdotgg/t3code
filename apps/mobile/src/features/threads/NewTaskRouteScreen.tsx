@@ -1,8 +1,8 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef } from "react";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -11,12 +11,13 @@ import { cn } from "../../lib/cn";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { useProjects, useThreadShells } from "../../state/entities";
+import { useProjects } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
-import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { useNewTaskFlow } from "./new-task-flow-provider";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -79,7 +80,7 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const { projectScopes } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
@@ -87,6 +88,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
+  const [expandedGroupKeys, setExpandedGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
   const { getShare, releaseShareReservation } = useIncomingShare();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
@@ -100,33 +102,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         : `Choose a project for the ${incomingShare.attachments.length} images you shared`
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
-  const repositoryGroups = useMemo(
-    () => groupProjectsByRepository({ projects, threads }),
-    [projects, threads],
-  );
-  const items = useMemo(() => {
-    const nextItems: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly id: ProjectId;
-      readonly key: string;
-      readonly title: string;
-      readonly workspaceRoot: string;
-    }> = [];
-    for (const group of repositoryGroups) {
-      const project = group.projects[0]?.project;
-      if (!project) {
-        continue;
-      }
-      nextItems.push({
-        environmentId: project.environmentId,
-        id: project.id,
-        key: group.key,
-        title: project.title,
-        workspaceRoot: project.workspaceRoot,
-      });
-    }
-    return nextItems;
-  }, [repositoryGroups]);
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
@@ -137,7 +112,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       ) ?? null)
     : null;
 
-  async function selectProject(item: (typeof items)[number]): Promise<void> {
+  async function selectProject(project: EnvironmentProject): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
       try {
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
@@ -154,11 +129,23 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     navigation.navigate("NewTaskSheet", {
       screen: "NewTaskDraft",
       params: {
-        environmentId: item.environmentId,
-        projectId: item.id,
-        title: item.title,
+        environmentId: project.environmentId,
+        projectId: project.id,
+        title: project.title,
         incomingShareId: incomingShare?.id,
       },
+    });
+  }
+
+  function toggleGroup(groupKey: string): void {
+    setExpandedGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
     });
   }
 
@@ -251,11 +238,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           gap: 12,
+          paddingBottom: 8,
           paddingHorizontal: 20,
           paddingTop: 8,
         }}
       >
-        {items.length === 0 ? (
+        {projectScopes.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}
             <Text className="text-center text-lg font-t3-bold text-foreground">
@@ -286,42 +274,89 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           </View>
         ) : (
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-            {items.map((item, index) => {
-              const isFirst = index === 0;
-              const isLast = index === items.length - 1;
-
+            {projectScopes.map((scope, scopeIndex) => {
+              const hasMultipleProjects = scope.projects.length > 1;
+              const expanded = expandedGroupKeys.has(scope.key);
+              const singleProject = hasMultipleProjects ? null : scope.projects[0];
               return (
-                <Pressable
-                  key={item.key}
-                  disabled={reservedDestinationProject !== null}
-                  onPress={() => void selectProject(item)}
-                  className={cn(
-                    "bg-card px-4 py-3.5",
-                    !isFirst && "border-t border-border-subtle",
-                    isFirst && "rounded-t-[24px]",
-                    isLast && "rounded-b-[24px]",
-                  )}
+                <View
+                  key={scope.key}
+                  className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
                 >
-                  <View className="flex-row items-center justify-between gap-3">
+                  <Pressable
+                    disabled={singleProject !== null && reservedDestinationProject !== null}
+                    onPress={() => {
+                      if (singleProject) {
+                        void selectProject(singleProject);
+                      } else {
+                        toggleGroup(scope.key);
+                      }
+                    }}
+                    className="flex-row items-center gap-3 bg-card px-4 py-3.5"
+                  >
                     <View className="h-7 w-7 items-center justify-center">
                       <ProjectFavicon
-                        environmentId={item.environmentId}
+                        environmentId={scope.representative.environmentId}
                         size={20}
-                        projectTitle={item.title}
-                        workspaceRoot={item.workspaceRoot}
+                        projectTitle={scope.title}
+                        workspaceRoot={scope.representative.workspaceRoot}
                       />
                     </View>
-                    <View className="flex-1">
-                      <Text className="text-base leading-snug font-t3-bold">{item.title}</Text>
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-base leading-snug font-t3-bold">{scope.title}</Text>
+                      <Text
+                        className="text-xs leading-snug text-foreground-muted"
+                        ellipsizeMode="middle"
+                        numberOfLines={1}
+                      >
+                        {hasMultipleProjects
+                          ? `${scope.projects.length} workspaces`
+                          : singleProject?.workspaceRoot}
+                      </Text>
                     </View>
                     <SymbolView
-                      name="chevron.right"
+                      name={hasMultipleProjects && expanded ? "chevron.down" : "chevron.right"}
                       size={14}
                       tintColor={chevronColor}
                       type="monochrome"
                     />
-                  </View>
-                </Pressable>
+                  </Pressable>
+                  {hasMultipleProjects && expanded
+                    ? scope.projects.map((project) => (
+                        <Pressable
+                          key={scopedProjectKey(project.environmentId, project.id)}
+                          disabled={reservedDestinationProject !== null}
+                          onPress={() => void selectProject(project)}
+                          className="flex-row items-center gap-3 border-t border-border-subtle bg-card py-3 pr-4 pl-10"
+                        >
+                          <ProjectFavicon
+                            environmentId={project.environmentId}
+                            size={18}
+                            projectTitle={project.title}
+                            workspaceRoot={project.workspaceRoot}
+                          />
+                          <View className="min-w-0 flex-1">
+                            <Text className="text-sm font-t3-bold text-foreground">
+                              {project.title}
+                            </Text>
+                            <Text
+                              className="text-xs text-foreground-muted"
+                              ellipsizeMode="middle"
+                              numberOfLines={1}
+                            >
+                              {project.workspaceRoot}
+                            </Text>
+                          </View>
+                          <SymbolView
+                            name="chevron.right"
+                            size={14}
+                            tintColor={chevronColor}
+                            type="monochrome"
+                          />
+                        </Pressable>
+                      ))
+                    : null}
+                </View>
               );
             })}
           </View>

@@ -31,12 +31,6 @@ export interface ResolvedHomeListOptions extends HomeListOptions {
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
-export function resolveProjectGroupingMode(
-  projectGroupingEnabled: boolean | undefined,
-): SidebarProjectGroupingMode {
-  return projectGroupingEnabled === false ? "separate" : "repository";
-}
-
 export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
   readonly value: HomeProjectSortOrder;
   readonly label: string;
@@ -76,7 +70,9 @@ const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>
 export function HomeListOptionsProvider({
   children,
   projectGroupingMode,
-}: PropsWithChildren<{ readonly projectGroupingMode: SidebarProjectGroupingMode }>) {
+}: PropsWithChildren<{
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+}>) {
   const [options, setOptions] = useState<HomeListOptions>(defaultHomeListOptions);
   const value = useMemo(
     () => ({ options, setOptions, projectGroupingMode }),

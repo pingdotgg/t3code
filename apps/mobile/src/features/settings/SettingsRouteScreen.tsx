@@ -530,20 +530,9 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.projectGroupingEnabled !== false
-    : true;
-
   return (
     <SettingsSection title="General">
-      <SettingsSwitchRow
-        icon="folder"
-        label="Project Grouping"
-        value={projectGroupingEnabled}
-        onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
-      />
+      <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
     </SettingsSection>
   );
 }
