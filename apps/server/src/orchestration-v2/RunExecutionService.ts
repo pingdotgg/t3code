@@ -53,6 +53,7 @@ export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
+  readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
   readonly rootProviderTurnId: ProviderTurnId | null;
 }
 
@@ -61,6 +62,11 @@ export interface ProviderEventRouteIdentity {
   readonly runId: OrchestrationV2Run["id"];
   readonly attemptId: RunAttemptId;
   readonly providerThreadId: ProviderThreadId;
+}
+
+export interface InheritedBackgroundTurnItemRoute {
+  readonly id: TurnItemId;
+  readonly runId: OrchestrationV2Run["id"];
 }
 
 type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
@@ -99,6 +105,46 @@ function isTerminalTurnItemStatus(status: OrchestrationV2TurnItem["status"]): bo
     status === "interrupted" ||
     status === "failed" ||
     status === "cancelled"
+  );
+}
+
+function isSettledRunEligibleForInheritedBackground(status: OrchestrationV2Run["status"]): boolean {
+  return status === "interrupted" || status === "failed" || status === "cancelled";
+}
+
+/**
+ * Transfer delivery permission for exact live background items whose original
+ * run no longer has a subscriber. Provider sessions are runtime containers and
+ * can host multiple provider threads, so the durable provider-thread lineage is
+ * the discriminator. Completed, rolled-back, and already-terminal items remain
+ * excluded.
+ */
+export function selectInheritedBackgroundTurnItems(input: {
+  readonly threadId: ThreadId;
+  readonly currentProviderThreadId: ProviderThreadId;
+  readonly currentRunOrdinal: number;
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+}): ReadonlyArray<InheritedBackgroundTurnItemRoute> {
+  const settledPriorRunIds = new Set(
+    input.runs
+      .filter(
+        (run) =>
+          run.threadId === input.threadId &&
+          run.ordinal < input.currentRunOrdinal &&
+          isSettledRunEligibleForInheritedBackground(run.status),
+      )
+      .map((run) => run.id),
+  );
+  return input.turnItems.flatMap((turnItem) =>
+    turnItem.threadId === input.threadId &&
+    turnItem.providerThreadId === input.currentProviderThreadId &&
+    turnItem.runId !== null &&
+    settledPriorRunIds.has(turnItem.runId) &&
+    backgroundCapableTurnItemTypes.has(turnItem.type) &&
+    !isTerminalTurnItemStatus(turnItem.status)
+      ? [{ id: turnItem.id, runId: turnItem.runId }]
+      : [],
   );
 }
 
@@ -274,6 +320,7 @@ export function finalProviderThreadStatus(
 
 export function makeProviderEventRoutingState(input: {
   readonly identity: ProviderEventRouteIdentity;
+  readonly inheritedBackgroundTurnItems?: ReadonlyArray<InheritedBackgroundTurnItemRoute>;
   readonly providerTurnId: ProviderTurnId | null;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
@@ -286,6 +333,9 @@ export function makeProviderEventRoutingState(input: {
     ]),
     ownedProviderTurnIds:
       input.providerTurnId === null ? new Set() : new Set([input.providerTurnId]),
+    inheritedBackgroundTurnItems: new Map(
+      (input.inheritedBackgroundTurnItems ?? []).map((item) => [item.id, item.runId]),
+    ),
     rootProviderTurnId: input.providerTurnId,
   };
 }
@@ -363,8 +413,28 @@ export function routeProviderEvent(
       return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
-    case "turn_item.updated":
-      return [ownsRun(event.turnItem.runId) || ownsChildThread(event.turnItem.threadId), state];
+    case "turn_item.updated": {
+      if (ownsRun(event.turnItem.runId) || ownsChildThread(event.turnItem.threadId)) {
+        return [true, state];
+      }
+      const inheritedRunId = state.inheritedBackgroundTurnItems.get(event.turnItem.id);
+      // Preserve the item's original ownership while allowing the one live run
+      // to deliver an exact carryover identity selected from the projection.
+      const isInheritedBackgroundItem =
+        event.turnItem.threadId === input.threadId &&
+        event.turnItem.runId !== null &&
+        event.turnItem.runId === inheritedRunId &&
+        backgroundCapableTurnItemTypes.has(event.turnItem.type);
+      if (!isInheritedBackgroundItem) {
+        return [false, state];
+      }
+      if (!isTerminalTurnItemStatus(event.turnItem.status)) {
+        return [true, state];
+      }
+      const inheritedBackgroundTurnItems = new Map(state.inheritedBackgroundTurnItems);
+      inheritedBackgroundTurnItems.delete(event.turnItem.id);
+      return [true, { ...state, inheritedBackgroundTurnItems }];
+    }
     case "plan.updated":
       return [ownsRun(event.plan.runId) || ownsChildThread(event.plan.threadId), state];
     case "runtime_request.updated":
@@ -428,6 +498,10 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
+  readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
+    ReadonlyArray<InheritedBackgroundTurnItemRoute>,
+    unknown
+  >;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, never>;
@@ -765,9 +839,30 @@ export const layer: Layer.Layer<
             attemptId: input.attempt.id,
             providerThreadId: input.providerThread.id,
           };
+          const eventSubscription =
+            input.session.subscribeEvents === undefined
+              ? { events: input.session.events, close: Effect.void }
+              : yield* input.session.subscribeEvents;
+          const inheritedBackgroundTurnItems = yield* (
+            input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
+          ).pipe(
+            Effect.onError(() => eventSubscription.close),
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
+            ),
+          );
+          const inheritedBackgroundTurnItemsById = new Map(
+            inheritedBackgroundTurnItems.map((item) => [item.id, item.runId]),
+          );
           const eventRouting = yield* Ref.make<ProviderEventRoutingState>(
             makeProviderEventRoutingState({
               identity: routeIdentity,
+              inheritedBackgroundTurnItems,
               providerTurnId: input.attempt.providerTurnId,
               ...(input.relatedThreadIds === undefined
                 ? {}
@@ -779,11 +874,12 @@ export const layer: Layer.Layer<
           );
           const rootTerminalSeen = yield* Ref.make(false);
           const rootRunFinalized = yield* Ref.make(false);
+          const providerThreadOwnerLost = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
           const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
           const activeBackgroundTurnItems = yield* Ref.make<
             ReadonlySet<OrchestrationV2TurnItem["id"]>
-          >(new Set());
+          >(new Set(inheritedBackgroundTurnItemsById.keys()));
           const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
           const finalizeRootRun = (terminal: ProviderTerminalEvent) =>
             Effect.gen(function* () {
@@ -895,9 +991,15 @@ export const layer: Layer.Layer<
                 const belongsToOwnedChildThread =
                   event.turnItem.threadId !== input.run.threadId &&
                   routing.ownedThreadIds.has(event.turnItem.threadId);
+                const belongsToInheritedBackgroundItem =
+                  event.turnItem.threadId === input.run.threadId &&
+                  event.turnItem.runId !== null &&
+                  inheritedBackgroundTurnItemsById.get(event.turnItem.id) === event.turnItem.runId;
                 if (
                   backgroundCapableTurnItemTypes.has(event.turnItem.type) &&
-                  (belongsToRootRun || belongsToOwnedChildThread)
+                  (belongsToRootRun ||
+                    belongsToOwnedChildThread ||
+                    belongsToInheritedBackgroundItem)
                 ) {
                   yield* Ref.update(activeBackgroundTurnItems, (current) => {
                     const next = new Set(current);
@@ -940,6 +1042,7 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
+            // Non-completed terminals drop background tracking immediately.
             if (terminal !== null && terminal.status !== "completed") {
               return true;
             }
@@ -956,16 +1059,40 @@ export const layer: Layer.Layer<
             // non-terminal, so their late completion events reach the
             // projection (stuck-spinner fix). Only for completed runs:
             // interrupted/failed turns intentionally drop background tracking
-            // rather than pinning the stream open. Assumes adapters emit an
-            // item's non-terminal event before the root terminal; an item
-            // first seen after the terminal is not pinned.
+            // rather than pinning the stream open. Newly owned items depend on
+            // adapters emitting a non-terminal event before the root terminal.
+            // Exact inherited items are seeded from their selected durable rows.
+            //
+            // Owner loss (a newer run claimed lastRunOrdinal) must not close
+            // this stream while these sets are non-empty: turn_item.updated
+            // writes are not ownership-gated, so late completions still land.
             const backgroundItems = yield* Ref.get(activeBackgroundTurnItems);
-            return backgroundItems.size === 0;
+            if (backgroundItems.size > 0) {
+              return false;
+            }
+            // Owner loss means do not hold the stream open solely for the
+            // roster probe; once background sets are empty, release.
+            if (yield* Ref.get(providerThreadOwnerLost)) {
+              return true;
+            }
+            // Claude background Bash has no turn-item projection. Keep the
+            // stream open while this root's provider thread still reports
+            // pending roster work so late empty updates can clear Waiting.
+            // Use only the thread-scoped probe: session-wide pending work
+            // (siblings, wake buffers, session subagents) must not pin this
+            // root subscription. Session idle release still uses
+            // hasPendingBackgroundWork via ProviderSessionManager.
+            const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
+            if (input.session.hasPendingBackgroundWorkForThread !== undefined) {
+              const hasPendingWork = yield* input.session
+                .hasPendingBackgroundWorkForThread(latestProviderThreadSnapshot)
+                .pipe(Effect.catchCause(() => Effect.succeed(false)));
+              if (hasPendingWork) {
+                return false;
+              }
+            }
+            return true;
           });
-          const eventSubscription =
-            input.session.subscribeEvents === undefined
-              ? { events: input.session.events, close: Effect.void }
-              : yield* input.session.subscribeEvents;
           const providerEventFiber = yield* eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
@@ -975,6 +1102,15 @@ export const layer: Layer.Layer<
                 let storedEventCount = 0;
                 const shouldDeliver = shouldDeliverProviderEvent(event, assistantStreamingEnabled);
                 if (shouldDeliver) {
+                  // Root provider_thread.updated always uses an ownership gate:
+                  // pre-terminal writeIfRunCurrent (attempt still running), or
+                  // post-terminal writeIfProviderThreadOwner so late roster
+                  // clears still land while this attempt owns the run and this
+                  // run owns lastRunOrdinal.
+                  const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
+                  const isRootProviderThreadUpdate =
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.id === input.providerThread.id;
                   const storedEvents = yield* providerEventIngestor.ingestNormalized({
                     providerSessionId: input.providerSessionId,
                     providerInstanceId: input.run.providerInstanceId,
@@ -982,18 +1118,35 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
                     event,
-                    ...(event.type === "provider_thread.updated" &&
-                    event.providerThread.id === input.providerThread.id
-                      ? {
-                          writeIfRunCurrent: {
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running" as const,
-                          },
-                        }
+                    ...(isRootProviderThreadUpdate
+                      ? rootTerminalAlreadySeen
+                        ? {
+                            writeIfProviderThreadOwner: {
+                              providerThreadId: input.providerThread.id,
+                              runId: input.run.id,
+                              activeAttemptId: input.attempt.id,
+                              expectedLastRunOrdinal: input.run.ordinal,
+                            },
+                          }
+                        : {
+                            writeIfRunCurrent: {
+                              runId: input.run.id,
+                              activeAttemptId: input.attempt.id,
+                              expectedStatus: "running" as const,
+                            },
+                          }
                       : {}),
                   });
                   storedEventCount = storedEvents.length;
+                  if (
+                    isRootProviderThreadUpdate &&
+                    rootTerminalAlreadySeen &&
+                    storedEventCount === 0
+                  ) {
+                    // Ownership lost (or thread row missing). Stop pinning the
+                    // stream on this run's background probe.
+                    yield* Ref.set(providerThreadOwnerLost, true);
+                  }
                 }
                 if (event.type === "provider_thread.updated") {
                   if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
