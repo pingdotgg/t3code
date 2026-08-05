@@ -689,30 +689,29 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
-    if (selectedThreadCwd !== null) {
-      actions.push({
-        accessibilityLabel: "Open files",
-        icon: "folder",
-        onPress: handleOpenFilesInspector,
-      });
-    }
-    if (selectedThreadProject?.workspaceRoot) {
-      actions.push({
-        accessibilityLabel: "Open terminal",
-        icon: "terminal",
-        onPress: () => handleOpenTerminal(null),
-      });
-    }
+    actions.push({
+      accessibilityLabel: "Open files",
+      icon: "folder",
+      onPress: handleOpenFilesInspector,
+      disabled: selectedThreadCwd === null,
+    });
+    actions.push({
+      accessibilityLabel: "Open terminal",
+      icon: "terminal",
+      onPress: () => handleOpenTerminal(null),
+      disabled: !selectedThreadProject?.workspaceRoot,
+    });
     actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: handleOpenGitInspector,
     });
-    if (fileInspector.supported && selectedThreadCwd !== null) {
+    if (fileInspector.supported) {
       actions.push({
         accessibilityLabel: "Toggle inspector",
         icon: "sidebar.right",
         onPress: handleToggleInspector,
+        disabled: selectedThreadCwd === null,
       });
     }
     return actions;
@@ -856,6 +855,7 @@ function ThreadRouteContent(
         <AndroidScreenHeader
           title={selectedThread.title}
           subtitle={headerSubtitle}
+          reserveSubtitleSpace
           onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
           actions={androidHeaderActions}
         />

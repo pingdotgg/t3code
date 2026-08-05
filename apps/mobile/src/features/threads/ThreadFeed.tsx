@@ -265,7 +265,10 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
   readonly host: string;
   readonly href: string;
 }) {
-  const [failed, setFailed] = useState(() => failedMarkdownFaviconHosts.has(props.host));
+  const [failedHost, setFailedHost] = useState<string | null>(() =>
+    failedMarkdownFaviconHosts.has(props.host) ? props.host : null,
+  );
+  const failed = failedHost === props.host || failedMarkdownFaviconHosts.has(props.host);
 
   return (
     <NativeText
@@ -286,7 +289,7 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
           style={[markdownLinkStyles.inlineIcon, markdownLinkStyles.favicon]}
           onError={() => {
             failedMarkdownFaviconHosts.add(props.host);
-            setFailed(true);
+            setFailedHost(props.host);
           }}
         />
       ) : (
@@ -1872,6 +1875,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             data={presentedFeed}
+            recycleItems={Platform.OS === "android"}
             extraData={listAppearanceData}
             renderItem={renderItem}
             keyExtractor={(entry) => entry.id}
