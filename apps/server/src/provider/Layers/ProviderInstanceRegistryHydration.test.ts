@@ -5,6 +5,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettingsError,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
@@ -34,17 +35,62 @@ import {
   SettingsWatcherLive,
 } from "./ProviderInstanceRegistryHydration.ts";
 
-it.effect("reconciles the subscribed settings payload without re-reading secrets", () =>
+it.effect("preserves known secrets and defers unresolved settings when a re-read fails", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("delivered_settings");
+      const unresolvedInstanceId = ProviderInstanceId.make("unresolved_settings");
       const driverKind = ProviderDriverKind.make("delivered");
-      const settings = {
+      const initialSettings: typeof DEFAULT_SERVER_SETTINGS = {
         ...DEFAULT_SERVER_SETTINGS,
         providerInstances: {
           [instanceId]: {
             driver: driverKind,
+            config: { enabled: false },
+            environment: [
+              {
+                name: "PROVIDER_TOKEN",
+                value: "materialized-secret",
+                sensitive: true,
+                valueRedacted: true,
+              },
+            ],
+          },
+        },
+      };
+      const deliveredSettings: typeof DEFAULT_SERVER_SETTINGS = {
+        ...initialSettings,
+        providerInstances: {
+          [instanceId]: {
+            ...initialSettings.providerInstances[instanceId],
+            driver: driverKind,
             config: { enabled: true },
+            environment: [
+              {
+                name: "PROVIDER_TOKEN",
+                value: "",
+                sensitive: true,
+                valueRedacted: true,
+              },
+            ],
+          },
+        },
+      };
+      const unresolvedSettings: typeof DEFAULT_SERVER_SETTINGS = {
+        ...deliveredSettings,
+        providerInstances: {
+          ...deliveredSettings.providerInstances,
+          [unresolvedInstanceId]: {
+            driver: driverKind,
+            config: { enabled: true },
+            environment: [
+              {
+                name: "NEW_PROVIDER_TOKEN",
+                value: "",
+                sensitive: true,
+                valueRedacted: true,
+              },
+            ],
           },
         },
       };
@@ -52,7 +98,7 @@ it.effect("reconciles the subscribed settings payload without re-reading secrets
       const reconciled = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const settingsReads = yield* Ref.make(0);
       const registryChanges = yield* PubSub.unbounded<void>();
-      const settingsChanges = Stream.make(settings).pipe(
+      const settingsChanges = Stream.make(deliveredSettings, unresolvedSettings).pipe(
         Stream.concat(Stream.fromEffect(Deferred.succeed(consumed, undefined)).pipe(Stream.drain)),
       );
       const registry = ProviderInstanceRegistry.of({
@@ -69,7 +115,17 @@ it.effect("reconciles the subscribed settings payload without re-reading secrets
         start: Effect.void,
         ready: Effect.void,
         getSettings: Ref.update(settingsReads, (count) => count + 1).pipe(
-          Effect.andThen(Effect.die("must not re-read an emitted settings payload")),
+          Effect.andThen(
+            Effect.fail(
+              new ServerSettingsError({
+                settingsPath: "settings.json",
+                operation: "read-secret",
+                providerInstanceId: instanceId,
+                environmentVariable: "PROVIDER_TOKEN",
+                cause: "secret store unavailable",
+              }),
+            ),
+          ),
         ),
         updateSettings: () => Effect.die("unused"),
         streamChanges: Stream.empty,
@@ -77,7 +133,7 @@ it.effect("reconciles the subscribed settings payload without re-reading secrets
       });
 
       yield* Layer.build(
-        SettingsWatcherLive(settingsChanges).pipe(
+        SettingsWatcherLive(settingsChanges, initialSettings).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ProviderInstanceRegistry, registry),
@@ -89,10 +145,19 @@ it.effect("reconciles the subscribed settings payload without re-reading secrets
       );
       yield* Deferred.await(consumed);
 
-      expect(yield* Ref.get(settingsReads)).toBe(0);
+      expect(yield* Ref.get(settingsReads)).toBe(2);
       expect(yield* Ref.get(reconciled)).toEqual([
         expect.objectContaining({
-          [instanceId]: expect.objectContaining({ driver: driverKind }),
+          [instanceId]: expect.objectContaining({
+            driver: driverKind,
+            config: { enabled: true },
+            environment: [
+              expect.objectContaining({
+                name: "PROVIDER_TOKEN",
+                value: "materialized-secret",
+              }),
+            ],
+          }),
         }),
       ]);
     }),

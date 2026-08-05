@@ -49,11 +49,14 @@ import {
   defaultInstanceIdForDriver,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
+  type ProviderInstanceEnvironmentVariable,
+  ProviderInstanceId,
   ServerSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { HostEnvironmentHydration } from "../../os-jank.ts";
@@ -130,31 +133,101 @@ export const refreshProviderInstancesAfterEnvironmentHydration = Effect.fn(
 });
 
 /**
+ * Retain the last materialized value for redacted provider secrets when a
+ * settings notification outlives a transient secret-store failure. If a
+ * redacted value has never been materialized, the whole notification is
+ * deferred rather than rebuilding a provider with incomplete credentials.
+ */
+const restoreMaterializedProviderSecrets = (
+  next: ServerSettings,
+  previous: ServerSettings | undefined,
+): ServerSettings | undefined => {
+  const providerInstances: Record<string, ProviderInstanceConfig> = {};
+
+  for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
+    if (instance.environment === undefined) {
+      providerInstances[instanceId] = instance;
+      continue;
+    }
+
+    const previousEnvironment =
+      previous?.providerInstances[ProviderInstanceId.make(instanceId)]?.environment ?? [];
+    const environment: ProviderInstanceEnvironmentVariable[] = [];
+    for (const variable of instance.environment) {
+      if (!variable.sensitive || !variable.valueRedacted || variable.value.length > 0) {
+        environment.push(variable);
+        continue;
+      }
+
+      const materialized = previousEnvironment.find(
+        (candidate) => candidate.name === variable.name && candidate.sensitive,
+      );
+      if (materialized === undefined) {
+        return undefined;
+      }
+      environment.push({ ...variable, value: materialized.value });
+    }
+
+    providerInstances[instanceId] = { ...instance, environment };
+  }
+
+  return {
+    ...next,
+    providerInstances: providerInstances as ServerSettings["providerInstances"],
+  };
+};
+
+/**
  * Layer that consumes `ProviderInstanceRegistryMutator` and forks a
  * settings-watcher fiber. The fiber's lifetime is tied to the enclosing
  * layer scope (process lifetime in production), so it is interrupted on
  * shutdown without leaking.
  *
- * Errors inside the watcher are logged and swallowed — the registry's own
- * "unavailable" bucket already absorbs unknown drivers and invalid
- * configs, so the only way the watcher could fail is a settings stream
- * tear-down, which logs and exits cleanly.
+ * Each notification is re-read to prefer a fully materialized current
+ * snapshot. If that read fails, non-secret changes can still land by
+ * restoring redacted values from the last materialized snapshot. An update
+ * containing a secret that has never been materialized is deferred. Other
+ * watcher errors are logged and swallowed so one bad emission cannot stop
+ * subsequent reconciles.
  */
-export const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
+export const SettingsWatcherLive = (
+  settingsChanges: Stream.Stream<ServerSettings>,
+  initialSettings: ServerSettings | undefined,
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator;
       const registry = yield* ProviderInstanceRegistry;
+      const serverSettings = yield* ServerSettingsService;
       const environmentHydration = yield* HostEnvironmentHydration;
+      const lastMaterializedSettings = yield* Ref.make(initialSettings);
       yield* settingsChanges.pipe(
         Stream.runForEach((next) =>
-          mutator
-            .reconcile(deriveProviderInstanceConfigMap(next))
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-              ),
+          serverSettings.getSettings.pipe(
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                const previous = yield* Ref.get(lastMaterializedSettings);
+                const recovered = restoreMaterializedProviderSecrets(next, previous);
+                if (recovered === undefined) {
+                  yield* Effect.logWarning(
+                    "Provider instance settings update deferred because secrets are unavailable",
+                    { cause: error },
+                  );
+                }
+                return recovered;
+              }),
             ),
+            Effect.flatMap((current) =>
+              current === undefined
+                ? Effect.void
+                : Ref.set(lastMaterializedSettings, current).pipe(
+                    Effect.andThen(mutator.reconcile(deriveProviderInstanceConfigMap(current))),
+                  ),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
+            ),
+          ),
         ),
         Effect.forkScoped,
       );
@@ -210,6 +283,8 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
       configMap: initialConfigMap,
     });
 
-    return SettingsWatcherLive(settingsChanges).pipe(Layer.provideMerge(mutableLayer));
+    return SettingsWatcherLive(settingsChanges, initialSettings).pipe(
+      Layer.provideMerge(mutableLayer),
+    );
   }),
 ) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
