@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -396,6 +398,34 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           });
 
           expect(generated.branch).toBe("feat/session");
+        }),
+    ),
+  );
+
+  it.effect("generates branch names even when the ambient scope is already closed", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          branch: "feat/background-generation",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          // Background fibers (e.g. the worktree branch rename fork) can run
+          // after their launching request's scope has closed; temp files must
+          // not be tied to that ambient scope or they are reaped on creation.
+          const closedScope = yield* Scope.make();
+          yield* Scope.close(closedScope, Exit.void);
+
+          const generated = yield* textGeneration
+            .generateBranchName({
+              cwd: process.cwd(),
+              message: "Please update session handling.",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.provideService(Scope.Scope, closedScope));
+
+          expect(generated.branch).toBe("feat/background-generation");
         }),
     ),
   );
