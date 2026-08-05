@@ -57,6 +57,7 @@ export function CompactBrandTitle(
     >
       <T3Wordmark color={iconColor} height={15} />
       <Text
+        allowFontScaling={false}
         style={{
           color: mutedColor,
           fontFamily: "DMSans-Medium",
@@ -75,6 +76,7 @@ export function CompactBrandTitle(
         }}
       >
         <Text
+          allowFontScaling={false}
           style={{
             color: mutedColor,
             fontFamily: "DMSans-Bold",
