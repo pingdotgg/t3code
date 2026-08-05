@@ -88,6 +88,7 @@ export type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
 
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
+type CodexTurnUserInput = EffectCodexSchema.V2TurnStartParams__UserInput;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
 type CodexThreadItem =
   | EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number]
@@ -358,6 +359,48 @@ function buildCodexCollaborationMode(input: {
   };
 }
 
+function buildCodexTurnInput(input: {
+  readonly prompt?: string;
+  readonly attachments?: ReadonlyArray<{
+    readonly type: "image";
+    readonly url: string;
+  }>;
+}): ReadonlyArray<CodexTurnUserInput> {
+  const turnInput: Array<CodexTurnUserInput> = [];
+  if (input.prompt) {
+    turnInput.push({
+      type: "text",
+      text: input.prompt,
+    });
+  }
+  for (const attachment of input.attachments ?? []) {
+    turnInput.push(attachment);
+  }
+  return turnInput;
+}
+
+export function buildTurnSteerParams(input: {
+  readonly threadId: string;
+  readonly activeTurnId: TurnId;
+  readonly prompt?: string;
+  readonly attachments?: ReadonlyArray<{
+    readonly type: "image";
+    readonly url: string;
+  }>;
+}): EffectCodexSchema.V2TurnSteerParams {
+  return {
+    threadId: input.threadId,
+    expectedTurnId: input.activeTurnId,
+    input: buildCodexTurnInput(input),
+  };
+}
+
+export function resolveCodexSteeringTurnId(
+  session: Pick<ProviderSession, "status" | "activeTurnId">,
+): TurnId | undefined {
+  return session.status === "running" ? session.activeTurnId : undefined;
+}
+
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
@@ -374,17 +417,6 @@ export function buildTurnStartParams(input: {
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
 > {
-  const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
-  if (input.prompt) {
-    turnInput.push({
-      type: "text",
-      text: input.prompt,
-    });
-  }
-  for (const attachment of input.attachments ?? []) {
-    turnInput.push(attachment);
-  }
-
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   const collaborationMode = buildCodexCollaborationMode({
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
@@ -394,7 +426,7 @@ export function buildTurnStartParams(input: {
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
-    input: turnInput,
+    input: buildCodexTurnInput(input),
     approvalPolicy: config.approvalPolicy,
     approvalsReviewer: config.approvalsReviewer,
     sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
@@ -1758,9 +1790,44 @@ export const makeCodexSessionRuntime = (
               ),
             );
           }
-          const normalizedModel = normalizeCodexModelSlug(
-            input.model ?? (yield* Ref.get(sessionRef)).model,
-          );
+          const session = yield* Ref.get(sessionRef);
+          const steeringTurnId = resolveCodexSteeringTurnId(session);
+          if (steeringTurnId) {
+            const response = yield* client.request(
+              "turn/steer",
+              buildTurnSteerParams({
+                threadId: providerThreadId,
+                activeTurnId: steeringTurnId,
+                ...(input.input ? { prompt: input.input } : {}),
+                ...(input.attachments ? { attachments: input.attachments } : {}),
+              }),
+            );
+            const turnId = TurnId.make(response.turnId);
+            yield* updateSession(sessionRef, {
+              status: "running",
+              activeTurnId: turnId,
+            });
+            // Codex does not emit a second turn/started notification when
+            // turn/steer keeps the existing turn alive. Reaffirm the active
+            // turn so orchestration can reconcile the steer request with the
+            // running turn instead of leaving a stale pending-turn row.
+            yield* emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              method: "turn/started",
+              turnId,
+              message: "Codex turn steered.",
+            });
+            const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+            return {
+              threadId: options.threadId,
+              turnId,
+              ...(resumedProviderThreadId
+                ? { resumeCursor: { threadId: resumedProviderThreadId } }
+                : {}),
+            } satisfies ProviderTurnStartResult;
+          }
+          const normalizedModel = normalizeCodexModelSlug(input.model ?? session.model);
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,

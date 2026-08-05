@@ -171,7 +171,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
@@ -180,6 +180,15 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
+import {
+  beginWebThreadOutboxDispatch,
+  EMPTY_WEB_THREAD_OUTBOX_QUEUE,
+  finishWebThreadOutboxDispatch,
+  shouldDrainWebThreadOutbox,
+  shouldQueueWebThreadMessage,
+  useWebThreadOutboxStore,
+  webThreadOutboxKey,
+} from "../webThreadOutbox";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -1263,6 +1272,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
+  const activeThreadOutboxQueue = useWebThreadOutboxStore(
+    (state) =>
+      state.queuesByThreadKey[webThreadOutboxKey(environmentId, props.threadId)] ??
+      EMPTY_WEB_THREAD_OUTBOX_QUEUE,
+  );
+  const pausedOutboxMessageIds = useWebThreadOutboxStore((state) => state.pausedMessageIds);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
   // primary server rather than the thread's environment.
@@ -4800,9 +4815,16 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     };
+    const shouldQueueCurrentMessage = shouldQueueWebThreadMessage({
+      activeTurnMessageBehavior: settings.activeTurnMessageBehavior,
+      hasQueuedMessages: activeThreadOutboxQueue.length > 0,
+      isSendBusy,
+      isServerThread,
+      phase,
+    });
     if (
       !activeThread ||
-      isSendBusy ||
+      (isSendBusy && !shouldQueueCurrentMessage) ||
       isConnecting ||
       threadDetailLoading ||
       sendInFlightRef.current
@@ -4951,6 +4973,98 @@ function ChatViewContent(props: ChatViewProps) {
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      return;
+    }
+
+    if (shouldQueueCurrentMessage) {
+      sendInFlightRef.current = true;
+      const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+      const composerElementContextsSnapshot = [...composerElementContexts];
+      const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+      const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+      const messageTextWithContexts = appendElementContextsToPrompt(
+        appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+        composerElementContextsSnapshot,
+      );
+      const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
+        (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+        messageTextWithContexts,
+      );
+      const messageTextForSend = appendReviewCommentsToPrompt(
+        messageTextWithPreviewAnnotations,
+        composerReviewCommentsSnapshot,
+      );
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+      const attachmentsResult = await settlePromise(() =>
+        Promise.all(
+          composerImagesSnapshot.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        ),
+      );
+      if (attachmentsResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(attachmentsResult);
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Failed to prepare the queued message.",
+        );
+        sendInFlightRef.current = false;
+        return;
+      }
+
+      const messageId = newMessageId();
+      const createdAt = new Date().toISOString();
+      const { durable } = useWebThreadOutboxStore.getState().enqueue({
+        environmentId,
+        threadId: threadIdForSend,
+        messageId,
+        commandId: newCommandId(),
+        text: outgoingMessageText,
+        attachments: attachmentsResult.value,
+        modelSelection: ctxSelectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        createdAt,
+      });
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      setThreadError(threadIdForSend, null);
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          }),
+        );
+      }
+      if (!durable) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Message queued for this session",
+            description:
+              "Browser storage could not save the queue, so this message will not survive a reload.",
+          }),
+        );
+      }
+      sendInFlightRef.current = false;
       return;
     }
 
@@ -5234,6 +5348,112 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  const nextQueuedMessage = activeThreadOutboxQueue[0] ?? null;
+  const queuedMessagePaused =
+    nextQueuedMessage !== null && Boolean(pausedOutboxMessageIds[nextQueuedMessage.messageId]);
+
+  useEffect(() => {
+    if (
+      !nextQueuedMessage ||
+      !activeThread ||
+      nextQueuedMessage.environmentId !== environmentId ||
+      nextQueuedMessage.threadId !== activeThread.id ||
+      !shouldDrainWebThreadOutbox({
+        phase,
+        isSendBusy,
+        isConnecting,
+        environmentUnavailable: activeEnvironmentUnavailable,
+        paused: queuedMessagePaused,
+      }) ||
+      !beginWebThreadOutboxDispatch(nextQueuedMessage.messageId)
+    ) {
+      return;
+    }
+
+    const deliver = async () => {
+      beginLocalDispatch({ preparingWorktree: false });
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId: nextQueuedMessage.threadId,
+        createdAt: nextQueuedMessage.createdAt,
+        modelSelection: nextQueuedMessage.modelSelection,
+        runtimeMode: nextQueuedMessage.runtimeMode,
+        interactionMode: nextQueuedMessage.interactionMode,
+      });
+      const startResult =
+        settingsResult._tag === "Failure"
+          ? settingsResult
+          : await startThreadTurn({
+              environmentId: nextQueuedMessage.environmentId,
+              input: {
+                commandId: nextQueuedMessage.commandId,
+                threadId: nextQueuedMessage.threadId,
+                message: {
+                  messageId: nextQueuedMessage.messageId,
+                  role: "user",
+                  text: nextQueuedMessage.text,
+                  attachments: nextQueuedMessage.attachments,
+                },
+                modelSelection: nextQueuedMessage.modelSelection,
+                titleSeed: activeThread.title,
+                runtimeMode: nextQueuedMessage.runtimeMode,
+                interactionMode: nextQueuedMessage.interactionMode,
+                createdAt: nextQueuedMessage.createdAt,
+              },
+            });
+
+      if (startResult._tag === "Failure") {
+        useWebThreadOutboxStore.getState().pause(nextQueuedMessage.messageId);
+        resetLocalDispatch();
+        if (!isAtomCommandInterrupted(startResult)) {
+          const error = squashAtomCommandFailure(startResult);
+          setThreadError(
+            nextQueuedMessage.threadId,
+            error instanceof Error ? error.message : "Failed to send the queued message.",
+          );
+        }
+        return;
+      }
+
+      const { durable } = useWebThreadOutboxStore.getState().remove(nextQueuedMessage);
+      if (!durable) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Queued message sent",
+            description:
+              "Browser storage could not save the queue update. Its stable command ID prevents a duplicate turn if it reappears after reload.",
+          }),
+        );
+      }
+    };
+
+    void deliver().finally(() => {
+      finishWebThreadOutboxDispatch(nextQueuedMessage.messageId);
+    });
+  }, [
+    activeEnvironmentUnavailable,
+    activeThread,
+    beginLocalDispatch,
+    environmentId,
+    isConnecting,
+    isSendBusy,
+    nextQueuedMessage,
+    persistThreadSettingsForNextTurn,
+    phase,
+    queuedMessagePaused,
+    resetLocalDispatch,
+    setThreadError,
+    startThreadTurn,
+  ]);
+
+  const retryQueuedMessages = useCallback(() => {
+    if (!nextQueuedMessage) {
+      return;
+    }
+    useWebThreadOutboxStore.getState().retry(nextQueuedMessage.messageId);
+    setThreadError(nextQueuedMessage.threadId, null);
+  }, [nextQueuedMessage, setThreadError]);
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6213,6 +6433,8 @@ function ChatViewContent(props: ChatViewProps) {
                             isSendBusy={isSendBusy}
                             sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
                             isPreparingWorktree={isPreparingWorktree}
+                            queuedMessageCount={activeThreadOutboxQueue.length}
+                            queuedMessagesPaused={queuedMessagePaused}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
@@ -6244,6 +6466,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
+                            onRetryQueuedMessages={retryQueuedMessages}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

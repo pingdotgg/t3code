@@ -487,6 +487,31 @@ describe("thread outbox", () => {
     ).toBe("send");
   });
 
+  it("waits behind active work in queue mode and dispatches into it in steer mode", () => {
+    const input = {
+      isCreation: false,
+      threadExists: true,
+      shellStatus: "live" as const,
+      environmentConnected: true,
+      threadBusy: true,
+    };
+
+    // Omitted preserves the behavior of outbox entries written by older mobile builds.
+    expect(resolveThreadOutboxDeliveryAction(input)).toBe("wait");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        ...input,
+        activeTurnMessageBehavior: "queue",
+      }),
+    ).toBe("wait");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        ...input,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe("send");
+  });
+
   it("sends queued creations once connected and live, removing already-created ones", () => {
     expect(
       resolveThreadOutboxDeliveryAction({

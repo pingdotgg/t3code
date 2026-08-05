@@ -315,6 +315,7 @@ export function useThreadOutboxDrain(): void {
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
         threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
+        activeTurnMessageBehavior: nextQueuedMessage.activeTurnMessageBehavior,
       });
       if (deliveryAction === "wait") {
         continue;

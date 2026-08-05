@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   CommandId,
@@ -10,6 +11,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
@@ -41,6 +43,7 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { mobilePreferencesAtom } from "./preferences";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -78,6 +81,10 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const activeTurnMessageBehavior = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.activeTurnMessageBehavior ?? DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR)
+    : DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR;
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -164,6 +171,7 @@ export function useThreadComposerState() {
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
+      activeTurnMessageBehavior,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -179,7 +187,7 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [activeTurnMessageBehavior, selectedThreadDetail, selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
@@ -308,6 +316,7 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    activeTurnMessageBehavior,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,

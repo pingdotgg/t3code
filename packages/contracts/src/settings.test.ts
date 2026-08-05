@@ -67,6 +67,22 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings messages while working", () => {
+  it("defaults to steering and accepts both delivery behaviors", () => {
+    expect(decodeClientSettings({}).activeTurnMessageBehavior).toBe("steer");
+    expect(
+      decodeClientSettingsPatch({ activeTurnMessageBehavior: "steer" }).activeTurnMessageBehavior,
+    ).toBe("steer");
+    expect(
+      decodeClientSettingsPatch({ activeTurnMessageBehavior: "queue" }).activeTurnMessageBehavior,
+    ).toBe("queue");
+  });
+
+  it("rejects unsupported delivery behaviors", () => {
+    expect(() => decodeClientSettingsPatch({ activeTurnMessageBehavior: "send-later" })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});

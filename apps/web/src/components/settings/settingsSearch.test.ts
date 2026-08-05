@@ -45,7 +45,7 @@ describe("searchSettings", () => {
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    expect(searchSettings("work")).toEqual([]);
+    expect(searchSettings("work").map((item) => item.id)).toEqual(["messages-while-working"]);
   });
 
   it("keeps catalog order for multiple title matches", () => {
@@ -65,6 +65,10 @@ describe("searchSettings", () => {
   });
 
   it("serves anchor props to panels from the catalog", () => {
+    expect(searchableSetting("messages-while-working")).toEqual({
+      id: "messages-while-working",
+      title: "Messages while working",
+    });
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
   });
