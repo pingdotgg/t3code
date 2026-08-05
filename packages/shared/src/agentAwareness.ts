@@ -40,7 +40,13 @@ export interface ProjectThreadAwarenessV2Input {
   readonly project: Pick<Project, "title">;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
-    "id" | "title" | "modelSelection" | "status" | "pendingRuntimeRequest" | "updatedAt"
+    | "activityRunStatus"
+    | "id"
+    | "modelSelection"
+    | "pendingRuntimeRequest"
+    | "status"
+    | "title"
+    | "updatedAt"
   >;
 }
 
@@ -85,7 +91,7 @@ function resolveThreadAwarenessPhaseV2(
   ) {
     return "waiting_for_approval";
   }
-  switch (thread.status) {
+  switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
       return "starting";
