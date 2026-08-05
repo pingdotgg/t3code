@@ -46,6 +46,7 @@ export const makeAuthControlPlane = Effect.gen(function* () {
       const createdAt = yield* DateTime.now;
       const issued = yield* bootstrapCredentials.issueOneTimeToken({
         role: input?.role ?? "client",
+        ...(input?.scopes ? { scopes: input.scopes } : {}),
         subject: input?.subject ?? "one-time-token",
         ...(input?.ttl ? { ttl: input.ttl } : {}),
         ...(input?.label ? { label: input.label } : {}),
@@ -54,6 +55,7 @@ export const makeAuthControlPlane = Effect.gen(function* () {
         id: issued.id,
         credential: issued.credential,
         role: input?.role ?? "client",
+        scopes: issued.scopes,
         subject: input?.subject ?? "one-time-token",
         ...(issued.label ? { label: issued.label } : {}),
         createdAt: DateTime.toUtc(createdAt),

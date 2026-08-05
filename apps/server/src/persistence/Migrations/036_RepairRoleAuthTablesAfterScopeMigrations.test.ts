@@ -4,6 +4,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import Migration036 from "./036_RepairRoleAuthTablesAfterScopeMigrations.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
@@ -139,6 +140,45 @@ layer("036_RepairRoleAuthTablesAfterScopeMigrations", (it) => {
           role: "owner",
         },
       ]);
+    }),
+  );
+
+  it.effect("preserves modern role and scopes auth records when reapplied", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations({ toMigrationInclusive: 36 });
+      yield* sql`ALTER TABLE auth_pairing_links ADD COLUMN scopes TEXT`;
+      yield* sql`ALTER TABLE auth_sessions ADD COLUMN scopes TEXT`;
+      yield* sql`
+        INSERT INTO auth_pairing_links (
+          id, credential, method, role, scopes, subject, created_at, expires_at
+        ) VALUES (
+          'pairing-modern', 'PAIRINGMODERN', 'one-time-token', 'client',
+          '["orchestration:read"]', 'mobile', '2026-08-01T00:00:00.000Z',
+          '2026-09-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO auth_sessions (
+          session_id, subject, role, scopes, method, client_device_type, issued_at, expires_at
+        ) VALUES (
+          'session-modern', 'mobile', 'client', '["orchestration:read"]',
+          'bearer-access-token', 'mobile', '2026-08-01T00:00:00.000Z',
+          '2026-09-01T00:00:00.000Z'
+        )
+      `;
+
+      yield* Migration036;
+
+      const pairingRows = yield* sql<{ readonly id: string }>`
+        SELECT id FROM auth_pairing_links WHERE id = 'pairing-modern'
+      `;
+      const sessionRows = yield* sql<{ readonly sessionId: string }>`
+        SELECT session_id AS "sessionId" FROM auth_sessions WHERE session_id = 'session-modern'
+      `;
+      assert.deepStrictEqual(pairingRows, [{ id: "pairing-modern" }]);
+      assert.deepStrictEqual(sessionRows, [{ sessionId: "session-modern" }]);
     }),
   );
 });

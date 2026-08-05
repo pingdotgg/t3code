@@ -120,7 +120,7 @@ export interface EnvironmentAuthShape {
   >;
   readonly revokeSession: (sessionId: AuthSessionId) => Effect.Effect<boolean, unknown>;
   readonly createPairingLink: (input: {
-    readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | ReadonlyArray<string>;
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly subject?: string;
     readonly ttl?: Duration.Duration;
     readonly label?: string;

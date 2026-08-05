@@ -25,6 +25,7 @@ import {
   signPayload,
   timingSafeEqualBase64Url,
 } from "../utils.ts";
+import { defaultSessionScopes } from "../scopes.ts";
 
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
@@ -39,7 +40,11 @@ const SessionClaims = Schema.Struct({
   sid: AuthSessionId,
   sub: Schema.String,
   role: Schema.Literals(["owner", "client"]),
-  method: Schema.Literals(["browser-session-cookie", "bearer-session-token"]),
+  method: Schema.Literals([
+    "browser-session-cookie",
+    "bearer-session-token",
+    "bearer-access-token",
+  ]),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -184,6 +189,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
           sessionId: row.value.sessionId,
           subject: row.value.subject,
           role: row.value.role,
+          scopes: row.value.scopes ?? defaultSessionScopes(row.value.role),
           method: row.value.method,
           client: toClientMetadata(row.value.client),
           issuedAt: row.value.issuedAt,
@@ -272,10 +278,12 @@ export const makeSessionCredentialService = Effect.gen(function* () {
       const encodedPayload = base64UrlEncode(JSON.stringify(claims));
       const signature = signPayload(encodedPayload, signingSecret);
       const client = input?.client ?? createDefaultClientMetadata();
+      const scopes = input?.scopes ?? defaultSessionScopes(claims.role);
       yield* authSessions.create({
         sessionId,
         subject: claims.sub,
         role: claims.role,
+        scopes: input?.scopes ?? null,
         method: claims.method,
         client: {
           label: client.label ?? null,
@@ -293,6 +301,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
           sessionId,
           subject: claims.sub,
           role: claims.role,
+          scopes,
           method: claims.method,
           client,
           issuedAt,
@@ -309,6 +318,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         client,
         expiresAt: expiresAt,
         role: claims.role,
+        scopes,
       } satisfies IssuedSession;
     }).pipe(Effect.mapError(toSessionCredentialError("Failed to issue session credential.")));
 
@@ -365,6 +375,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         expiresAt: DateTime.makeUnsafe(claims.exp),
         subject: claims.sub,
         role: claims.role,
+        scopes: row.value.scopes ?? defaultSessionScopes(row.value.role),
       } satisfies VerifiedSession;
     }).pipe(
       Effect.mapError((cause) =>
@@ -459,6 +470,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         expiresAt: row.value.expiresAt,
         subject: row.value.subject,
         role: row.value.role,
+        scopes: row.value.scopes ?? defaultSessionScopes(row.value.role),
       } satisfies VerifiedSession;
     }).pipe(
       Effect.mapError((cause) =>
@@ -482,6 +494,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
           sessionId: row.sessionId,
           subject: row.subject,
           role: row.role,
+          scopes: row.scopes ?? defaultSessionScopes(row.role),
           method: row.method,
           client: toClientMetadata(row.client),
           issuedAt: row.issuedAt,

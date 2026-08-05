@@ -1,5 +1,11 @@
 import { Effect, Exit, PubSub, Scope, Stream } from "effect";
-import { ORCHESTRATION_WS_METHODS, WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
+import {
+  EnvironmentRpcAuthorization,
+  ORCHESTRATION_WS_METHODS,
+  WS_METHODS,
+  WsRpcGroup,
+} from "@t3tools/contracts";
+import * as Layer from "effect/Layer";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 type RpcServerInstance = RpcServer.RpcServer<any>;
@@ -85,7 +91,14 @@ export class BrowserWsRpcHarness {
     this.serverReady = Effect.runPromise(
       Scope.provide(this.scope)(
         RpcServer.makeNoSerialization(WsRpcGroup, this.makeServerOptions()),
-      ).pipe(Effect.provide(this.makeLayer())),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            this.makeLayer(),
+            Layer.succeed(EnvironmentRpcAuthorization, (effect) => effect),
+          ),
+        ),
+      ),
     ) as Promise<RpcServerInstance>;
   }
 

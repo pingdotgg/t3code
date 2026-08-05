@@ -1,4 +1,8 @@
-import type { AuthPairingLink, ServerAuthBootstrapMethod } from "@t3tools/contracts";
+import type {
+  AuthEnvironmentScope,
+  AuthPairingLink,
+  ServerAuthBootstrapMethod,
+} from "@t3tools/contracts";
 import { Data, DateTime, Duration, Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -7,6 +11,7 @@ export type BootstrapCredentialRole = "owner" | "client";
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
   readonly role: BootstrapCredentialRole;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
   readonly label?: string;
   readonly expiresAt: DateTime.DateTime;
@@ -21,6 +26,7 @@ export class BootstrapCredentialError extends Data.TaggedError("BootstrapCredent
 export interface IssuedBootstrapCredential {
   readonly id: string;
   readonly credential: string;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly label?: string;
   readonly expiresAt: DateTime.Utc;
 }
@@ -39,6 +45,7 @@ export interface BootstrapCredentialServiceShape {
   readonly issueOneTimeToken: (input?: {
     readonly ttl?: Duration.Duration;
     readonly role?: BootstrapCredentialRole;
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly subject?: string;
     readonly label?: string;
   }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialError>;

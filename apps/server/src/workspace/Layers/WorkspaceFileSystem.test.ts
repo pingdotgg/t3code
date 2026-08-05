@@ -149,6 +149,7 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
         expect(result).toEqual({
           relativePath: "docs/preview.html",
           contents: "<h1>Preview</h1>",
+          byteLength: 16,
           truncated: false,
         });
       }),

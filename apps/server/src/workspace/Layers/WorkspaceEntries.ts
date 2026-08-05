@@ -475,6 +475,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
           let matchedEntryCount = 0;
 
           for (const entry of index.entries) {
+            if (input.kind !== undefined && entry.kind !== input.kind) {
+              continue;
+            }
             const score = scoreEntry(entry, normalizedQuery);
             if (score === null) {
               continue;

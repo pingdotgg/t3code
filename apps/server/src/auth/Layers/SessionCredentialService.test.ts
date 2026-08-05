@@ -1,6 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { AuthSessionId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthSessionId,
+  AuthTerminalOperateScope,
+} from "@t3tools/contracts";
 import { DateTime, Duration, Effect, Fiber, Layer, Stream } from "effect";
 import { TestClock } from "effect/testing";
 
@@ -143,6 +147,23 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       expect(verified.client.label).toBe("Desktop app");
       expect(verified.client.browser).toBe("Electron");
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
+    }).pipe(Effect.provide(makeSessionCredentialLayer())),
+  );
+  it.effect("persists explicit access-token scopes", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionCredentialService;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        scopes: [AuthOrchestrationReadScope, AuthTerminalOperateScope],
+      });
+      const verified = yield* sessions.verify(issued.token);
+
+      expect(verified.method).toBe("bearer-access-token");
+      expect(verified.scopes).toEqual([AuthOrchestrationReadScope, AuthTerminalOperateScope]);
+      expect((yield* sessions.listActive())[0]?.scopes).toEqual([
+        AuthOrchestrationReadScope,
+        AuthTerminalOperateScope,
+      ]);
     }).pipe(Effect.provide(makeSessionCredentialLayer())),
   );
   it.effect("rejects malformed session tokens", () =>

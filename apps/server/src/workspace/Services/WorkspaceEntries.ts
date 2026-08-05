@@ -12,6 +12,7 @@ import type { Effect } from "effect";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectEntryKind,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 
@@ -19,6 +20,7 @@ export interface WorkspaceEntriesSearchInput {
   readonly cwd: string;
   readonly query: string;
   readonly limit: number;
+  readonly kind?: ProjectEntryKind;
 }
 
 export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(

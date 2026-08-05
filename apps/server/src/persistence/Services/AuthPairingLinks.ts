@@ -1,3 +1,4 @@
+import { AuthEnvironmentScopes } from "@t3tools/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -8,6 +9,7 @@ export const AuthPairingLinkRecord = Schema.Struct({
   credential: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   role: Schema.Literals(["owner", "client"]),
+  scopes: Schema.NullOr(AuthEnvironmentScopes),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -22,6 +24,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   credential: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   role: Schema.Literals(["owner", "client"]),
+  scopes: Schema.NullOr(AuthEnvironmentScopes),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,

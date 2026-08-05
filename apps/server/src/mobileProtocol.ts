@@ -2,6 +2,8 @@
 import { createHash } from "node:crypto";
 
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthBootstrapInput,
   type AuthBearerBootstrapResult,
   type AuthSessionState,
@@ -38,7 +40,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { AuthError, ServerAuth } from "./auth/Services/ServerAuth.ts";
-import { respondToAuthError } from "./auth/http.ts";
+import { requireSessionScope, respondToAuthError } from "./auth/http.ts";
 import { deriveAuthClientMetadata } from "./auth/utils.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
@@ -329,7 +331,9 @@ export const mobileWebSocketRouteLayer = Layer.unwrap(
         const orchestrationEngine = yield* OrchestrationEngineService;
         const checkpointDiffQuery = yield* CheckpointDiffQuery;
         const startup = yield* ServerRuntimeStartup;
-        yield* serverAuth.authenticateWebSocketUpgrade(request);
+        const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
+        yield* requireSessionScope(session.role, AuthOrchestrationReadScope, session.scopes);
+        yield* requireSessionScope(session.role, AuthOrchestrationOperateScope, session.scopes);
 
         const socket = yield* request.upgrade;
         const write = yield* socket.writer;

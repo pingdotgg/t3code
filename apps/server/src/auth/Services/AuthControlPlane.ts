@@ -1,6 +1,7 @@
 import type {
   AuthClientMetadata,
   AuthClientSession,
+  AuthEnvironmentScope,
   AuthPairingLink,
   AuthSessionId,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ export interface IssuedPairingLink {
   readonly id: string;
   readonly credential: string;
   readonly role: SessionRole;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: DateTime.Utc;
@@ -39,6 +41,7 @@ export interface AuthControlPlaneShape {
     readonly ttl?: Duration.Duration;
     readonly label?: string;
     readonly role?: SessionRole;
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly subject?: string;
   }) => Effect.Effect<IssuedPairingLink, AuthControlPlaneError>;
   readonly listPairingLinks: (input?: {

@@ -14,6 +14,7 @@ it("formats issued pairing credentials with the secret and optional pair URL", (
       id: "pairing-1",
       credential: "secret-pairing-token",
       role: "client",
+      scopes: ["orchestration:read"],
       subject: "one-time-token",
       createdAt: DateTime.fromDateUnsafe(new Date("2026-04-08T09:00:00.000Z")),
       expiresAt: DateTime.fromDateUnsafe(new Date("2026-04-08T10:00:00.000Z")),

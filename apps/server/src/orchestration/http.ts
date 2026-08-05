@@ -63,7 +63,7 @@ const authorizeClientSession = (
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* ServerAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request);
-    yield* requireSessionScope(session.role, requiredScope);
+    yield* requireSessionScope(session.role, requiredScope, session.scopes);
     return session;
   });
 

@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
 import {
@@ -117,10 +117,21 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
         (file) => Effect.promise(() => file.close()),
       );
       const truncated = fileBytes.byteLength > WORKSPACE_FILE_PREVIEW_MAX_BYTES;
+      const byteLength = yield* Effect.tryPromise({
+        try: async () => (await stat(target.absolutePath)).size,
+        catch: (cause) =>
+          new WorkspaceFileSystemError({
+            cwd: input.cwd,
+            relativePath: input.relativePath,
+            operation: "workspaceFileSystem.stat",
+            detail: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
       const contents = new TextDecoder().decode(
         truncated ? fileBytes.subarray(0, WORKSPACE_FILE_PREVIEW_MAX_BYTES) : fileBytes,
       );
-      return { relativePath: target.relativePath, contents, truncated };
+      return { relativePath: target.relativePath, contents, byteLength, truncated };
     },
   );
   return { readFile, writeFile } satisfies WorkspaceFileSystemShape;

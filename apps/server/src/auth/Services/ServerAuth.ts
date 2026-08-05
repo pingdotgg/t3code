@@ -1,4 +1,5 @@
 import type {
+  AuthAccessTokenResult,
   AuthBearerBootstrapResult,
   AuthBootstrapResult,
   AuthClientMetadata,
@@ -8,9 +9,11 @@ import type {
   AuthPairingCredentialResult,
   AuthSessionId,
   AuthSessionState,
+  AuthEnvironmentScope,
   ServerAuthDescriptor,
   ServerAuthSessionMethod,
   AuthWebSocketTokenResult,
+  AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
 import { Data, DateTime, Context } from "effect";
 import type { Effect } from "effect";
@@ -22,12 +25,14 @@ export interface AuthenticatedSession {
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
   readonly role: SessionRole;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly expiresAt?: DateTime.DateTime;
 }
 
 export class AuthError extends Data.TaggedError("AuthError")<{
   readonly message: string;
   readonly status?: 400 | 401 | 403 | 500;
+  readonly environmentReason?: "invalid_scope" | "scope_not_granted";
   readonly cause?: unknown;
 }> {}
 
@@ -50,6 +55,11 @@ export interface ServerAuthShape {
     credential: string,
     requestMetadata: AuthClientMetadata,
   ) => Effect.Effect<AuthBearerBootstrapResult, AuthError>;
+  readonly exchangeBootstrapCredentialForAccessToken: (
+    credential: string,
+    requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
+    requestMetadata: AuthClientMetadata,
+  ) => Effect.Effect<AuthAccessTokenResult, AuthError>;
   readonly issuePairingCredential: (
     input?: AuthCreatePairingCredentialInput & {
       readonly role?: SessionRole;
@@ -76,6 +86,9 @@ export interface ServerAuthShape {
   readonly issueWebSocketToken: (
     session: AuthenticatedSession,
   ) => Effect.Effect<AuthWebSocketTokenResult, AuthError>;
+  readonly issueWebSocketTicket: (
+    session: AuthenticatedSession,
+  ) => Effect.Effect<AuthWebSocketTicketResult, AuthError>;
   readonly issueStartupPairingUrl: (baseUrl: string) => Effect.Effect<string, AuthError>;
 }
 

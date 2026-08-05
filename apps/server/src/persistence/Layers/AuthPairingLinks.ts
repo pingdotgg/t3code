@@ -1,6 +1,7 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Schema } from "effect";
+import { AuthEnvironmentScopes } from "@t3tools/contracts";
 
 import {
   toPersistenceDecodeError,
@@ -8,7 +9,6 @@ import {
   type AuthPairingLinkRepositoryError,
 } from "../Errors.ts";
 import {
-  AuthPairingLinkRecord,
   AuthPairingLinkRepository,
   type AuthPairingLinkRepositoryShape,
   ConsumeAuthPairingLinkInput,
@@ -17,6 +17,20 @@ import {
   ListActiveAuthPairingLinksInput,
   RevokeAuthPairingLinkInput,
 } from "../Services/AuthPairingLinks.ts";
+
+const AuthPairingLinkDbRow = Schema.Struct({
+  id: Schema.String,
+  credential: Schema.String,
+  method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
+  role: Schema.Literals(["owner", "client"]),
+  scopes: Schema.NullOr(Schema.fromJsonString(AuthEnvironmentScopes)),
+  subject: Schema.String,
+  label: Schema.NullOr(Schema.String),
+  createdAt: Schema.DateTimeUtcFromString,
+  expiresAt: Schema.DateTimeUtcFromString,
+  consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+});
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): AuthPairingLinkRepositoryError =>
@@ -37,6 +51,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           credential,
           method,
           role,
+          scopes,
           subject,
           label,
           created_at,
@@ -49,6 +64,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           ${input.credential},
           ${input.method},
           ${input.role},
+          ${input.scopes === null ? null : JSON.stringify(input.scopes)},
           ${input.subject},
           ${input.label},
           ${input.createdAt},
@@ -61,7 +77,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
 
   const consumeAvailablePairingLinkRow = SqlSchema.findOneOption({
     Request: ConsumeAuthPairingLinkInput,
-    Result: AuthPairingLinkRecord,
+    Result: AuthPairingLinkDbRow,
     execute: ({ credential, consumedAt, now }) =>
       sql`
         UPDATE auth_pairing_links
@@ -75,6 +91,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           credential AS "credential",
           method AS "method",
           role AS "role",
+          scopes AS "scopes",
           subject AS "subject",
           label AS "label",
           created_at AS "createdAt",
@@ -86,7 +103,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
 
   const listActivePairingLinkRows = SqlSchema.findAll({
     Request: ListActiveAuthPairingLinksInput,
-    Result: AuthPairingLinkRecord,
+    Result: AuthPairingLinkDbRow,
     execute: ({ now }) =>
       sql`
         SELECT
@@ -94,6 +111,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           credential AS "credential",
           method AS "method",
           role AS "role",
+          scopes AS "scopes",
           subject AS "subject",
           label AS "label",
           created_at AS "createdAt",
@@ -124,7 +142,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
 
   const getPairingLinkRowByCredential = SqlSchema.findOneOption({
     Request: GetAuthPairingLinkByCredentialInput,
-    Result: AuthPairingLinkRecord,
+    Result: AuthPairingLinkDbRow,
     execute: ({ credential }) =>
       sql`
         SELECT
@@ -132,6 +150,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           credential AS "credential",
           method AS "method",
           role AS "role",
+          scopes AS "scopes",
           subject AS "subject",
           label AS "label",
           created_at AS "createdAt",

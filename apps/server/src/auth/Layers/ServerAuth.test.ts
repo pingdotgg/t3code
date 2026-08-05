@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import {
+  AuthAccessTokenType,
+  AuthOrchestrationReadScope,
+  AuthTerminalOperateScope,
+} from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 
 import type { ServerConfigShape } from "../../config.ts";
@@ -85,6 +90,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
         pairingCredential.credential,
         requestMetadata,
       );
+
       const verified = yield* serverAuth.authenticateHttpRequest(
         makeCookieRequest(exchanged.sessionToken),
       );
@@ -92,6 +98,100 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       expect(verified.sessionId.length).toBeGreaterThan(0);
       expect(verified.role).toBe("client");
       expect(verified.subject).toBe("one-time-token");
+    }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect("exchanges pairing credentials for scoped OAuth access tokens", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const pairingCredential = yield* serverAuth.issuePairingCredential({
+        label: "Official iOS",
+      });
+      const access = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        [AuthOrchestrationReadScope, AuthTerminalOperateScope],
+        {
+          ...requestMetadata,
+          deviceType: "mobile",
+          os: "iOS",
+        },
+      );
+      const session = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(access.access_token),
+      );
+
+      expect(access.issued_token_type).toBe(AuthAccessTokenType);
+      expect(access.token_type).toBe("Bearer");
+      expect(access.scope).toBe("orchestration:read terminal:operate");
+      expect(session.method).toBe("bearer-access-token");
+      expect(session.scopes).toEqual([AuthOrchestrationReadScope, AuthTerminalOperateScope]);
+    }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect("rejects scope escalation from a client pairing credential", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const pairingCredential = yield* serverAuth.issuePairingCredential();
+      const error = yield* Effect.flip(
+        serverAuth.exchangeBootstrapCredentialForAccessToken(
+          pairingCredential.credential,
+          ["access:write"],
+          requestMetadata,
+        ),
+      );
+
+      expect(error.status).toBe(400);
+      expect(error.environmentReason).toBe("scope_not_granted");
+    }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect("preserves restricted scopes from pairing credential through OAuth exchange", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const pairingCredential = yield* serverAuth.issuePairingCredential({
+        scopes: [AuthOrchestrationReadScope],
+      });
+      const access = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        undefined,
+        requestMetadata,
+      );
+      const session = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(access.access_token),
+      );
+
+      expect(access.scope).toBe(AuthOrchestrationReadScope);
+      expect(session.scopes).toEqual([AuthOrchestrationReadScope]);
+    }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect("preserves restricted scopes through legacy pairing exchanges", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const browserCredential = yield* serverAuth.issuePairingCredential({
+        scopes: [AuthOrchestrationReadScope],
+      });
+      const browserExchange = yield* serverAuth.exchangeBootstrapCredential(
+        browserCredential.credential,
+        requestMetadata,
+      );
+      const browserSession = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(browserExchange.sessionToken),
+      );
+
+      const bearerCredential = yield* serverAuth.issuePairingCredential({
+        scopes: [AuthOrchestrationReadScope],
+      });
+      const bearerExchange = yield* serverAuth.exchangeBootstrapCredentialForBearerSession(
+        bearerCredential.credential,
+        requestMetadata,
+      );
+      const bearerSession = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(bearerExchange.sessionToken),
+      );
+
+      expect(browserSession.scopes).toEqual([AuthOrchestrationReadScope]);
+      expect(bearerSession.scopes).toEqual([AuthOrchestrationReadScope]);
     }).pipe(Effect.provide(makeServerAuthLayer())),
   );
 

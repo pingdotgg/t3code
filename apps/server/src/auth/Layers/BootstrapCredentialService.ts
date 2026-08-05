@@ -13,6 +13,7 @@ import {
   type BootstrapGrant,
   type IssuedBootstrapCredential,
 } from "../Services/BootstrapCredentialService.ts";
+import { defaultSessionScopes } from "../scopes.ts";
 
 interface StoredBootstrapGrant extends BootstrapGrant {
   readonly remainingUses: number | "unbounded";
@@ -82,6 +83,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
     yield* seedGrant(config.desktopBootstrapToken, {
       method: "desktop-bootstrap",
       role: "owner",
+      scopes: defaultSessionScopes("owner"),
       subject: "desktop-bootstrap",
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES),
@@ -104,6 +106,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
               id: row.id,
               credential: row.credential,
               role: row.role,
+              scopes: row.scopes ?? defaultSessionScopes(row.role),
               subject: row.subject,
               label: row.label,
               createdAt: row.createdAt,
@@ -113,6 +116,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
               id: row.id,
               credential: row.credential,
               role: row.role,
+              scopes: row.scopes ?? defaultSessionScopes(row.role),
               subject: row.subject,
               createdAt: row.createdAt,
               expiresAt: row.expiresAt,
@@ -143,6 +147,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       const issued: IssuedBootstrapCredential = {
         id,
         credential,
+        scopes: input?.scopes ?? defaultSessionScopes(input?.role ?? "client"),
         ...(input?.label ? { label: input.label } : {}),
         expiresAt,
       };
@@ -151,6 +156,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         credential,
         method: "one-time-token",
         role: input?.role ?? "client",
+        scopes: issued.scopes,
         subject: input?.subject ?? "one-time-token",
         label: input?.label ?? null,
         createdAt: now,
@@ -160,6 +166,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         id,
         credential,
         role: input?.role ?? "client",
+        scopes: issued.scopes,
         subject: input?.subject ?? "one-time-token",
         ...(input?.label ? { label: input.label } : {}),
         createdAt: now,
@@ -217,6 +224,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
               grant: {
                 method: grant.method,
                 role: grant.role,
+                scopes: grant.scopes,
                 subject: grant.subject,
                 ...(grant.label ? { label: grant.label } : {}),
                 expiresAt: grant.expiresAt,
@@ -245,6 +253,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         return {
           method: consumed.value.method,
           role: consumed.value.role,
+          scopes: consumed.value.scopes ?? defaultSessionScopes(consumed.value.role),
           subject: consumed.value.subject,
           ...(consumed.value.label ? { label: consumed.value.label } : {}),
           expiresAt: consumed.value.expiresAt,

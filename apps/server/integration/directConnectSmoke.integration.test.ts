@@ -217,6 +217,37 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
         );
         expect(registration.profile.httpBaseUrl).toBe(`${securePublicOrigin}/`);
         expect(registration.profile.wsBaseUrl).toBe("wss://direct-connect.test/");
+        const oauthSessionState = yield* fetchJson<{
+          readonly authenticated: boolean;
+          readonly scopes?: ReadonlyArray<string>;
+          readonly sessionMethod?: string;
+        }>(`${origin}/api/auth/session`, {
+          headers: { authorization: `Bearer ${registration.credential.token}` },
+        });
+        expect(oauthSessionState.body.authenticated).toBe(true);
+        expect(oauthSessionState.body.sessionMethod).toBe("bearer-access-token");
+        expect(oauthSessionState.body.scopes).toEqual(AuthStandardClientScopes);
+
+        const replayResponse = yield* Effect.promise(() =>
+          fetch(`${origin}/oauth/token`, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+              subject_token: mobileCredential,
+              subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+              requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              scope: AuthStandardClientScopes.join(" "),
+            }),
+          }),
+        );
+        expect(replayResponse.status).toBe(401);
+        const replayBody = yield* Effect.promise(() => replayResponse.json());
+        expect(replayBody).toMatchObject({
+          _tag: "EnvironmentAuthInvalidError",
+          code: "auth_invalid",
+          reason: "invalid_credential",
+        });
         const unauthorizedSnapshot = yield* Effect.promise(() =>
           fetch(`${origin}/api/orchestration/shell-snapshot`),
         );
@@ -450,7 +481,7 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
         });
         const mobileSession = clients.body.find(
           (session) =>
-            session.method === "bearer-session-token" &&
+            session.method === "bearer-access-token" &&
             session.role === "client" &&
             !session.current,
         );

@@ -1,8 +1,17 @@
 import { Schema } from "effect";
-import { PositiveInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
+export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
+export type ProjectEntryKind = typeof ProjectEntryKind.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   scope: Schema.Union([
@@ -18,9 +27,17 @@ export const ProjectSearchEntriesInput = Schema.Struct({
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
 });
+export const ProjectDirectSearchEntriesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  query: TrimmedString.check(Schema.isMaxLength(256)),
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
+  kind: Schema.optional(ProjectEntryKind),
+});
+export const ProjectSearchEntriesRpcInput = Schema.Union([
+  ProjectSearchEntriesInput,
+  ProjectDirectSearchEntriesInput,
+]);
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
-
-const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 
 export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
@@ -53,11 +70,20 @@ export const ProjectReadFileInput = Schema.Struct({
   threadId: ThreadId,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
 });
+export const ProjectDirectReadFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+});
+export const ProjectReadFileRpcInput = Schema.Union([
+  ProjectReadFileInput,
+  ProjectDirectReadFileInput,
+]);
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
 export const ProjectReadFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
   contents: Schema.String,
+  byteLength: Schema.optionalKey(NonNegativeInt),
   truncated: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;

@@ -1,5 +1,26 @@
 # Remote Access
 
+## Official iOS compatibility target
+
+The direct-pairing compatibility target is the App Store release **T3 Code
+1.0.1** (`com.t3tools.t3code`, released 2026-07-31) and its upstream mobile
+contract as inspected at `pingdotgg/t3code@d7950ac153c6fdd788ef63699a5d061243bb4997`.
+
+The server supports both authentication generations:
+
+| Client flow                     | Pairing exchange                  | Persistent credential | WebSocket ticket                                   |
+| ------------------------------- | --------------------------------- | --------------------- | -------------------------------------------------- |
+| Official iOS / current upstream | `POST /oauth/token`               | scoped `access_token` | `POST /api/auth/websocket-ticket`, then `wsTicket` |
+| Legacy fork clients             | `POST /api/auth/bootstrap/bearer` | `sessionToken`        | `POST /api/auth/ws-token`, then `wsToken`          |
+
+OAuth sessions persist their granted scopes and enforce them for HTTP and RPC
+operations. Legacy sessions retain their role-derived scopes so existing paired
+clients continue to work.
+
+The official `orchestration.searchThreads` RPC and direct workspace payloads
+for `projects.searchEntries` and `projects.readFile` are supported alongside
+the fork's existing transcript-search and thread/project-scoped payloads.
+
 Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
 
 ## Recommended Setup

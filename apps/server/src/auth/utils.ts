@@ -1,4 +1,8 @@
-import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@t3tools/contracts";
+import type {
+  AuthClientMetadata,
+  AuthClientMetadataDeviceType,
+  AuthClientPresentationMetadata,
+} from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Crypto from "node:crypto";
 
@@ -115,17 +119,17 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
 
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
-  readonly label?: string;
+  readonly presented?: AuthClientPresentationMetadata;
 }): AuthClientMetadata {
   const userAgent = normalizeNonEmptyString(input.request.headers["user-agent"]);
   const ipAddress = readRemoteAddressFromSource(input.request.source);
-  const os = inferOs(userAgent);
+  const os = input.presented?.os ?? inferOs(userAgent);
   const browser = inferBrowser(userAgent);
   return {
-    ...(input.label ? { label: input.label } : {}),
+    ...(input.presented?.label ? { label: input.presented.label } : {}),
     ...(ipAddress ? { ipAddress } : {}),
     ...(userAgent ? { userAgent } : {}),
-    deviceType: inferDeviceType(userAgent),
+    deviceType: input.presented?.deviceType ?? inferDeviceType(userAgent),
     ...(os ? { os } : {}),
     ...(browser ? { browser } : {}),
   };
