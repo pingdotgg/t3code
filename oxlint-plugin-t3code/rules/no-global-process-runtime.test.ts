@@ -129,6 +129,27 @@ describe("t3code/no-global-process-runtime", () => {
   );
 
   rule.valid(
+    "allows a shadowed node process namespace parameter",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const read = (NodeProcess: { platform: string }) => NodeProcess.platform;
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node process namespace local const",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const read = () => {
+        const NodeProcess = { arch: "arm64" };
+        return NodeProcess.arch;
+      };
+    `,
+  );
+
+  rule.valid(
     "allows unrelated node process imports",
     `
       import * as NodeProcess from "node:process";

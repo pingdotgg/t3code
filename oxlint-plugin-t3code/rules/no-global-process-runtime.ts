@@ -241,7 +241,8 @@ export default defineRule({
       return (
         Option.isSome(expression) &&
         expression.value.type === "Identifier" &&
-        nodeProcessNamespaces.has(expression.value.name)
+        nodeProcessNamespaces.has(expression.value.name) &&
+        !isShadowedByLocalBinding(expression.value, expression.value.name)
       );
     };
 
