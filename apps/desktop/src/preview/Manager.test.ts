@@ -36,6 +36,28 @@ describe("fitPictureInPictureContentSize", () => {
   });
 });
 
+describe("isPreviewRefreshShortcut", () => {
+  const input = (overrides: Partial<Electron.Input> = {}) =>
+    ({
+      type: "keyDown",
+      key: "r",
+      meta: true,
+      control: false,
+      shift: false,
+      alt: false,
+      ...overrides,
+    }) as Electron.Input;
+
+  it("recognizes the platform refresh chord without matching modified variants", () => {
+    expect(PreviewManager.isPreviewRefreshShortcut(input())).toBe(true);
+    expect(PreviewManager.isPreviewRefreshShortcut(input({ meta: false, control: true }))).toBe(
+      true,
+    );
+    expect(PreviewManager.isPreviewRefreshShortcut(input({ shift: true }))).toBe(false);
+    expect(PreviewManager.isPreviewRefreshShortcut(input({ type: "keyUp" }))).toBe(false);
+  });
+});
+
 const {
   browserWindowConstructor,
   createFromPath,
