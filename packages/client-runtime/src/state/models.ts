@@ -86,6 +86,9 @@ export interface EnvironmentThreadShell {
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly hasActionableProposedPlan: boolean;
+  readonly pendingBackgroundTasks: ReadonlyArray<
+    NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
+  >;
   readonly itemCount: number;
   readonly visibleItemCount: number;
   readonly createdAt: string;
@@ -126,10 +129,17 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
+// Park runtime at idle when the post-settlement background roster is nonempty
+// so #4415 waiting-presentation Waiting (session.idle) can consume CTM runtime.
+// The server suppresses the roster while an interruptible activity run exists,
+// so a remaining roster is stronger than checkpoint-oriented waiting.
+// latestRun keeps the latest run's status for history presentation.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
   if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
+  const hasPendingBackgroundTasks = (thread.pendingBackgroundTasks?.length ?? 0) > 0;
+  const status = hasPendingBackgroundTasks ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
-    status: thread.status,
+    status,
     activeRunId: thread.activeRunId,
     providerInstanceId: thread.providerInstanceId,
     providerName: null,
@@ -189,6 +199,7 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     itemCount: thread.itemCount,
     visibleItemCount: thread.visibleItemCount,
     createdAt: iso(thread.createdAt),

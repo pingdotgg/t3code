@@ -1,5 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { claudeBackgroundTaskAfterRootInput } from "./claude_background_task_after_root/input.ts";
+import { assertClaudeBackgroundTaskAfterRootOutput } from "./claude_background_task_after_root/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
@@ -24,6 +26,8 @@ import { planQuestionsInput } from "./plan_questions/input.ts";
 import { assertProposedPlanOutput } from "./proposed_plan/codex_output.ts";
 import { assertProposedPlanCursorOutput } from "./proposed_plan/cursor_output.ts";
 import { proposedPlanInput } from "./proposed_plan/input.ts";
+import { assertQueuedCancelledWhileActiveOutput } from "./queued_cancelled_while_active/codex_output.ts";
+import { queuedCancelledWhileActiveInput } from "./queued_cancelled_while_active/input.ts";
 import { assertQueuedTurnOutput } from "./queued_turn/codex_output.ts";
 import { queuedTurnInput } from "./queued_turn/input.ts";
 import { assertSimpleClaudeOutput } from "./simple/claude_output.ts";
@@ -83,7 +87,22 @@ import {
   WORKSPACE_NEVER_POLICY,
 } from "./shared.ts";
 
-export const ORCHESTRATOR_REPLAY_FIXTURES = [
+export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixture> = [
+  {
+    name: "claude_background_task_after_root",
+    buildInput: claudeBackgroundTaskAfterRootInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_task_after_root/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeBackgroundTaskAfterRootOutput,
+      },
+    ],
+  },
   {
     name: "claude_local_bash_task",
     buildInput: claudeLocalBashTaskInput,
@@ -458,6 +477,20 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     ],
   },
   {
+    name: "queued_cancelled_while_active",
+    buildInput: queuedCancelledWhileActiveInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL("./queued_turn/codex_transcript.ndjson", import.meta.url),
+        recordedScenario: "queued_turn",
+        transcriptEntriesThroughLabel: "turn/completed",
+        modelSelection: CODEX_MODEL_SELECTION,
+        assertOutput: assertQueuedCancelledWhileActiveOutput,
+      },
+    ],
+  },
+  {
     name: "queued_turn",
     buildInput: queuedTurnInput,
     providers: [
@@ -737,7 +770,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
       },
     ],
   },
-] satisfies ReadonlyArray<OrchestratorReplayFixture>;
+];
 
 // TODO(claude-v2/approvals-denied): add denied write fixtures after the live query runner records
 // Claude denial callback responses. Cross-reference

@@ -193,6 +193,7 @@ export function describeThreadShellForAwareness(
   return {
     found: true,
     status: shell.status,
+    activityRunStatus: shell.activityRunStatus ?? null,
     activeRunId: shell.activeRunId ?? null,
     latestRunId: shell.latestRunId ?? null,
     pendingRuntimeRequestKind: shell.pendingRuntimeRequest?.kind ?? null,

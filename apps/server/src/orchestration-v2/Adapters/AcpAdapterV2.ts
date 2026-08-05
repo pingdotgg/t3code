@@ -151,7 +151,7 @@ export interface AcpRootTurnIdleSnapshot {
   readonly hasRunningTool: boolean;
   readonly hasPendingRuntimeRequest: boolean;
   readonly hasToolHistory: boolean;
-  readonly hasRunningSubagent: boolean;
+  readonly hasActiveSubagent: boolean;
   readonly hasOutput: boolean;
 }
 
@@ -176,7 +176,7 @@ export function acpRootTurnIsIdle(snapshot: AcpRootTurnIdleSnapshot): boolean {
   if (snapshot.finalized || snapshot.interrupted) return false;
   if (snapshot.assistantStreamOpen || snapshot.reasoningStreamOpen) return false;
   if (snapshot.hasRunningTool || snapshot.hasPendingRuntimeRequest) return false;
-  if (snapshot.hasRunningSubagent) return false;
+  if (snapshot.hasActiveSubagent) return false;
   if (!snapshot.hasOutput) return false;
   // Structural gates above stay for unit tests / future re-enable. Speculative
   // idle completion is intentionally disabled.
@@ -327,7 +327,7 @@ export interface AcpAdapterV2SubagentUpdate {
   readonly prompt: string;
   readonly title: string | null;
   readonly model: string | null;
-  readonly status: "running" | "completed" | "failed" | "interrupted" | "cancelled";
+  readonly status: "pending" | "running" | "completed" | "failed" | "interrupted" | "cancelled";
   readonly childSessionId: string | null;
   readonly result: string | null;
   /**
@@ -1064,6 +1064,7 @@ interface ActiveAcpTurn {
   } | null;
   interrupted: boolean;
   finalized: boolean;
+  finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   settleScheduleGeneration: number;
   /** session/prompt already returned; finalize deferred for background work. */
   promptSettled: boolean;
@@ -1203,6 +1204,21 @@ export function acpIsAppOwnedWakeTurn(message: {
   return message.createdBy === "agent" && message.creationSource === "server";
 }
 
+export function acpCarryoverTerminalShouldClearContinuation(input: {
+  readonly continuationOffered: boolean;
+  readonly wakeBufferLength: number;
+}): boolean {
+  return !input.continuationOffered && input.wakeBufferLength === 0;
+}
+
+export function acpTurnStartShouldPreserveContinuation(input: {
+  readonly continuationRequested: boolean;
+  readonly isContinuationTurn: boolean;
+  readonly wakeBufferLength: number;
+}): boolean {
+  return !input.isContinuationTurn && input.continuationRequested && input.wakeBufferLength > 0;
+}
+
 export function acpPostSettleMonitorPromptShouldSuppress(
   mutation:
     | {
@@ -1236,7 +1252,43 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   nextChildOrdinal: number;
+  /**
+   * Whether a terminal carryover status has been projected to events.
+   * Completed roots project post-settle terminals immediately while their
+   * subscriber remains observable. Non-completed roots retain terminals in
+   * memory until the next attach. A later project:true path for the same entry
+   * must still project once; this flag prevents double emission and pins
+   * hasPendingBackgroundWork until projection lands.
+   */
+  terminalStatusProjected: boolean;
 }
+
+function acpSubagentStatusIsTerminal(status: OrchestrationV2Subagent["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "interrupted" ||
+    status === "cancelled"
+  );
+}
+
+export function acpSubagentStatusBlocksTurnSettlement(
+  status: OrchestrationV2Subagent["status"],
+): boolean {
+  return status === "running" || status === "pending";
+}
+
+function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boolean {
+  return (
+    acpSubagentStatusBlocksTurnSettlement(subagent.task.status) || !subagent.terminalStatusProjected
+  );
+}
+
+type AcpCarryoverSubagents = {
+  readonly sessionId: string;
+  readonly rootTerminalStatus: "completed" | "interrupted" | "failed" | "cancelled";
+  readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
+};
 
 function acpTurnHasPendingRuntimeRequest(
   providerTurnId: OrchestrationV2ProviderTurn["id"],
@@ -1585,10 +1637,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         // lineages into the next turn on the same session so their terminal
         // signals can still flip the original turn items instead of leaving
         // them running forever.
-        const carryoverSubagents = yield* Ref.make<{
-          readonly sessionId: string;
-          readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
-        } | null>(null);
+        const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -2025,6 +2074,22 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             (update.childSessionId !== null
               ? context.subagentsBySessionId.get(update.childSessionId)
               : undefined);
+          const updateIsTerminal = acpSubagentStatusIsTerminal(update.status);
+          if (
+            existing !== undefined &&
+            acpSubagentStatusIsTerminal(existing.task.status) &&
+            !updateIsTerminal
+          ) {
+            return;
+          }
+          if (
+            existing !== undefined &&
+            existing.task.status === update.status &&
+            updateIsTerminal &&
+            existing.terminalStatusProjected
+          ) {
+            return;
+          }
           // get_command_or_subagent_output may target monitors/bash tasks. Only
           // hydrate when we already have a matching subagent lineage. Spawn ACKs
           // (non-empty prompt) may create a new lineage; empty-prompt hydration
@@ -2090,7 +2155,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }),
             status: taskStatus,
             result: existing?.assistantText || update.result,
-            completedAt: taskStatus === "running" ? null : now,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
             updatedAt: now,
           };
           const subagent: ActiveAcpSubagent = existing ?? {
@@ -2104,6 +2169,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             childSessionId: null,
             assistantText: "",
             nextChildOrdinal: 101,
+            terminalStatusProjected: false,
           };
           subagent.task = task;
           context.subagents.set(nativeTaskId, subagent);
@@ -2208,7 +2274,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ...subagent.task,
             status: taskStatus,
             result,
-            completedAt: taskStatus === "running" ? null : now,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
             updatedAt: now,
           };
           const providerThreadId = subagent.task.providerThreadId;
@@ -2283,6 +2349,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               result,
             },
           });
+          if (acpSubagentStatusIsTerminal(taskStatus)) {
+            subagent.terminalStatusProjected = true;
+          }
         });
 
         const toolOutputText = (toolCall: AcpToolCallState): string => {
@@ -2331,7 +2400,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (status === "pending" || status === "running") return true;
           }
           for (const subagent of context.subagents.values()) {
-            if (subagent.task.status === "running" || subagent.task.status === "pending") {
+            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
               return true;
             }
           }
@@ -2855,7 +2924,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
         const offerContinuationRun = Effect.fnUntraced(function* (_sessionId: string) {
           if (continuationRequests === undefined) {
-            return;
+            return false;
           }
           const pending = yield* continuationPermit.withPermit(
             Effect.gen(function* () {
@@ -2872,7 +2941,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               return Option.some({ route, generation });
             }),
           );
-          if (Option.isNone(pending)) return;
+          if (Option.isNone(pending)) return false;
           const { route, generation } = pending.value;
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
@@ -2924,6 +2993,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 }),
               ),
           });
+          return true;
         });
 
         const applyLateBackgroundMutation = Effect.fnUntraced(function* (
@@ -2998,19 +3068,35 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           notification: EffectAcpSchema.SessionNotification,
         ) {
           if (!postSettleContinuationEnabled || continuationRequests === undefined) {
-            return false;
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: false,
+            };
           }
           // Direct Stop quarantine: drop residual wake evidence instead of
           // buffering it for a later continuation or follow-up run.
           if (yield* Ref.get(stoppedRunQuarantine)) {
-            return true;
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
           }
           const rootSessionId = yield* Ref.get(activeSessionId);
           if (rootSessionId === null || notification.sessionId !== rootSessionId) {
-            return false;
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: false,
+            };
           }
           if (!acpPostSettleWakeEvidence(notification, flavor)) {
-            return false;
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: false,
+            };
           }
           const update = notification.update;
           let alreadyHandledToolUpdate = false;
@@ -3072,16 +3158,22 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           // (the already-handled gate below intentionally skips
           // `offerContinuationRun` to avoid synthetic "Background task
           // completed." spam).
+          let buffered = false;
           if (
             !alreadyHandledToolUpdate &&
             !isInTurnHandledAgentChatter &&
             acpPostSettleWakeShouldBuffer(notification, backgroundWorkRunning)
           ) {
             yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
+            buffered = true;
           }
           // Buffer progress without offering; only completion-like frames open a run.
           if (!acpPostSettleContinuationOfferEvidence(notification, flavor)) {
-            return true;
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
           }
           // While a monitor is still streaming, tool re-reports buffer without
           // offering and per-event agent commentary is consumed without being
@@ -3093,7 +3185,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           // actually ends (end-notice mutation below, or the first frame after
           // it).
           if (backgroundWorkRunning) {
-            return true;
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
           }
           if (alreadyHandledToolUpdate) {
             // Drop leftover wake noise for in-turn-handled work so idle release
@@ -3103,23 +3199,45 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (!(yield* Ref.get(continuationRequested))) {
               yield* Ref.set(wakeBuffer, []);
             }
-            return true;
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
           }
           // Same in-turn-handled agent chatter: do not open a synthetic wake.
           // Do not clear wakeBuffer here: frames for other still-tracked tasks
           // must remain drainable when a real (tool) completion later offers.
           if (isInTurnHandledAgentChatter) {
-            return true;
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
           }
-          yield* offerContinuationRun(notification.sessionId);
-          return true;
+          return {
+            buffered,
+            offerContinuation: true,
+            stopProcessing: true,
+          };
         });
+
+        let applyFinalizedActiveTurnSubagentTerminal: (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+        ) => Effect.Effect<boolean> = () => Effect.succeed(false);
 
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
+          if (
+            context?.finalized === true &&
+            (yield* applyFinalizedActiveTurnSubagentTerminal(context, notification))
+          ) {
+            return;
+          }
           // Only while a finalized turn is still the active context. When
           // activeTurn is null, post-settle agent frames must reach
           // bufferPostSettleWake so continuation can attach (context?.finalized
@@ -3159,9 +3277,102 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (yield* Ref.get(stoppedRunQuarantine)) {
               return;
             }
+            const bufferOutcome = yield* bufferPostSettleWake(notification);
+            // Post-settle carryover sync: keep in-memory carryover accurate so
+            // hasPendingBackgroundWork reasons correctly after root settle.
+            // A completed root keeps its subscriber open while background items
+            // remain, so project its terminals immediately even when the wake
+            // frame is buffered for a continuation. Non-completed roots stay
+            // memory-only: durable ingest requires a subscriber that owns the
+            // original runId, which the interrupted path does not guarantee.
+            const carryover = yield* Ref.get(carryoverSubagents);
+            const rootTerminalCanStillProject =
+              carryover !== null &&
+              carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
+              carryover.rootTerminalStatus === "completed";
+            const projectCarryover = rootTerminalCanStillProject;
+            let carryoverTerminalized = false;
+            if (
+              flavor.extractSubagentUpdate !== undefined &&
+              (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+            ) {
+              for (const event of parseSessionUpdateEvent(notification).events) {
+                if (event._tag !== "ToolCallUpdated") continue;
+                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+                if (subagentUpdate === undefined) continue;
+                if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) {
+                  continue;
+                }
+                if (
+                  yield* updateCarryoverSubagentStatus(
+                    subagentUpdate.nativeTaskId,
+                    subagentUpdate.status,
+                    subagentUpdate.result,
+                    { project: projectCarryover },
+                  )
+                ) {
+                  carryoverTerminalized = true;
+                }
+                if (
+                  subagentUpdate.childSessionId !== null &&
+                  (yield* updateCarryoverSubagentStatus(
+                    subagentUpdate.childSessionId,
+                    subagentUpdate.status,
+                    subagentUpdate.result,
+                    { project: projectCarryover },
+                  ))
+                ) {
+                  carryoverTerminalized = true;
+                }
+              }
+            }
+            if (
+              update.sessionUpdate === "user_message_chunk" &&
+              update.content.type === "text" &&
+              flavor.extractSubagentEndNotice !== undefined
+            ) {
+              const notice = flavor.extractSubagentEndNotice(update.content.text);
+              if (
+                notice !== undefined &&
+                (yield* updateCarryoverSubagentStatus(
+                  notice.childSessionId,
+                  notice.status,
+                  undefined,
+                  {
+                    project: projectCarryover,
+                  },
+                ))
+              ) {
+                carryoverTerminalized = true;
+              }
+            }
+            // Synchronize carryover before an eager continuation can attach and
+            // drain the frame.
+            const continuationOffered = bufferOutcome.offerContinuation
+              ? yield* offerContinuationRun(notification.sessionId)
+              : false;
+            const wakeOutcome = { ...bufferOutcome, continuationOffered };
+            // Frames that will not buffer never reach the continuation drain for
+            // this traffic. Once carryover is terminalized, skip history append /
+            // residual handling (and avoid double-projecting on child re-entry).
+            if (carryoverTerminalized && !wakeOutcome.buffered) {
+              // Projected above. Never clear a non-empty wakeBuffer. A sticky
+              // continuationRequested with an empty buffer is safe to drop so
+              // idle release is not wed on a pin with nothing to deliver.
+              if (
+                acpCarryoverTerminalShouldClearContinuation({
+                  continuationOffered: wakeOutcome.continuationOffered,
+                  wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
+                })
+              ) {
+                yield* Ref.set(continuationRequested, false);
+              }
+              return;
+            }
             // Prefer continuation buffering over history append so the same
             // frames are not double-counted once a continuation run attaches.
-            if (yield* bufferPostSettleWake(notification)) {
+            if (wakeOutcome.stopProcessing) {
               return;
             }
             if (
@@ -3204,10 +3415,32 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             // Finalize may have completed during the activeSessionId yield.
             if (context.finalized) return;
             if (flavor.extractSubagentUpdate === undefined) return;
+            const subagent = context.subagentsBySessionId.get(notification.sessionId);
+            if (
+              update.sessionUpdate === "tool_call" ||
+              update.sessionUpdate === "tool_call_update"
+            ) {
+              if (subagent === undefined) return;
+              const nativeTaskId =
+                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+              for (const event of parseSessionUpdateEvent(notification).events) {
+                if (event._tag !== "ToolCallUpdated") continue;
+                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+                if (
+                  subagentUpdate === undefined ||
+                  (subagentUpdate.nativeTaskId !== nativeTaskId &&
+                    subagentUpdate.childSessionId !== notification.sessionId)
+                ) {
+                  continue;
+                }
+                yield* emitSubagent(context, subagentUpdate);
+              }
+              return;
+            }
             if (update.sessionUpdate !== "agent_message_chunk" || update.content.type !== "text") {
               return;
             }
-            const subagent = context.subagentsBySessionId.get(notification.sessionId);
             if (subagent !== undefined) {
               yield* projectSubagentNotification(subagent, notification);
               return;
@@ -3717,112 +3950,304 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         });
 
         /**
+         * Mutate a carryover subagent's in-memory task status without projecting.
+         * Used after a non-completed root whose original run subscriber is no
+         * longer guaranteed to ingest the terminal event.
+         */
+        const mutateCarryoverSubagentStatus = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          status: OrchestrationV2Subagent["status"],
+          resultOverride?: string | null,
+        ) {
+          const now = yield* DateTime.now;
+          const result =
+            resultOverride !== undefined && resultOverride !== null && resultOverride.length > 0
+              ? resultOverride
+              : subagent.assistantText || subagent.task.result;
+          const completedAt = acpSubagentStatusIsTerminal(status) ? now : null;
+          subagent.task = {
+            ...subagent.task,
+            status,
+            result,
+            completedAt,
+            updatedAt: now,
+          };
+        });
+
+        /**
+         * Project a carryover subagent status change without an ActiveAcpTurn.
+         * Shared by completed-root post-settle completion, deferred attach, and
+         * Direct Stop terminalization.
+         */
+        const projectCarryoverSubagentStatus = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          status: OrchestrationV2Subagent["status"],
+          resultOverride?: string | null,
+        ) {
+          yield* mutateCarryoverSubagentStatus(subagent, status, resultOverride);
+          const now = subagent.task.updatedAt;
+          const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id;
+          const nativeItemRef = {
+            driver,
+            nativeId: nativeTaskId,
+            strength: "strong" as const,
+          };
+          const parentProviderThreadId = subagent.parentProviderThreadId;
+          const result = subagent.task.result;
+          const completedAt = subagent.task.completedAt;
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: subagent.task.id,
+              threadId: subagent.task.threadId,
+              runId: subagent.task.runId,
+              parentNodeId: subagent.task.parentNodeId,
+              rootNodeId: subagent.task.parentNodeId,
+              kind: "subagent",
+              status,
+              countsForRun: false,
+              providerThreadId: parentProviderThreadId,
+              providerTurnId: subagent.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: subagent.childRootNodeId,
+              threadId: subagent.childThreadId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: subagent.childRootNodeId,
+              kind: "root_turn",
+              status,
+              countsForRun: false,
+              providerThreadId: subagent.task.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "subagent.updated",
+            driver,
+            subagent: subagent.task,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: subagent.turnItemId,
+              threadId: subagent.task.threadId,
+              runId: subagent.task.runId,
+              nodeId: subagent.task.id,
+              providerThreadId: parentProviderThreadId,
+              providerTurnId: subagent.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal: subagent.turnItemOrdinal,
+              status,
+              title: subagent.task.title,
+              startedAt: subagent.task.startedAt,
+              completedAt,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: subagent.task.id,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: subagent.task.providerInstanceId,
+              childThreadId: subagent.childThreadId,
+              prompt: subagent.task.prompt,
+              result,
+            },
+          });
+          if (acpSubagentStatusIsTerminal(status)) {
+            subagent.terminalStatusProjected = true;
+          }
+        });
+
+        /**
+         * Update a carryover subagent matched by native task id or child session
+         * id. Post-settle completions must flip the pin in hasPendingBackgroundWork
+         * without waiting for a new user turn to consume carryover.
+         * When `project` is false, only the in-memory carryover status advances
+         * (the next attach projects the terminal state).
+         * If status already matches but projection was deferred, a later
+         * project:true caller still projects once via terminalStatusProjected.
+         */
+        const updateCarryoverSubagentStatus = Effect.fnUntraced(function* (
+          nativeIdOrChildSessionId: string,
+          status: OrchestrationV2Subagent["status"],
+          result?: string | null,
+          options?: { readonly project?: boolean },
+        ) {
+          const carryover = yield* Ref.get(carryoverSubagents);
+          if (carryover === null) return false;
+          const match = carryover.subagents.find((subagent) => {
+            const nativeId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+            return (
+              nativeId === nativeIdOrChildSessionId ||
+              subagent.childSessionId === nativeIdOrChildSessionId
+            );
+          });
+          if (match === undefined) return false;
+          const shouldProject = options?.project !== false;
+          if (match.task.status === status) {
+            // Already at this status: only project if requested and not yet done.
+            if (!shouldProject || match.terminalStatusProjected) {
+              return true;
+            }
+            yield* projectCarryoverSubagentStatus(match, status, result);
+            return true;
+          }
+          // Only advance nonterminal entries; do not resurrect a terminal one.
+          if (match.task.status !== "running" && match.task.status !== "pending") {
+            return false;
+          }
+          if (!shouldProject) {
+            yield* mutateCarryoverSubagentStatus(match, status, result);
+          } else {
+            yield* projectCarryoverSubagentStatus(match, status, result);
+          }
+          return true;
+        });
+
+        applyFinalizedActiveTurnSubagentTerminal = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          if (flavor.extractSubagentUpdate === undefined) return false;
+
+          const applyTerminal = Effect.fnUntraced(function* (
+            subagent: ActiveAcpSubagent,
+            update: AcpAdapterV2SubagentUpdate,
+          ) {
+            if (!acpSubagentStatusIsTerminal(update.status)) return false;
+            if (acpSubagentStatusIsTerminal(subagent.task.status)) {
+              if (subagent.terminalStatusProjected || context.finalizedStatus !== "completed") {
+                return true;
+              }
+            }
+            if (context.finalizedStatus === "completed") {
+              yield* emitSubagent(context, update);
+            } else {
+              yield* mutateCarryoverSubagentStatus(subagent, update.status, update.result);
+            }
+            return true;
+          });
+
+          const sessionUpdate = notification.update;
+          if (
+            sessionUpdate.sessionUpdate === "tool_call" ||
+            sessionUpdate.sessionUpdate === "tool_call_update"
+          ) {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+              if (
+                subagentUpdate === undefined ||
+                !acpSubagentStatusIsTerminal(subagentUpdate.status)
+              ) {
+                continue;
+              }
+              const subagent =
+                context.subagents.get(subagentUpdate.nativeTaskId) ??
+                (subagentUpdate.childSessionId === null
+                  ? undefined
+                  : context.subagentsBySessionId.get(subagentUpdate.childSessionId)) ??
+                context.subagentsBySessionId.get(notification.sessionId);
+              if (subagent === undefined) continue;
+              const nativeTaskId =
+                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+              if (
+                subagentUpdate.nativeTaskId !== nativeTaskId &&
+                (subagentUpdate.childSessionId === null ||
+                  (subagentUpdate.childSessionId !== subagent.childSessionId &&
+                    subagentUpdate.childSessionId !== notification.sessionId))
+              ) {
+                continue;
+              }
+              if (yield* applyTerminal(subagent, subagentUpdate)) return true;
+            }
+          }
+
+          if (
+            sessionUpdate.sessionUpdate === "user_message_chunk" &&
+            sessionUpdate.content.type === "text" &&
+            flavor.extractSubagentEndNotice !== undefined
+          ) {
+            const notice = flavor.extractSubagentEndNotice(sessionUpdate.content.text);
+            const subagent =
+              notice === undefined
+                ? undefined
+                : context.subagentsBySessionId.get(notice.childSessionId);
+            if (notice !== undefined && subagent !== undefined) {
+              return yield* applyTerminal(subagent, {
+                nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                prompt: subagent.task.prompt,
+                title: subagent.task.title,
+                model: subagent.task.model,
+                status: notice.status,
+                childSessionId: notice.childSessionId,
+                result: null,
+                suppressNormalTool: true,
+              });
+            }
+          }
+
+          return false;
+        });
+
+        const projectDeferredCarryoverTerminals = Effect.fnUntraced(function* (
+          subagents: ReadonlyArray<ActiveAcpSubagent>,
+        ) {
+          for (const subagent of subagents) {
+            if (
+              subagent.task.status === "running" ||
+              subagent.task.status === "pending" ||
+              subagent.terminalStatusProjected
+            ) {
+              continue;
+            }
+            yield* projectCarryoverSubagentStatus(
+              subagent,
+              subagent.task.status,
+              subagent.task.result,
+            );
+          }
+        });
+
+        /**
          * Direct Stop after a soft steer clears carryover without an active turn.
          * Emit the same interrupted terminal events terminalizeOpenRunOwnedItems
          * would have, context-free (no ActiveAcpTurn).
          */
         const terminalizeCarryoverSubagents = Effect.fnUntraced(function* (
-          carryover: {
-            readonly sessionId: string;
-            readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
-          } | null,
+          carryover: AcpCarryoverSubagents | null,
         ) {
           if (carryover === null) return;
-          const now = yield* DateTime.now;
           for (const subagent of carryover.subagents) {
-            if (subagent.task.status !== "running" && subagent.task.status !== "pending") {
+            if (acpSubagentStatusIsTerminal(subagent.task.status)) {
+              if (!subagent.terminalStatusProjected) {
+                yield* projectCarryoverSubagentStatus(
+                  subagent,
+                  subagent.task.status,
+                  subagent.task.result,
+                );
+              }
               continue;
             }
-            const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id;
-            const nativeItemRef = {
-              driver,
-              nativeId: nativeTaskId,
-              strength: "strong" as const,
-            };
-            const parentProviderThreadId = subagent.parentProviderThreadId;
-            const result = subagent.assistantText || subagent.task.result;
-            subagent.task = {
-              ...subagent.task,
-              status: "interrupted",
-              result,
-              completedAt: now,
-              updatedAt: now,
-            };
-            yield* emitProviderEvent({
-              type: "node.updated",
-              driver,
-              node: {
-                id: subagent.task.id,
-                threadId: subagent.task.threadId,
-                runId: subagent.task.runId,
-                parentNodeId: subagent.task.parentNodeId,
-                rootNodeId: subagent.task.parentNodeId,
-                kind: "subagent",
-                status: "interrupted",
-                countsForRun: false,
-                providerThreadId: parentProviderThreadId,
-                providerTurnId: subagent.providerTurnId,
-                nativeItemRef,
-                runtimeRequestId: null,
-                checkpointScopeId: null,
-                startedAt: subagent.task.startedAt,
-                completedAt: now,
-              },
-            });
-            yield* emitProviderEvent({
-              type: "node.updated",
-              driver,
-              node: {
-                id: subagent.childRootNodeId,
-                threadId: subagent.childThreadId,
-                runId: null,
-                parentNodeId: null,
-                rootNodeId: subagent.childRootNodeId,
-                kind: "root_turn",
-                status: "interrupted",
-                countsForRun: false,
-                providerThreadId: subagent.task.providerThreadId,
-                providerTurnId: null,
-                nativeItemRef,
-                runtimeRequestId: null,
-                checkpointScopeId: null,
-                startedAt: subagent.task.startedAt,
-                completedAt: now,
-              },
-            });
-            yield* emitProviderEvent({
-              type: "subagent.updated",
-              driver,
-              subagent: subagent.task,
-            });
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver,
-              turnItem: {
-                id: subagent.turnItemId,
-                threadId: subagent.task.threadId,
-                runId: subagent.task.runId,
-                nodeId: subagent.task.id,
-                providerThreadId: parentProviderThreadId,
-                providerTurnId: subagent.providerTurnId,
-                nativeItemRef,
-                parentItemId: null,
-                ordinal: subagent.turnItemOrdinal,
-                status: "interrupted",
-                title: subagent.task.title,
-                startedAt: subagent.task.startedAt,
-                completedAt: now,
-                updatedAt: now,
-                type: "subagent",
-                subagentId: subagent.task.id,
-                origin: "provider_native",
-                driver,
-                providerInstanceId: subagent.task.providerInstanceId,
-                childThreadId: subagent.childThreadId,
-                prompt: subagent.task.prompt,
-                result,
-              },
-            });
+            yield* projectCarryoverSubagentStatus(subagent, "interrupted");
           }
         });
 
@@ -4318,6 +4743,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         ) {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
+          context.finalizedStatus = settledStatus;
           context.finalized = true;
           if (options?.drainTrailingChunks === true) {
             yield* drainTrailingRootTurnChunks();
@@ -4386,14 +4812,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   threadDisposition: "reusable",
                 },
           );
-          const liveSubagents = [...context.subagents.values()].filter(
-            (subagent) => subagent.task.status === "running" || subagent.task.status === "pending",
+          const subagentsRequiringCarryover = [...context.subagents.values()].filter(
+            acpSubagentHasPendingBackgroundWork,
           );
           // Direct Stop must not carry residual subagents into a later run.
-          if (liveSubagents.length > 0 && !directStopQuarantine) {
+          if (subagentsRequiringCarryover.length > 0 && !directStopQuarantine) {
             const sessionId = yield* Ref.get(activeSessionId);
             if (sessionId !== null) {
-              yield* Ref.set(carryoverSubagents, { sessionId, subagents: liveSubagents });
+              yield* Ref.set(carryoverSubagents, {
+                sessionId,
+                rootTerminalStatus: settledStatus,
+                subagents: subagentsRequiringCarryover,
+              });
             }
           }
           yield* Ref.set(activeTurn, null);
@@ -4443,8 +4873,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           // Debounce already proved root-session quiescence; open segment handles
           // without an explicit close should not block settlement.
-          const hasRunningSubagent = [...context.subagents.values()].some(
-            (subagent) => subagent.task.status === "running",
+          const hasActiveSubagent = [...context.subagents.values()].some((subagent) =>
+            acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
           if (
             !acpRootTurnIsIdle({
@@ -4455,7 +4885,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               hasRunningTool,
               hasPendingRuntimeRequest,
               hasToolHistory: context.tools.size > 0,
-              hasRunningSubagent,
+              hasActiveSubagent,
               hasOutput: context.assistant.nextSegment > 0,
             })
           ) {
@@ -4650,23 +5080,28 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (!isAppOwnedWakeTurn) {
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
             }
-            // User turns must not inherit prior-turn wake residue. Stale injected-
-            // turn ack chatter buffered for in-turn-handled work can otherwise
-            // arm a mid-turn offer when a later monitor completes (multiturn
-            // live repro). Continuation turns keep the buffer so attach mode can
-            // drain it. Still-running tasks remain in runningBackgroundTaskIds
-            // and re-buffer evidence when they complete; a user message means
-            // this turn owns the conversation, so prior wake frames cannot be
-            // legitimate for a synthetic continuation of the previous turn.
-            if (!isContinuationTurn && !isAppOwnedWakeTurn) {
-              yield* Ref.set(wakeBuffer, []);
-            }
-            // Drop a sticky continuation offer when any new turn starts so idle
-            // pin and further offers cannot wed on a completed or failed dispatch.
-            yield* continuationPermit.withPermit(
+            // A user turn supersedes an empty offer, but not an offer that owns
+            // buffered wake traffic. ProviderContinuationService queues that
+            // continuation behind the user run so it can drain afterwards.
+            const continuationWasRequested = yield* continuationPermit.withPermit(
               Effect.gen(function* () {
+                const wasRequested = yield* Ref.get(continuationRequested);
+                const preserveBufferedContinuation = acpTurnStartShouldPreserveContinuation({
+                  continuationRequested: wasRequested,
+                  isContinuationTurn,
+                  wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
+                });
+                // User turns must not inherit prior-turn wake residue. Stale
+                // injected-turn ack chatter can otherwise arm a later offer.
+                // Preserve only a queued continuation that owns buffered wake
+                // traffic, and exempt app-owned sibling wakes entirely.
+                if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
+                  yield* Ref.set(wakeBuffer, []);
+                }
+                if (preserveBufferedContinuation) return wasRequested;
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
                 yield* Ref.set(continuationRequested, false);
+                return wasRequested;
               }),
             );
             const prompt = isContinuationTurn ? null : yield* resolvePromptParts(turnInput);
@@ -4697,6 +5132,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               plan: null,
               interrupted: false,
               finalized: false,
+              finalizedStatus: null,
               settleScheduleGeneration: 0,
               promptSettled: false,
               promptSettledStatus: null,
@@ -4704,7 +5140,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               backgroundFinalizeGeneration: 0,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
+            let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
             if (carryover !== null && carryover.sessionId === requestedSessionId) {
+              rehydratedCarryoverSubagents = carryover.subagents;
               for (const subagent of carryover.subagents) {
                 const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
                 if (nativeId !== null) {
@@ -4755,22 +5193,42 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               createdAt: startedAt,
               updatedAt: startedAt,
             });
+            // Every attach ends the deferred-terminal contract, but only the
+            // queued provider continuation owns wake traffic. A user turn may
+            // start before that continuation and must leave its buffer intact.
+            yield* projectDeferredCarryoverTerminals(rehydratedCarryoverSubagents);
+            // Keep projected terminals addressable through the wake drain so
+            // emitSubagent's monotonic guard can reject replayed spawn frames.
+            // Finalize carries only entries with pending background work, so a
+            // terminal-and-projected lineage still expires with this turn.
             if (isContinuationTurn) {
-              const drained = yield* Ref.modify(wakeBuffer, (current) => {
-                const next: Array<EffectAcpSchema.SessionNotification> = [];
-                return [current.slice(), next] as const;
-              });
               yield* Ref.set(continuationRequested, false);
+              const drainedWakeCount = yield* Ref.modify(wakeBuffer, (current) => {
+                const next: Array<EffectAcpSchema.SessionNotification> = [];
+                return [
+                  current.filter((notification) => notification.sessionId === requestedSessionId),
+                  next,
+                ] as const;
+              }).pipe(
+                Effect.tap((drained) =>
+                  Effect.forEach(drained, handleSessionUpdate, {
+                    concurrency: 1,
+                    discard: true,
+                  }),
+                ),
+                Effect.map((drained) => drained.length),
+              );
               // Treat attach mode as prompt-settled so deferred finalize / quiet
               // windows can complete the continuation after wake traffic drains.
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
-              if (drained.length === 0) {
-                // Empty wakeBuffer (midTurn-only offer): wait the quiet window
-                // so late CLI frames can attach. scheduleDeferredFinalize
-                // no-ops without deferFinalizeForBackgroundWork; fall back to
-                // immediate finalize so the turn cannot wedge.
-                if (flavor.deferFinalizeForBackgroundWork === true) {
+              if (drainedWakeCount === 0) {
+                // A requested continuation with only mid-turn evidence has no
+                // buffered frame yet. Wait the quiet window so late CLI frames
+                // can attach. A provider-authored attach without a matching
+                // request only exists to project deferred carryover terminals,
+                // so it can finish immediately once those terminals are visible.
+                if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
                   if (hasDeferredBackgroundWork(context)) {
                     yield* rearmDeferredFinalize(context);
                   } else {
@@ -4782,9 +5240,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   });
                 }
                 return;
-              }
-              for (const notification of drained) {
-                yield* handleSessionUpdate(notification);
               }
               if (!context.finalized) {
                 if (hasDeferredBackgroundWork(context)) {
@@ -4952,6 +5407,27 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
                   if (yield* Ref.get(continuationRequested)) return true;
                   if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+                  // Projected post-settle Grok subagents can outlive the root
+                  // turn via carryover; keep the ACP process pinned until they
+                  // terminalize or teardown clears the carryover.
+                  // Also pin while a terminal status is held only in memory
+                  // (project:false) so idle release cannot drop the session
+                  // before the continuation drain (or a later project:true path)
+                  // delivers the turn_item terminal.
+                  const active = yield* Ref.get(activeTurn);
+                  if (
+                    active !== null &&
+                    [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
+                  ) {
+                    return true;
+                  }
+                  const carryover = yield* Ref.get(carryoverSubagents);
+                  if (
+                    carryover !== null &&
+                    carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
+                  ) {
+                    return true;
+                  }
                   return false;
                 }),
               }

@@ -1432,3 +1432,66 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
   });
 });
+
+describe("deriveMessagesTimelineRows waiting-background", () => {
+  it("renders the waiting-background row instead of Working for a parked waiting runtime", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "waiting-background",
+        id: "waiting-background-row",
+        createdAt: null,
+        description: "Run Codex review",
+        taskCount: 1,
+        label: "Waiting on background task: Run Codex review",
+      },
+    ]);
+  });
+
+  it("suppresses a stale waiting roster while an active running turn is Working", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.some((row) => row.kind === "waiting-background")).toBe(false);
+    expect(rows.some((row) => row.kind === "working")).toBe(true);
+  });
+
+  it("includes task count for multiple background tasks", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      pendingBackgroundTasks: [
+        { taskId: "bg-1", description: "first" },
+        { taskId: "bg-2", description: "second" },
+      ],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "waiting-background",
+        id: "waiting-background-row",
+        createdAt: null,
+        description: "first",
+        taskCount: 2,
+        label: "Waiting on 2 background tasks: first, …",
+      },
+    ]);
+  });
+});

@@ -84,7 +84,7 @@ export function deriveThreadRelationshipGraph(input: {
       sourceThreadId: parentThreadId,
       targetThreadId: thread.id,
       kind: thread.lineage.relationshipToParent === "subagent" ? "subagent" : "fork",
-      status: thread.status,
+      status: thread.activityRunStatus ?? thread.status,
     });
   }
 
