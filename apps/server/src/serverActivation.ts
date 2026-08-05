@@ -12,10 +12,13 @@ export class ServerActivation extends Context.Reference<Effect.Effect<void> | un
 // Clear inherited ParentSpan so long-lived forks don't pin short-lived startup spans (#5410).
 export const withoutAmbientParentSpan = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
+): Effect.Effect<A, E, Exclude<R, Tracer.ParentSpan>> =>
   Effect.updateContext(
     effect,
-    (context) => Context.omit(Tracer.ParentSpan)(context) as Context.Context<NoInfer<R>>,
+    (context) =>
+      Context.omit(Tracer.ParentSpan)(context) as Context.Context<
+        Exclude<NoInfer<R>, Tracer.ParentSpan>
+      >,
   );
 
 /** Forks a long-running root before commit and proves it is parked at the activation boundary. */
