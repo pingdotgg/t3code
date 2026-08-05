@@ -196,6 +196,128 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
   return { outcome: "cancelled" };
 }
 
+// ---------------------------------------------------------------------------
+// x.ai/exit_plan_mode — plan approval gate (mirrors Grok Build TUI plan window)
+// ---------------------------------------------------------------------------
+
+const XAiExitPlanModeParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  planContent: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const XAiWrappedExitPlanModeParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]),
+  params: XAiExitPlanModeParams,
+});
+
+export const XAiExitPlanModeRequest = Schema.Union([
+  XAiExitPlanModeParams,
+  XAiWrappedExitPlanModeParams,
+]);
+
+type XAiExitPlanModeRequestParams = typeof XAiExitPlanModeParams.Type;
+type XAiExitPlanModeRequest = typeof XAiExitPlanModeRequest.Type;
+
+function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanModeRequestParams {
+  return "params" in params ? params.params : params;
+}
+
+/** Empty-state copy when Grok exits plan mode without a plan file. */
+export const XAI_EMPTY_PLAN_MARKDOWN =
+  "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)";
+
+export function extractXAiExitPlanMarkdown(
+  params: XAiExitPlanModeRequest,
+  fallback?: string | null,
+): string {
+  const content = unwrapExitPlanModeParams(params).planContent;
+  const fromRequest = typeof content === "string" ? trimmed(content) : undefined;
+  if (fromRequest) {
+    return fromRequest;
+  }
+  const fromFallback = fallback?.trim();
+  if (fromFallback && fromFallback.length > 0) {
+    return fromFallback;
+  }
+  return XAI_EMPTY_PLAN_MARKDOWN;
+}
+
+export type XAiExitPlanModeOutcome = "approved" | "abandoned" | "request_changes";
+
+export interface XAiExitPlanModeResponse {
+  readonly outcome: XAiExitPlanModeOutcome;
+  readonly feedback?: string;
+}
+
+/**
+ * Client captured the plan for T3's proposed-plan card. Abandon the native
+ * Grok plan-approval gate so the turn unblocks; the user implements via T3 UI.
+ */
+export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitPlanModeResponse {
+  return {
+    outcome: "abandoned",
+    feedback:
+      feedback ??
+      "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+  };
+}
+
+/** True when a path is Grok's session plan file (…/plan.md). */
+export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean {
+  if (typeof path !== "string") {
+    return false;
+  }
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (normalized.length === 0) {
+    return false;
+  }
+  return normalized === "plan.md" || normalized.endsWith("/plan.md");
+}
+
+/**
+ * Extract plan markdown from a Grok write/edit tool call targeting plan.md.
+ * Used so T3 can show the plan while plan mode is still active (before exit).
+ */
+export function extractGrokPlanMarkdownFromToolCallData(
+  data: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!data) {
+    return undefined;
+  }
+
+  const rawInput = data.rawInput;
+  if (isRecord(rawInput)) {
+    const filePath =
+      (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
+      (typeof rawInput.path === "string" ? rawInput.path : undefined);
+    const content = typeof rawInput.content === "string" ? rawInput.content : undefined;
+    if (isGrokPlanMarkdownPath(filePath) && content && content.trim().length > 0) {
+      return content.trim();
+    }
+  }
+
+  const content = data.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!isRecord(block) || block.type !== "diff") {
+        continue;
+      }
+      const path = typeof block.path === "string" ? block.path : undefined;
+      const newText = typeof block.newText === "string" ? block.newText : undefined;
+      if (isGrokPlanMarkdownPath(path) && newText && newText.trim().length > 0) {
+        return newText.trim();
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
  * The underlying runtime remains unaware of xAI methods and metadata.
