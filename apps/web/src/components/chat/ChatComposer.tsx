@@ -47,6 +47,7 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
+import { buildDroppedFileMentions, partitionDroppedComposerFiles } from "./composerFileDrop";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -2419,16 +2420,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
 
-  const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    dragDepthRef.current = 0;
-    setIsDragOverComposer(false);
-    const files = Array.from(event.dataTransfer.files);
-    void addComposerImages(files);
-    focusComposer();
-  };
-
   const insertComposerTextAtEnd = (
     text: string,
     options?: { ensureLeadingBoundary?: boolean },
@@ -2450,6 +2441,57 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt.length,
       needsLeadingSpace ? ` ${text}` : text,
     );
+  };
+
+  // OS file drops: images attach inline (as before), while other files become
+  // file mentions when the desktop shell can resolve the dropped File's on-disk
+  // path (Electron webUtils). Files whose path can't be resolved — browser
+  // builds, or in-memory Files — fall back to the image path so the existing
+  // "unsupported file type" error still surfaces instead of silently vanishing.
+  const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOverComposer(false);
+    const { imageFiles, pathFiles } = partitionDroppedComposerFiles(
+      Array.from(event.dataTransfer.files),
+    );
+    const resolvePath = window.desktopBridge?.getPathForFile;
+    const mentionPaths: string[] = [];
+    const unresolvedFiles: File[] = [];
+    for (const file of pathFiles) {
+      let absolutePath = "";
+      if (resolvePath) {
+        try {
+          absolutePath = resolvePath(file);
+        } catch {
+          absolutePath = "";
+        }
+      }
+      if (absolutePath.length > 0) {
+        mentionPaths.push(absolutePath);
+      } else {
+        unresolvedFiles.push(file);
+      }
+    }
+    if (mentionPaths.length > 0) {
+      const inserted = insertComposerTextAtEnd(buildDroppedFileMentions(mentionPaths, gitCwd), {
+        ensureLeadingBoundary: true,
+      });
+      if (!inserted) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+      }
+    }
+    const imagesToAttach =
+      unresolvedFiles.length > 0 ? [...imageFiles, ...unresolvedFiles] : imageFiles;
+    if (imagesToAttach.length > 0) {
+      void addComposerImages(imagesToAttach);
+    }
+    focusComposer();
   };
 
   // File-tree drags land as mentions. Handled in the capture phase so the
