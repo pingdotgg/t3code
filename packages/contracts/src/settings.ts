@@ -468,9 +468,19 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const SentryAgentMonitoringSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  dsn: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  dsnRedacted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SentryAgentMonitoringSettings = typeof SentryAgentMonitoringSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  sentryAgentMonitoring: SentryAgentMonitoringSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
@@ -727,6 +737,13 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+      sentryAgentMonitoring: Schema.optionalKey(
+        Schema.Struct({
+          enabled: Schema.optionalKey(Schema.Boolean),
+          dsn: Schema.optionalKey(TrimmedString),
+          dsnRedacted: Schema.optionalKey(Schema.Boolean),
+        }),
+      ),
     }),
   ),
   providers: Schema.optionalKey(

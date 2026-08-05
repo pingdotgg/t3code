@@ -35,6 +35,10 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
+    "./sentryAgentMonitoring": {
+      "types": "./src/sentryAgentMonitoring.ts",
+      "import": "./src/sentryAgentMonitoring.ts"
+    },
     "./httpObservability": {
       "types": "./src/httpObservability.ts",
       "import": "./src/httpObservability.ts"

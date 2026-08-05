@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 
 import {
   useClientSettings,
+  usePrimarySettings,
   useSidebarV2Enabled,
   useUpdateClientSettings,
+  useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
+import { parseSentryDsn } from "@t3tools/shared/sentryAgentMonitoring";
+import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -55,6 +59,113 @@ function AutoSettleDaysInput({
   );
 }
 
+function SentryAgentMonitoringSettings() {
+  const monitoring = usePrimarySettings((settings) => settings.observability.sentryAgentMonitoring);
+  const updateSettings = useUpdatePrimarySettings();
+  const [dsnDraft, setDsnDraft] = useState("");
+  const validDsn = parseSentryDsn(dsnDraft) !== null;
+  const sentrySetting = searchableSetting("sentry-agent-monitoring");
+
+  useEffect(() => {
+    if (monitoring.dsnRedacted) setDsnDraft("");
+  }, [monitoring.dsnRedacted]);
+
+  return (
+    <SettingsRow
+      id={sentrySetting.id}
+      title={<span className="text-purple-700 dark:text-purple-300">{sentrySetting.title}</span>}
+      className="border border-purple-500/20 bg-purple-500/4 dark:border-purple-400/20 dark:bg-purple-500/6"
+      description="Send one metadata-only trace for each settled agent turn to your own Sentry project. Includes provider, model, duration, token and tool counts, cost when available, completion state, and normalized errors. Prompts, responses, reasoning, code, diffs, paths, and raw provider events are never sent."
+      status={
+        <span className="text-purple-700/75 dark:text-purple-300/75">
+          {monitoring.enabled
+            ? "Restart the server after enabling or replacing the DSN. Turning this off stops future exports immediately."
+            : monitoring.dsnRedacted
+              ? "DSN stored securely. Monitoring is off."
+              : "Off by default."}
+        </span>
+      }
+      control={
+        <Switch
+          className="data-checked:bg-purple-600 focus-visible:ring-purple-500 dark:data-checked:bg-purple-500"
+          checked={monitoring.enabled}
+          onCheckedChange={(checked) =>
+            updateSettings({
+              observability: {
+                sentryAgentMonitoring: { enabled: Boolean(checked) },
+              },
+            })
+          }
+          aria-label="Enable Sentry agent monitoring"
+        />
+      }
+    >
+      {monitoring.enabled ? (
+        <div className="mt-3 grid gap-2 border-t border-purple-500/15 py-3 sm:grid-cols-[minmax(0,1fr)_auto] dark:border-purple-400/15">
+          <div className="space-y-1">
+            <Input
+              className="has-focus-visible:border-purple-500 has-focus-visible:ring-purple-500/20 dark:has-focus-visible:border-purple-400 dark:has-focus-visible:ring-purple-400/20"
+              type="password"
+              value={dsnDraft}
+              onChange={(event) => setDsnDraft(event.target.value)}
+              placeholder={
+                monitoring.dsnRedacted
+                  ? "Stored DSN — enter a new one to replace"
+                  : "https://public-key@o0.ingest.sentry.io/project-id"
+              }
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Sentry DSN"
+            />
+            <p className="text-xs text-purple-700/65 dark:text-purple-300/65">
+              Find the DSN in Sentry under Project Settings → Client Keys (DSN).
+            </p>
+          </div>
+          <div className="flex items-start gap-2">
+            {monitoring.dsnRedacted ? (
+              <Button
+                variant="outline"
+                className="border-purple-500/25 text-purple-700 hover:bg-purple-500/8 dark:border-purple-400/25 dark:text-purple-300 dark:hover:bg-purple-400/8"
+                onClick={() =>
+                  updateSettings({
+                    observability: {
+                      sentryAgentMonitoring: {
+                        enabled: false,
+                        dsn: "",
+                        dsnRedacted: false,
+                      },
+                    },
+                  })
+                }
+              >
+                Remove
+              </Button>
+            ) : null}
+            <Button
+              className="border-purple-600 bg-purple-600 text-white shadow-purple-600/24 hover:bg-purple-600/90 dark:border-purple-500 dark:bg-purple-500 dark:shadow-purple-500/24 dark:hover:bg-purple-500/90"
+              disabled={!validDsn}
+              onClick={() => {
+                if (!validDsn) return;
+                updateSettings({
+                  observability: {
+                    sentryAgentMonitoring: {
+                      dsn: dsnDraft.trim(),
+                      dsnRedacted: false,
+                    },
+                  },
+                });
+                setDsnDraft("");
+              }}
+            >
+              Save DSN
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
 export function BetaSettingsPanel() {
   const sidebarV2Enabled = useSidebarV2Enabled();
   const sidebarAutoSettleAfterDays = useClientSettings(
@@ -65,6 +176,7 @@ export function BetaSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="Beta features">
+        <SentryAgentMonitoringSettings />
         <SettingsRow
           {...searchableSetting("sidebar-v2")}
           description="One flat thread list in creation order. Active work renders as rich cards; settled threads collapse to compact rows. Settling requires an up-to-date server — on older servers threads simply stay active. Switch back any time."
