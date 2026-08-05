@@ -168,6 +168,9 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
+  // Hot path: called every few seconds from parked runtime fibers. Spans here
+  // previously nested under immortal startup ParentSpans and dominated idle
+  // trace volume; keep reads cheap and untraced.
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
@@ -181,7 +184,7 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
-      Effect.withSpan("ServerSecretStore.get"),
+      Effect.withTracerEnabled(false),
     );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
