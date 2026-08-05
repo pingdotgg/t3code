@@ -252,8 +252,7 @@ async function resolve({ github, context, core }) {
       (pull) =>
         pull.state === "open" &&
         pull.head.sha === source.head_sha &&
-        pull.head.ref === source.head_branch &&
-        pull.head.repo?.full_name === source.head_repository?.full_name,
+        pull.head.ref === source.head_branch,
     );
     if (matchingPulls.length !== 1) {
       core.info(

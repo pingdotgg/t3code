@@ -86,12 +86,22 @@ test("renders baseline, impact, ceiling, and ceiling changes", () => {
   );
 });
 
-test("resolves the current PR artifact and exact main baseline", async () => {
+test("resolves a fallback PR with a redacted head repo and exact main baseline", async () => {
   const outputs = {};
   const listWorkflowRunArtifacts = () => {};
   const listWorkflowRuns = () => {};
+  const listPullRequestsAssociatedWithCommit = () => {};
   const github = {
     paginate: async (method, input) => {
+      if (method === listPullRequestsAssociatedWithCommit) {
+        return [
+          {
+            number: 5350,
+            state: "open",
+            head: { sha: "head-sha", ref: "feature-branch", repo: null },
+          },
+        ];
+      }
       if (method === listWorkflowRunArtifacts) {
         return [
           {
@@ -116,7 +126,7 @@ test("resolves the current PR artifact and exact main baseline", async () => {
           },
         }),
       },
-      repos: { listPullRequestsAssociatedWithCommit: () => {} },
+      repos: { listPullRequestsAssociatedWithCommit },
     },
   };
   await resolve({
@@ -129,8 +139,10 @@ test("resolves the current PR artifact and exact main baseline", async () => {
           event: "pull_request",
           workflow_id: 3,
           head_sha: "head-sha",
+          head_branch: "feature-branch",
+          head_repository: { full_name: "pingdotgg/t3code" },
           conclusion: "success",
-          pull_requests: [{ number: 5350 }],
+          pull_requests: [],
         },
       },
     },
