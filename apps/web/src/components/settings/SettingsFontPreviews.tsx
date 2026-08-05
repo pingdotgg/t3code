@@ -120,11 +120,26 @@ export function CodeFontPreview() {
   );
 }
 
-const TERMINAL_PROMPT = "\x1b[2m$\x1b[0m ";
+// A zsh-style prompt: green arrow, cyan project, blue/red git segment,
+// yellow dirty marker. It doubles as the echo loop's fresh-line prompt.
+const TERMINAL_PROMPT =
+  "\x1b[1;32m→\x1b[0m \x1b[1;36mt3code\x1b[0m \x1b[1;34mgit:(\x1b[1;31mmain\x1b[1;34m)\x1b[0m \x1b[1;33m✗\x1b[0m ";
+// A dev-server startup: brand line, addresses, a test summary, and a READY
+// badge. Together the lines cover bold, dim, underline, the six accent
+// colors, and a background cell, so a font choice shows every SGR the
+// terminal actually renders.
 const TERMINAL_PREVIEW_TRANSCRIPT =
-  `${TERMINAL_PROMPT}npm run dev\r\n` +
-  "\x1b[32m✓\x1b[0m Ready in 430ms\r\n" +
-  "\x1b[2mLocal:\x1b[0m \x1b[36mhttp://localhost:3000\x1b[0m\r\n" +
+  `${TERMINAL_PROMPT}vpr dev\r\n` +
+  "\r\n" +
+  "  \x1b[1;32mVITE\x1b[0m \x1b[32mv7.1.1\x1b[0m  \x1b[2mready in\x1b[0m \x1b[1m1.24s\x1b[0m\r\n" +
+  "\r\n" +
+  "  \x1b[32m→\x1b[0m  \x1b[2mLocal:\x1b[0m    \x1b[4;36mhttp://127.0.0.1:5173/\x1b[0m\r\n" +
+  "  \x1b[32m→\x1b[0m  \x1b[2mNetwork:\x1b[0m  \x1b[4;36mhttp://192.168.1.24:5173/\x1b[0m\r\n" +
+  "\r\n" +
+  "  \x1b[32m✓ 85 passed\x1b[0m   \x1b[33m△ 2 warnings\x1b[0m   \x1b[31m✗ 0 failed\x1b[0m\r\n" +
+  "\r\n" +
+  "  \x1b[42;30m READY \x1b[0m \x1b[2mwatching for changes — press\x1b[0m \x1b[1mq\x1b[0m \x1b[2mto quit\x1b[0m\r\n" +
+  "\r\n" +
   TERMINAL_PROMPT;
 
 /** The surface treats an omitted family or size as "use the built-in default". */
@@ -225,7 +240,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   return (
     <div
       ref={mountRef}
-      className="relative mt-1 mb-2 h-36 overflow-hidden rounded-lg border border-border"
+      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
       aria-label="Terminal font preview"
     />
   );
