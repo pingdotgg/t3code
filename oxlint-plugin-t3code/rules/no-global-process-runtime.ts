@@ -73,6 +73,10 @@ const collectBindingNames = (pattern: unknown, names: Set<string>): void => {
         for (const property of properties) collectBindingNames(property, names);
       return;
     }
+    // Oxlint's `BindingProperty` interface carries the runtime tag "Property",
+    // so "BindingProperty" never appears in the AST. Match both, as the
+    // Identifier and RestElement cases above already do.
+    case "Property":
     case "BindingProperty":
       collectBindingNames((node as { value?: unknown }).value, names);
       return;

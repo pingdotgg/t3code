@@ -129,11 +129,29 @@ describe("t3code/no-global-process-runtime", () => {
   );
 
   rule.valid(
+    "allows a shadowed node os namespace destructured parameter",
+    `
+      import * as NodeOS from "node:os";
+
+      export const read = ({ NodeOS }: { NodeOS: { platform: () => string } }) => NodeOS.platform();
+    `,
+  );
+
+  rule.valid(
     "allows a shadowed node process namespace parameter",
     `
       import * as NodeProcess from "node:process";
 
       export const read = (NodeProcess: { platform: string }) => NodeProcess.platform;
+    `,
+  );
+
+  rule.valid(
+    "allows a shadowed node process namespace destructured parameter",
+    `
+      import * as NodeProcess from "node:process";
+
+      export const read = ({ NodeProcess }: { NodeProcess: { arch: string } }) => NodeProcess.arch;
     `,
   );
 
