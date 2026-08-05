@@ -195,6 +195,8 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.unsettle":
     case "thread.snooze":
     case "thread.unsnooze":
+    case "thread.pin":
+    case "thread.unpin":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -1342,6 +1344,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unsettle"
           | "thread.snooze"
           | "thread.unsnooze"
+          | "thread.pin"
+          | "thread.unpin"
           | "thread.visit"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -1401,7 +1405,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.type === "thread.settle" ||
         command.type === "thread.unsettle" ||
         command.type === "thread.snooze" ||
-        command.type === "thread.unsnooze") &&
+        command.type === "thread.unsnooze" ||
+        command.type === "thread.pin" ||
+        command.type === "thread.unpin") &&
       thread.archivedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
@@ -1514,11 +1520,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         case "thread.settle": {
-          const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
+          // Settling is "I'm done with this": it clears a pin the same way it
+          // parks the thread (mirrors the v1 decider's settle/pin exclusion).
+          const wasPinned = thread.pinnedAt != null;
+          const alreadySettled =
+            thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
           return {
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : now,
+            pinnedAt: null,
             updatedAt: alreadySettled ? thread.updatedAt : now,
           };
         }
@@ -1551,6 +1562,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil: null,
             snoozedAt: null,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
+          };
+        }
+        case "thread.pin": {
+          // Pinning is a promotion: it clears the parked states rather than
+          // silently outranking them — an explicit settle is un-settled and a
+          // snooze's return ticket is spent (the thread is on top NOW).
+          const alreadyPinned = thread.pinnedAt != null;
+          const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+          return {
+            ...thread,
+            pinnedAt: alreadyPinned ? thread.pinnedAt : now,
+            settledOverride:
+              thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+            settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
+            snoozedUntil: null,
+            snoozedAt: null,
+            updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
+          };
+        }
+        case "thread.unpin": {
+          const alreadyUnpinned = thread.pinnedAt == null;
+          return {
+            ...thread,
+            pinnedAt: null,
+            updatedAt: alreadyUnpinned ? thread.updatedAt : now,
           };
         }
         // Visited tracking records read state only; it must not bump updatedAt,
@@ -1620,6 +1656,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.snoozed" as const;
         case "thread.unsnooze":
           return "thread.unsnoozed" as const;
+        case "thread.pin":
+          return "thread.pinned" as const;
+        case "thread.unpin":
+          return "thread.unpinned" as const;
         case "thread.visit":
           return "thread.visited" as const;
         case "thread.mark-unread":
@@ -6650,6 +6690,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unsettle":
       case "thread.snooze":
       case "thread.unsnooze":
+      case "thread.pin":
+      case "thread.unpin":
       case "thread.visit":
       case "thread.mark-unread":
       case "thread.metadata.update":
