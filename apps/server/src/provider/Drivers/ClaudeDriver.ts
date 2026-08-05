@@ -12,7 +12,12 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  type ProviderInstanceEnvironment,
+  ProviderDriverKind,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
@@ -54,7 +59,11 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+  makeClaudeEnvironmentSource,
+} from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -79,6 +88,20 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
     lockKey: "claude-native",
     isCommandPath: isClaudeNativeCommandPath,
   },
+});
+
+export const makeClaudeInstanceEnvironment = Effect.fn("makeClaudeInstanceEnvironment")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  environment: ProviderInstanceEnvironment | undefined,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+) {
+  const provider = makeProviderInstanceEnvironmentSource(environment, baseEnv);
+  const claude = yield* makeClaudeEnvironmentSource(config, provider.environment);
+  return {
+    providerEnvironment: provider.environment,
+    claudeEnvironment: claude.environment,
+    refresh: provider.refresh.pipe(Effect.andThen(claude.refresh)),
+  };
 });
 
 export type ClaudeDriverEnv =
@@ -125,13 +148,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const environmentSource = makeProviderInstanceEnvironmentSource(environment);
-      const processEnv = environmentSource.environment;
+      const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const environmentSource = yield* makeClaudeInstanceEnvironment(effectiveConfig, environment);
+      const processEnv = environmentSource.providerEnvironment;
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const claudeEnvironment = environmentSource.claudeEnvironment;
       const maintenanceCapabilities = yield* makeProviderMaintenanceCapabilitiesSource(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -146,11 +170,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
 
       const adapterOptions = {
         instanceId,
-        environment: processEnv,
+        environment: claudeEnvironment,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
-      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, claudeEnvironment);
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.

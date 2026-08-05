@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import { makeProviderInstanceEnvironmentSource } from "../ProviderInstanceEnvironment.ts";
 
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -22,6 +23,7 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  if (resolvedBaseEnv.CLAUDE_CONFIG_DIR === resolvedHomePath) return resolvedBaseEnv;
   return {
     ...resolvedBaseEnv,
     // Isolate this instance's config via CLAUDE_CONFIG_DIR rather than HOME.
@@ -32,6 +34,22 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
     // keychain) intact.
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
+});
+
+export const makeClaudeEnvironmentSource = Effect.fn("makeClaudeEnvironmentSource")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  baseEnv: NodeJS.ProcessEnv,
+) {
+  const homePath = config.homePath.trim();
+  if (homePath.length === 0) {
+    return makeProviderInstanceEnvironmentSource(undefined, baseEnv);
+  }
+
+  const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  return makeProviderInstanceEnvironmentSource(
+    [{ name: "CLAUDE_CONFIG_DIR", value: resolvedHomePath, sensitive: false }],
+    baseEnv,
+  );
 });
 
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(

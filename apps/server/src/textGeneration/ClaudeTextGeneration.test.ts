@@ -6,6 +6,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -13,6 +16,8 @@ import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import { makeClaudeEnvironmentSource } from "../provider/Drivers/ClaudeHome.ts";
+import { makeProviderInstanceEnvironmentSource } from "../provider/ProviderInstanceEnvironment.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -190,6 +195,83 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect("uses refreshed environment values for future commands with a configured home", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const homePath = path.resolve("claude-refreshed-home");
+      const baseEnv: NodeJS.ProcessEnv = {
+        PATH: "before-path",
+        CLAUDE_CREDENTIAL: "host-before",
+        REMOVE_ME: "stale",
+        CLAUDE_CONFIG_DIR: "host-home",
+      };
+      const instanceEnvironment = makeProviderInstanceEnvironmentSource(
+        [{ name: "CLAUDE_CREDENTIAL", value: "instance-credential", sensitive: true }],
+        baseEnv,
+      );
+      const claudeEnvironment = yield* makeClaudeEnvironmentSource(
+        { homePath },
+        instanceEnvironment.environment,
+      );
+      let spawnedEnvironment: NodeJS.ProcessEnv | undefined;
+      const spawner = ChildProcessSpawner.make((command) => {
+        const childProcessCommand = command as unknown as {
+          readonly options: { readonly env?: NodeJS.ProcessEnv };
+        };
+        spawnedEnvironment = childProcessCommand.options.env;
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(
+              Stream.make(
+                JSON.stringify({
+                  structured_output: { subject: "Use refreshed environment", body: "" },
+                }),
+              ),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+      const config = decodeClaudeSettings({ homePath, binaryPath: "claude" });
+      const textGeneration = yield* makeClaudeTextGeneration(
+        config,
+        claudeEnvironment.environment,
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+      baseEnv.PATH = "after-path";
+      baseEnv.CLAUDE_CREDENTIAL = "host-after";
+      baseEnv.CLAUDE_CONFIG_DIR = "host-after-home";
+      delete baseEnv.REMOVE_ME;
+      yield* instanceEnvironment.refresh;
+      yield* claudeEnvironment.refresh;
+
+      yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/refreshed-environment",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-haiku-4-5",
+        ),
+      });
+
+      expect(spawnedEnvironment?.PATH).toBe("after-path");
+      expect(spawnedEnvironment?.CLAUDE_CREDENTIAL).toBe("instance-credential");
+      expect(spawnedEnvironment?.REMOVE_ME).toBeUndefined();
+      expect(spawnedEnvironment?.CLAUDE_CONFIG_DIR).toBe(homePath);
+    }),
+  );
+
   it.effect("forwards Claude thinking settings for Haiku without passing effort", () =>
     withFakeClaudeEnv(
       {

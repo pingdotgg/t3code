@@ -22,6 +22,8 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+import { ClaudeExecutableFileCheck } from "../Drivers/ClaudeExecutable.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -156,6 +159,13 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly platform?: "win32" | "linux" | "darwin";
+  readonly resolveExecutable?: (
+    command: string,
+    platform: string,
+    env: NodeJS.ProcessEnv,
+  ) => string;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -167,6 +177,7 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.environment ? { environment: config.environment } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -188,7 +199,14 @@ function makeHarness(config?: {
       ClaudeAdapter,
       Effect.gen(function* () {
         const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
-        return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
+        const platform = config?.platform ?? (yield* HostProcessPlatform);
+        const resolveExecutable = config?.resolveExecutable ?? (yield* SpawnExecutableResolution);
+        const executableFileCheck = yield* ClaudeExecutableFileCheck;
+        return yield* makeClaudeAdapter(claudeConfig, adapterOptions).pipe(
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(SpawnExecutableResolution, resolveExecutable),
+          Effect.provideService(ClaudeExecutableFileCheck, executableFileCheck),
+        );
       }),
     ).pipe(
       Layer.provideMerge(
@@ -350,6 +368,49 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("uses refreshed environment values for future sessions with a configured home", () => {
+    const homePath = NodePath.join(NodeOS.tmpdir(), "claude-refreshed-home");
+    const environment: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      CLAUDE_CONFIG_DIR: NodePath.resolve(homePath),
+      CLAUDE_CREDENTIAL: "before",
+      REMOVE_ME: "stale",
+    };
+    const harness = makeHarness({
+      claudeConfig: { homePath, binaryPath: "claude" },
+      environment,
+      platform: "win32",
+      resolveExecutable: (command, _platform, env) =>
+        NodePath.win32.join(env.PATH ?? "", `${command}.exe`),
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      environment.PATH = "refreshed-path";
+      environment.CLAUDE_CREDENTIAL = "after";
+      delete environment.REMOVE_ME;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const sessionEnvironment = harness.getLastCreateQueryInput()?.options.env;
+      assert.equal(sessionEnvironment?.PATH, "refreshed-path");
+      assert.equal(sessionEnvironment?.CLAUDE_CREDENTIAL, "after");
+      assert.equal(sessionEnvironment?.REMOVE_ME, undefined);
+      assert.equal(sessionEnvironment?.CLAUDE_CONFIG_DIR, NodePath.resolve(homePath));
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
+        NodePath.win32.join("refreshed-path", "claude.exe"),
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
