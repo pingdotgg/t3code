@@ -446,21 +446,17 @@ function defaultShellResolver(platform: NodeJS.Platform, env: NodeJS.ProcessEnv)
   return env.SHELL ?? "bash";
 }
 
-function normalizeShellCommand(
-  value: string | undefined,
-  platform: NodeJS.Platform,
-): string | null {
+function normalizeShellCommand(value: string | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
 
-  if (platform === "win32") {
-    return trimmed;
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === "'") && trimmed.at(-1) === quote) {
+    const unquoted = trimmed.slice(1, -1).trim();
+    return unquoted.length > 0 ? unquoted : null;
   }
-
-  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
-  if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
+  return trimmed;
 }
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
@@ -538,7 +534,7 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ShellCandidate[], never, FileSystem.FileSystem | Path.Path> {
-  const requestedCommand = normalizeShellCommand(shellResolver(), platform);
+  const requestedCommand = normalizeShellCommand(shellResolver());
   const resolvedRequestedCommand =
     platform === "win32" && requestedCommand !== null
       ? yield* resolveCommandPath(requestedCommand, { env }).pipe(
@@ -564,7 +560,7 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
 
   return uniqueShellCandidates([
     requested,
-    shellCandidateFromCommand(normalizeShellCommand(env.SHELL, platform), platform),
+    shellCandidateFromCommand(normalizeShellCommand(env.SHELL), platform),
     shellCandidateFromCommand("/bin/zsh", platform),
     shellCandidateFromCommand("/bin/bash", platform),
     shellCandidateFromCommand("/bin/sh", platform),
@@ -1212,8 +1208,9 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const settingsChanges = yield* settingsService.subscribeChanges;
   let configuredShell = (yield* settingsService.getSettings).defaultTerminalShell;
-  yield* settingsService.streamChanges.pipe(
+  yield* settingsChanges.pipe(
     Stream.runForEach((settings) =>
       Effect.sync(() => {
         configuredShell = settings.defaultTerminalShell;
@@ -1941,15 +1938,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
+            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const shellCandidates = yield* resolveShellCandidates(
               shellResolver,
               platform,
-              baseEnv,
+              terminalEnv,
             ).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;

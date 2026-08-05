@@ -412,7 +412,7 @@ export const makeProviderMaintenanceCapabilitiesSource = Effect.fn(
   return {
     get: () => current,
     resolve,
-    refresh: Effect.forkDetach(resolve, { startImmediately: true }).pipe(Effect.asVoid),
+    refresh: resolve.pipe(Effect.asVoid),
   } satisfies ProviderMaintenanceCapabilitiesSource;
 });
 

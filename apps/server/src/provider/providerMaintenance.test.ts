@@ -215,8 +215,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
 
       expect(source.get().update?.lockKey).toBe("npm-global");
-      expect((yield* source.resolve).update?.lockKey).toBe("bun-global");
+      yield* source.refresh;
       expect(source.get().update?.lockKey).toBe("bun-global");
+      expect((yield* source.resolve).update?.lockKey).toBe("bun-global");
     }),
   );
 

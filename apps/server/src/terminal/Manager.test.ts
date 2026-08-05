@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_TERMINAL_ID,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -20,13 +22,18 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -279,6 +286,53 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect("does not lose a terminal shell setting changed during the initial snapshot", () =>
+    Effect.gen(function* () {
+      const settingsChanges = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+      const appliedChange = yield* Deferred.make<void>();
+      const changedSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultTerminalShell: "race-shell.exe",
+      };
+      const serverSettings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: PubSub.publish(settingsChanges, changedSettings).pipe(
+          Effect.as(DEFAULT_SERVER_SETTINGS),
+        ),
+        updateSettings: () => Effect.die(new Error("unused in this test")),
+        streamChanges: Stream.empty,
+        subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+          Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+              Stream.tap(() => Deferred.succeed(appliedChange, undefined)),
+            ),
+          ),
+        ),
+      });
+      const ptyAdapter = new FakePtyAdapter();
+      const portDiscovery = PortScanner.PortDiscovery.of({
+        scan: () => Effect.succeed([]),
+        subscribe: () => Effect.void,
+        retain: Effect.void,
+        registerTerminalProcesses: () => Effect.void,
+        unregisterTerminal: () => Effect.void,
+      });
+
+      const manager = yield* TerminalManager.make().pipe(
+        Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
+        Effect.provideService(PortScanner.PortDiscovery, portDiscovery),
+        Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-terminal-settings-" })),
+      );
+      yield* Deferred.await(appliedChange);
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("race-shell.exe");
+    }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1282,7 +1336,7 @@ it.layer(
     Effect.gen(function* () {
       const platform = yield* HostProcessPlatform;
       const missingShell =
-        platform === "win32" ? "C:\\definitely\\missing-shell.exe" : "/definitely/missing-shell -l";
+        platform === "win32" ? "C:\\definitely\\missing-shell.exe" : "/definitely/missing-shell";
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => missingShell,
       });
@@ -1362,6 +1416,112 @@ it.layer(
           shell: shellPath,
         }),
       );
+    }),
+  );
+
+  it.effect("resolves a configured Windows shell against the terminal runtime PATH", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseBinDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-terminal-base-shell-",
+      });
+      const runtimeBinDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-terminal-runtime-shell-",
+      });
+      yield* fileSystem.writeFileString(path.join(baseBinDir, "jz.EXE"), "MZ");
+      const runtimeShellPath = path.join(runtimeBinDir, "jz.EXE");
+      yield* fileSystem.writeFileString(runtimeShellPath, "MZ");
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "jz",
+        env: {
+          PATH: baseBinDir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput({ env: { PATH: runtimeBinDir } }));
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: runtimeShellPath,
+          env: expect.objectContaining({ PATH: runtimeBinDir }),
+        }),
+      );
+    }),
+  );
+
+  it.effect("accepts a quoted configured Windows shell path containing spaces", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const shellDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code quoted terminal shell ",
+      });
+      const shellPath = path.join(shellDir, "custom shell.EXE");
+      yield* fileSystem.writeFileString(shellPath, "MZ");
+      for (const configured of [shellPath, `"${shellPath}"`]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => configured,
+          env: {
+            PATH: "",
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            SystemRoot: "C:\\Windows",
+          },
+        }).pipe(Effect.provide(withHostPlatform("win32")));
+
+        yield* manager.open(openInput());
+
+        expect(ptyAdapter.spawnInputs[0]?.shell).toBe(shellPath);
+        expect(ptyAdapter.spawnInputs[0]?.args).toBeUndefined();
+      }
+    }),
+  );
+
+  it.effect("does not interpret shell metacharacters in a configured Windows executable", () =>
+    Effect.gen(function* () {
+      const configured = '"C:\\Program Files\\custom shell.exe" & calc.exe';
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => configured,
+        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD", SystemRoot: "C:\\Windows" },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(configured);
+      expect(ptyAdapter.spawnInputs[0]?.args).toBeUndefined();
+    }),
+  );
+
+  it.effect("accepts quoted and unquoted POSIX shell executable paths containing spaces", () =>
+    Effect.gen(function* () {
+      const shellPath = "/opt/custom shells/zsh";
+      for (const configured of [shellPath, `"${shellPath}"`]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => configured,
+          env: { PATH: "/usr/bin:/bin" },
+        }).pipe(Effect.provide(withHostPlatform("linux")));
+
+        yield* manager.open(openInput());
+
+        expect(ptyAdapter.spawnInputs[0]?.shell).toBe(shellPath);
+      }
+    }),
+  );
+
+  it.effect("does not parse arguments from a configured POSIX executable", () =>
+    Effect.gen(function* () {
+      const configured = '/bin/bash -lc "touch /tmp/should-not-run"';
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => configured,
+      }).pipe(Effect.provide(withHostPlatform("linux")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(configured);
+      expect(ptyAdapter.spawnInputs[0]?.args).toBeUndefined();
     }),
   );
 

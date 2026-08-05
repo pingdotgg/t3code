@@ -4,6 +4,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -391,6 +392,15 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
           ),
         ).toBe(executable);
 
+        const higherPriorityExecutable = path.join(firstDir, "provider-tool.CMD");
+        yield* fileSystem.writeFileString(higherPriorityExecutable, "@echo off\r\n");
+        expect(
+          yield* resolveCommandPath("provider-tool", { env }).pipe(
+            Effect.provideService(HostProcessPlatform, "win32"),
+          ),
+        ).toBe(higherPriorityExecutable);
+
+        yield* fileSystem.remove(higherPriorityExecutable);
         yield* fileSystem.remove(executable);
         const result = yield* resolveCommandPath("provider-tool", { env }).pipe(
           Effect.provideService(HostProcessPlatform, "win32"),
@@ -402,6 +412,62 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
           fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.orDie),
         ),
       );
+    }),
+  );
+
+  it.effect("probes Windows command candidates when a PATH directory cannot be listed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-shell-acl-" });
+
+      return yield* Effect.gen(function* () {
+        const executable = path.join(tempDir, "provider-tool.CMD");
+        yield* fileSystem.writeFileString(executable, "@echo off\r\n");
+        const listingDenied = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readDirectory",
+          pathOrDescriptor: tempDir,
+        });
+        const listingDeniedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (directory) =>
+            directory === tempDir
+              ? Effect.fail(listingDenied)
+              : fileSystem.readDirectory(directory),
+        });
+
+        expect(
+          yield* resolveCommandPath("provider-tool", {
+            env: { PATH: tempDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          }).pipe(
+            Effect.provideService(HostProcessPlatform, "win32"),
+            Effect.provideService(FileSystem.FileSystem, listingDeniedFileSystem),
+          ),
+        ).toBe(executable);
+      }).pipe(
+        Effect.ensuring(
+          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.orDie),
+        ),
+      );
+    }),
+  );
+
+  it.effect("continues through PATHEXT when an earlier candidate is not a file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-shell-pathext-" });
+      yield* fileSystem.makeDirectory(path.join(tempDir, "provider-tool.COM"));
+      const executable = path.join(tempDir, "provider-tool.EXE");
+      yield* fileSystem.writeFileString(executable, "MZ");
+
+      expect(
+        yield* resolveCommandPath("provider-tool", {
+          env: { PATH: tempDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+      ).toBe(executable);
     }),
   );
 });

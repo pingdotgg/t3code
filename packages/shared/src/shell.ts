@@ -515,6 +515,42 @@ const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
   return canExecuteFile(filePath);
 });
 
+const resolveWindowsCommandInDirectory = Effect.fn("shell.resolveWindowsCommandInDirectory")(
+  function* (
+    pathEntry: string,
+    commandCandidates: ReadonlyArray<string>,
+    windowsPathExtensions: ReadonlyArray<string>,
+  ): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directoryEntries = yield* fileSystem.readDirectory(pathEntry).pipe(
+      Effect.map((entries) => ({ entries })),
+      Effect.orElseSucceed(() => null),
+    );
+
+    if (directoryEntries !== null) {
+      const names = new Map(directoryEntries.entries.map((entry) => [entry.toUpperCase(), entry]));
+      for (const candidate of commandCandidates) {
+        const entry = names.get(candidate.toUpperCase());
+        if (entry === undefined) continue;
+        const candidatePath = path.join(pathEntry, entry);
+        if (yield* isExecutableFile(candidatePath, "win32", windowsPathExtensions)) {
+          return candidatePath;
+        }
+      }
+      return null;
+    }
+
+    for (const candidate of commandCandidates) {
+      const candidatePath = path.join(pathEntry, candidate);
+      if (yield* isExecutableFile(candidatePath, "win32", windowsPathExtensions)) {
+        return candidatePath;
+      }
+    }
+    return null;
+  },
+);
+
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
@@ -532,11 +568,16 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   );
   const cacheKey = commandResolutionCacheKey(command, platform, env);
   const cachedPath = resolvedCommandPathCache.get(cacheKey);
+  let validCachedPath: string | undefined;
   if (cachedPath !== undefined) {
     if (yield* isExecutableFile(cachedPath, platform, windowsPathExtensions)) {
-      return cachedPath;
+      validCachedPath = cachedPath;
+      if (command.includes("/") || command.includes("\\")) {
+        return cachedPath;
+      }
+    } else {
+      resolvedCommandPathCache.delete(cacheKey);
     }
-    resolvedCommandPathCache.delete(cacheKey);
   }
 
   if (command.includes("/") || command.includes("\\")) {
@@ -564,30 +605,34 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     pathEntries.push(pathEntry);
   }
 
+  const cachedPathEntryIndex =
+    validCachedPath === undefined
+      ? -1
+      : pathEntries.findIndex((pathEntry) =>
+          commandCandidates.some(
+            (candidate) =>
+              normalizePathEntryForComparison(path.join(pathEntry, candidate), platform) ===
+              normalizePathEntryForComparison(validCachedPath, platform),
+          ),
+        );
+  const lookupPathEntries =
+    cachedPathEntryIndex < 0 ? pathEntries : pathEntries.slice(0, cachedPathEntryIndex + 1);
+
   if (platform === "win32") {
-    const fileSystem = yield* FileSystem.FileSystem;
-    for (let offset = 0; offset < pathEntries.length; offset += WINDOWS_COMMAND_LOOKUP_BATCH_SIZE) {
-      const batch = pathEntries.slice(offset, offset + WINDOWS_COMMAND_LOOKUP_BATCH_SIZE);
+    for (
+      let offset = 0;
+      offset < lookupPathEntries.length;
+      offset += WINDOWS_COMMAND_LOOKUP_BATCH_SIZE
+    ) {
+      const batch = lookupPathEntries.slice(offset, offset + WINDOWS_COMMAND_LOOKUP_BATCH_SIZE);
       const matches = yield* Effect.forEach(
         batch,
         (pathEntry) =>
-          fileSystem.readDirectory(pathEntry).pipe(
-            Effect.orElseSucceed(() => []),
-            Effect.map((entries) => {
-              const names = new Map(entries.map((entry) => [entry.toUpperCase(), entry]));
-              const candidate = commandCandidates.find((name) => names.has(name.toUpperCase()));
-              return candidate === undefined
-                ? null
-                : path.join(pathEntry, names.get(candidate.toUpperCase()) ?? candidate);
-            }),
-          ),
+          resolveWindowsCommandInDirectory(pathEntry, commandCandidates, windowsPathExtensions),
         { concurrency: WINDOWS_COMMAND_LOOKUP_CONCURRENCY },
       );
       for (const candidatePath of matches) {
-        if (
-          candidatePath !== null &&
-          (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions))
-        ) {
+        if (candidatePath !== null) {
           resolvedCommandPathCache.set(cacheKey, candidatePath);
           return candidatePath;
         }
@@ -596,7 +641,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return yield* new CommandResolutionError({ command, reason: "not-found" });
   }
 
-  const candidatePaths = pathEntries.flatMap((pathEntry) =>
+  const candidatePaths = lookupPathEntries.flatMap((pathEntry) =>
     commandCandidates.map((candidate) => path.join(pathEntry, candidate)),
   );
   for (let offset = 0; offset < candidatePaths.length; offset += 1) {
