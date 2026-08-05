@@ -167,6 +167,26 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.pinned":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinnedAt: event.payload.pinnedAt,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.unpinned":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinnedAt: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {

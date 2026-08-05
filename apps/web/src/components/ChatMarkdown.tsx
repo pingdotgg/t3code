@@ -1363,6 +1363,9 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
+  /* eslint-disable react/no-unstable-nested-components -- ReactMarkdown requires component
+   * renderers that close over this message's metadata. useMemo keeps them stable until that
+   * metadata changes. */
   const markdownComponents = useMemo<Components>(() => {
     const fileLinkChip = (
       fileLinkMeta: MarkdownFileLinkMeta,
@@ -1593,6 +1596,7 @@ function ChatMarkdown({
     text,
     threadRef,
   ]);
+  /* eslint-enable react/no-unstable-nested-components */
 
   return (
     <div

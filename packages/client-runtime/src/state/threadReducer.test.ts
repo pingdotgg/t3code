@@ -231,6 +231,55 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.pinned / thread.unpinned", () => {
+    it("sets pinnedAt", () => {
+      const pinnedAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: pinnedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pinned",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          pinnedAt,
+          updatedAt: pinnedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.pinnedAt).toBe(pinnedAt);
+      }
+    });
+
+    it("clears pinnedAt", () => {
+      const pinnedThread: OrchestrationThread = {
+        ...baseThread,
+        pinnedAt: "2026-04-01T05:00:00.000Z",
+      };
+      const updatedAt = "2026-04-01T06:00:00.000Z";
+      const result = applyThreadDetailEvent(pinnedThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.unpinned",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.pinnedAt).toBeNull();
+      }
+    });
+  });
+
   describe("thread.meta-updated", () => {
     it("patches title and branch", () => {
       const result = applyThreadDetailEvent(baseThread, {
