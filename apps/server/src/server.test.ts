@@ -5249,6 +5249,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   },
                 ],
               }),
+            getDiffFileContents: () =>
+              Effect.succeed({
+                oldContents: "before\n",
+                newContents: "after\n",
+              }),
           },
         },
       });
@@ -5363,6 +5368,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
+
+      const diffFileContents = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.reviewGetDiffFileContents]({
+            cwd: "/tmp/repo",
+            sourceKind: "working-tree",
+            changeType: "change",
+            baseRef: "HEAD",
+            headRef: null,
+            oldPath: "README.md",
+            newPath: "README.md",
+          }),
+        ),
+      );
+      assert.equal(diffFileContents.oldContents, "before\n");
+      assert.equal(diffFileContents.newContents, "after\n");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

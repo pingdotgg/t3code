@@ -1,5 +1,5 @@
 import {
-  deriveLogicalProjectKey,
+  buildProjectGroups,
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
@@ -37,10 +37,6 @@ export interface HomeProjectScope {
   readonly projectRefs: ReadonlyArray<ScopedProjectRef>;
 }
 
-function getProjectFreshnessTimestamp(project: EnvironmentProject): number {
-  return toSortableTimestamp(project.updatedAt) ?? toSortableTimestamp(project.createdAt) ?? 0;
-}
-
 function getProjectSortTimestamp(
   project: EnvironmentProject,
   sortOrder: HomeProjectSortOrder,
@@ -60,64 +56,19 @@ export function buildHomeProjectScopes(input: {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
-  const projectsByPhysicalKey = new Map<string, EnvironmentProject[]>();
-  for (const project of projects) {
-    const physicalKey = derivePhysicalProjectKey(project);
-    const existing = projectsByPhysicalKey.get(physicalKey);
-    if (existing) existing.push(project);
-    else projectsByPhysicalKey.set(physicalKey, [project]);
-  }
-
-  const winnersByPhysicalKey = new Map<
-    string,
-    { readonly key: string; readonly project: EnvironmentProject }
-  >();
-  for (const [physicalKey, members] of projectsByPhysicalKey) {
-    const project = members.reduce((winner, candidate) => {
-      const freshnessDelta =
-        getProjectFreshnessTimestamp(candidate) - getProjectFreshnessTimestamp(winner);
-      return freshnessDelta > 0 || (freshnessDelta === 0 && candidate.id > winner.id)
-        ? candidate
-        : winner;
-    });
-    const identitySource = members.find((member) => member.repositoryIdentity !== null) ?? project;
-    winnersByPhysicalKey.set(physicalKey, {
-      key: deriveLogicalProjectKey(identitySource, { groupingMode: input.projectGroupingMode }),
-      project,
-    });
-  }
-
-  const groups = new Map<string, EnvironmentProject[]>();
-  for (const { key, project } of winnersByPhysicalKey.values()) {
-    const existing = groups.get(key);
-    if (existing) existing.push(project);
-    else groups.set(key, [project]);
-  }
-
-  const projectRefsByGroup = new Map<string, ScopedProjectRef[]>();
-  const seenProjectRefs = new Set<string>();
-  for (const project of projects) {
-    const refKey = scopedProjectKey(project.environmentId, project.id);
-    if (seenProjectRefs.has(refKey)) continue;
-    seenProjectRefs.add(refKey);
-
-    const key =
-      winnersByPhysicalKey.get(derivePhysicalProjectKey(project))?.key ??
-      deriveLogicalProjectKey(project, { groupingMode: input.projectGroupingMode });
-    const refs = projectRefsByGroup.get(key);
-    const projectRef = { environmentId: project.environmentId, projectId: project.id };
-    if (refs) refs.push(projectRef);
-    else projectRefsByGroup.set(key, [projectRef]);
-  }
-
-  return Array.from(groups, ([key, projects]) => {
-    const representative = projects[0]!;
+  return buildProjectGroups({
+    projects,
+    settings: {
+      sidebarProjectGroupingMode: input.projectGroupingMode,
+      sidebarProjectGroupingOverrides: {},
+    },
+  }).map((group) => {
     return {
-      key,
-      title: deriveProjectGroupLabel({ representative, members: projects }),
-      representative,
-      projects,
-      projectRefs: projectRefsByGroup.get(key) ?? [],
+      key: group.key,
+      title: group.label,
+      representative: group.representative,
+      projects: group.members.map((member) => member.project),
+      projectRefs: group.memberProjectRefs,
     };
   });
 }
@@ -264,9 +215,11 @@ export function buildHomeThreadGroups(input: {
 }): ReadonlyArray<HomeThreadGroup> {
   const now = input.now ?? Date.now();
   const groups = new Map<string, MutableHomeThreadGroup>();
+  const groupTitleByKey = new Map<string, string>();
   const groupKeyByProjectKey = new Map<string, string>();
 
   for (const scope of buildHomeProjectScopes(input)) {
+    groupTitleByKey.set(scope.key, scope.title);
     groups.set(scope.key, {
       key: scope.key,
       projects: [...scope.projects],
@@ -345,7 +298,9 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const title = deriveProjectGroupLabel({ representative, members: group.projects });
+    const title =
+      groupTitleByKey.get(group.key) ??
+      deriveProjectGroupLabel({ representative, members: group.projects });
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||
