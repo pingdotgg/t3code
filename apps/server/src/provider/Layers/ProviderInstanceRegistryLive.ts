@@ -242,9 +242,10 @@ const makeReconcile = <R>(input: {
           nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
         );
 
-        // Stage the public state before teardown so readers can never receive
-        // an instance whose scope has already closed. Unavailable snapshots
-        // are rebuilt below because they do not retain their source envelope.
+        // Stage live state before teardown so readers can never receive an
+        // instance whose scope has already closed. Unavailable snapshots own
+        // no resources, so keep the last complete map published until the
+        // rebuilt map commits below.
         const removedIds: Array<ProviderInstanceId> = [];
         const replacedIds = new Set<ProviderInstanceId>();
         for (const [instanceId, live] of previousEntries) {
@@ -279,10 +280,7 @@ const makeReconcile = <R>(input: {
           [...stagedEntries].some(
             ([id, live], index) => previousOrder[index] !== id || previousEntries.get(id) !== live,
           );
-        const stagedStateChanged = stagedEntriesChanged || previousUnavailable.size > 0;
-
         yield* Ref.set(state.entries, stagedEntries);
-        yield* Ref.set(state.unavailable, new Map());
 
         for (const id of [...removedIds, ...replacedIds]) {
           const live = previousEntries.get(id);
@@ -325,7 +323,7 @@ const makeReconcile = <R>(input: {
               Scope.close(scope, Exit.void).pipe(Effect.ignore),
             ).pipe(
               Effect.andThen(
-                stagedStateChanged ? PubSub.publish(state.changes, undefined) : Effect.void,
+                stagedEntriesChanged ? PubSub.publish(state.changes, undefined) : Effect.void,
               ),
               Effect.asVoid,
             ),

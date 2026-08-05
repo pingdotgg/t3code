@@ -140,23 +140,21 @@ export const refreshProviderInstancesAfterEnvironmentHydration = Effect.fn(
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
+export const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator;
       const registry = yield* ProviderInstanceRegistry;
-      const serverSettings = yield* ServerSettingsService;
       const environmentHydration = yield* HostEnvironmentHydration;
       yield* settingsChanges.pipe(
-        Stream.runForEach(() =>
-          serverSettings.getSettings.pipe(
-            Effect.flatMap((current) =>
-              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+        Stream.runForEach((next) =>
+          mutator
+            .reconcile(deriveProviderInstanceConfigMap(next))
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
+              ),
             ),
-            Effect.catchCause((cause) =>
-              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-            ),
-          ),
         ),
         Effect.forkScoped,
       );

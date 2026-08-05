@@ -1,7 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as NodeFS from "node:fs";
@@ -10,9 +14,12 @@ import * as NodePath from "node:path";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import { ServerSettingsService } from "../../serverSettings.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeProviderInstanceEnvironmentSource } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -21,7 +28,76 @@ import {
   normalizeCommandPath,
 } from "../providerMaintenance.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { refreshProviderInstancesAfterEnvironmentHydration } from "./ProviderInstanceRegistryHydration.ts";
+import { ProviderInstanceRegistryMutator } from "../Services/ProviderInstanceRegistryMutator.ts";
+import {
+  refreshProviderInstancesAfterEnvironmentHydration,
+  SettingsWatcherLive,
+} from "./ProviderInstanceRegistryHydration.ts";
+
+it.effect("reconciles the subscribed settings payload without re-reading secrets", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("delivered_settings");
+      const driverKind = ProviderDriverKind.make("delivered");
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: {
+            driver: driverKind,
+            config: { enabled: true },
+          },
+        },
+      };
+      const consumed = yield* Deferred.make<void>();
+      const reconciled = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const settingsReads = yield* Ref.make(0);
+      const registryChanges = yield* PubSub.unbounded<void>();
+      const settingsChanges = Stream.make(settings).pipe(
+        Stream.concat(Stream.fromEffect(Deferred.succeed(consumed, undefined)).pipe(Stream.drain)),
+      );
+      const registry = ProviderInstanceRegistry.of({
+        getInstance: () => Effect.sync(() => undefined),
+        listInstances: Effect.succeed([]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: PubSub.subscribe(registryChanges),
+      });
+      const mutator = ProviderInstanceRegistryMutator.of({
+        reconcile: (configMap) => Ref.update(reconciled, (seen) => [...seen, configMap]),
+      });
+      const serverSettings = ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Ref.update(settingsReads, (count) => count + 1).pipe(
+          Effect.andThen(Effect.die("must not re-read an emitted settings payload")),
+        ),
+        updateSettings: () => Effect.die("unused"),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+      });
+
+      yield* Layer.build(
+        SettingsWatcherLive(settingsChanges).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(ProviderInstanceRegistry, registry),
+              Layer.succeed(ProviderInstanceRegistryMutator, mutator),
+              Layer.succeed(ServerSettingsService, serverSettings),
+            ),
+          ),
+        ),
+      );
+      yield* Deferred.await(consumed);
+
+      expect(yield* Ref.get(settingsReads)).toBe(0);
+      expect(yield* Ref.get(reconciled)).toEqual([
+        expect.objectContaining({
+          [instanceId]: expect.objectContaining({ driver: driverKind }),
+        }),
+      ]);
+    }),
+  ),
+);
 
 it.effect("refreshes profile-discovered tools without replacing active provider instances", () =>
   Effect.gen(function* () {

@@ -141,6 +141,75 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
 });
 
 describe("ProviderInstanceRegistryLive — reconcile lifecycle", () => {
+  it.effect("keeps unavailable snapshots visible when replacement is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("shadow_default");
+        const unavailableDriverKind = ProviderDriverKind.make("missing");
+        const driverKind = ProviderDriverKind.make("test");
+        const enteredBlockedCreate = yield* Deferred.make<void>();
+
+        const driver = {
+          driverKind,
+          metadata: { displayName: "Test" },
+          configSchema: Schema.Struct({ version: Schema.String }),
+          defaultConfig: () => ({ version: "default" }),
+          create: Effect.fn("UnavailableTransitionTestDriver.create")(function* (input) {
+            const version = input.config.version;
+            if (version === "blocked") {
+              yield* Deferred.succeed(enteredBlockedCreate, undefined);
+              return yield* Effect.never;
+            }
+            return {
+              instanceId: input.instanceId,
+              driverKind,
+              continuationIdentity: {
+                driverKind,
+                continuationKey: `test:${version}`,
+              },
+              displayName: version,
+              enabled: true,
+              snapshot: {} as ProviderInstance["snapshot"],
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+          }),
+        } satisfies ProviderDriver<{ readonly version: string }>;
+
+        const initialConfig: ProviderInstanceConfigMap = {
+          [instanceId]: {
+            driver: unavailableDriverKind,
+            config: { version: "unavailable" },
+          },
+        };
+        const liveConfig = (version: string): ProviderInstanceConfigMap => ({
+          [instanceId]: {
+            driver: driverKind,
+            config: { version },
+          },
+        });
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: initialConfig,
+        });
+        const initialUnavailable = yield* registry.listUnavailable;
+        expect(initialUnavailable.map((snapshot) => snapshot.instanceId)).toEqual([instanceId]);
+
+        const interrupted = yield* Effect.forkChild(mutator.reconcile(liveConfig("blocked")));
+        yield* Deferred.await(enteredBlockedCreate);
+        expect(yield* registry.listUnavailable).toEqual(initialUnavailable);
+
+        yield* Fiber.interrupt(interrupted);
+        expect(Exit.hasInterrupts(yield* Fiber.await(interrupted))).toBe(true);
+        expect(yield* registry.listUnavailable).toEqual(initialUnavailable);
+
+        yield* mutator.reconcile(liveConfig("recovered"));
+        expect(yield* registry.listUnavailable).toEqual([]);
+        expect((yield* registry.getInstance(instanceId))?.displayName).toBe("recovered");
+      }),
+    ),
+  );
+
   it.effect("keeps scope ownership safe when replacement is interrupted", () =>
     Effect.scoped(
       Effect.gen(function* () {
