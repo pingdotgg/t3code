@@ -173,15 +173,26 @@ describe("formatThreadTitleContext", () => {
     );
   });
 
-  it("marks truncation once older content stops fitting the budget", () => {
+  it("pins the first user message ahead of the retained tail once content stops fitting", () => {
     const context = formatThreadTitleContext([
-      { role: "user", text: `Ancient context that no longer fits ${"x".repeat(600)}` },
+      { role: "user", text: `Ancient context that anchors the topic ${"x".repeat(600)}` },
       { role: "assistant", text: "y".repeat(6_000) },
       { role: "user", text: "z".repeat(1_500) },
     ]);
-    assert.isTrue(context.message.startsWith("[Earlier content truncated]\n\n"));
-    assert.isFalse(context.message.includes("Ancient context"));
-    assert.isTrue(context.message.includes("ASSISTANT:"));
+    assert.isTrue(context.message.startsWith("USER:\nAncient context that anchors the topic"));
+    assert.isTrue(context.message.includes("[Earlier content truncated]\n\n"));
+    assert.isTrue(context.message.includes("y".repeat(100)));
+  });
+
+  it("truncates an oversized pinned first user message", () => {
+    const context = formatThreadTitleContext([
+      { role: "user", text: `Topic anchor ${"a".repeat(4_000)}` },
+      { role: "assistant", text: "y".repeat(9_000) },
+      { role: "user", text: "z".repeat(1_500) },
+    ]);
+    assert.isTrue(context.message.startsWith("USER:\nTopic anchor"));
+    assert.isTrue(context.message.includes("[First user message truncated]"));
+    assert.isTrue(context.message.includes("[Earlier content truncated]\n\n"));
   });
 
   it("retains at most four attachments from the newest messages", () => {
@@ -195,7 +206,7 @@ describe("formatThreadTitleContext", () => {
     ]);
     assert.deepEqual(
       context.attachments.map((entry) => entry.name),
-      ["c.png", "d.png", "e.png", "a.png"],
+      ["b.png", "c.png", "d.png", "e.png"],
     );
   });
 });
