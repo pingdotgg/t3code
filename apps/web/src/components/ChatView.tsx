@@ -145,7 +145,11 @@ import {
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  formatShortcutLabel,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -1561,6 +1565,7 @@ function ChatViewContent(props: ChatViewProps) {
     [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
+  const sourceControlOpen = activeRightPanelKind === "source-control";
   const rightPanelOpen = rightPanelState.isOpen;
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
@@ -3185,6 +3190,10 @@ function ChatViewContent(props: ChatViewProps) {
   const addSourceControlSurface = useCallback(() => {
     if (!activeThreadRef || !isGitRepo) return;
     useRightPanelStore.getState().open(activeThreadRef, "source-control");
+  }, [activeThreadRef, isGitRepo]);
+  const toggleSourceControlSurface = useCallback(() => {
+    if (!activeThreadRef || !isGitRepo) return;
+    useRightPanelStore.getState().toggle(activeThreadRef, "source-control");
   }, [activeThreadRef, isGitRepo]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
@@ -5781,10 +5790,21 @@ function ChatViewContent(props: ChatViewProps) {
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+      sourceControlAvailable={isGitRepo}
+      sourceControlOpen={sourceControlOpen}
+      sourceControlShortcutLabel={formatShortcutLabel({
+        key: "g",
+        metaKey: false,
+        ctrlKey: false,
+        modKey: true,
+        shiftKey: true,
+        altKey: false,
+      })}
       rightPanelAvailable={activeProject !== null}
-      rightPanelOpen={rightPanelOpen}
+      rightPanelOpen={rightPanelOpen && !sourceControlOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       onToggleTerminal={toggleTerminalVisibility}
+      onToggleSourceControl={toggleSourceControlSurface}
       onToggleRightPanel={toggleRightPanel}
     />
   );
