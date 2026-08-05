@@ -1219,12 +1219,36 @@ export const makeCodexSessionRuntime = (
         })();
 
         rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
-        if (childParentTurnId && shouldSuppressChildConversationNotification(notification.method)) {
+        // Interception FIRST: a registered v2 child is usually also in the
+        // receiver-turn map (collabAgentToolCall.receiverThreadIds), and the
+        // legacy suppressor below would drop its lifecycle before it could
+        // become synthetic collabAgent events (review finding). The
+        // suppressor still covers UNREGISTERED children.
+        if (yield* interceptCollabChildNotification(notification)) {
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }
 
-        if (yield* interceptCollabChildNotification(notification)) {
+        // Suppression applies to receiver-map children (v1) AND to any
+        // conversation that is not the root thread. The live capture
+        // (codexMultiAgentWire.json) shows a child's thread/status/changed
+        // arriving BEFORE anything registers the child — pre-registration
+        // lifecycle must not reach the parent path, where the adapter maps
+        // thread/* onto parent session state. Root-id-known guard keeps the
+        // root's own early notifications flowing during session open.
+        const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        const foreignConversation = (() => {
+          const providerConversationId = readNotificationThreadId(notification);
+          return (
+            providerConversationId !== undefined &&
+            suppressRootId !== undefined &&
+            providerConversationId !== suppressRootId
+          );
+        })();
+        if (
+          (childParentTurnId !== undefined || foreignConversation) &&
+          shouldSuppressChildConversationNotification(notification.method)
+        ) {
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }

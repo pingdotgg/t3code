@@ -379,5 +379,67 @@
         }
       }
     }
-  ]
+  ],
+  "responses": {
+    "threadStart": {
+      "thread": {
+        "id": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "extra": null,
+        "sessionId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "",
+        "ephemeral": false,
+        "historyMode": "legacy",
+        "modelProvider": "openai",
+        "createdAt": 1785898342,
+        "updatedAt": 1785898342,
+        "recencyAt": 1785898342,
+        "status": {
+          "type": "idle"
+        },
+        "path": "/fixtures/codex/rollout.jsonl",
+        "cwd": "/workspace/repo",
+        "cliVersion": "0.145.0",
+        "source": "vscode",
+        "canAcceptDirectInput": true,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": null,
+        "turns": []
+      },
+      "model": "gpt-5.6-sol",
+      "modelProvider": "openai",
+      "serviceTier": "default",
+      "cwd": "/workspace/repo",
+      "runtimeWorkspaceRoots": ["/workspace/repo"],
+      "instructionSources": ["/fixtures/scrubbed", "/workspace/repo/AGENTS.md"],
+      "approvalPolicy": "on-request",
+      "approvalsReviewer": "auto_review",
+      "sandbox": {
+        "type": "workspaceWrite",
+        "writableRoots": [],
+        "networkAccess": false,
+        "excludeTmpdirEnvVar": false,
+        "excludeSlashTmp": false
+      },
+      "activePermissionProfile": null,
+      "reasoningEffort": "high",
+      "multiAgentMode": "explicitRequestOnly"
+    },
+    "turnStart": {
+      "turn": {
+        "id": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "items": [],
+        "itemsView": "notLoaded",
+        "status": "inProgress",
+        "error": null,
+        "startedAt": null,
+        "completedAt": null,
+        "durationMs": null
+      }
+    }
+  }
 }

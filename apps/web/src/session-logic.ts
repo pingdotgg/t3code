@@ -892,7 +892,13 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
   if (entry.isWorkflowCoordinator) {
     return `wf:${taskId}`;
   }
-  return `direct:${entry.turnId ?? "no-turn"}`;
+  // No turn id means no batch signal at all: fall back to one group per
+  // task. Unrelated turn-less spawns (separate fleets whose rows lost their
+  // turn) must not collapse into one immortal "direct:no-turn" CTA
+  // accumulating every agent the thread ever ran (review finding). Adapters
+  // stamp spawn turns (Codex spawnTurnId; Claude rows ride real turns), so
+  // this path is defensive.
+  return entry.turnId ? `direct:${entry.turnId}` : `direct:task:${taskId}`;
 }
 
 function collapseDerivedWorkLogEntries(

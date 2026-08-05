@@ -537,6 +537,10 @@ export function foldSubagentActivities(
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
+        // A task first seen via task.updated (start row aged out) has run at
+        // least once — zero activations would misreport "run 0" and let a
+        // later start row treat it as never-started (review finding).
+        if (agent.activationCount === 0) agent.activationCount = 1;
         const wasTerminal = isTerminalSubagentStatus(agent.status);
         const status = asRuntimeStatus(payload.status);
         if (status) applyStatus(agent, status, at);

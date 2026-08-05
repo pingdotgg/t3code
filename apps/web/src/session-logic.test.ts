@@ -1713,6 +1713,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
             summary: `agent ${agent} tick ${tick}`,
             tone: "info",
             payload: { taskId, summary: `working ${tick}`, role: "explorer" },
+            turnId: "turn-batch",
             sequence: agent * 20 + tick,
           }),
         );
@@ -1736,6 +1737,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
             summary: `agent ${agent} done`,
             role: "explorer",
           },
+          turnId: "turn-batch",
           sequence: agent * 20 + 19,
         }),
       );
@@ -1796,18 +1798,22 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
   });
 
   it("folds timelineBypass agent rows into one CTA (Codex children, workflow members)", () => {
+    // Codex children carry their parent's spawn turn (spawnTurnId stamping),
+    // which is what batches a fleet into one CTA.
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.progress",
         summary: "child work",
         tone: "info",
         payload: { taskId: "child-1", timelineBypass: true },
+        turnId: "turn-spawn",
       }),
       makeActivity({
         kind: "task.progress",
         summary: "child work again",
         tone: "info",
         payload: { taskId: "child-2", timelineBypass: true },
+        turnId: "turn-spawn",
       }),
     ]);
     // Not suppressed outright (a Codex fleet's rows are ALL bypassed and
@@ -1848,6 +1854,31 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
 });
 
 describe("rerun workflows", () => {
+  it("turn-less direct spawns do not collapse into one global batch", () => {
+    // Rows that lost their turn id (defensive path) group per task, so two
+    // unrelated turn-less spawns never merge into one immortal CTA.
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.started",
+        summary: "Task started",
+        payload: { taskId: "loose-1", taskType: "local_agent", role: "a" },
+        sequence: 1,
+      }),
+      makeActivity({
+        kind: "task.started",
+        summary: "Task started",
+        payload: { taskId: "loose-2", taskType: "local_agent", role: "b" },
+        sequence: 2,
+      }),
+    ]);
+    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
+    expect(spawnRows).toHaveLength(2);
+    expect(spawnRows.map((row) => row.agentSpawn!.agentTaskIds)).toEqual([
+      ["loose-1"],
+      ["loose-2"],
+    ]);
+  });
+
   it("each workflow run gets its own CTA row (distinct coordinator ids)", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({

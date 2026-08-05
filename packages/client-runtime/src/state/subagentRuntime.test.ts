@@ -573,6 +573,15 @@ describe("session-derived interruption", () => {
 });
 
 describe("terminal robustness", () => {
+  it("task.updated creating an agent (start row aged out) counts one activation", () => {
+    const agents = fold([
+      activity("task.updated", { taskId: "orphan-u", status: "running", role: "worker" }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]!.activationCount).toBe(1);
+    expect(agents[0]!.status).toBe("running");
+  });
+
   it("a late start after a terminal task.updated does not reopen the run", () => {
     const agents = fold([
       activity("task.updated", { taskId: "t1", status: "failed", role: "worker" }),
