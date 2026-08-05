@@ -1,7 +1,4 @@
 ---
-import devAppIcon from "../assets/t3-dev-384.webp?url";
-import nightlyAppIcon from "../assets/t3-nightly-384.webp?url";
-import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
 import {
@@ -24,11 +21,6 @@ import {
       <span class="download-stage-art download-stage-art--dev"></span>
     </div>
     <div class="download-channel-inner">
-      <div class="download-app-icons" aria-hidden="true">
-        <img class="download-app-icon download-app-icon--latest" src={stableAppIcon} alt="" />
-        <img class="download-app-icon download-app-icon--nightly" src={nightlyAppIcon} alt="" />
-        <img class="download-app-icon download-app-icon--dev" src={devAppIcon} alt="" />
-      </div>
       <h1 class="heading">Download T3 Code</h1>
       <p class="download-channel-copy">Choose the channel that matches how you work.</p>
       <div class="download-stage-picker" aria-label="Desktop release channel">
@@ -325,40 +317,58 @@ import {
     flex-direction: column;
     align-items: center;
     min-height: 100vh;
-    padding: calc(8vh + 60px) 1.5rem 4rem;
+    padding: 0 1.5rem 4rem;
   }
 
   .download-channel-hero {
     --channel-fade-duration: 700ms;
     position: relative;
     display: grid;
-    width: min(100%, 1120px);
-    min-height: 460px;
+    width: calc(100% + 3rem);
+    min-height: 100svh;
     overflow: hidden;
     place-items: center;
-    margin-bottom: 72px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 24px;
+    margin-bottom: 0;
     background: #050506;
     isolation: isolate;
-    box-shadow: 0 42px 120px -64px rgba(0, 0, 0, 0.86);
+  }
+
+  .download-channel-hero::before,
+  .download-channel-hero::after {
+    position: absolute;
+    z-index: 2;
+    content: "";
+    pointer-events: none;
+  }
+
+  .download-channel-hero::before {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 34%;
+    background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.62) 56%, #000 100%);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 62%);
+    mask-image: linear-gradient(to bottom, transparent, #000 62%);
   }
 
   .download-channel-hero::after {
-    position: absolute;
     z-index: 1;
     inset: 0;
     background:
       radial-gradient(circle at 0 100%, rgba(255, 255, 255, 0.06), transparent 30%),
       radial-gradient(circle at 100% 0, rgba(255, 255, 255, 0.05), transparent 26%);
-    content: "";
-    pointer-events: none;
   }
 
   .download-channel-art,
   .download-stage-art {
     position: absolute;
     inset: 0;
+  }
+
+  .download-channel-art {
+    z-index: 0;
   }
 
   .download-stage-art {
@@ -389,7 +399,8 @@ import {
   .download-stage-art--nightly {
     background:
       url("/nightly-stars.svg") center / cover,
-      url("/nightly-clouds-foreground.webp") center bottom / 130% auto no-repeat,
+      url("/nightly-clouds-foreground.webp") center bottom / max(130%, 1600px) auto no-repeat,
+      url("/nightly-clouds.webp") center / cover no-repeat,
       linear-gradient(138deg, #0b162e 0%, #171a3c 46%, #2d1948 100%);
   }
 
@@ -404,36 +415,13 @@ import {
 
   .download-channel-inner {
     position: relative;
-    z-index: 2;
+    z-index: 3;
     display: flex;
     align-items: center;
     flex-direction: column;
     padding: 56px 28px;
     text-align: center;
-  }
-
-  .download-app-icons {
-    position: relative;
-    width: 116px;
-    height: 116px;
-    margin-bottom: 22px;
-  }
-
-  .download-app-icon {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 26px;
-    object-fit: contain;
-    opacity: 0;
-    transition: opacity var(--channel-fade-duration) ease;
-  }
-
-  .download-channel-hero[data-stage="latest"] .download-app-icon--latest,
-  .download-channel-hero[data-stage="nightly"] .download-app-icon--nightly,
-  .download-channel-hero[data-stage="dev"] .download-app-icon--dev {
-    opacity: 1;
+    transform: translateY(-5vh);
   }
 
   .download-channel-copy {
@@ -533,11 +521,14 @@ import {
   /* ── Platforms ── */
 
   .platforms {
+    position: relative;
+    z-index: 4;
     width: 100%;
     max-width: 820px;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 22px 20px;
+    margin-top: -9rem;
     opacity: 0;
     animation: fade-in 1s ease-out 0.2s forwards;
   }
@@ -779,7 +770,11 @@ import {
 
   @media (max-width: 640px) {
     .download-page {
-      padding: calc(5vh + 60px) 1.25rem 4rem;
+      padding: 0 1.25rem 4rem;
+    }
+
+    .download-channel-hero {
+      width: calc(100% + 2.5rem);
     }
 
     .download-stage-picker {
