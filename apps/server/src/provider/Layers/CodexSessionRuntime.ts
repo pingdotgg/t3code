@@ -706,6 +706,62 @@ function shouldSuppressChildConversationNotification(
   );
 }
 
+/**
+ * How a notification addressed to a REGISTERED child thread is handled.
+ *
+ * Exported and pure so the routing table can be asserted against captured
+ * wire traces (see codexMultiAgentWire.json) rather than only read.
+ *
+ * - "agent-event": map to a synthetic collabAgent/* event (Agents surface).
+ * - "parent": pass through to the parent path — it carries state the parent
+ *   still owns (approval correlation cleanup).
+ * - "drop": genuine child chatter with no parent meaning (deltas, name and
+ *   plan updates).
+ *
+ * Default is "drop" ONLY for the enumerated chatter; anything unrecognized
+ * routes to "parent" so new wire methods surface instead of vanishing
+ * (two shipped bugs came from a catch-all that swallowed everything).
+ */
+export type CodexChildNotificationRoute = "agent-event" | "parent" | "drop";
+
+const CHILD_AGENT_EVENT_METHODS: ReadonlySet<string> = new Set([
+  "turn/started",
+  "turn/completed",
+  "thread/status/changed",
+  "thread/tokenUsage/updated",
+  "item/started",
+  "item/completed",
+  "thread/closed",
+  "error",
+]);
+
+const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
+  "item/agentMessage/delta",
+  "item/reasoning/textDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/fileChange/patchUpdated",
+  "item/plan/delta",
+  "turn/plan/updated",
+  "turn/diff/updated",
+  "thread/name/updated",
+  "thread/settings/updated",
+  "rawResponseItem/completed",
+]);
+
+export function routeCodexChildNotification(method: string): CodexChildNotificationRoute {
+  if (CHILD_AGENT_EVENT_METHODS.has(method)) {
+    return "agent-event";
+  }
+  if (CHILD_CHATTER_METHODS.has(method)) {
+    return "drop";
+  }
+  // Unknown or parent-owned (serverRequest/resolved, approvals, …).
+  return "parent";
+}
+
 function toCodexUserInputAnswer(
   questionId: string,
   value: ProviderUserInputAnswers[string],
@@ -1131,17 +1187,12 @@ export const makeCodexSessionRuntime = (
               },
             });
             return true;
-          case "serverRequest/resolved":
-            // NOT agent chatter: approval resolution clears the parent's
-            // correlation cache and settles pending-approval activity.
-            // Swallowing it here left approvals stuck after they resolved
-            // (review finding) — fall through to the parent path, which
-            // already routes child requests via handleServerRequest.
-            return false;
           default:
-            // Remaining child chatter (name updates, deltas, plan updates)
-            // stays out of the parent timeline and has no agent mapping yet.
-            return true;
+            // Routing table decides (single source of truth, asserted
+            // against captured wire traces): enumerated chatter is dropped,
+            // everything else — including methods this build has never seen
+            // — falls through to the parent path rather than vanishing.
+            return routeCodexChildNotification(notification.method) === "drop";
         }
       });
 
