@@ -87,23 +87,37 @@ export function resolveGrokReasoningEffortSelection(
 
 /**
  * Grok has no ACP session modes on live 0.2.x. Plan mode is entered via the
- * `/plan` slash command (see Grok Build user guide). Map T3 interactionMode
- * onto that command so Plan/Build in the composer does real work.
+ * `/plan` slash command and left via `/default` (Build). Map T3 interactionMode
+ * onto those commands so Plan/Build in the composer does real work.
+ *
+ * When leaving plan mode (`interactionMode` default/build while `planModeActive`),
+ * prefix `/default` once so Grok exits plan mode for the subsequent Build turn.
  */
 export function applyGrokPlanModeToPromptText(input: {
   readonly text: string | undefined;
   readonly interactionMode: "plan" | "default" | undefined;
+  /** True when the Grok session is currently in plan mode (enter_plan_mode or prior /plan). */
+  readonly planModeActive?: boolean;
 }): string | undefined {
   const trimmed = input.text?.trim();
-  if (!trimmed) {
-    // Plan mode still needs the slash command so Grok enters plan mode.
-    return input.interactionMode === "plan" ? "/plan" : trimmed;
-  }
   if (input.interactionMode === "plan") {
+    if (!trimmed) {
+      return "/plan";
+    }
     if (/^\/plan(?:\s|$)/i.test(trimmed)) {
       return trimmed;
     }
     return `/plan ${trimmed}`;
+  }
+  // Build (default): exit Grok plan mode when we still believe it is active.
+  if (input.planModeActive && input.interactionMode === "default") {
+    if (!trimmed) {
+      return "/default";
+    }
+    if (/^\/default(?:\s|$)/i.test(trimmed)) {
+      return trimmed;
+    }
+    return `/default ${trimmed}`;
   }
   return trimmed;
 }
@@ -200,24 +214,36 @@ export function currentGrokModelIdFromSessionSetup(
 /**
  * Apply model and/or reasoning effort via Grok ACP `session/set_model`.
  * Effort is sent as `_meta.reasoningEffort` (Grok private extension).
- * Calls set_model when the model changes or when an effort selection is present
- * (effort can change without a model id change). Mid-thread effort no longer
- * requires a process restart.
+ * Calls set_model when the model changes or when effort differs from
+ * `currentEffort` (skip re-applying the same value every turn). Mid-thread
+ * effort no longer requires a process restart.
+ *
+ * Effort-only still needs a model id for set_model: prefer requested, else
+ * current. When both are missing, returns `undefined` without calling
+ * set_model (cannot claim effort was applied).
  */
 export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
   readonly selections?: ReadonlyArray<ProviderOptionSelection> | null;
+  /** Last known process effort; when equal to the selection, set_model is skipped. */
+  readonly currentEffort?: string;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
   const targetModelId = input.requestedModelId ?? input.currentModelId;
   const reasoningEffort = resolveGrokReasoningEffortSelection(input.selections);
   const shouldSwitchModel =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  const shouldApplyEffort = reasoningEffort !== undefined;
+  const shouldApplyEffort =
+    reasoningEffort !== undefined && reasoningEffort !== input.currentEffort;
 
-  if (!targetModelId || (!shouldSwitchModel && !shouldApplyEffort)) {
+  if (!targetModelId) {
+    // No model available for set_model (effort cannot be applied alone).
+    return Effect.succeed(undefined);
+  }
+
+  if (!shouldSwitchModel && !shouldApplyEffort) {
     return Effect.succeed(input.currentModelId);
   }
 

@@ -275,12 +275,18 @@ describe("XAiAcpExtension", () => {
   });
 
   it("matches only Grok session plan.md paths", () => {
-    expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/abc/plan.md")).toBe(true);
+    // Real layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
     expect(
       isGrokPlanMarkdownPath(
         "/Users/me/.grok/sessions/%2FUsers%2Fme%2Fproj/sess-123/plan.md",
       ),
     ).toBe(true);
+    expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/encoded-cwd/sess-1/plan.md")).toBe(
+      true,
+    );
+    // Too few segments after sessions/ (workspace false positive)
+    expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/abc/plan.md")).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/demo/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/repo/docs/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/tmp/other.md")).toBe(false);
@@ -290,7 +296,7 @@ describe("XAiAcpExtension", () => {
     expect(
       extractGrokPlanMarkdownFromToolCallData({
         rawInput: {
-          path: "/home/x/.grok/sessions/s1/plan.md",
+          path: "/home/x/.grok/sessions/encoded/s1/plan.md",
           content: "# Mid-plan draft\n",
         },
       }),
@@ -301,7 +307,7 @@ describe("XAiAcpExtension", () => {
         content: [
           {
             type: "diff",
-            path: "/home/x/.grok/sessions/s1/plan.md",
+            path: "/home/x/.grok/sessions/encoded/s1/plan.md",
             newText: "# Diff plan\n",
           },
         ],
@@ -316,7 +322,13 @@ describe("XAiAcpExtension", () => {
 
     expect(
       extractGrokPlanMarkdownFromToolCallData({
-        rawInput: { path: "/home/x/.grok/sessions/s1/plan.md", content: "   " },
+        rawInput: { path: "/repo/.grok/sessions/demo/plan.md", content: "# Fake session plan" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        rawInput: { path: "/home/x/.grok/sessions/encoded/s1/plan.md", content: "   " },
       }),
     ).toBeUndefined();
   });

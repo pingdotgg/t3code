@@ -150,6 +150,58 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 
+  it.effect("skips set_model when effort matches currentEffort", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        requestedModelId: undefined,
+        selections: [{ id: "reasoningEffort", value: "high" }],
+        currentEffort: "high",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("grok-build");
+    }),
+  );
+
+  it.effect("applies effort change when currentEffort differs", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        requestedModelId: undefined,
+        selections: [{ id: "reasoningEffort", value: "low" }],
+        currentEffort: "high",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([
+        {
+          modelId: "grok-build",
+          options: { _meta: { reasoningEffort: "low" } },
+        },
+      ]);
+      expect(result).toBe("grok-build");
+    }),
+  );
+
+  it.effect("returns undefined without set_model when effort-only and no model id", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: undefined,
+        requestedModelId: undefined,
+        selections: [{ id: "reasoningEffort", value: "high" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBeUndefined();
+    }),
+  );
+
   it.effect("calls set_model with model switch and effort _meta together", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
@@ -266,10 +318,40 @@ describe("applyGrokPlanModeToPromptText", () => {
     );
   });
 
-  it("leaves default mode text unchanged", () => {
+  it("leaves default mode text unchanged when not in plan mode", () => {
     expect(applyGrokPlanModeToPromptText({ text: "hello", interactionMode: "default" })).toBe(
       "hello",
     );
+  });
+
+  it("prefixes /default when leaving plan mode for Build", () => {
+    expect(
+      applyGrokPlanModeToPromptText({
+        text: "implement it",
+        interactionMode: "default",
+        planModeActive: true,
+      }),
+    ).toBe("/default implement it");
+  });
+
+  it("does not double-prefix /default", () => {
+    expect(
+      applyGrokPlanModeToPromptText({
+        text: "/default already",
+        interactionMode: "default",
+        planModeActive: true,
+      }),
+    ).toBe("/default already");
+  });
+
+  it("returns /default for blank Build prompts while plan mode is active", () => {
+    expect(
+      applyGrokPlanModeToPromptText({
+        text: undefined,
+        interactionMode: "default",
+        planModeActive: true,
+      }),
+    ).toBe("/default");
   });
 
   it("returns /plan for blank plan prompts", () => {
