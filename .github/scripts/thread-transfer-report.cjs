@@ -29,6 +29,10 @@ const SCENARIO_KEYS = [
   "measuredMcpResultBytes",
 ];
 
+function resultShaMarker(sha) {
+  return `<!-- t3-thread-transfer-result-sha:${sha} -->`;
+}
+
 function assertObject(value, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
@@ -187,6 +191,7 @@ function renderComment(input) {
 
   return [
     COMMENT_MARKER,
+    resultShaMarker(input.currentRun.sha),
     "## Thread transfer impact",
     "",
     failed
@@ -312,7 +317,7 @@ async function resolve({ github, context, core }) {
   );
 }
 
-async function upsertComment(github, context, pullNumber, body) {
+async function upsertComment(github, context, pullNumber, body, options = {}) {
   const { owner, repo } = context.repo;
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner,
@@ -324,6 +329,12 @@ async function upsertComment(github, context, pullNumber, body) {
     (comment) =>
       comment.user?.login === "github-actions[bot]" && comment.body?.includes(COMMENT_MARKER),
   );
+  if (
+    options.preserveResultSha &&
+    existing?.body?.includes(resultShaMarker(options.preserveResultSha))
+  ) {
+    return;
+  }
   if (existing) {
     await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
   } else {
@@ -331,7 +342,15 @@ async function upsertComment(github, context, pullNumber, body) {
   }
 }
 
-async function upsertCommentForCurrentHead(github, context, core, pullNumber, expectedSha, body) {
+async function upsertCommentForCurrentHead(
+  github,
+  context,
+  core,
+  pullNumber,
+  expectedSha,
+  body,
+  options,
+) {
   const { owner, repo } = context.repo;
   const { data: pull } = await github.rest.pulls.get({
     owner,
@@ -343,7 +362,7 @@ async function upsertCommentForCurrentHead(github, context, core, pullNumber, ex
     return false;
   }
 
-  await upsertComment(github, context, pullNumber, body);
+  await upsertComment(github, context, pullNumber, body, options);
   return true;
 }
 
@@ -374,6 +393,7 @@ async function publish({ github, context, core }) {
         "",
         "_This comment will update automatically after the next completed run._",
       ].join("\n"),
+      { preserveResultSha: currentRun.sha },
     );
     return;
   }

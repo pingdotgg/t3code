@@ -80,6 +80,10 @@ test("renders baseline, impact, ceiling, and ceiling changes", () => {
   assert.match(comment, /This PR changes transfer ceilings/);
   assert.match(comment, /312\.5 KiB → 322\.3 KiB/);
   assert.match(comment, /<!-- t3-thread-transfer-report -->/);
+  assert.match(
+    comment,
+    /<!-- t3-thread-transfer-result-sha:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->/,
+  );
 });
 
 test("resolves the current PR artifact and exact main baseline", async () => {
@@ -234,4 +238,43 @@ test("does not publish a stale result after the PR head advances", async () => {
   assert.equal(published, false);
   assert.equal(listedComments, false);
   assert.deepEqual(info, ["Skipping stale CI result old-head-sha; PR head is new-head-sha."]);
+});
+
+test("preserves a successful result when a same-SHA rerun has no artifact", async () => {
+  let updatedComment = false;
+  const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const published = await upsertCommentForCurrentHead(
+    {
+      paginate: async () => [
+        {
+          id: 1,
+          user: { login: "github-actions[bot]" },
+          body: `<!-- t3-thread-transfer-report -->\n<!-- t3-thread-transfer-result-sha:${sha} -->`,
+        },
+      ],
+      rest: {
+        issues: {
+          listComments: () => {},
+          createComment: () => {
+            updatedComment = true;
+          },
+          updateComment: () => {
+            updatedComment = true;
+          },
+        },
+        pulls: {
+          get: async () => ({ data: { head: { sha } } }),
+        },
+      },
+    },
+    { repo: { owner: "pingdotgg", repo: "t3code" } },
+    { info: () => {} },
+    5350,
+    sha,
+    "missing artifact warning",
+    { preserveResultSha: sha },
+  );
+
+  assert.equal(published, true);
+  assert.equal(updatedComment, false);
 });
