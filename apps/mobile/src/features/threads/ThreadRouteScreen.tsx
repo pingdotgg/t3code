@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -17,6 +17,7 @@ import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vc
 import { vcsEnvironment } from "../../state/vcs";
 
 import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/AppText";
 import {
   AndroidScreenHeader,
   type AndroidHeaderAction,
@@ -61,6 +62,10 @@ import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
+  resolveThreadHeaderStatus,
+  type ThreadHeaderStatusPresentation,
+} from "./threadHeaderPresentation";
+import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
@@ -78,6 +83,42 @@ interface ThreadInspectorSelection {
 }
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ThreadHeaderStatus(props: {
+  readonly status: ThreadHeaderStatusPresentation;
+  readonly onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityHint="Opens git controls"
+      accessibilityLabel={`Thread status: ${props.status.label}`}
+      accessibilityRole="button"
+      hitSlop={8}
+      onPress={props.onPress}
+      className="min-h-11 flex-row items-center justify-center px-1"
+    >
+      <Text
+        className={
+          props.status.kind === "approval"
+            ? "font-t3-bold text-base text-amber-600 dark:text-amber-300"
+            : props.status.kind === "input"
+              ? "font-t3-bold text-base text-indigo-600 dark:text-indigo-300"
+              : props.status.kind === "working"
+                ? "font-t3-bold text-base tabular-nums text-sky-600 dark:text-sky-400"
+                : props.status.kind === "failed"
+                  ? "font-t3-bold text-base text-red-600 dark:text-red-400"
+                  : "font-t3-bold text-base text-green-600 dark:text-green-400"
+        }
+      >
+        {props.status.nativeLabel}
+      </Text>
+    </Pressable>
+  );
+}
 
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
@@ -281,11 +322,37 @@ function ThreadRouteContent(
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
   const headerSubtitle = [
-    selectedThreadProject?.title ?? null,
+    selectedThread?.branch ? `⑂ ${selectedThread.branch}` : null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
   ]
     .filter(Boolean)
     .join(" · ");
+  const headerHasPendingApproval = Boolean(
+    requests.activePendingApproval ?? selectedThread?.hasPendingApprovals,
+  );
+  const headerHasPendingUserInput = Boolean(
+    requests.activePendingUserInput ?? selectedThread?.hasPendingUserInput,
+  );
+  const headerTimerEnabled =
+    composer.activeThreadBusy && !headerHasPendingApproval && !headerHasPendingUserInput;
+  const [headerNowMs, setHeaderNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!headerTimerEnabled) {
+      return;
+    }
+    setHeaderNowMs(Date.now());
+    const intervalId = setInterval(() => setHeaderNowMs(Date.now()), 1_000);
+    return () => clearInterval(intervalId);
+  }, [composer.activeWorkStartedAt, headerTimerEnabled]);
+  const threadHeaderStatus = resolveThreadHeaderStatus({
+    hasPendingApproval: headerHasPendingApproval,
+    hasPendingUserInput: headerHasPendingUserInput,
+    active: composer.activeThreadBusy,
+    failed:
+      selectedThread?.session?.status === "error" || selectedThread?.latestTurn?.state === "error",
+    activeWorkStartedAt: composer.activeWorkStartedAt,
+    nowMs: headerNowMs,
+  });
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -685,11 +752,6 @@ function ThreadRouteContent(
         onPress: () => handleOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: handleOpenGitInspector,
-    });
     if (fileInspector.supported && selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Toggle inspector",
@@ -725,6 +787,92 @@ function ThreadRouteContent(
     ],
     [navigation],
   );
+  const compactThreadActionItem = useMemo(() => {
+    const gitItem = compactRightHeaderItems.find((item) => item.identifier === "thread-right-git");
+    if (!gitItem) {
+      return null;
+    }
+    const existingMenu = isUnknownRecord(gitItem.menu) ? gitItem.menu : null;
+    const existingMenuItems =
+      existingMenu && Array.isArray(existingMenu.items) ? existingMenu.items : [];
+    return {
+      ...gitItem,
+      accessibilityLabel: "Thread actions",
+      icon: { name: "ellipsis", type: "sfSymbol" as const },
+      identifier: "thread-right-actions",
+      label: undefined,
+      menu: {
+        ...existingMenu,
+        items: [
+          ...existingMenuItems,
+          {
+            description: "Browse this thread's worktree",
+            disabled: selectedThreadCwd === null,
+            icon: { name: "folder", type: "sfSymbol" as const },
+            label: "Files",
+            onPress: handleOpenFilesInspector,
+            type: "action" as const,
+          },
+          {
+            description: "Open this thread's shell",
+            disabled: !selectedThreadProject?.workspaceRoot,
+            icon: { name: "terminal", type: "sfSymbol" as const },
+            label: "Terminal",
+            onPress: () => handleOpenTerminal(null),
+            type: "action" as const,
+          },
+        ],
+        title: "Thread actions",
+      },
+      sharesBackground: false,
+      tintColor: undefined,
+      width: 44,
+    };
+  }, [
+    compactRightHeaderItems,
+    handleOpenFilesInspector,
+    handleOpenTerminal,
+    selectedThreadCwd,
+    selectedThreadProject?.workspaceRoot,
+  ]);
+  const compactThreadStatusItem = useMemo(
+    () => ({
+      accessibilityLabel: `Thread status: ${threadHeaderStatus.label}`,
+      icon: {
+        name:
+          threadHeaderStatus.kind === "done"
+            ? "checkmark.circle"
+            : threadHeaderStatus.kind === "working"
+              ? "timer"
+              : threadHeaderStatus.kind === "approval"
+                ? "exclamationmark.circle"
+                : threadHeaderStatus.kind === "input"
+                  ? "questionmark.circle"
+                  : "xmark.circle",
+        type: "sfSymbol" as const,
+      },
+      identifier: "thread-right-status",
+      label: threadHeaderStatus.nativeLabel,
+      onPress: handleOpenGitInspector,
+      sharesBackground: false,
+      tintColor: threadHeaderStatus.tintColor,
+      type: "button" as const,
+    }),
+    [handleOpenGitInspector, threadHeaderStatus],
+  );
+  const nativeThreadRightHeaderItems = useMemo<NativeHeaderItems>(() => {
+    if (layout.usesSplitView) {
+      return threadCenterHeaderItems;
+    }
+    return compactThreadActionItem
+      ? [compactThreadStatusItem, compactThreadActionItem]
+      : [compactThreadStatusItem];
+  }, [
+    compactThreadActionItem,
+    compactThreadStatusItem,
+    layout.usesSplitView,
+    threadCenterHeaderItems,
+  ]);
 
   if (!environmentId || !threadId) {
     return <OpeningThreadLoadingScreen />;
@@ -757,6 +905,7 @@ function ThreadRouteContent(
           selectedThreadFeed={composer.selectedThreadFeed}
           activeWorkStartedAt={composer.activeWorkStartedAt}
           activePendingApproval={requests.activePendingApproval}
+          activePendingApprovalCount={requests.activePendingApprovalCount}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}
           activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
@@ -798,17 +947,16 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={nativeThreadRightHeaderItems}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
           headerShown: Platform.OS !== "android",
           headerTitle: selectedThread.title,
-          headerTitleStyle: usesNativeHeaderGlass
-            ? {
-                fontSize: 17,
-                fontWeight: "800",
-              }
-            : undefined,
+          headerTitleStyle: {
+            fontSize: 19,
+            fontWeight: "800",
+          },
           title: selectedThread.title,
           headerBackVisible: !layout.usesSplitView,
           // Compact uses the NATIVE back button when a previous route exists;
@@ -826,10 +974,8 @@ function ThreadRouteContent(
           // the git controls on the RIGHT (no center items — center space is
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
-            Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
-              : undefined,
-          unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
+            Platform.OS === "ios" ? () => nativeThreadRightHeaderItems : undefined,
+          unstable_headerSubtitle: headerSubtitle.length > 0 ? headerSubtitle : undefined,
         }}
       />
 
@@ -839,6 +985,9 @@ function ThreadRouteContent(
           subtitle={headerSubtitle}
           onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
           actions={androidHeaderActions}
+          trailing={
+            <ThreadHeaderStatus status={threadHeaderStatus} onPress={handleOpenGitInspector} />
+          }
         />
       ) : null}
 

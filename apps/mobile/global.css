@@ -100,13 +100,13 @@
 
     @variant dark {
       /* Page backgrounds */
-      --color-screen: #0a0a0a;
-      --color-sheet: rgba(14, 14, 14, 0.98);
+      --color-screen: #000000;
+      --color-sheet: rgba(6, 6, 7, 0.98);
 
       /* Card / surface */
-      --color-card: #171717;
-      --color-card-alt: #1c1c1c;
-      --color-card-translucent: rgba(17, 17, 17, 0.8);
+      --color-card: #111113;
+      --color-card-alt: #171719;
+      --color-card-translucent: rgba(13, 13, 15, 0.92);
 
       /* Text */
       --color-foreground: #f5f5f5;
@@ -143,7 +143,7 @@
       --color-danger-foreground: #fca5a5;
 
       /* Inputs */
-      --color-input: #141414;
+      --color-input: #0d0d0f;
       --color-input-border: rgba(255, 255, 255, 0.08);
       --color-sidebar-search: rgba(118, 118, 128, 0.24);
       --color-placeholder: #8e8e93;
@@ -154,13 +154,13 @@
       --color-icon-subtle: #8e8e93;
 
       /* Header / glass chrome */
-      --color-header: rgba(10, 10, 10, 0.97);
+      --color-header: rgba(0, 0, 0, 0.97);
       --color-header-border: rgba(255, 255, 255, 0.06);
-      --color-glass-surface: rgba(23, 23, 23, 0.78);
-      --color-glass-tint: rgba(23, 23, 23, 0.24);
+      --color-glass-surface: rgba(13, 13, 15, 0.92);
+      --color-glass-tint: rgba(13, 13, 15, 0.24);
 
       /* StatusBar */
-      --color-status-bar: #0a0a0a;
+      --color-status-bar: #000000;
 
       /* Markdown */
       --color-md-body: #e5e5e5;
@@ -183,7 +183,7 @@
 
       /* Drawer / modal backdrop */
       --color-backdrop: rgba(0, 0, 0, 0.48);
-      --color-drawer: rgba(14, 14, 14, 0.99);
+      --color-drawer: rgba(6, 6, 7, 0.99);
       --color-drawer-shadow: rgba(0, 0, 0, 0.32);
 
       /* Misc */

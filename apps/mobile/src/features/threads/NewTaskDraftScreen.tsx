@@ -1,11 +1,10 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
+import { Alert, Keyboard, Pressable, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -20,9 +19,11 @@ import {
   ComposerToolbarScroller,
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPillMenu } from "../../components/ControlPill";
+import { ModelPickerSheet } from "../../components/ModelPickerSheet";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
 
@@ -31,7 +32,6 @@ import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/
 import {
   applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
-  providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -43,7 +43,7 @@ import {
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { buildModelMenuActions, resolveSelectableModelSelection } from "../../lib/modelOptions";
+import { resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
@@ -51,18 +51,7 @@ import { useRemoteConnectionStatus } from "../../state/use-remote-environment-re
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
-
-function formatWorkspaceLabel(input: {
-  readonly workspaceMode: string;
-  readonly currentBranchName: string | null;
-  readonly selectedBranchName: string | null;
-}): string {
-  const branchName = input.selectedBranchName ?? input.currentBranchName;
-  if (input.workspaceMode === "worktree") {
-    return branchName ? `New worktree · ${branchName}` : "New worktree";
-  }
-  return branchName ? `Current · ${branchName}` : "Current checkout";
-}
+import { useModelFavorites } from "./useModelFavorites";
 
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
@@ -94,6 +83,9 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const { favoriteModelKeys, favoritesReady, toggleFavorite } = useModelFavorites(
+    selectedProject?.environmentId ?? null,
+  );
   const environmentConnected =
     selectedProject !== null &&
     connectedEnvironments.find(
@@ -101,12 +93,12 @@ export function NewTaskDraftScreen(props: {
     )?.connectionState === "connected";
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
-  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
   const [cancelledIncomingShareId, setCancelledIncomingShareId] = useState<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const [shareImportAttempt, setShareImportAttempt] = useState(0);
+  const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const startedShareImportKeyRef = useRef<string | null>(null);
   const cancellingShareImportKeyRef = useRef<string | null>(null);
   const shareImportDraftBackupRef = useRef(new Map<string, ComposerDraft>());
@@ -221,11 +213,8 @@ export function NewTaskDraftScreen(props: {
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
   const foregroundColor = useThemeColor("--color-foreground");
-  const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
   const headlineText = useScaledTextRole("headline");
-  const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
-  const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
 
   // A new navigation to this mounted screen delivers a fresh initialProjectRef
   // reference — treat it as a new request and let it apply again.
@@ -510,26 +499,6 @@ export function NewTaskDraftScreen(props: {
     shareImportAttempt,
   ]);
 
-  useEffect(() => {
-    // Android starts with the collapsed composer pill (like an open thread)
-    // and only expands/focuses when tapped.
-    if (!selectedProject || Platform.OS === "android") {
-      return;
-    }
-
-    let focusFrame: ReturnType<typeof requestAnimationFrame> | null = null;
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      focusFrame = requestAnimationFrame(() => promptInputRef.current?.focus());
-    });
-
-    return () => {
-      interaction.cancel();
-      if (focusFrame !== null) {
-        cancelAnimationFrame(focusFrame);
-      }
-    };
-  }, [selectedProject]);
-
   const environmentMenuActions = useMemo(
     () =>
       flow.environments.map((environment) => ({
@@ -542,10 +511,6 @@ export function NewTaskDraftScreen(props: {
     [flow.environments, flow.selectedEnvironmentId, isIncomingShareTransferPending],
   );
 
-  const modelMenuActions = useMemo(
-    () => buildModelMenuActions(flow.providerGroups, flow.selectedModel),
-    [flow.providerGroups, flow.selectedModel],
-  );
   const providerOptionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
@@ -669,30 +634,19 @@ export function NewTaskDraftScreen(props: {
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
     )?.environmentLabel ?? "Environment";
-  const currentBranchName =
-    flow.availableBranches.find((branch) => branch.current)?.name ??
-    flow.availableBranches.find((branch) => branch.isDefault)?.name ??
-    null;
-  const configurationLabel = useMemo(
-    () => providerOptionsConfigurationLabel(providerOptionDescriptors),
-    [providerOptionDescriptors],
+  const configurationMenuActions = useMemo(
+    () => [
+      ...optionsMenuActions,
+      {
+        id: "options-environment",
+        title: "Environment",
+        subtitle: selectedEnvironmentLabel,
+        subactions: environmentMenuActions,
+      },
+      ...workspaceMenuActions,
+    ],
+    [environmentMenuActions, optionsMenuActions, selectedEnvironmentLabel, workspaceMenuActions],
   );
-  const workspaceLabel = useMemo(
-    () =>
-      formatWorkspaceLabel({
-        currentBranchName,
-        selectedBranchName: flow.selectedBranchName,
-        workspaceMode: flow.workspaceMode,
-      }),
-    [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
-  );
-  function handleModelMenuAction(event: string) {
-    if (isIncomingShareTransferPending || !event.startsWith("model:")) {
-      return;
-    }
-    flow.setSelectedModelKey(event.slice("model:".length));
-  }
-
   function handleEnvironmentMenuAction(event: string) {
     if (isIncomingShareTransferPending || !event.startsWith("environment:")) {
       return;
@@ -743,6 +697,12 @@ export function NewTaskDraftScreen(props: {
         flow.selectBranch(branch);
       }
     }
+  }
+
+  function handleConfigurationMenuAction(event: string) {
+    handleOptionsMenuAction(event);
+    handleEnvironmentMenuAction(event);
+    handleWorkspaceMenuAction(event);
   }
 
   async function handlePickImages(): Promise<void> {
@@ -911,24 +871,13 @@ export function NewTaskDraftScreen(props: {
 
   if (!selectedProject) {
     return (
-      <View className="flex-1 bg-sheet">
-        {Platform.OS === "android" ? (
-          <>
-            <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
-          </>
-        ) : (
-          <NativeStackScreenOptions options={{ title: "Loading task" }} />
-        )}
+      <View className="flex-1 bg-screen">
+        <NativeStackScreenOptions options={{ headerShown: false }} />
       </View>
     );
   }
 
-  const isAndroid = Platform.OS === "android";
   const isDarkMode = colorScheme === "dark";
-  // Android expansion follows native editor focus so relayout cannot race
-  // the touch gesture that opens the keyboard.
-  const isExpanded = !isAndroid || isComposerFocused;
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
@@ -940,90 +889,57 @@ export function NewTaskDraftScreen(props: {
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
-      // Native autoFocus fires becomeFirstResponder in didMoveToWindow, which
-      // forces the iOS keyboard bring-up during the formSheet present
-      // animation and stalls it. The runAfterInteractions effect above focuses
-      // the editor once the transition settles instead.
       autoFocus={false}
       editable={!isIncomingShareTransferPending}
       multiline
-      scrollEnabled={isExpanded}
+      scrollEnabled
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
       onChangeText={flow.setPrompt}
-      onFocus={() => setIsComposerFocused(true)}
-      onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder={`Describe a coding task in ${selectedProject.title}`}
-      // Same collapsed centering as ThreadComposer: native vertical gravity
-      // in a pill-height box.
-      singleLineCentered={!isExpanded}
-      contentInsetVertical={isAndroid ? 0 : undefined}
-      style={
-        isAndroid
-          ? isExpanded
-            ? { minHeight: 80, maxHeight: 160, paddingHorizontal: 4, paddingVertical: 4 }
-            : { height: 36 }
-          : { flex: 1, minHeight: 0 }
-      }
-      textStyle={
-        isAndroid
-          ? { ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }
-          : headlineText
-      }
+      placeholder="Ask anything..."
+      contentInsetVertical={0}
+      style={{
+        minHeight: 76,
+        maxHeight: 160,
+        paddingHorizontal: 4,
+        paddingVertical: 4,
+      }}
+      textStyle={{ ...bodyText, color: foregroundColor }}
     />
   );
 
   const toolbarPills = (
     <>
       <ComposerToolbarButton
-        icon="plus"
+        accessibilityLabel="Add attachment"
+        disabled={isIncomingShareTransferPending}
+        icon="paperclip"
         onPress={() => void handlePickImages()}
         showChevron={false}
+        variant="ghost"
+      />
+      <ComposerToolbarTrigger
+        accessibilityLabel="Choose model"
         disabled={isIncomingShareTransferPending}
+        iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={18} />}
+        label={flow.selectedModelOption?.label ?? "Model"}
+        onPress={() => {
+          Keyboard.dismiss();
+          setModelPickerVisible(true);
+        }}
+        variant="ghost"
       />
       <ControlPillMenu
-        actions={modelMenuActions}
-        onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-      >
-        <ComposerToolbarTrigger
-          accessibilityLabel="Model"
-          disabled={isIncomingShareTransferPending}
-          iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
-          label={flow.selectedModelOption?.label ?? "Model"}
-        />
-      </ControlPillMenu>
-      <ControlPillMenu
-        actions={optionsMenuActions}
-        onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+        actions={configurationMenuActions}
+        onPressAction={({ nativeEvent }) => handleConfigurationMenuAction(nativeEvent.event)}
       >
         <ComposerToolbarTrigger
           accessibilityLabel="Configuration"
           disabled={isIncomingShareTransferPending}
           icon="slider.horizontal.3"
-          label={configurationLabel}
-        />
-      </ControlPillMenu>
-      <ControlPillMenu
-        actions={environmentMenuActions}
-        onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
-      >
-        <ComposerToolbarTrigger
-          accessibilityLabel="Environment"
-          disabled={isIncomingShareTransferPending}
-          icon="desktopcomputer"
-          label={selectedEnvironmentLabel}
-        />
-      </ControlPillMenu>
-      <ControlPillMenu
-        actions={workspaceMenuActions}
-        onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-      >
-        <ComposerToolbarTrigger
-          accessibilityLabel="Workspace"
-          disabled={isIncomingShareTransferPending}
-          icon="point.topleft.down.curvedto.point.bottomright.up"
-          label={workspaceLabel}
+          showChevron={false}
+          variant="ghost"
         />
       </ControlPillMenu>
     </>
@@ -1034,7 +950,7 @@ export function NewTaskDraftScreen(props: {
       accessibilityLabel={
         flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
       }
-      icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+      icon="arrow.up"
       onPress={() => void handleStart()}
       variant="primary"
       showChevron={false}
@@ -1042,115 +958,126 @@ export function NewTaskDraftScreen(props: {
     />
   );
 
-  if (isAndroid) {
-    // The draft is a thread that doesn't exist yet, so it mirrors the thread
-    // page: in-screen header, empty feed canvas above, and the same floating
-    // composer chrome as ThreadComposer (collapsed pill → expanded card).
-    return (
-      <View className="flex-1 bg-screen">
-        <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
-
-        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-          <View className="flex-1" />
-
-          <View
-            className="px-4 pt-2"
+  return (
+    <View
+      className="flex-1 overflow-hidden"
+      style={{
+        backgroundColor: isDarkMode ? "#000000" : "#f2f2f7",
+        borderColor: isDarkMode ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)",
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderTopWidth: 1,
+      }}
+    >
+      <NativeStackScreenOptions options={{ headerShown: false }} />
+      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+        <View style={{ paddingTop: Math.max(insets.top, 8) }}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isIncomingShareTransferPending || isCancellingShareImport}
+            hitSlop={8}
+            onPress={() => navigation.goBack()}
+            className="self-start px-4 py-3 active:opacity-60"
             style={{
-              paddingBottom: controlsBottomPadding,
-              experimental_backgroundImage: isDarkMode
-                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+              opacity: isIncomingShareTransferPending || isCancellingShareImport ? 0.45 : 1,
             }}
           >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
+            <Text className="text-sm text-foreground-muted">Cancel</Text>
+          </Pressable>
+        </View>
+
+        <View className="min-h-0 flex-1 items-center justify-center px-6 pb-12">
+          <Text
+            className="text-center font-t3-medium text-foreground"
+            style={[headlineText, { fontSize: 28, lineHeight: 34, letterSpacing: -0.6 }]}
+          >
+            What should we build
+          </Text>
+          <View className="max-w-full flex-row items-center justify-center">
+            <Text
+              className="font-t3-medium text-foreground"
+              style={[headlineText, { fontSize: 28, lineHeight: 34, letterSpacing: -0.6 }]}
             >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={
-                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
-                    }
-                  />
-                </View>
-              ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
-              ) : null}
-            </ComposerSurface>
-
-            {isExpanded ? (
-              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-                <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-                >
-                  {toolbarPills}
-                </ComposerToolbarScroller>
-                {startButton}
-              </ComposerToolbarRow>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
-      </View>
-    );
-  }
-
-  return (
-    <View className="flex-1 bg-sheet">
-      <NativeStackScreenOptions options={{ title: selectedProject.title }} />
-
-      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-        <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
-
-        <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
-          {flow.attachments.length > 0 ? (
-            <View className="px-4 pt-3">
-              <ComposerAttachmentStrip
-                attachments={flow.attachments}
-                onRemove={isIncomingShareTransferPending ? () => undefined : flow.removeAttachment}
-                imageSize={88}
-                imageBorderRadius={20}
-              />
+              in{" "}
+            </Text>
+            <View
+              className="max-w-[240px] border-b border-foreground-muted"
+              style={{ borderStyle: "dotted" }}
+            >
+              <Text
+                className="font-t3-medium text-foreground"
+                ellipsizeMode="tail"
+                numberOfLines={1}
+                style={[headlineText, { fontSize: 28, lineHeight: 34, letterSpacing: -0.6 }]}
+              >
+                {selectedProject.title}
+              </Text>
             </View>
-          ) : null}
-          <ComposerToolbarRow paddingBottom={controlsBottomPadding} paddingHorizontal={6}>
-            <ComposerToolbarScroller
-              fadeOpaque={sheetFadeOpaque}
-              fadeTransparent={sheetFadeTransparent}
+            <Text
+              className="font-t3-medium text-foreground"
+              style={[headlineText, { fontSize: 28, lineHeight: 34, letterSpacing: -0.6 }]}
             >
-              {toolbarPills}
-            </ComposerToolbarScroller>
-            {startButton}
-          </ComposerToolbarRow>
+              ?
+            </Text>
+          </View>
+          <View className="mt-2 flex-row items-center gap-1.5">
+            <SymbolView
+              name="desktopcomputer"
+              size={12}
+              tintColor={isDarkMode ? "#66676d" : "#8e8e93"}
+              type="monochrome"
+            />
+            <Text className="text-xs text-foreground-tertiary">on {selectedEnvironmentLabel}</Text>
+          </View>
+        </View>
+
+        <View
+          style={{ paddingBottom: controlsBottomPadding, paddingHorizontal: 10, paddingTop: 8 }}
+        >
+          <ComposerSurface
+            isDarkMode={isDarkMode}
+            style={{
+              backgroundColor: isDarkMode ? "rgba(17,17,19,0.95)" : "rgba(255,255,255,0.95)",
+              borderRadius: 22,
+              overflow: "hidden",
+              paddingBottom: 6,
+              paddingHorizontal: 12,
+              paddingTop: 10,
+            }}
+          >
+            {flow.attachments.length > 0 ? (
+              <View className="pb-2.5">
+                <ComposerAttachmentStrip
+                  attachments={flow.attachments}
+                  onRemove={
+                    isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
+                  }
+                />
+              </View>
+            ) : null}
+            {promptEditor}
+            <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
+              <ComposerToolbarScroller
+                fadeOpaque={isDarkMode ? "rgba(17,17,19,0.95)" : "rgba(255,255,255,0.95)"}
+                fadeTransparent={isDarkMode ? "rgba(17,17,19,0)" : "rgba(255,255,255,0)"}
+              >
+                {toolbarPills}
+              </ComposerToolbarScroller>
+              {startButton}
+            </ComposerToolbarRow>
+          </ComposerSurface>
         </View>
       </KeyboardAvoidingView>
+      <ModelPickerSheet
+        favoriteModelKeys={favoriteModelKeys}
+        favoritesEnabled={favoritesReady}
+        groups={flow.providerGroups}
+        onClose={() => setModelPickerVisible(false)}
+        onSelectModel={(option) => flow.setSelectedModelKey(option.key)}
+        onToggleFavorite={toggleFavorite}
+        selectedModel={flow.selectedModel}
+        visible={modelPickerVisible}
+      />
     </View>
   );
 }

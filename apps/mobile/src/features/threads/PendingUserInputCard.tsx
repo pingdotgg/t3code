@@ -1,9 +1,12 @@
 import type { ApprovalRequestId } from "@t3tools/contracts";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 
+import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { PendingUserInput, PendingUserInputDraftAnswer } from "../../lib/threadActivity";
+import { useThemeColor } from "../../lib/useThemeColor";
 
 export interface PendingUserInputCardProps {
   readonly pendingUserInput: PendingUserInput;
@@ -23,83 +26,176 @@ export interface PendingUserInputCardProps {
   readonly onSubmit: () => Promise<unknown>;
 }
 
+function hasDraftAnswer(draft: PendingUserInputDraftAnswer | undefined): boolean {
+  return Boolean(draft?.customAnswer?.trim() || draft?.selectedOptionLabel?.trim());
+}
+
+function firstUnansweredQuestionIndex(
+  questions: PendingUserInput["questions"],
+  drafts: Record<string, PendingUserInputDraftAnswer>,
+): number {
+  const index = questions.findIndex((question) => !hasDraftAnswer(drafts[question.id]));
+  return index === -1 ? Math.max(questions.length - 1, 0) : index;
+}
+
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const [questionIndex, setQuestionIndex] = useState(() =>
+    firstUnansweredQuestionIndex(props.pendingUserInput.questions, props.drafts),
+  );
+  const selectedColor = useThemeColor("--color-md-link");
+  const activeQuestion = props.pendingUserInput.questions[questionIndex] ?? null;
+  const draft = activeQuestion ? props.drafts[activeQuestion.id] : undefined;
+  const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
+  const isLastQuestion = questionIndex >= props.pendingUserInput.questions.length - 1;
+  const canGoBack = questionIndex > 0 && !isResponding;
+  const canAdvance = hasDraftAnswer(draft);
+  const canContinue = isLastQuestion ? props.answers !== null : canAdvance;
+
+  if (!activeQuestion) {
+    return null;
+  }
+
+  const handleAdvance = () => {
+    if (!canContinue || isResponding) {
+      return;
+    }
+    if (!isLastQuestion) {
+      setQuestionIndex((current) =>
+        Math.min(current + 1, props.pendingUserInput.questions.length - 1),
+      );
+      return;
+    }
+    if (props.answers) {
+      void props.onSubmit();
+    }
+  };
+
+  const handleBack = () => {
+    if (!canGoBack) return;
+    setQuestionIndex((current) => Math.max(0, current - 1));
+  };
+
   return (
-    <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
-      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
-        User input needed
-      </Text>
-      <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
-        Fill in the pending answers
-      </Text>
-      {props.pendingUserInput.questions.map((question) => {
-        const draft = props.drafts[question.id];
-        return (
-          <View key={question.id} className="gap-2 pt-1">
-            <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500 dark:text-neutral-500">
-              {question.header}
-            </Text>
-            <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
-              {question.question}
-            </Text>
-            <View className="flex-row flex-wrap gap-2.5">
-              {question.options.map((option) => {
-                const selected =
-                  draft?.selectedOptionLabel === option.label && !draft.customAnswer?.trim().length;
-                return (
-                  <Pressable
-                    key={option.label}
-                    className={cn(
-                      "rounded-full border px-3 py-2.5 ",
-                      selected
-                        ? "border-blue-300/50 bg-blue-50 dark:border-blue-400/28 dark:bg-blue-400/14"
-                        : "border-neutral-200 bg-white dark:border-white/6 dark:bg-neutral-950/70",
-                    )}
-                    onPress={() =>
-                      props.onSelectOption(
-                        props.pendingUserInput.requestId,
-                        question.id,
-                        option.label,
-                      )
-                    }
-                  >
-                    <Text
-                      className={cn(
-                        "font-t3-bold text-sm",
-                        selected
-                          ? "text-sky-700 dark:text-sky-300"
-                          : "text-neutral-600 dark:text-neutral-300",
-                      )}
-                    >
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <TextInput
-              value={draft?.customAnswer ?? ""}
-              onChangeText={(value) =>
-                props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
+    <View
+      accessibilityLabel={`Input needed: ${activeQuestion.question}`}
+      className="overflow-hidden rounded-[22px] border border-border bg-card"
+    >
+      <View className="gap-2 px-4 pb-3 pt-3.5">
+        <View className="flex-row items-center justify-between gap-3">
+          <Text
+            numberOfLines={1}
+            className="min-w-0 flex-1 font-t3-bold text-2xs uppercase tracking-[1.2px] text-indigo-600 dark:text-indigo-300"
+          >
+            {activeQuestion.header}
+          </Text>
+          <Text className="font-t3-medium text-sm tabular-nums text-foreground-tertiary">
+            {questionIndex + 1}/{props.pendingUserInput.questions.length}
+          </Text>
+        </View>
+        <Text className="font-t3-bold text-lg leading-[24px] text-foreground">
+          {activeQuestion.question}
+        </Text>
+      </View>
+
+      <View className="gap-1.5 border-t border-border px-3 py-2.5">
+        {activeQuestion.options.map((option, index) => {
+          const selected =
+            draft?.selectedOptionLabel === option.label && !draft.customAnswer?.trim().length;
+          return (
+            <Pressable
+              key={option.label}
+              accessibilityLabel={`${option.label}. ${option.description}`}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected, disabled: isResponding }}
+              className={cn(
+                "min-h-[68px] flex-row items-center gap-3 rounded-xl border px-3 py-3",
+                selected ? "border-blue-500/45 bg-blue-500/10" : "border-transparent bg-subtle",
+                isResponding && "opacity-50",
+              )}
+              disabled={isResponding}
+              onPress={() =>
+                props.onSelectOption(
+                  props.pendingUserInput.requestId,
+                  activeQuestion.id,
+                  option.label,
+                )
               }
-              placeholder="Or type a custom answer"
-              className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-base text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
-            />
-          </View>
-        );
-      })}
-      <Pressable
-        className={cn(
-          "items-center justify-center rounded-2xl px-4 py-3.5",
-          props.answers ? "bg-blue-500" : "bg-neutral-200 dark:bg-neutral-700/60",
+            >
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text className="font-t3-bold text-base text-foreground">{option.label}</Text>
+                {option.description !== option.label ? (
+                  <Text className="font-sans text-sm leading-[19px] text-foreground-muted">
+                    {option.description}
+                  </Text>
+                ) : null}
+              </View>
+              {selected ? (
+                <SymbolView
+                  name="checkmark"
+                  size={16}
+                  tintColor={selectedColor}
+                  type="monochrome"
+                />
+              ) : index < 9 ? (
+                <View className="size-6 items-center justify-center rounded-md border border-border bg-screen/40">
+                  <Text className="font-t3-medium text-xs tabular-nums text-foreground-muted">
+                    {index + 1}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        })}
+
+        <TextInput
+          accessibilityLabel="Write a custom answer"
+          editable={!isResponding}
+          value={draft?.customAnswer ?? ""}
+          onChangeText={(value) =>
+            props.onChangeCustomAnswer(props.pendingUserInput.requestId, activeQuestion.id, value)
+          }
+          placeholder="Write a different answer"
+          selectionColor={selectedColor}
+          className="mt-1 min-h-12 rounded-xl bg-screen px-3 py-3 text-base"
+        />
+      </View>
+
+      <View className="flex-row items-center justify-between border-t border-border px-3 py-2.5">
+        {questionIndex > 0 ? (
+          <Pressable
+            accessibilityLabel="Previous question"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canGoBack }}
+            className={cn("min-h-11 items-center justify-center px-3", !canGoBack && "opacity-50")}
+            disabled={!canGoBack}
+            onPress={handleBack}
+          >
+            <Text className="font-t3-bold text-base text-foreground-muted">Back</Text>
+          </Pressable>
+        ) : (
+          <View />
         )}
-        disabled={
-          props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
-        }
-        onPress={() => void props.onSubmit()}
-      >
-        <Text className="font-t3-extrabold text-sm text-white">Submit answers</Text>
-      </Pressable>
+        <Pressable
+          accessibilityLabel={isLastQuestion ? "Submit answers" : "Next question"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canContinue || isResponding }}
+          className={cn(
+            "min-h-11 items-center justify-center rounded-full px-5",
+            canContinue && !isResponding ? "bg-blue-600" : "bg-subtle-strong",
+          )}
+          disabled={!canContinue || isResponding}
+          onPress={handleAdvance}
+        >
+          <Text
+            className={cn(
+              "font-t3-bold text-base",
+              canContinue && !isResponding ? "text-white" : "text-foreground-tertiary",
+            )}
+          >
+            {isLastQuestion ? "Submit answers" : "Next question"}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

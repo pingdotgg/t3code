@@ -19,17 +19,16 @@ import type {
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
+import { FlatList, Platform, Pressable, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -71,8 +70,6 @@ import {
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
-import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
-import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -120,14 +117,7 @@ interface HomeScreenProps {
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
 
-const ESTIMATED_THREAD_ROW_HEIGHT = 72;
-const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
-/**
- * Top spacing between the list and the Android custom header. The Android
- * header (AndroidHomeHeader) is rendered in-flow above this screen and
- * already consumes the top safe-area inset, so the list only needs breathing
- * room here.
- */
+const ESTIMATED_THREAD_ROW_HEIGHT = 92;
 
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
@@ -192,10 +182,6 @@ function deriveEmptyState(props: {
   };
 }
 
-function HomeTopContentSpacer() {
-  return <View className="h-4" />;
-}
-
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
@@ -208,11 +194,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
-  const accentColor = useThemeColor("--color-icon-muted");
-  const iosBottomToolbarClearance =
-    Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
-      ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
-      : 0;
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
@@ -415,6 +396,16 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return map;
   }, [props.projects]);
+
+  const connectionStateByEnvironmentId = useMemo(
+    () =>
+      new Map(
+        props.environments.map(
+          (environment) => [environment.environmentId, environment.connectionState] as const,
+        ),
+      ),
+    [props.environments],
+  );
 
   const v2ProjectScopeKey = props.selectedProjectKey;
   const v2ScopeProjects = useMemo(
@@ -706,11 +697,12 @@ export function HomeScreen(props: HomeScreenProps) {
             project={projectByKey.get(pendingScopeKey) ?? null}
             projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={
-              Object.keys(props.savedConnectionsById).length > 1
-                ? (props.savedConnectionsById[item.pendingTask.message.environmentId]
-                    ?.environmentLabel ?? null)
-                : null
+              props.savedConnectionsById[item.pendingTask.message.environmentId]
+                ?.environmentLabel ?? null
             }
+            environmentConnectionState={connectionStateByEnvironmentId.get(
+              item.pendingTask.message.environmentId,
+            )}
             showPendingDivider={item.showPendingDivider}
             onSelectPendingTask={props.onSelectPendingTask}
             onDeletePendingTask={props.onDeletePendingTask}
@@ -760,10 +752,9 @@ export function HomeScreen(props: HomeScreenProps) {
               )?.driver ?? null
           }
           environmentLabel={
-            Object.keys(props.savedConnectionsById).length > 1
-              ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
-              : null
+            props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
           }
+          environmentConnectionState={connectionStateByEnvironmentId.get(thread.environmentId)}
           searchMatch={threadSearchMatchByKey.get(
             threadSearchMatchKey({
               environmentId: thread.environmentId,
@@ -804,6 +795,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableWillOpen,
       handleUnsettleThread,
       pinningEnvironmentIds,
+      connectionStateByEnvironmentId,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,
@@ -829,6 +821,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // HomeScreen render.
   const v2ExtraData = useMemo(
     () => ({
+      connectionStateByEnvironmentId,
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
@@ -839,6 +832,7 @@ export function HomeScreen(props: HomeScreenProps) {
       threadSearchMatchByKey,
     }),
     [
+      connectionStateByEnvironmentId,
       projectByKey,
       projectCwdByKey,
       props.searchQuery,
@@ -969,29 +963,34 @@ export function HomeScreen(props: HomeScreenProps) {
       ? null
       : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
         "this environment");
-  const shouldShowConnectionStatus = shouldShowWorkspaceConnectionStatus(props.catalogState);
   const emptyState = deriveEmptyState({
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
-  const connectionStatus =
-    shouldShowConnectionStatus && Platform.OS !== "ios" ? (
-      <View
-        className="absolute left-0 right-0 items-center"
-        style={{ bottom: Math.max(insets.bottom, 18) + 76 }}
-      >
-        <WorkspaceConnectionStatus state={props.catalogState} onPress={props.onOpenEnvironments} />
-      </View>
-    ) : null;
+  const composeAction = (
+    <Pressable
+      accessibilityLabel="New task"
+      accessibilityRole="button"
+      className="absolute right-4 size-14 items-center justify-center rounded-full bg-white"
+      onPress={props.onStartNewTask}
+      style={({ pressed }) => ({
+        bottom: Math.max(insets.bottom, 16) + 9,
+        opacity: pressed ? 0.72 : 1,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.7,
+        shadowRadius: 26,
+      })}
+    >
+      <SymbolView name="square.and.pencil" size={22} tintColor="#000" type="monochrome" />
+    </Pressable>
+  );
 
   if (!hasAnyThreads) {
     return (
       <View
-        className="flex-1 items-center justify-center bg-screen px-8"
-        style={{
-          paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
-          paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
-        }}
+        className="flex-1 items-center justify-center px-8"
+        style={{ backgroundColor: "#000", paddingBottom: Math.max(insets.bottom, 24) }}
       >
         <View className="w-full max-w-[430px]">
           <EmptyState
@@ -1001,45 +1000,15 @@ export function HomeScreen(props: HomeScreenProps) {
             onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
             variant="plain"
           />
-          {emptyState.loading && !shouldShowConnectionStatus ? (
-            <View className="mt-4 items-center">
-              <ActivityIndicator color={accentColor} />
-            </View>
-          ) : null}
-          {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-            <View className="mt-4">
-              <WorkspaceConnectionStatus
-                state={props.catalogState}
-                onPress={props.onOpenEnvironments}
-                variant="sidebar"
-              />
-            </View>
-          ) : null}
         </View>
-        {connectionStatus}
+        {composeAction}
       </View>
     );
   }
 
-  const listHeader = (
-    <>
-      {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
-
-      {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-        <View className="pb-4">
-          <WorkspaceConnectionStatus
-            state={props.catalogState}
-            onPress={props.onOpenEnvironments}
-            variant="sidebar"
-          />
-        </View>
-      ) : null}
-    </>
-  );
-
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
-  const v2ListHeader = listHeader;
+  const listHeader = null;
 
   const listEmpty = !hasResults ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
@@ -1076,14 +1045,14 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (threadListV2Enabled) {
     return (
-      <View className="flex-1 bg-screen">
+      <View className="flex-1" style={{ backgroundColor: "#000" }}>
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <FlatList
             data={threadListV2Items}
             renderItem={renderV2Item}
             keyExtractor={v2KeyExtractor}
             extraData={v2ExtraData}
-            ListHeaderComponent={v2ListHeader}
+            ListHeaderComponent={listHeader}
             ListFooterComponent={
               settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                 <Pressable
@@ -1101,28 +1070,25 @@ export function HomeScreen(props: HomeScreenProps) {
             }
             ListEmptyComponent={v2ListEmpty}
             style={{ flex: 1 }}
-            automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-            contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+            automaticallyAdjustsScrollIndicatorInsets={false}
+            contentInsetAdjustmentBehavior="never"
             showsVerticalScrollIndicator={false}
             keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
             {...scrollGateHandlers}
             scrollEventThrottle={16}
             contentContainerStyle={{
-              paddingBottom:
-                Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                  : Math.max(insets.bottom, 16) + 88,
+              paddingBottom: Math.max(insets.bottom, 16) + 80,
             }}
           />
         </SwipeableScrollGateProvider>
-        {connectionStatus}
+        {composeAction}
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-screen">
+    <View className="flex-1" style={{ backgroundColor: "#000" }}>
       {/* Sticky headers are deliberately not wired up: LegendList's JS sticky
           implementation mispositions pinned headers at mount under iOS
           automatic content insets (headers render one nav-inset too low until
@@ -1142,8 +1108,8 @@ export function HomeScreen(props: HomeScreenProps) {
           ListHeaderComponent={listHeader}
           ListEmptyComponent={listEmpty}
           style={{ flex: 1 }}
-          automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
-          contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
+          automaticallyAdjustsScrollIndicatorInsets={false}
+          contentInsetAdjustmentBehavior="never"
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
@@ -1151,27 +1117,19 @@ export function HomeScreen(props: HomeScreenProps) {
           recycleItems
           scrollEventThrottle={16}
           contentContainerStyle={{
-            // Android reserves room for the floating new-task FAB
-            // (56 button + 16 gap + bottom inset). Pre-glass iOS shows a
-            // standard 44pt bottom toolbar that overlays the list and is not
-            // reflected in insets while contentInsetAdjustmentBehavior is
-            // "never".
-            paddingBottom:
-              Platform.OS === "ios"
-                ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
-                : Math.max(insets.bottom, 16) + 88,
+            paddingBottom: Math.max(insets.bottom, 16) + 80,
           }}
           scrollIndicatorInsets={
             Platform.OS === "ios"
               ? {
-                  bottom: Math.max(insets.bottom, 16) + 24 + iosBottomToolbarClearance,
+                  bottom: Math.max(insets.bottom, 16) + 80,
                   top: 0,
                 }
               : undefined
           }
         />
       </SwipeableScrollGateProvider>
-      {connectionStatus}
+      {composeAction}
     </View>
   );
 }

@@ -124,6 +124,36 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("applies functional preference updates against the latest optimistic value", () =>
+    Effect.gen(function* () {
+      const state = makePreferencesState({
+        load: Effect.succeed({ favoriteModelKeys: ["env:codex:gpt-5"] }),
+        savePatch: (patch) => Effect.succeed(patch),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        favoriteModelKeys: [...(current.favoriteModelKeys ?? []), "env:claude:opus"],
+      }));
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        favoriteModelKeys: [...(current.favoriteModelKeys ?? []), "other:codex:gpt-6"],
+      }));
+
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))).toEqual({
+        favoriteModelKeys: ["env:codex:gpt-5", "env:claude:opus", "other:codex:gpt-6"],
+      });
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
   it.effect("falls back to empty preferences when secure storage cannot be read", () =>
     Effect.gen(function* () {
       const state = makePreferencesState({

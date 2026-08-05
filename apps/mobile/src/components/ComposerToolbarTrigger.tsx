@@ -11,6 +11,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import Svg, { Circle } from "react-native-svg";
 
 import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
@@ -146,8 +147,9 @@ export function ComposerToolbarButton(props: {
   readonly minWidth?: number;
   readonly onPress?: () => void;
   readonly showChevron?: boolean;
+  readonly size?: "default" | "compact";
   readonly textTransform?: "none" | "uppercase";
-  readonly variant?: "default" | "primary" | "danger";
+  readonly variant?: "default" | "ghost" | "primary" | "danger";
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
@@ -157,6 +159,7 @@ export function ComposerToolbarButton(props: {
   const primaryFg = useThemeColor("--color-primary-foreground");
   const dangerFg = useThemeColor("--color-danger-foreground");
   const variant = props.variant ?? "default";
+  const isCompact = props.size === "compact";
   const isCircle = !props.label && props.showChevron === false;
   const defaultBorderColor = isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
   const activeBorderColor = isDarkMode ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.1)";
@@ -173,66 +176,86 @@ export function ComposerToolbarButton(props: {
         : primaryFg
       : variant === "danger"
         ? dangerFg
-        : iconColor;
+        : variant === "ghost"
+          ? iconSubtle
+          : iconColor;
 
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
       disabled={props.disabled}
+      hitSlop={isCompact ? 4 : undefined}
       onPress={props.onPress}
       className={cn(
         // Default width cap lives in the class chain (not the inline style)
         // so callers can lift it with max-w-full — flex-filling pills in the
         // thread composer stretch to the row's edge. The numeric maxWidth
         // prop still wins via the inline style below.
-        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full active:opacity-70",
-        isCircle ? "w-11" : "gap-2 px-3.5",
+        "max-w-[172px] flex-row items-center justify-center rounded-full active:opacity-70",
+        isCompact ? "h-9" : "h-11",
+        isCircle ? (isCompact ? "w-9" : "w-11") : isCompact ? "gap-1.5 px-1.5" : "gap-2 px-3.5",
         variant === "primary"
           ? props.disabled
             ? "bg-subtle-strong"
             : "bg-primary"
           : variant === "danger"
             ? "bg-danger"
-            : props.active
-              ? "bg-subtle-strong"
-              : "bg-subtle",
+            : variant === "ghost"
+              ? "bg-transparent"
+              : props.active
+                ? "bg-subtle-strong"
+                : "bg-subtle",
         props.className,
       )}
       style={({ pressed }) => [
         {
           borderColor:
-            variant === "default"
-              ? props.active
-                ? activeBorderColor
-                : defaultBorderColor
-              : filledBorderColor,
-          borderWidth: 1,
+            variant === "ghost"
+              ? "transparent"
+              : variant === "default"
+                ? props.active
+                  ? activeBorderColor
+                  : defaultBorderColor
+                : filledBorderColor,
+          borderWidth: variant === "ghost" ? 0 : 1,
           maxWidth: props.maxWidth,
           minWidth: props.minWidth,
           opacity: props.disabled ? 0.55 : pressed ? 0.72 : 1,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: isDarkMode ? 3 : 2 },
-          shadowOpacity: props.disabled ? 0 : isDarkMode ? 0.24 : 0.08,
+          shadowOpacity: props.disabled || variant === "ghost" ? 0 : isDarkMode ? 0.24 : 0.08,
           shadowRadius: isDarkMode ? 10 : 8,
         },
         props.style,
       ]}
     >
       {props.iconNode ? (
-        <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>
+        <View
+          className={cn("items-center justify-center", isCompact ? "h-4 w-4" : "h-[18px] w-[18px]")}
+        >
+          {props.iconNode}
+        </View>
       ) : props.icon ? (
-        <SymbolView name={props.icon} size={16} tintColor={iconTintColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={isCompact ? 16 : 18}
+          tintColor={iconTintColor}
+          type="monochrome"
+        />
       ) : null}
       {props.label ? (
         <Text
           className={cn(
-            "shrink text-center text-sm font-t3-bold",
+            "shrink text-center font-t3-bold",
+            isCompact ? "text-sm" : "text-base",
             variant === "primary"
               ? props.disabled
                 ? "text-foreground-muted"
                 : "text-primary-foreground"
-              : "text-foreground",
+              : variant === "ghost"
+                ? "text-foreground-muted"
+                : "text-foreground",
           )}
           ellipsizeMode="tail"
           numberOfLines={1}
@@ -245,6 +268,51 @@ export function ComposerToolbarButton(props: {
         <SymbolView name="chevron.down" size={11} tintColor={iconTintColor} type="monochrome" />
       )}
     </Pressable>
+  );
+}
+
+/**
+ * The mobile composer keeps the web context-window affordance in the footer.
+ * Usage is optional because the mobile thread shell does not always include a
+ * context snapshot; in that case the quiet track still reserves the control.
+ */
+export function ComposerContextRing(props: { readonly usedPercentage?: number | null }) {
+  const trackColor = useThemeColor("--color-border");
+  const progressColor = useThemeColor("--color-icon-subtle");
+  const normalizedPercentage = Math.max(0, Math.min(100, props.usedPercentage ?? 0));
+  const radius = 7;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
+
+  return (
+    <View
+      accessible
+      accessibilityLabel={
+        props.usedPercentage == null
+          ? "Context window"
+          : `Context window ${Math.round(normalizedPercentage)} percent used`
+      }
+      className="h-11 w-9 items-center justify-center"
+    >
+      <Svg width={20} height={20} viewBox="0 0 18 18">
+        <Circle cx={9} cy={9} r={radius} fill="none" stroke={trackColor} strokeWidth={2.5} />
+        {normalizedPercentage > 0 ? (
+          <Circle
+            cx={9}
+            cy={9}
+            r={radius}
+            fill="none"
+            rotation={-90}
+            origin="9, 9"
+            stroke={progressColor}
+            strokeDasharray={`${circumference} ${circumference}`}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            strokeWidth={2.5}
+          />
+        ) : null}
+      </Svg>
+    </View>
   );
 }
 

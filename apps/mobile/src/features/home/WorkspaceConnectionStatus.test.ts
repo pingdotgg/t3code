@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { WorkspaceState } from "../../state/workspaceModel";
 import {
+  resolveHomeEnvironmentConnectionPhase,
   shouldShowWorkspaceConnectionStatus,
+  workspaceConnectionHeaderPresentation,
   workspaceConnectionStatusLabel,
 } from "./workspace-connection-status";
 
@@ -25,6 +27,12 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
 }
 
 describe("workspace connection status", () => {
+  it("treats uncatalogued saved environments as connecting during startup", () => {
+    expect(resolveHomeEnvironmentConnectionPhase(undefined, true)).toBe("connecting");
+    expect(resolveHomeEnvironmentConnectionPhase(undefined, false)).toBe("available");
+    expect(resolveHomeEnvironmentConnectionPhase("connected", true)).toBe("connected");
+  });
+
   it("stays hidden while a ready environment is connected", () => {
     expect(shouldShowWorkspaceConnectionStatus(workspaceState())).toBe(false);
   });
@@ -83,5 +91,57 @@ describe("workspace connection status", () => {
 
     expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
     expect(workspaceConnectionStatusLabel(state)).toBe("Loading threads...");
+  });
+
+  it("keeps healthy shell synchronization out of the Home wordmark", () => {
+    const state = workspaceState({ hasPendingShellSnapshot: true });
+
+    expect(workspaceConnectionHeaderPresentation(state, "Leftbook")).toBeNull();
+  });
+
+  it("presents reconnecting environments in amber", () => {
+    const state = workspaceState({
+      hasConnectingEnvironment: true,
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "Leftbook",
+          displayUrl: "",
+          isRelayManaged: false,
+          connectionState: "reconnecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionHeaderPresentation(state, "Other device")).toEqual({
+      detail: "reconnecting",
+      label: "Leftbook",
+      tone: "amber",
+    });
+  });
+
+  it("presents unreachable environments in red", () => {
+    const state = workspaceState({
+      connectionError: "Connection refused",
+      hasReadyEnvironment: false,
+    });
+
+    expect(workspaceConnectionHeaderPresentation(state, "Steambox")).toEqual({
+      detail: "unreachable",
+      label: "Steambox",
+      tone: "red",
+    });
+  });
+
+  it("surfaces one unavailable device while other environments stay connected", () => {
+    const state = workspaceState();
+
+    expect(workspaceConnectionHeaderPresentation(state, "Steambox", "available")).toEqual({
+      detail: "unreachable",
+      label: "Steambox",
+      tone: "red",
+    });
   });
 });

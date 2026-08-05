@@ -1,6 +1,7 @@
 import type {
   ModelCapabilities,
   ModelSelection,
+  ProviderInstanceId,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -13,7 +14,7 @@ export type ModelOption = {
   readonly key: string;
   readonly label: string;
   readonly subtitle: string;
-  readonly providerKey: string;
+  readonly providerKey: ProviderInstanceId;
   readonly providerLabel: string;
   readonly providerDriver: string;
   readonly isDefault: boolean;
@@ -23,9 +24,14 @@ export type ModelOption = {
 };
 
 export type ProviderGroup = {
-  readonly providerKey: string;
+  readonly providerKey: ProviderInstanceId;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
+};
+
+export type ModelPickerProviderGroup = ProviderGroup & {
+  readonly currentModels: ReadonlyArray<ModelOption>;
+  readonly legacyModels: ReadonlyArray<ModelOption>;
 };
 
 function providerDisplayLabel(provider: {
@@ -149,7 +155,7 @@ export function buildModelOptions(
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
-  const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
+  const groups = new Map<ProviderInstanceId, { providerLabel: string; models: ModelOption[] }>();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
@@ -167,6 +173,37 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
   }));
+}
+
+/**
+ * Builds the provider sections used by the full-screen mobile picker. Legacy
+ * models stay separate so the UI can keep them folded until requested while
+ * search can still reveal a matching legacy model immediately.
+ */
+export function buildModelPickerProviderGroups(
+  groups: ReadonlyArray<ProviderGroup>,
+  query: string,
+): ReadonlyArray<ModelPickerProviderGroup> {
+  const tokens = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+  const matches = (option: ModelOption) => {
+    if (tokens.length === 0) return true;
+    const searchable = [
+      option.label,
+      option.selection.model,
+      option.providerLabel,
+      option.providerDriver,
+    ]
+      .join(" ")
+      .toLocaleLowerCase();
+    return tokens.every((token) => searchable.includes(token));
+  };
+
+  return groups.flatMap((group) => {
+    const currentModels = group.models.filter((model) => !model.isLegacy && matches(model));
+    const legacyModels = group.models.filter((model) => model.isLegacy && matches(model));
+    if (currentModels.length === 0 && legacyModels.length === 0) return [];
+    return [{ ...group, currentModels, legacyModels }];
+  });
 }
 
 function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {

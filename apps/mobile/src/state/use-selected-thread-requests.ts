@@ -168,6 +168,7 @@ export function useSelectedThreadRequests() {
 
   return {
     activePendingApproval,
+    activePendingApprovalCount: activePendingApprovals.length,
     activePendingUserInput,
     activePendingUserInputDrafts,
     activePendingUserInputAnswers,

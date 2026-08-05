@@ -5,6 +5,7 @@ import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
 import {
   buildModelMenuActions,
   buildModelOptions,
+  buildModelPickerProviderGroups,
   groupByProvider,
   resolveSelectableModelSelection,
 } from "./modelOptions";
@@ -86,6 +87,46 @@ describe("mobile model options", () => {
         subactions: [{ id: "model:codex:gpt-5.4" }],
       },
     ]);
+  });
+
+  it("keeps legacy models folded into their provider while search can reveal them", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gpt-current",
+              name: "GPT Current",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "gpt-legacy",
+              name: "GPT Legacy",
+              isCustom: false,
+              isLegacy: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const groups = groupByProvider(buildModelOptions(config, null));
+    expect(buildModelPickerProviderGroups(groups, "")[0]).toMatchObject({
+      currentModels: [{ label: "GPT Current" }],
+      legacyModels: [{ label: "GPT Legacy" }],
+    });
+    expect(buildModelPickerProviderGroups(groups, "legacy")[0]).toMatchObject({
+      currentModels: [],
+      legacyModels: [{ label: "GPT Legacy" }],
+    });
   });
 
   it("normalizes a legacy fallback selection against current capabilities", () => {

@@ -1,4 +1,3 @@
-import Constants from "expo-constants";
 import type {
   NativeStackHeaderItem,
   NativeStackNavigationOptions,
@@ -8,7 +7,6 @@ import { Platform, View } from "react-native";
 import { AppText as Text } from "./AppText";
 import { T3Wordmark } from "./T3Wordmark";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
-import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useThemeColor } from "../lib/useThemeColor";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../native/native-glass";
 
@@ -26,8 +24,6 @@ export function CompactBrandTitle(
 ) {
   const iconColor = useThemeColor("--color-icon");
   const mutedColor = useThemeColor("--color-foreground-muted");
-  const subtleColor = useThemeColor("--color-subtle");
-  const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset =
     Platform.OS !== "ios"
       ? 0
@@ -48,7 +44,7 @@ export function CompactBrandTitle(
       style={{
         alignItems: "center",
         flexDirection: "row",
-        gap: 6,
+        gap: 4,
         marginLeft: titleOffset,
       }}
     >
@@ -63,26 +59,6 @@ export function CompactBrandTitle(
       >
         Code
       </Text>
-      <View
-        style={{
-          backgroundColor: subtleColor,
-          borderRadius: 999,
-          paddingHorizontal: 6,
-          paddingVertical: 2,
-        }}
-      >
-        <Text
-          style={{
-            color: mutedColor,
-            fontFamily: "DMSans-Bold",
-            fontSize: 9,
-            letterSpacing: 0.9,
-            textTransform: "uppercase",
-          }}
-        >
-          {stageLabel}
-        </Text>
-      </View>
     </View>
   );
 }

@@ -17,8 +17,8 @@ import {
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
-  ActivityIndicator,
   Image,
+  Keyboard,
   Platform,
   Pressable,
   useColorScheme,
@@ -50,10 +50,11 @@ import {
   ComposerToolbarScroller,
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPillMenu } from "../../components/ControlPill";
+import { ModelPickerSheet } from "../../components/ModelPickerSheet";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelMenuActions, buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
@@ -64,23 +65,23 @@ import {
 import {
   applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
-  providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { useModelFavorites } from "./useModelFavorites";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
  * Exported so the parent can compute feed overlap / content insets.
  */
-export const COMPOSER_COLLAPSED_CHROME = 60;
+export const COMPOSER_COLLAPSED_CHROME = 68;
 
 /**
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
  * Used by the parent to compute the larger feed bottom inset when the composer is focused.
  */
-export const COMPOSER_EXPANDED_CHROME = 174;
+export const COMPOSER_EXPANDED_CHROME = 184;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -168,7 +169,7 @@ export function ComposerSurface(props: {
         style={[
           props.style,
           {
-            backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
+            backgroundColor: props.isDarkMode ? "rgba(17,17,19,0.96)" : "rgba(255,255,255,0.96)",
             borderWidth: 1,
             borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
           },
@@ -249,11 +250,11 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
         onPress={props.onPress}
         className="max-w-full flex-row items-center gap-2 rounded-full bg-white/90 px-3 py-2 shadow-sm active:opacity-70 dark:bg-neutral-900/90"
       >
-        {isReconnecting ? (
-          <ActivityIndicator size="small" color="#8e8e93" />
-        ) : (
-          <View className="h-2 w-2 rounded-full bg-red-500" />
-        )}
+        <View
+          className={
+            isReconnecting ? "h-2 w-2 rounded-full bg-sky-400" : "h-2 w-2 rounded-full bg-red-500"
+          }
+        />
         <Text
           className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
           numberOfLines={1}
@@ -277,6 +278,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
   const canSend = hasContent;
@@ -322,7 +324,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     environmentLabel: props.environmentLabel,
     threadSyncPhase: props.threadSyncPhase,
   });
-  const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
+  const toolbarFadeOpaque = isDarkMode ? "rgba(17,17,19,0.95)" : "rgba(255,255,255,0.95)";
   const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
@@ -601,13 +603,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [currentModelOption?.capabilities, currentModelSelection.options],
   );
-  const configurationLabel = useMemo(
-    () => providerOptionsConfigurationLabel(providerOptionDescriptors),
-    [providerOptionDescriptors],
-  );
-  const modelMenuActions = useMemo(
-    () => buildModelMenuActions(providerGroups, currentModelSelection),
-    [providerGroups, currentModelSelection],
+  const { favoriteModelKeys, favoritesReady, toggleFavorite } = useModelFavorites(
+    props.environmentId,
   );
 
   // ── Options menu ─────────────────────────────────────────
@@ -660,17 +657,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
 
   // ── Menu handlers ────────────────────────────────────────
-  function handleModelMenuAction(event: string) {
-    if (!event.startsWith("model:")) {
-      return;
-    }
-    const modelKey = event.slice("model:".length);
-    const option = modelOptions.find((o) => o.key === modelKey);
-    if (option) {
-      props.onUpdateModelSelection(option.selection);
-    }
-  }
-
   function handleOptionsMenuAction(event: string) {
     const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
     if (providerOptions) {
@@ -693,9 +679,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   return (
     <Animated.View
-      className="px-4"
       layout={COMPOSER_LAYOUT_TRANSITION}
       style={{
+        paddingHorizontal: 14,
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
         experimental_backgroundImage: isDarkMode
@@ -731,19 +717,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           style={
             isExpanded
               ? {
-                  borderRadius: 20,
+                  borderRadius: 22,
                   overflow: "hidden" as const,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
+                  paddingHorizontal: 12,
+                  paddingBottom: 6,
+                  paddingTop: 10,
+                  backgroundColor: isDarkMode ? "rgba(17,17,19,0.95)" : "rgba(255,255,255,0.95)",
                 }
               : {
-                  borderRadius: 999,
+                  borderRadius: 28,
                   overflow: "hidden" as const,
                   flexDirection: "row" as const,
                   alignItems: "center" as const,
+                  minHeight: 54,
                   paddingLeft: 18,
                   paddingRight: 5,
-                  paddingVertical: 5,
+                  paddingVertical: 6,
+                  backgroundColor: isDarkMode ? "rgba(17,17,19,0.95)" : "rgba(255,255,255,0.95)",
                 }
           }
         >
@@ -772,7 +762,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}
               onPasteImages={(uris) => void props.onNativePasteImages(uris)}
-              placeholder={props.placeholder}
+              placeholder={showStopAction ? "Message to queue..." : props.placeholder}
               onFocus={handleFocus}
               onBlur={handleBlur}
               onSubmit={handleSend}
@@ -784,7 +774,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               style={
                 isExpanded
                   ? {
-                      minHeight: 80,
+                      minHeight: 76,
                       maxHeight: 160,
                       paddingHorizontal: 4,
                       paddingVertical: 4,
@@ -822,81 +812,88 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           {!isExpanded ? (
             <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
               {showStopAction ? (
-                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+                <ComposerToolbarButton
+                  accessibilityLabel="Stop"
+                  icon="stop.fill"
+                  variant="danger"
+                  onPress={props.onStopThread}
+                  showChevron={false}
+                />
               ) : (
-                <ControlPill
+                <ComposerToolbarButton
+                  accessibilityLabel={sendLabel}
                   icon="arrow.up"
                   variant="primary"
                   disabled={!canSend}
                   onPress={handleSend}
+                  showChevron={false}
                 />
               )}
             </Animated.View>
           ) : null}
-        </ComposerSurface>
-
-        {isExpanded ? (
-          // Toolbar row — matches draft page layout (expanded only)
-          <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
-            <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-              <ComposerToolbarScroller
-                fadeOpaque={toolbarFadeOpaque}
-                fadeTransparent={toolbarFadeTransparent}
-              >
-                <ComposerToolbarButton
-                  accessibilityLabel="Add attachment"
-                  icon="plus"
-                  onPress={() => void props.onPickDraftImages()}
-                  showChevron={false}
-                />
-                <ControlPillMenu
-                  actions={modelMenuActions}
-                  onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+          {isExpanded ? (
+            <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
+              <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
+                <ComposerToolbarScroller
+                  fadeOpaque={toolbarFadeOpaque}
+                  fadeTransparent={toolbarFadeTransparent}
                 >
+                  <ComposerToolbarButton
+                    accessibilityLabel="Add attachment"
+                    icon="paperclip"
+                    onPress={() => void props.onPickDraftImages()}
+                    showChevron={false}
+                    variant="ghost"
+                  />
                   <ComposerToolbarTrigger
-                    accessibilityLabel="Model"
+                    accessibilityLabel="Choose model"
                     iconNode={
-                      <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                      <ProviderIcon provider={currentModelOption?.providerDriver} size={18} />
                     }
                     label={currentModelOption?.label ?? currentModelSelection.model}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setModelPickerVisible(true);
+                    }}
+                    variant="ghost"
                   />
-                </ControlPillMenu>
-                <ControlPillMenu
-                  actions={optionsMenuActions}
-                  onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-                >
-                  <ComposerToolbarTrigger
-                    accessibilityLabel="Configuration"
-                    icon="slider.horizontal.3"
-                    label={configurationLabel}
-                  />
-                </ControlPillMenu>
-                {showStopAction ? (
-                  <ComposerToolbarButton
-                    accessibilityLabel="Stop"
-                    icon="stop.fill"
-                    variant="danger"
-                    onPress={props.onStopThread}
-                    showChevron={false}
-                  />
-                ) : null}
-              </ComposerToolbarScroller>
-              <ComposerToolbarButton
-                accessibilityLabel={sendLabel}
-                icon="arrow.up"
-                variant="primary"
-                disabled={!canSend}
-                onPress={handleSend}
-                showChevron={false}
-              />
-            </ComposerToolbarRow>
-          </Animated.View>
-        ) : null}
+                  <ControlPillMenu
+                    actions={optionsMenuActions}
+                    onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+                  >
+                    <ComposerToolbarTrigger
+                      accessibilityLabel="Configuration"
+                      icon="slider.horizontal.3"
+                      showChevron={false}
+                      variant="ghost"
+                    />
+                  </ControlPillMenu>
+                  {showStopAction ? (
+                    <ComposerToolbarButton
+                      accessibilityLabel="Stop"
+                      icon="stop.fill"
+                      variant="danger"
+                      onPress={props.onStopThread}
+                      showChevron={false}
+                    />
+                  ) : null}
+                </ComposerToolbarScroller>
+                <ComposerToolbarButton
+                  accessibilityLabel={sendLabel}
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canSend}
+                  onPress={handleSend}
+                  showChevron={false}
+                />
+              </ComposerToolbarRow>
+            </Animated.View>
+          ) : null}
+        </ComposerSurface>
 
-        {/* Queue count */}
         {props.queueCount > 0 ? (
           <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
-            <Text className="pt-2 text-xs text-foreground-muted">
+            <Text className="pt-1 text-sm text-foreground-muted">
               {props.queueCount} queued message{props.queueCount === 1 ? "" : "s"} will send
               automatically.
             </Text>
@@ -911,6 +908,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         onRequestClose={closePreview}
         swipeToCloseEnabled
         doubleTapToZoomEnabled
+      />
+      <ModelPickerSheet
+        favoriteModelKeys={favoriteModelKeys}
+        favoritesEnabled={favoritesReady}
+        groups={providerGroups}
+        onClose={() => setModelPickerVisible(false)}
+        onSelectModel={(option) => props.onUpdateModelSelection(option.selection)}
+        onToggleFavorite={toggleFavorite}
+        selectedModel={currentModelSelection}
+        visible={modelPickerVisible}
       />
     </Animated.View>
   );

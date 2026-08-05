@@ -15,6 +15,10 @@ interface OptimisticPreferences {
   readonly versions: Partial<Record<keyof Preferences, number>>;
 }
 
+export type PreferencesUpdate =
+  | Partial<Preferences>
+  | ((current: Preferences) => Partial<Preferences>);
+
 /**
  * Owns the device preference blob for the lifetime of the app registry.
  * Optimistic patches are kept separately so writes made while persistence is
@@ -57,7 +61,15 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
 
   const updatePreferencesAtom = runtime
     .fn(
-      (patch: Partial<Preferences>, get) => {
+      (update: PreferencesUpdate, get) => {
+        const preferences = get(preferencesAtom);
+        let patch: Partial<Preferences>;
+        if (typeof update === "function") {
+          if (!AsyncResult.isSuccess(preferences)) return Effect.void;
+          patch = update(preferences.value);
+        } else {
+          patch = update;
+        }
         const version = ++nextPatchVersion;
         const current = get(optimisticPatchAtom);
         const versions = { ...current.versions };

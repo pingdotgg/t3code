@@ -51,6 +51,7 @@ export interface ThreadDetailScreenProps {
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
+  readonly activePendingApprovalCount: number;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
@@ -181,6 +182,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
+  const activePendingRequest = props.activePendingApproval ?? props.activePendingUserInput;
+  const activePendingRequestId = activePendingRequest?.requestId ?? null;
   const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
@@ -201,7 +204,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
-  const composerOverlapHeight = composerChrome + composerBottomInset;
+  const requestChrome =
+    (props.activePendingApproval ? 270 : 0) + (props.activePendingUserInput ? 430 : 0);
+  const composerOverlapHeight = activePendingRequest
+    ? requestChrome + Math.max(insets.bottom, 12)
+    : composerChrome + composerBottomInset;
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -241,6 +248,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     lastScrolledAnchorMessageIdRef.current = null;
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
+
+  useEffect(() => {
+    if (!activePendingRequestId) {
+      return;
+    }
+    setComposerExpanded(false);
+    composerEditorRef.current?.blur();
+  }, [activePendingRequestId]);
 
   useEffect(() => {
     if (
@@ -388,21 +403,24 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               pushes the resting content floor up by the same amount. */}
           <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
             <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
-              {props.activePendingApproval || props.activePendingUserInput ? (
+              {activePendingRequest ? (
                 <Animated.View
-                  className="shrink-0 gap-3 px-4 pb-3"
+                  className="shrink-0 gap-2 px-2.5 pt-1.5"
                   entering={FadeInDown.duration(220)}
                   exiting={FadeOut.duration(140)}
+                  style={{ paddingBottom: Math.max(insets.bottom, 10) }}
                 >
                   {props.activePendingApproval ? (
                     <PendingApprovalCard
                       approval={props.activePendingApproval}
+                      approvalCount={props.activePendingApprovalCount}
                       respondingApprovalId={props.respondingApprovalId}
                       onRespond={props.onRespondToApproval}
                     />
                   ) : null}
                   {props.activePendingUserInput ? (
                     <PendingUserInputCard
+                      key={props.activePendingUserInput.requestId}
                       pendingUserInput={props.activePendingUserInput}
                       drafts={props.activePendingUserInputDrafts}
                       answers={props.activePendingUserInputAnswers}
@@ -416,35 +434,37 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               ) : null}
             </View>
 
-            <ThreadComposer
-              editorRef={composerEditorRef}
-              draftMessage={props.draftMessage}
-              draftAttachments={props.draftAttachments}
-              placeholder="Ask the repo agent, or run a command…"
-              contentMaxWidth={contentMaxWidth}
-              connectionState={props.connectionStateLabel}
-              connectionError={props.connectionError}
-              environmentLabel={props.environmentLabel}
-              threadSyncPhase={threadSyncPhase}
-              selectedThread={props.selectedThread}
-              serverConfig={props.serverConfig}
-              queueCount={props.selectedThreadQueueCount}
-              activeThreadBusy={props.activeThreadBusy}
-              environmentId={props.environmentId}
-              projectCwd={props.projectWorkspaceRoot}
-              bottomInset={composerBottomInset}
-              onChangeDraftMessage={props.onChangeDraftMessage}
-              onPickDraftImages={props.onPickDraftImages}
-              onNativePasteImages={props.onNativePasteImages}
-              onRemoveDraftImage={props.onRemoveDraftImage}
-              onStopThread={props.onStopThread}
-              onSendMessage={handleSendMessage}
-              onReconnectEnvironment={props.onReconnectEnvironment}
-              onUpdateModelSelection={props.onUpdateThreadModelSelection}
-              onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
-              onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-              onExpandedChange={setComposerExpanded}
-            />
+            {activePendingRequest ? null : (
+              <ThreadComposer
+                editorRef={composerEditorRef}
+                draftMessage={props.draftMessage}
+                draftAttachments={props.draftAttachments}
+                placeholder="Ask anything..."
+                contentMaxWidth={contentMaxWidth}
+                connectionState={props.connectionStateLabel}
+                connectionError={props.connectionError}
+                environmentLabel={props.environmentLabel}
+                threadSyncPhase={threadSyncPhase}
+                selectedThread={props.selectedThread}
+                serverConfig={props.serverConfig}
+                queueCount={props.selectedThreadQueueCount}
+                activeThreadBusy={props.activeThreadBusy}
+                environmentId={props.environmentId}
+                projectCwd={props.projectWorkspaceRoot}
+                bottomInset={composerBottomInset}
+                onChangeDraftMessage={props.onChangeDraftMessage}
+                onPickDraftImages={props.onPickDraftImages}
+                onNativePasteImages={props.onNativePasteImages}
+                onRemoveDraftImage={props.onRemoveDraftImage}
+                onStopThread={props.onStopThread}
+                onSendMessage={handleSendMessage}
+                onReconnectEnvironment={props.onReconnectEnvironment}
+                onUpdateModelSelection={props.onUpdateThreadModelSelection}
+                onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
+                onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                onExpandedChange={setComposerExpanded}
+              />
+            )}
           </View>
         </KeyboardStickyView>
       ) : null}

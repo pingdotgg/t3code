@@ -22,6 +22,8 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  /** Device-local model favorites, scoped as environment:model-option keys. */
+  readonly favoriteModelKeys?: readonly string[];
   readonly projectGroupingEnabled?: boolean;
   /**
    * Device-local mirror of the web beta's `sidebarV2Enabled`. Mobile has no
@@ -79,6 +81,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     codeWordBreak?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    favoriteModelKeys?: readonly string[];
     projectGroupingEnabled?: boolean;
     threadListV2Enabled?: boolean;
   } = {};
@@ -104,6 +107,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (Array.isArray(parsed.collapsedProjectGroups)) {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
+      (key): key is string => typeof key === "string",
+    );
+  }
+  if (Array.isArray(parsed.favoriteModelKeys)) {
+    preferences.favoriteModelKeys = parsed.favoriteModelKeys.filter(
       (key): key is string => typeof key === "string",
     );
   }

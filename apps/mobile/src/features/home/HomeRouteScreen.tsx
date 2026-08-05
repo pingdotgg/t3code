@@ -2,22 +2,25 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
+import { View } from "react-native";
 
-import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
-import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import {
+  useRemoteConnections,
+  useSavedRemoteConnections,
+} from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
-import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { buildHomeProjectScopes } from "./homeThreadList";
+import { resolveHomeEnvironmentConnectionPhase } from "./workspace-connection-status";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -29,6 +32,7 @@ export function HomeRouteScreen() {
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const { onReconnectEnvironment } = useRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -58,12 +62,14 @@ export function HomeRouteScreen() {
       Object.values(savedConnectionsById).map((connection) => ({
         environmentId: connection.environmentId,
         label: connection.environmentLabel,
-        connectionState:
-          connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
+        connectionState: resolveHomeEnvironmentConnectionPhase(
+          connectionStateByEnvironmentId.get(connection.environmentId),
+          catalogState.isLoadingConnections,
+        ),
       })),
       Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
     );
-  }, [savedConnectionsById, workspaceEnvironments]);
+  }, [catalogState.isLoadingConnections, savedConnectionsById, workspaceEnvironments]);
   const availableEnvironmentIds = useMemo(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
@@ -103,7 +109,12 @@ export function HomeRouteScreen() {
     return (
       <>
         <NativeStackScreenOptions
-          options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
+          options={{
+            headerShown: true,
+            title: "",
+            headerTitle: "",
+            unstable_headerLeftItems: () => [],
+          }}
         />
         <WorkspaceSidebarToolbar
           afterSidebarButton={
@@ -122,85 +133,80 @@ export function HomeRouteScreen() {
   }
 
   return (
-    <AndroidHomeFabLayout
-      onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-    >
-      <>
-        {/* Restore the compact title after the split branch blanks the detail header. */}
-        <NativeStackScreenOptions options={getCompactBrandHeaderOptions()} />
-        <HomeHeader
-          environments={environments}
-          projects={projectFilterOptions}
-          searchQuery={searchQuery}
-          selectedEnvironmentId={selectedEnvironmentId}
-          selectedProjectKey={selectedProjectKey}
-          projectSortOrder={listOptions.projectSortOrder}
-          threadSortOrder={listOptions.threadSortOrder}
-          onEnvironmentChange={setSelectedEnvironmentId}
-          onProjectChange={setSelectedProjectKey}
-          onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
-          onProjectSortOrderChange={setProjectSortOrder}
-          onSearchQueryChange={setSearchQuery}
-          onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-          onThreadSortOrderChange={setThreadSortOrder}
-        />
+    <View className="flex-1 bg-black">
+      <HomeHeader
+        catalogState={catalogState}
+        environments={environments}
+        projects={projectFilterOptions}
+        searchQuery={searchQuery}
+        selectedEnvironmentId={selectedEnvironmentId}
+        selectedProjectKey={selectedProjectKey}
+        projectSortOrder={listOptions.projectSortOrder}
+        threadSortOrder={listOptions.threadSortOrder}
+        onEnvironmentChange={setSelectedEnvironmentId}
+        onProjectChange={setSelectedProjectKey}
+        onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
+        onProjectSortOrderChange={setProjectSortOrder}
+        onReconnectEnvironment={onReconnectEnvironment}
+        onSearchQueryChange={setSearchQuery}
+        onThreadSortOrderChange={setThreadSortOrder}
+      />
 
-        <HomeScreen
-          catalogState={catalogState}
-          environments={environments}
-          onAddConnection={() =>
-            navigation.navigate("SettingsSheet", { screen: "SettingsEnvironmentNew" })
-          }
-          onArchiveThread={archiveThread}
-          onDeleteThread={confirmDeleteThread}
-          onSettleThread={settleThread}
-          onSnoozeThread={snoozeThread}
-          onUnsnoozeThread={unsnoozeThread}
-          onUnsettleThread={unsettleThread}
-          onPinThread={pinThread}
-          onUnpinThread={unpinThread}
-          onEnvironmentChange={setSelectedEnvironmentId}
-          onProjectChange={setSelectedProjectKey}
-          onOpenEnvironments={() =>
-            navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
-          }
-          onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
-          onProjectSortOrderChange={setProjectSortOrder}
-          onSearchQueryChange={setSearchQuery}
-          onSelectThread={(thread) => {
-            // Settled threads are live shells: opening one is plain
-            // navigation, and sending a message un-settles server-side.
-            navigation.navigate("Thread", {
-              environmentId: thread.environmentId,
-              threadId: thread.id,
-            });
-          }}
-          onSelectPendingTask={openPendingTask}
-          onDeletePendingTask={confirmDeletePendingTask}
-          onNewThreadInProject={(project) => {
-            navigation.navigate("NewTaskSheet", {
-              screen: "NewTaskDraft",
-              params: {
-                environmentId: String(project.environmentId),
-                projectId: String(project.id),
-                title: project.title,
-              },
-            });
-          }}
-          onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-          onThreadSortOrderChange={setThreadSortOrder}
-          pendingTasks={pendingTasks}
-          projectGroupingMode={listOptions.projectGroupingMode}
-          projects={projects}
-          projectSortOrder={listOptions.projectSortOrder}
-          savedConnectionsById={savedConnectionsById}
-          searchQuery={searchQuery}
-          selectedEnvironmentId={selectedEnvironmentId}
-          selectedProjectKey={selectedProjectKey}
-          threads={threads}
-          threadSortOrder={listOptions.threadSortOrder}
-        />
-      </>
-    </AndroidHomeFabLayout>
+      <HomeScreen
+        catalogState={catalogState}
+        environments={environments}
+        onAddConnection={() =>
+          navigation.navigate("SettingsSheet", { screen: "SettingsEnvironmentNew" })
+        }
+        onArchiveThread={archiveThread}
+        onDeleteThread={confirmDeleteThread}
+        onSettleThread={settleThread}
+        onSnoozeThread={snoozeThread}
+        onUnsnoozeThread={unsnoozeThread}
+        onUnsettleThread={unsettleThread}
+        onPinThread={pinThread}
+        onUnpinThread={unpinThread}
+        onEnvironmentChange={setSelectedEnvironmentId}
+        onProjectChange={setSelectedProjectKey}
+        onOpenEnvironments={() =>
+          navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
+        }
+        onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
+        onProjectSortOrderChange={setProjectSortOrder}
+        onSearchQueryChange={setSearchQuery}
+        onSelectThread={(thread) => {
+          // Settled threads are live shells: opening one is plain
+          // navigation, and sending a message un-settles server-side.
+          navigation.navigate("Thread", {
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+          });
+        }}
+        onSelectPendingTask={openPendingTask}
+        onDeletePendingTask={confirmDeletePendingTask}
+        onNewThreadInProject={(project) => {
+          navigation.navigate("NewTaskSheet", {
+            screen: "NewTaskDraft",
+            params: {
+              environmentId: String(project.environmentId),
+              projectId: String(project.id),
+              title: project.title,
+            },
+          });
+        }}
+        onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+        onThreadSortOrderChange={setThreadSortOrder}
+        pendingTasks={pendingTasks}
+        projectGroupingMode={listOptions.projectGroupingMode}
+        projects={projects}
+        projectSortOrder={listOptions.projectSortOrder}
+        savedConnectionsById={savedConnectionsById}
+        searchQuery={searchQuery}
+        selectedEnvironmentId={selectedEnvironmentId}
+        selectedProjectKey={selectedProjectKey}
+        threads={threads}
+        threadSortOrder={listOptions.threadSortOrder}
+      />
+    </View>
   );
 }
