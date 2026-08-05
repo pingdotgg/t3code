@@ -61,10 +61,12 @@ import {
 } from "../acp/GrokAcpSupport.ts";
 import {
   extractXAiAskUserQuestions,
+  extractXAiAutoCompactCompleted,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   promptResponseHasMissingXAiStopReason,
   XAiAskUserQuestionRequest,
+  XAiSessionNotification,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -658,6 +660,54 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         case "cancelled":
                           return makeXAiAskUserQuestionCancelledResponse();
                       }
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
+            // Manual `/compact` and auto-compact complete as x.ai session notifications.
+            // Map them to thread.state.changed → UI work log "Context compacted".
+            yield* Effect.forEach(
+              ["x.ai/session_notification", "_x.ai/session_notification"] as const,
+              (method) =>
+                acp.handleExtNotification(method, XAiSessionNotification, (notification) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, notification);
+                      const compact = extractXAiAutoCompactCompleted(notification);
+                      if (!compact) {
+                        return;
+                      }
+                      const live = sessions.get(input.threadId);
+                      if (!live || live.stopped) {
+                        return;
+                      }
+                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                      if (turnId !== undefined && live.interruptedTurnIds.has(turnId)) {
+                        return;
+                      }
+                      yield* offerRuntimeEvent({
+                        type: "thread.state.changed",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId,
+                        payload: {
+                          state: "compacted",
+                          detail: {
+                            tokensBefore: compact.tokensBefore,
+                            tokensAfter: compact.tokensAfter,
+                            ...(compact.summaryPreview
+                              ? { summaryPreview: compact.summaryPreview }
+                              : {}),
+                          },
+                        },
+                        raw: {
+                          source: "acp.grok.extension",
+                          method,
+                          payload: notification,
+                        },
+                      });
                     }),
                   ),
                 ),

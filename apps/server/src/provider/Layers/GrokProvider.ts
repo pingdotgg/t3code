@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -44,6 +45,15 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
+/** Grok ACP handles `/compact` as prompt text; surface it in the composer slash menu. */
+const GROK_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [
+  {
+    name: "compact",
+    description: "Compress conversation history to reclaim context window",
+    input: { hint: "optional context about what to preserve" },
+  },
+];
+
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "grok-build",
@@ -66,6 +76,7 @@ export function buildInitialGrokProviderSnapshot(
         enabled: false,
         checkedAt,
         models,
+        slashCommands: GROK_SLASH_COMMANDS,
         probe: {
           installed: false,
           version: null,
@@ -81,6 +92,7 @@ export function buildInitialGrokProviderSnapshot(
       enabled: true,
       checkedAt,
       models,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: null,
@@ -175,6 +187,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: false,
       checkedAt,
       models: fallbackModels,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: false,
         version: null,
@@ -200,6 +213,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -218,6 +232,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: null,
@@ -241,6 +256,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: true,
         version,
@@ -264,6 +280,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: true,
         version,
@@ -282,6 +299,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      slashCommands: GROK_SLASH_COMMANDS,
       probe: {
         installed: true,
         version,
@@ -302,6 +320,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     enabled: grokSettings.enabled,
     checkedAt,
     models,
+    slashCommands: GROK_SLASH_COMMANDS,
     probe: {
       installed: true,
       version,
