@@ -2,6 +2,7 @@ import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
+import type { HostedAppChannel } from "./hostedPairing";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
 export interface VersionMismatch {
@@ -62,18 +63,59 @@ export function manualServerUpdateCommand(targetVersion: string): string {
   return `npx t3@${targetVersion}`;
 }
 
+export const DESKTOP_UPDATE_TRACK_DESCRIPTION =
+  "Stable corresponds to hosted Latest. Nightly corresponds to hosted Nightly.";
+
+export const HOSTED_UPDATE_TRACK_DESCRIPTION =
+  "Latest corresponds to Desktop Stable. Nightly corresponds to Desktop Nightly.";
+
+export interface DesktopManagedUpdateGuidance {
+  readonly guidance: string;
+  readonly actionHint: string;
+}
+
+/** Channel-aware copy for desktop-managed servers so hosted web and desktop
+    release-track naming stays explicit. */
+export function resolveDesktopManagedUpdateGuidance(
+  serverLabel: string,
+  hostedAppChannel: HostedAppChannel | null,
+): DesktopManagedUpdateGuidance {
+  switch (hostedAppChannel) {
+    case "nightly":
+      return {
+        guidance:
+          "This web app is on Nightly, which corresponds to Desktop Nightly. Choose corresponding tracks on web and desktop, then update the desktop app if versions still differ.",
+        actionHint:
+          "Nightly corresponds to Desktop Nightly. Choose corresponding tracks, then update the desktop app if versions still differ.",
+      };
+    case "latest":
+      return {
+        guidance:
+          "This web app is on Latest, which corresponds to Desktop Stable. Choose corresponding tracks on web and desktop, then update the desktop app if versions still differ.",
+        actionHint:
+          "Latest corresponds to Desktop Stable. Choose corresponding tracks, then update the desktop app if versions still differ.",
+      };
+    default:
+      return {
+        guidance: `The ${serverLabel} is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.`,
+        actionHint: "Update the desktop app on that machine to update this server.",
+      };
+  }
+}
+
 /** One sentence telling the user how to resolve version skew for a server,
     matched to the update path it offers. */
 export function serverUpdateGuidance(
   capability: ServerSelfUpdateCapability | null,
   serverLabel: string,
+  hostedAppChannel: HostedAppChannel | null = null,
 ): string {
   switch (capability) {
     case "boot-service":
     case "respawn":
       return `Update the ${serverLabel} so they stay in sync.`;
     case "desktop-managed":
-      return `The ${serverLabel} is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.`;
+      return resolveDesktopManagedUpdateGuidance(serverLabel, hostedAppChannel).guidance;
     default:
       return `Relaunch the ${serverLabel} with the copied command to sync them.`;
   }

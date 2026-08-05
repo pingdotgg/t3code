@@ -58,6 +58,10 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
+  DESKTOP_UPDATE_TRACK_DESCRIPTION,
+  HOSTED_UPDATE_TRACK_DESCRIPTION,
+} from "../../versionSkew";
+import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
@@ -519,7 +523,7 @@ function AboutVersionSection() {
       {hasDesktopBridge ? (
         <SettingsRow
           title="Update track"
-          description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
+          description={DESKTOP_UPDATE_TRACK_DESCRIPTION}
           control={
             <Select
               value={selectedUpdateChannel}
@@ -550,7 +554,7 @@ function AboutVersionSection() {
       ) : selectedHostedAppChannel ? (
         <SettingsRow
           title="Update track"
-          description="Switches the hosted app release channel."
+          description={HOSTED_UPDATE_TRACK_DESCRIPTION}
           control={
             <Select
               value={selectedHostedAppChannel}

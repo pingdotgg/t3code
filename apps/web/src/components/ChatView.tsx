@@ -299,6 +299,7 @@ import {
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ServerUpdateAction, ServerUpdateProgress } from "./ServerUpdateAction";
+import { HOSTED_APP_CHANNEL } from "../branding";
 import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
@@ -2001,7 +2002,11 @@ function ChatViewContent(props: ChatViewProps) {
             <>
               Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
               {versionMismatch.serverVersion}.{" "}
-              {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+              {serverUpdateGuidance(
+                versionMismatchSelfUpdate,
+                versionMismatchServerLabel,
+                HOSTED_APP_CHANNEL,
+              )}
             </>
           ) : null,
         // The desktop-managed guidance is already the description; the action
