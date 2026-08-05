@@ -39,6 +39,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { withoutAmbientParentSpan } from "../serverActivation.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -579,9 +580,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   );
 
   // Single layer-scoped polling fiber. Ticks are no-ops when no client is
-  // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
-  yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
-
+  // currently retained. Run detached from any ambient ParentSpan (e.g.
+  // PortDiscovery.make) and without tracing idle no-ops — otherwise every
+  // 3s tick parents under an immortal span and grows server private memory.
+  yield* Effect.forkScoped(
+    withoutAmbientParentSpan(
+      pollTick().pipe(
+        Effect.repeat(Schedule.spaced(POLL_INTERVAL)),
+        Effect.withTracerEnabled(false),
+      ),
+    ),
+  );
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = yield* Ref.modify(stateRef, (state) => [
       state.retainCount === 0,
@@ -659,6 +668,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     registerTerminalProcesses,
     unregisterTerminal,
   });
-}).pipe(Effect.withSpan("PortDiscovery.make"));
+});
 
 export const layer = Layer.effect(PortDiscovery, make);
