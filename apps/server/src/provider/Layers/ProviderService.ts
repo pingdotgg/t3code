@@ -216,6 +216,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  const clearMcpSession = (threadId: ThreadId) =>
+    McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
+      Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
   const prepareMcpSession = (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
@@ -230,6 +234,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ? settingsResult.success.agentVisualToolsMode
           : ("provider-native" as const);
       if (agentVisualToolsMode !== "t3-preview") {
+        // Drop any leftover credential/session from a prior T3 Preview run on
+        // this thread so provider-native sessions cannot inherit stale tools.
+        yield* clearMcpSession(threadId);
         return;
       }
       const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
@@ -240,10 +247,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         McpProviderSession.setMcpProviderSession(credential.config);
       }
     });
-  const clearMcpSession = (threadId: ThreadId) =>
-    McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
-      Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
-    );
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(

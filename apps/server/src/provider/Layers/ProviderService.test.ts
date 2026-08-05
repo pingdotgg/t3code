@@ -1947,6 +1947,76 @@ it.effect(
 );
 
 it.effect(
+  "ProviderServiceLive clears stale MCP state when starting a provider-native session",
+  () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-stale-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "stale-provider-session",
+        providerInstanceId: codexInstanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer stale-token",
+      });
+      const issueSpy = vi
+        .spyOn(McpSessionRegistry, "issueActiveMcpCredential")
+        .mockImplementation(() => Effect.succeed(undefined));
+      const revokeSpy = vi
+        .spyOn(McpSessionRegistry, "revokeActiveMcpThread")
+        .mockImplementation(() => Effect.void);
+
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [CODEX_DRIVER]: codex.adapter,
+      });
+      const providerAdapterLayer = Layer.succeed(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        registry,
+      );
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      try {
+        yield* Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          yield* provider.startSession(threadId, {
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+          assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
+        }).pipe(Effect.provide(providerLayer));
+
+        assert.equal(issueSpy.mock.calls.length, 0);
+        assert.ok(revokeSpy.mock.calls.some((call) => call[0] === threadId));
+        assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+        revokeSpy.mockRestore();
+        issueSpy.mockRestore();
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
   "ProviderServiceLive issues t3-code MCP credentials when T3 Preview mode is selected",
   () =>
     Effect.gen(function* () {

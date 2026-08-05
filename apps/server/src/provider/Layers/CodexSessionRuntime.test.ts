@@ -389,6 +389,50 @@ describe("hasConfiguredT3CodeMcpServer", () => {
       true,
     );
   });
+
+  it("honors t3-code MCP entries supplied through launch args after merge", () => {
+    const withT3CodeFromLaunchArgs = codexSessionAppServerArgs(
+      undefined,
+      '-c mcp_servers.t3-code.url="http://127.0.0.1/mcp"',
+    );
+    const withOtherMcpFromLaunchArgs = codexSessionAppServerArgs(
+      undefined,
+      '-c mcp_servers.other.url="http://127.0.0.1/mcp"',
+    );
+
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(withT3CodeFromLaunchArgs), true);
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(withOtherMcpFromLaunchArgs), false);
+
+    const previewFromLaunchArgs = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Browse",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        includeT3PreviewTools: hasConfiguredT3CodeMcpServer(withT3CodeFromLaunchArgs),
+      }),
+    );
+    const unrelatedFromLaunchArgs = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Browse",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        includeT3PreviewTools: hasConfiguredT3CodeMcpServer(withOtherMcpFromLaunchArgs),
+      }),
+    );
+
+    NodeAssert.match(
+      previewFromLaunchArgs.collaborationMode?.settings.developer_instructions ?? "",
+      /## T3 Code collaborative browser/,
+    );
+    NodeAssert.doesNotMatch(
+      unrelatedFromLaunchArgs.collaborationMode?.settings.developer_instructions ?? "",
+      /## T3 Code collaborative browser/,
+    );
+  });
 });
 
 describe("codexSessionAppServerArgs", () => {

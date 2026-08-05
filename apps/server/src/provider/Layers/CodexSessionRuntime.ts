@@ -1296,7 +1296,7 @@ export const makeCodexSessionRuntime = (
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
+          if (hasConfiguredMcpServer(appServerArgs)) {
             yield* client.request("config/mcpServer/reload", undefined).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
@@ -1317,7 +1317,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-            includeT3PreviewTools: hasConfiguredT3CodeMcpServer(options.appServerArgs),
+            includeT3PreviewTools: hasConfiguredT3CodeMcpServer(appServerArgs),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
