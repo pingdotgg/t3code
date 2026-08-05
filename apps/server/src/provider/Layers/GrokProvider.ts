@@ -3,6 +3,8 @@ import {
   type ModelCapabilities,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -33,13 +35,98 @@ import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSup
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
-  badgeLabel: "Early Access",
+  // Live 0.2.x: plan toggle lands in later stack layer; set_model is in-session.
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+
+function reasoningEffortLabels(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    none: "None",
+    minimal: "Minimal",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+    max: "Max",
+  };
+  return labels[normalized] ?? value;
+}
+
+/** Map Grok/ACP model `_meta.reasoningEfforts` into composer optionDescriptors when present. */
+export function capabilitiesFromGrokModelMeta(
+  meta: Record<string, unknown> | null | undefined,
+): ModelCapabilities {
+  if (!meta) {
+    return EMPTY_CAPABILITIES;
+  }
+  const rawEfforts = meta.reasoningEfforts ?? meta.reasoning_efforts;
+  if (!Array.isArray(rawEfforts) || rawEfforts.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+  const defaultEffort =
+    typeof meta.defaultReasoningEffort === "string"
+      ? meta.defaultReasoningEffort.trim()
+      : typeof meta.default_reasoning_effort === "string"
+        ? meta.default_reasoning_effort.trim()
+        : undefined;
+  const options = rawEfforts.flatMap((entry) => {
+    if (typeof entry === "string") {
+      const id = entry.trim();
+      if (!id) return [];
+      return [
+        {
+          id,
+          label: reasoningEffortLabels(id),
+          ...(defaultEffort === id ? { isDefault: true as const } : {}),
+        },
+      ];
+    }
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const id =
+      typeof record.value === "string" && record.value.trim()
+        ? record.value.trim()
+        : typeof record.id === "string" && record.id.trim()
+          ? record.id.trim()
+          : "";
+    if (!id) {
+      return [];
+    }
+    const label =
+      typeof record.label === "string" && record.label.trim()
+        ? record.label.trim()
+        : reasoningEffortLabels(id);
+    const isDefault =
+      record.default === true || defaultEffort === id || defaultEffort === record.id;
+    return [
+      {
+        id,
+        label,
+        ...(isDefault ? { isDefault: true as const } : {}),
+      },
+    ];
+  });
+  if (options.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options,
+      },
+    ],
+  });
+}
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
@@ -113,14 +200,61 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         return undefined;
       }
       seen.add(slug);
+      const meta =
+        model._meta && typeof model._meta === "object" && !Array.isArray(model._meta)
+          ? (model._meta as Record<string, unknown>)
+          : undefined;
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: capabilitiesFromGrokModelMeta(meta),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
+}
+
+export interface GrokAcpDiscoveryResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly authEmail?: string;
+  readonly authLabel?: string;
+}
+
+export function mapAcpCommandsToCatalog(
+  commands: ReadonlyArray<{
+    readonly name: string;
+    readonly description?: string;
+    readonly inputHint?: string;
+  }>,
+): {
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+} {
+  const slashCommands: ServerProviderSlashCommand[] = [];
+  const skills: ServerProviderSkill[] = [];
+  for (const command of commands) {
+    const name = command.name.trim();
+    if (!name) continue;
+    const description = command.description?.trim();
+    slashCommands.push({
+      name,
+      ...(description ? { description } : {}),
+      ...(command.inputHint ? { input: { hint: command.inputHint } } : {}),
+    });
+    // Grok advertises skills as slash-style commands; mirror into skills when
+    // description is present so the $ picker is non-empty (#4109 class).
+    if (description) {
+      skills.push({
+        name,
+        description,
+        path: `acp://${name}`,
+        enabled: true,
+      });
+    }
+  }
+  return { slashCommands, skills };
 }
 
 const discoverGrokModelsViaAcp = (
@@ -137,7 +271,73 @@ const discoverGrokModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    // Prefer modelState from session setup; fall back to initialize _meta (live wire).
+    const initializeMeta =
+      started.initializeResult._meta &&
+      typeof started.initializeResult._meta === "object" &&
+      !Array.isArray(started.initializeResult._meta)
+        ? (started.initializeResult._meta as Record<string, unknown>)
+        : undefined;
+    const modelsFromSession = buildGrokDiscoveredModelsFromSessionModelState(
+      started.sessionSetupResult.models,
+    );
+    const modelsFromInitialize = buildGrokDiscoveredModelsFromSessionModelState(
+      initializeMeta?.modelState as EffectAcpSchema.SessionModelState | undefined,
+    );
+    const models = modelsFromSession.length > 0 ? modelsFromSession : modelsFromInitialize;
+    const initializeCommands = Array.isArray(initializeMeta?.availableCommands)
+      ? (
+          initializeMeta.availableCommands as ReadonlyArray<{
+            readonly name?: unknown;
+            readonly description?: unknown;
+            readonly input?: unknown;
+          }>
+        ).flatMap((command) => {
+          const name = typeof command.name === "string" ? command.name.trim() : "";
+          if (!name) return [];
+          const description =
+            typeof command.description === "string" ? command.description.trim() : undefined;
+          const inputHint =
+            command.input &&
+            typeof command.input === "object" &&
+            command.input !== null &&
+            "hint" in command.input &&
+            typeof (command.input as { hint: unknown }).hint === "string"
+              ? (command.input as { hint: string }).hint.trim()
+              : undefined;
+          return [
+            {
+              name,
+              ...(description ? { description } : {}),
+              ...(inputHint ? { inputHint } : {}),
+            },
+          ];
+        })
+      : [];
+    const catalog = mapAcpCommandsToCatalog(initializeCommands);
+    const authMeta =
+      started.authenticateResult?._meta &&
+      typeof started.authenticateResult._meta === "object" &&
+      !Array.isArray(started.authenticateResult._meta)
+        ? (started.authenticateResult._meta as Record<string, unknown>)
+        : undefined;
+    const authEmail =
+      typeof authMeta?.email === "string" && authMeta.email.trim()
+        ? authMeta.email.trim()
+        : undefined;
+    const authLabel =
+      typeof authMeta?.subscription_tier === "string" && authMeta.subscription_tier.trim()
+        ? `Grok ${authMeta.subscription_tier.trim()}`
+        : typeof authMeta?.auth_mode === "string" && authMeta.auth_mode.trim()
+          ? authMeta.auth_mode.trim()
+          : undefined;
+    return {
+      models,
+      slashCommands: catalog.slashCommands,
+      skills: catalog.skills,
+      ...(authEmail ? { authEmail } : {}),
+      ...(authLabel ? { authLabel } : {}),
+    } satisfies GrokAcpDiscoveryResult;
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
@@ -256,9 +456,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     Effect.exit,
   );
   if (Exit.isFailure(discoveryExit)) {
+    const errorTag = causeErrorTag(discoveryExit.cause);
     yield* Effect.logWarning("Grok ACP model discovery failed", {
-      errorTag: causeErrorTag(discoveryExit.cause),
+      errorTag,
     });
+    const authFailure =
+      /auth|unauth|login|token|credential|oidc|forbidden|unauthorized/i.test(errorTag) ||
+      /auth|unauth|login|token|credential/i.test(String(discoveryExit.cause));
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -268,8 +472,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         installed: true,
         version,
         status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
+        auth: { status: authFailure ? "unauthenticated" : "unknown" },
+        message: authFailure
+          ? "Grok CLI is installed but authentication failed. Run `grok login` or set XAI_API_KEY."
+          : "Grok CLI is installed but ACP startup failed. Check server logs for details.",
       },
     });
   }
@@ -291,10 +497,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
+  const discovery = discoveryExit.value.value;
   const models =
-    discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
+    discovery.models.length > 0
+      ? grokModelsFromSettings(grokSettings.customModels, discovery.models)
       : fallbackModels;
 
   return buildServerProvider({
@@ -302,11 +508,18 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     enabled: grokSettings.enabled,
     checkedAt,
     models,
+    slashCommands: discovery.slashCommands,
+    skills: discovery.skills,
     probe: {
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      // Process-observed: authenticate + session start succeeded on this probe.
+      auth: {
+        status: "authenticated",
+        ...(discovery.authLabel ? { label: discovery.authLabel } : {}),
+        ...(discovery.authEmail ? { email: discovery.authEmail } : {}),
+      },
     },
   });
 });

@@ -1,4 +1,9 @@
-import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type GrokSettings,
+  type ProviderOptionSelection,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
+import { getProviderOptionStringSelectionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,6 +25,13 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
+/** Process-level agent options. Live Grok exposes effort via CLI flags, not ACP config options. */
+export interface GrokAcpSpawnOptions {
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly alwaysApprove?: boolean;
+}
+
 interface GrokAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "clientCapabilities" | "spawn"
@@ -27,16 +39,31 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly grokSettings: GrokAcpRuntimeGrokSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly spawnOptions?: GrokAcpSpawnOptions;
 }
 
 export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  spawnOptions?: GrokAcpSpawnOptions,
 ): AcpSessionRuntime.AcpSpawnInput {
+  const args: string[] = ["agent"];
+  const model = spawnOptions?.model?.trim();
+  if (model) {
+    args.push("--model", model);
+  }
+  const effort = spawnOptions?.reasoningEffort?.trim();
+  if (effort) {
+    args.push("--reasoning-effort", effort);
+  }
+  if (spawnOptions?.alwaysApprove) {
+    args.push("--always-approve");
+  }
+  args.push("stdio");
   return {
     command: grokSettings?.binaryPath || "grok",
-    args: ["agent", "stdio"],
+    args,
     cwd,
     env: {
       ...environment,
@@ -44,6 +71,18 @@ export function buildGrokAcpSpawnInput(
     },
   };
 }
+
+export function resolveGrokReasoningEffortSelection(
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): string | undefined {
+  return (
+    getProviderOptionStringSelectionValue(selections, "reasoningEffort") ??
+    getProviderOptionStringSelectionValue(selections, "reasoning") ??
+    getProviderOptionStringSelectionValue(selections, "effort")
+  );
+}
+
+
 
 function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
   return environment?.[GROK_API_KEY_ENV]?.trim()
@@ -62,7 +101,12 @@ export const makeGrokAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
+        spawn: buildGrokAcpSpawnInput(
+          input.grokSettings,
+          input.cwd,
+          input.environment,
+          input.spawnOptions,
+        ),
         authMethodId: resolveGrokAuthMethodId(input.environment),
       }).pipe(
         Layer.provide(
@@ -105,4 +149,68 @@ export function applyGrokAcpModelSelection<E>(input: {
   return input.runtime
     .setSessionModel(input.requestedModelId)
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+}
+
+function isEffortConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+  const id = option.id.trim().toLowerCase();
+  const name = option.name.trim().toLowerCase();
+  const category = option.category?.trim().toLowerCase() ?? "";
+  return (
+    id === "reasoning" ||
+    id === "reasoningeffort" ||
+    id === "reasoning_effort" ||
+    id === "effort" ||
+    name.includes("reasoning") ||
+    name.includes("effort") ||
+    category === "thought_level"
+  );
+}
+
+/**
+ * Secondary path: only when Grok advertises effort as ACP config options.
+ * Live Grok 0.2.x has no session/set_config_option; effort is CLI
+ * `--reasoning-effort` via buildGrokAcpSpawnInput / process restart.
+ */
+export function applyGrokAcpConfigSelections<E>(input: {
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >;
+  readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<void, E> {
+  return Effect.gen(function* () {
+    if (!input.selections || input.selections.length === 0) {
+      return;
+    }
+    const configOptions = yield* input.runtime.getConfigOptions.pipe(
+      Effect.mapError(input.mapError),
+    );
+    if (!configOptions || configOptions.length === 0) {
+      return;
+    }
+    const requestedEffort =
+      getProviderOptionStringSelectionValue(input.selections, "reasoningEffort") ??
+      getProviderOptionStringSelectionValue(input.selections, "reasoning") ??
+      getProviderOptionStringSelectionValue(input.selections, "effort");
+    if (!requestedEffort) {
+      return;
+    }
+    const effortOption = configOptions.find(isEffortConfigOption);
+    if (!effortOption || effortOption.type !== "select") {
+      return;
+    }
+    const values = effortOption.options.flatMap((entry) =>
+      "value" in entry ? [entry.value] : entry.options.map((option) => option.value),
+    );
+    const match = values.find(
+      (value) => value.trim().toLowerCase() === requestedEffort.trim().toLowerCase(),
+    );
+    if (!match || match === effortOption.currentValue) {
+      return;
+    }
+    yield* input.runtime
+      .setConfigOption(effortOption.id, match)
+      .pipe(Effect.mapError(input.mapError));
+  });
 }

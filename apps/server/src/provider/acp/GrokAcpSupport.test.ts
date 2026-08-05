@@ -3,9 +3,11 @@ import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
+  applyGrokAcpConfigSelections,
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
   resolveGrokAcpBaseModelId,
+  resolveGrokReasoningEffortSelection,
 } from "./GrokAcpSupport.ts";
 
 describe("resolveGrokAcpBaseModelId", () => {
@@ -32,6 +34,35 @@ describe("buildGrokAcpSpawnInput", () => {
         GROK_OAUTH2_REFERRER: "t3code",
       },
     });
+  });
+
+  it("passes model and reasoning effort as CLI flags (live Grok wire contract)", () => {
+    const spawn = buildGrokAcpSpawnInput({ binaryPath: "grok" }, "/repo", undefined, {
+      model: "grok-4.5",
+      reasoningEffort: "low",
+      alwaysApprove: true,
+    });
+    expect(spawn.args).toEqual([
+      "agent",
+      "--model",
+      "grok-4.5",
+      "--reasoning-effort",
+      "low",
+      "--always-approve",
+      "stdio",
+    ]);
+  });
+});
+
+describe("resolveGrokReasoningEffortSelection", () => {
+  it("reads reasoningEffort, reasoning, or effort option ids", () => {
+    expect(resolveGrokReasoningEffortSelection([{ id: "reasoningEffort", value: "low" }])).toBe(
+      "low",
+    );
+    expect(resolveGrokReasoningEffortSelection([{ id: "reasoning", value: "high" }])).toBe("high");
+    expect(resolveGrokReasoningEffortSelection([{ id: "effort", value: "medium" }])).toBe("medium");
+    expect(resolveGrokReasoningEffortSelection([{ id: "other", value: "x" }])).toBeUndefined();
+    expect(resolveGrokReasoningEffortSelection(undefined)).toBeUndefined();
   });
 });
 
@@ -107,3 +138,65 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 });
+
+describe("applyGrokAcpConfigSelections", () => {
+  it.effect("sets effort config option when advertised and selected", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ id: string; value: string | boolean }> = [];
+      yield* applyGrokAcpConfigSelections({
+        runtime: {
+          getConfigOptions: Effect.succeed([
+            {
+              id: "effort",
+              name: "Reasoning",
+              category: "thought_level",
+              type: "select",
+              currentValue: "low",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ]),
+          setConfigOption: ((id: string, value: string | boolean) =>
+            Effect.sync(() => {
+              calls.push({ id, value });
+              return {};
+            })) as never,
+        },
+        selections: [{ id: "reasoningEffort", value: "high" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(calls).toEqual([{ id: "effort", value: "high" }]);
+    }),
+  );
+
+  it.effect("skips when selection already matches current", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ id: string; value: string | boolean }> = [];
+      yield* applyGrokAcpConfigSelections({
+        runtime: {
+          getConfigOptions: Effect.succeed([
+            {
+              id: "effort",
+              name: "Reasoning",
+              type: "select",
+              currentValue: "high",
+              options: [{ value: "high", name: "High" }],
+            },
+          ]),
+          setConfigOption: ((id: string, value: string | boolean) =>
+            Effect.sync(() => {
+              calls.push({ id, value });
+              return {};
+            })) as never,
+        },
+        selections: [{ id: "reasoningEffort", value: "high" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(calls).toEqual([]);
+    }),
+  );
+});
+
+

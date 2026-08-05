@@ -6,7 +6,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildInitialGrokProviderSnapshot,
+  capabilitiesFromGrokModelMeta,
+  checkGrokProviderStatus,
+  mapAcpCommandsToCatalog,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -31,7 +36,8 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.requiresNewThreadForModelChange).toBe(false);
+      expect(snapshot.showInteractionModeToggle).toBe(false);
     }),
   );
 });
@@ -107,4 +113,36 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+});
+
+describe("Grok capability and command helpers", () => {
+  it("maps reasoningEfforts meta into optionDescriptors", () => {
+    const caps = capabilitiesFromGrokModelMeta({
+      reasoningEfforts: [
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    });
+    expect(caps.optionDescriptors?.[0]).toMatchObject({
+      id: "reasoningEffort",
+      type: "select",
+    });
+    expect(
+      caps.optionDescriptors?.[0]?.type === "select" && caps.optionDescriptors[0].options,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "high", label: "High Effort", isDefault: true }),
+        expect.objectContaining({ id: "low", label: "Low Effort" }),
+      ]),
+    );
+  });
+
+  it("maps ACP commands into slash and skills catalogs", () => {
+    const catalog = mapAcpCommandsToCatalog([
+      { name: "review", description: "Review code", inputHint: "path" },
+      { name: "skip-me" },
+    ]);
+    expect(catalog.slashCommands).toHaveLength(2);
+    expect(catalog.skills).toEqual([expect.objectContaining({ name: "review", enabled: true })]);
+  });
 });
