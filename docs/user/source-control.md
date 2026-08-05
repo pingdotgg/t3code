@@ -27,6 +27,8 @@ T3 Code works with the platforms your team already uses:
   history. Search, refresh, sync, stash, undo, and discard actions live in the same toolbar.
 - Source Control can remain open beside the standard right panel, including while viewing a file
   diff.
+- Discarding one file, a folder or change group, or all changes always asks for confirmation first.
+  When Git supports backups, the success message also offers Undo.
 
 ### Start Projects from Anywhere
 

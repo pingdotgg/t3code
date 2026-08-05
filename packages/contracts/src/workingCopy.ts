@@ -162,9 +162,8 @@ export const WorkingCopyStashEntry = Schema.Struct({
 export type WorkingCopyStashEntry = typeof WorkingCopyStashEntry.Type;
 
 /**
- * The undo ladder's load-bearing field: `recoverable: false` means the discard
- * could not be backed by a pathspec stash (git < 2.13), so the client must
- * confirm first and offer no undo, permanently, for that repo.
+ * `recoverable: false` means the confirmed discard could not be backed by a
+ * pathspec stash (git < 2.13), so the client cannot offer Undo.
  */
 export const WorkingCopyDiscardResult = Schema.Struct({
   recoverable: Schema.Boolean,
@@ -173,10 +172,9 @@ export const WorkingCopyDiscardResult = Schema.Struct({
   /**
    * fork: f4 — the preflight answer. `true` means **nothing was touched**: the
    * server found it could not take a backup and refused the destructive path
-   * because the input did not carry `confirmedDestructive`. The client shows the
-   * irrecoverable-discard confirm and retries with the flag set. This is what
-   * makes the ladder's "discard on old git → confirm, no undo offered" rung
-   * reachable on the FIRST discard rather than only after one has been lost.
+   * because the input did not carry `confirmedDestructive`. Current clients
+   * confirm before the first request and send the flag; this remains a safe
+   * preflight for older clients.
    */
   requiresConfirmation: Schema.optional(Schema.Boolean),
 });

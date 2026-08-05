@@ -5,17 +5,14 @@ import {
   confirmAbortOperation,
   confirmDeleteBranch,
   confirmDirtyCheckout,
+  confirmDiscardChanges,
   confirmDiscardHunk,
-  confirmDiscardIrrecoverable,
   confirmMergeBranch,
   confirmResetHard,
   confirmRevertMerge,
   confirmStashDrop,
-  discardRequiresConfirm,
   discardToastText,
-  noteDiscardRecoverability,
   undoCommitToastText,
-  EMPTY_DISCARD_RECOVERABILITY,
 } from "./safetyLadder";
 
 /**
@@ -38,7 +35,7 @@ describe("every dialog says what is lost", () => {
     confirmAbortOperation("merge"),
     confirmMergeBranch("feat", "main"),
     confirmDiscardHunk("src/a.ts"),
-    confirmDiscardIrrecoverable(["src/a.ts"]),
+    confirmDiscardChanges(["src/a.ts"]),
     confirmDirtyCheckout("feat", 3),
     confirmResetHard("a1b2c3d4", true),
     confirmRevertMerge("a1b2c3d4"),
@@ -85,7 +82,7 @@ describe("reset --hard is the ONLY requireTyped", () => {
       confirmStashDrop({ ref: "stash@{0}" }),
       confirmAbortOperation("rebase"),
       confirmDirtyCheckout("feat", 1),
-      confirmDiscardIrrecoverable(null),
+      confirmDiscardChanges(null),
       confirmDiscardHunk("a.ts"),
       confirmMergeBranch("feat", "main"),
       confirmRevertMerge("abc1234"),
@@ -161,27 +158,35 @@ describe("dirty checkout — offers the safer path as a peer", () => {
   });
 });
 
-describe("discard — the ladder inverts, because it is undoable", () => {
-  it("the irrecoverable dialog is reachable ONLY as the old-git fallback, and says why", () => {
-    const options = confirmDiscardIrrecoverable(["a.ts", "b.ts"]);
-    expect(options.consequence).toContain("too old to keep a backup");
-    expect(options.consequence).toContain("2 files");
+describe("discard — every scope confirms before touching Git", () => {
+  it("confirms a single file and names it", () => {
+    const options = confirmDiscardChanges(["a.ts"]);
+    expect(options.title).toBe("Discard changes in this file?");
+    expect(options.consequence).toContain("undo backup when Git supports it");
+    expect(options.body).toBe("a.ts");
+  });
+
+  it("confirms a multi-file group and names its size", () => {
+    const options = confirmDiscardChanges(["a.ts", "b.ts"]);
+    expect(options.title).toContain("2 files");
     expect(options.body).toContain("a.ts");
   });
 
-  it("scopes the whole-tree case as such", () => {
-    expect(confirmDiscardIrrecoverable(null).consequence).toContain("every uncommitted change");
-    expect(confirmDiscardIrrecoverable(null).body).toBeUndefined();
+  it("confirms and clearly scopes discard all", () => {
+    const options = confirmDiscardChanges(null);
+    expect(options.title).toBe("Discard all changes?");
+    expect(options.consequence).toContain("all uncommitted changes");
+    expect(options.body).toBeUndefined();
   });
 
   it("truncates a long file list rather than rendering 200 rows", () => {
     const files = Array.from({ length: 30 }, (_, index) => `src/file-${index}.ts`);
-    const body = confirmDiscardIrrecoverable(files).body ?? "";
+    const body = confirmDiscardChanges(files).body ?? "";
     expect(body).toContain("…and 22 more");
     expect(body.split("\n")).toHaveLength(9);
   });
 
-  it("hunk discard keeps its confirm, and explains that it is the exception", () => {
+  it("hunk discard keeps its confirm and explains why it has no backup", () => {
     const options = confirmDiscardHunk("src/a.ts");
     expect(options.consequence).toContain("not undoable");
     expect(options.body).toBe("src/a.ts");
@@ -221,30 +226,5 @@ describe("abort / merge — neutral where the action is reversible", () => {
 
   it("reverting a merge explains the mainline choice rather than just asking", () => {
     expect(confirmRevertMerge("a1b2c3d4").consequence).toContain("FIRST parent");
-  });
-});
-
-describe("per-repo discard recoverability", () => {
-  it("asks for no confirm until a repo is observed unrecoverable", () => {
-    expect(discardRequiresConfirm(EMPTY_DISCARD_RECOVERABILITY, "/repo")).toBe(false);
-  });
-
-  it("one observation of recoverable:false flips the repo permanently", () => {
-    let state = noteDiscardRecoverability(EMPTY_DISCARD_RECOVERABILITY, "/repo", false);
-    expect(discardRequiresConfirm(state, "/repo")).toBe(true);
-    // A later success does not undo it — an old git will not get newer.
-    state = noteDiscardRecoverability(state, "/repo", true);
-    expect(discardRequiresConfirm(state, "/repo")).toBe(true);
-  });
-
-  it("is scoped per repo", () => {
-    const state = noteDiscardRecoverability(EMPTY_DISCARD_RECOVERABILITY, "/old", false);
-    expect(discardRequiresConfirm(state, "/new")).toBe(false);
-  });
-
-  it("keeps identity when nothing changes, so consumers do not re-render", () => {
-    const state = noteDiscardRecoverability(EMPTY_DISCARD_RECOVERABILITY, "/repo", false);
-    expect(noteDiscardRecoverability(state, "/repo", false)).toBe(state);
-    expect(noteDiscardRecoverability(state, "/other", true)).toBe(state);
   });
 });

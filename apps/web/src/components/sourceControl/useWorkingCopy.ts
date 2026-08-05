@@ -32,16 +32,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  EMPTY_DISCARD_RECOVERABILITY,
   commitToastText,
   confirmAbortOperation,
-  confirmDiscardIrrecoverable,
+  confirmDiscardChanges,
   confirmStashDrop,
-  discardRequiresConfirm,
   discardToastText,
-  noteDiscardRecoverability,
   undoCommitToastText,
-  type DiscardRecoverabilityState,
 } from "~/lib/sourceControl/safetyLadder";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useEnvironmentQuery } from "~/state/query";
@@ -331,9 +327,6 @@ export function useWorkingCopyActions(
   confirmWith: ConfirmFn,
 ): WorkingCopyActions {
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set<string>());
-  const [recoverability, setRecoverability] = useState<DiscardRecoverabilityState>(
-    EMPTY_DISCARD_RECOVERABILITY,
-  );
 
   const stagePaths = useAtomCommand(workingCopyEnvironment.stagePaths);
   const unstagePaths = useAtomCommand(workingCopyEnvironment.unstagePaths);
@@ -359,6 +352,14 @@ export function useWorkingCopyActions(
   const busyRef = useRef(busy);
   busyRef.current = busy;
 
+  const setBusyKey = useCallback((key: string, active: boolean) => {
+    const next = withBusyKey(busyRef.current, key, active);
+    // Update the ref synchronously. React state does not commit until the next
+    // render, so ref-only-on-render leaves a same-tick double press unguarded.
+    busyRef.current = next;
+    setBusy(next);
+  }, []);
+
   /**
    * Re-entrant press on a key already in flight is a no-op. Doubling `discard`
    * would leave two backup stashes and two undo toasts pointing at different
@@ -380,7 +381,7 @@ export function useWorkingCopyActions(
         sourceControlInfoToast(BUSY_DROPPED_PRESS_TITLE);
         return null;
       }
-      setBusy((current) => withBusyKey(current, key, true));
+      setBusyKey(key, true);
       try {
         const result = await execute();
         if (result._tag === "Failure") {
@@ -395,10 +396,10 @@ export function useWorkingCopyActions(
         }
         return result.value;
       } finally {
-        setBusy((current) => withBusyKey(current, key, false));
+        setBusyKey(key, false);
       }
     },
-    [],
+    [setBusyKey],
   );
 
   return useMemo<WorkingCopyActions>(() => {
@@ -468,45 +469,33 @@ export function useWorkingCopyActions(
        * `null` means "everything" (the discard-all rung); the wire spells that
        * as an empty `paths` array.
        *
-       * Discard normally does NOT ask - it takes a pathspec-stash backup and
-       * offers an undo toast. It asks first when this repo has already answered
-       * `recoverable: false` (permanent for the session), OR when the server's
-       * preflight says it cannot back this discard up: that answer arrives as
-       * `requiresConfirmation` with NOTHING destroyed, so the confirm-first
-       * rung fires on the very first discard rather than after one is lost.
+       * Every scope asks before reaching Git. After confirmation the server
+       * takes a pathspec-stash backup when possible and the client offers Undo;
+       * `confirmedDestructive` also authorizes the old-Git fallback when no
+       * backup can be created.
        */
       discard: async (paths) => {
         const key = actionBusyKey("discard", paths === null ? "*" : paths.join(BUSY_KEY_SEPARATOR));
-        const attempt = (confirmedDestructive: boolean) =>
-          run(key, "Could not discard changes", () =>
-            discardPaths(
-              target(
-                confirmedDestructive
-                  ? { paths: paths ?? [], confirmedDestructive: true }
-                  : { paths: paths ?? [] },
-              ),
-            ),
-          );
+        const outcome = await confirmWith(confirmDiscardChanges(paths));
+        if (outcome !== "confirmed") return;
 
-        const preConfirmed = discardRequiresConfirm(recoverability, cwd);
-        if (preConfirmed) {
-          const outcome = await confirmWith(confirmDiscardIrrecoverable(paths));
-          if (outcome !== "confirmed") return;
-        }
-
-        let result = await attempt(preConfirmed);
+        const result = await run(key, "Could not discard changes", () =>
+          discardPaths(
+            target({
+              paths: paths ?? [],
+              confirmedDestructive: true,
+            }),
+          ),
+        );
         if (result === null) return;
 
         if (result.requiresConfirmation === true) {
-          setRecoverability((current) => noteDiscardRecoverability(current, cwd, false));
-          const outcome = await confirmWith(confirmDiscardIrrecoverable(paths));
-          if (outcome !== "confirmed") return;
-          const retried = await attempt(true);
-          if (retried === null) return;
-          result = retried;
+          // A matching server cannot return this after the explicit flag, but
+          // do not silently issue a second destructive request if versions drift.
+          errorToast("Could not discard changes", "The server did not accept the confirmation.");
+          return;
         }
 
-        setRecoverability((current) => noteDiscardRecoverability(current, cwd, result.recoverable));
         if (!result.recoverable) {
           toastManager.add(stackedThreadToast({ type: "success", title: discardToastText(paths) }));
           return;
@@ -671,7 +660,7 @@ export function useWorkingCopyActions(
           sourceControlInfoToast(BUSY_DROPPED_PRESS_TITLE);
           return null;
         }
-        setBusy((current) => withBusyKey(current, key, true));
+        setBusyKey(key, true);
         try {
           const result = await generateCommitMessageCommand(target(amend ? { amend } : {}));
           if (result._tag === "Failure") {
@@ -697,7 +686,7 @@ export function useWorkingCopyActions(
           }
           return result.value.message;
         } finally {
-          setBusy((current) => withBusyKey(current, key, false));
+          setBusyKey(key, false);
         }
       },
     };
@@ -712,12 +701,12 @@ export function useWorkingCopyActions(
     confirmWith,
     discardPaths,
     generateCommitMessageCommand,
-    recoverability,
     resetCommand,
     resolveConflictCommand,
     restoreDiscardBackup,
     revertCommand,
     run,
+    setBusyKey,
     scope,
     stagePaths,
     stashApplyCommand,

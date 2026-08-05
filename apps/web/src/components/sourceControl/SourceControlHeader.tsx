@@ -13,6 +13,7 @@ import {
   GitBranch,
   GitGraph,
   ListTree,
+  Loader2,
   MoreHorizontal,
   RefreshCw,
   Search,
@@ -32,6 +33,9 @@ export interface SourceControlHeaderProps {
   readonly activeSection: SourceControlSection;
   readonly searchActive: boolean;
   readonly syncBusy: boolean;
+  readonly pendingSyncKind: SourceControlSyncKind | null;
+  /** Any source-control mutation is active; navigation/filter controls remain available. */
+  readonly actionsBusy: boolean;
   readonly dirtyCount: number;
   readonly undoBusy: boolean;
   readonly discardAllBusy: boolean;
@@ -40,13 +44,23 @@ export interface SourceControlHeaderProps {
   readonly viewActions: ReactNode;
   readonly onSelectSection: (section: SourceControlSection) => void;
   readonly onToggleSearch: () => void;
-  readonly onSync: (kind: "publish" | "push" | "pull" | "sync" | "fetch") => void;
+  readonly onSync: (kind: SourceControlSyncKind) => void;
   readonly onUndoLastCommit: () => void;
   readonly onDiscardAll: () => void;
   readonly onOpenStashDialog: () => void;
   readonly onOpenStashes: () => void;
   readonly onRefresh: () => void;
 }
+
+export type SourceControlSyncKind = "publish" | "push" | "pull" | "sync" | "fetch";
+
+const PENDING_SYNC_LABEL: Record<SourceControlSyncKind, string> = {
+  publish: "Publishing…",
+  push: "Pushing…",
+  pull: "Pulling…",
+  sync: "Syncing…",
+  fetch: "Refreshing…",
+};
 
 export function SourceControlHeader(props: SourceControlHeaderProps) {
   const sync = deriveSyncState(props.status);
@@ -109,7 +123,7 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
         </ToolbarButton>
         <ToolbarButton
           label={refreshBusy ? "Refreshing source control" : "Refresh source control"}
-          disabled={refreshBusy}
+          disabled={refreshBusy || props.actionsBusy}
           onClick={() => (refreshOnly ? props.onSync("fetch") : props.onRefresh())}
         >
           <RefreshCw className={cn(refreshBusy && "animate-spin")} />
@@ -122,13 +136,20 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
                   size="xs"
                   variant="ghost"
                   className="gap-1 px-1.5 text-[11px]"
-                  disabled={props.syncBusy || props.status === null}
+                  disabled={props.actionsBusy || props.status === null}
+                  aria-busy={props.syncBusy}
                   onClick={() => props.onSync(sync.kind)}
                 />
               }
             >
-              <SyncIcon kind={sync.kind} />
-              <span className="max-w-14 truncate">{sync.label}</span>
+              {props.syncBusy ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <SyncIcon kind={sync.kind} />
+              )}
+              <span className="max-w-20 truncate">
+                {props.pendingSyncKind ? PENDING_SYNC_LABEL[props.pendingSyncKind] : sync.label}
+              </span>
             </TooltipTrigger>
             <TooltipPopup>{sync.title}</TooltipPopup>
           </Tooltip>
@@ -136,17 +157,28 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
         <Menu>
           <MenuTrigger
             render={
-              <Button size="icon-xs" variant="ghost" aria-label="More source control actions" />
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="More source control actions"
+                disabled={props.actionsBusy}
+              />
             }
           >
             <MoreHorizontal />
           </MenuTrigger>
           <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
-            <MenuItem onClick={props.onUndoLastCommit} disabled={props.undoBusy}>
+            <MenuItem
+              onClick={props.onUndoLastCommit}
+              disabled={props.actionsBusy || props.undoBusy}
+            >
               <GitGraph />
               {props.undoBusy ? "Undoing…" : "Undo last commit"}
             </MenuItem>
-            <MenuItem onClick={props.onOpenStashDialog} disabled={clean || props.stashBusy}>
+            <MenuItem
+              onClick={props.onOpenStashDialog}
+              disabled={props.actionsBusy || clean || props.stashBusy}
+            >
               <Archive />
               Stash changes…
             </MenuItem>
@@ -157,7 +189,7 @@ export function SourceControlHeader(props: SourceControlHeaderProps) {
             <MenuSeparator />
             <MenuItem
               onClick={props.onDiscardAll}
-              disabled={clean || props.discardAllBusy}
+              disabled={props.actionsBusy || clean || props.discardAllBusy}
               className={cn(!clean && !props.discardAllBusy && "text-destructive-foreground")}
             >
               <Undo2 />

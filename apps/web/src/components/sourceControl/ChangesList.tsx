@@ -89,6 +89,8 @@ export interface ChangesListProps {
   readonly collapsedGroups: ReadonlyArray<string>;
   readonly collapsedFolders: ReadonlyArray<string>;
   readonly busyPaths: ReadonlySet<string>;
+  /** A repository-wide mutation (commit, push, sync…) blocks all file mutations. */
+  readonly actionsDisabled: boolean;
   readonly onToggleGroup: (group: ChangesGroup) => void;
   readonly onToggleFolder: (folderKey: string) => void;
   readonly onSetCollapsedFolders: (folderKeys: ReadonlyArray<string>) => void;
@@ -262,6 +264,7 @@ export function ChangesList(props: ChangesListProps) {
       action: (paths: ReadonlyArray<string>) => void,
       predicate: (row: ChangesRow) => boolean,
     ) => {
+      if (props.actionsDisabled) return;
       const targets = actionTargetRows(rows, selection).filter(predicate);
       if (targets.length === 0) {
         // A keypress that resolves to nothing used to be indistinguishable from
@@ -373,6 +376,7 @@ export function ChangesList(props: ChangesListProps) {
             row={row}
             collapsed={collapsedGroups.has(row.group)}
             busy={anyPathBusy(props.busyPaths, paths)}
+            actionsDisabled={props.actionsDisabled}
             onToggle={() => props.onToggleGroup(row.group)}
             // fork: f4 F-08 — the group's OWN paths. `[]` used to travel up to
             // the panel and be re-expanded into the whole working copy.
@@ -391,6 +395,7 @@ export function ChangesList(props: ChangesListProps) {
             row={row}
             indentPx={changesRowIndent(row.depth)}
             busy={anyPathBusy(props.busyPaths, folderFiles)}
+            actionsDisabled={props.actionsDisabled}
             onToggle={() => props.onToggleFolder(`${row.group}:${row.path ?? ""}`)}
             onStage={() => props.onStage(folderFiles)}
             onUnstage={() => props.onUnstage(folderFiles)}
@@ -418,6 +423,7 @@ export function ChangesList(props: ChangesListProps) {
           focused={selection.focusedKey === row.key}
           partial={partialPaths.has(file.path)}
           busy={props.busyPaths.has(file.path)}
+          actionsDisabled={props.actionsDisabled}
           showDirectory={props.viewMode === "flat"}
           indentPx={changesRowIndent(row.depth)}
           onSelect={handleSelect}
@@ -505,6 +511,7 @@ export function ChangesList(props: ChangesListProps) {
               pinned
               collapsed={collapsedGroups.has(pinnedRow.group)}
               busy={anyPathBusy(props.busyPaths, groupPathsOf(pinnedRow.group))}
+              actionsDisabled={props.actionsDisabled}
               onToggle={() => props.onToggleGroup(pinnedRow.group)}
               onStageAll={() => props.onStage(groupPathsOf(pinnedRow.group))}
               onUnstageAll={() => props.onUnstage(groupPathsOf(pinnedRow.group))}
@@ -526,6 +533,7 @@ function GroupHeader(props: {
   showFolderToggle: boolean;
   /** One of this group's files has an action in flight. */
   busy: boolean;
+  actionsDisabled: boolean;
   onToggle: () => void;
   onStageAll: () => void;
   onUnstageAll: () => void;
@@ -594,6 +602,7 @@ function GroupHeader(props: {
             <HeaderAction
               label={`Unstage all ${CHANGES_GROUP_TITLE[row.group]}`}
               busy={props.busy}
+              disabled={props.actionsDisabled}
               onClick={props.onUnstageAll}
             >
               <Minus />
@@ -603,6 +612,7 @@ function GroupHeader(props: {
               <HeaderAction
                 label={`Stage all ${CHANGES_GROUP_TITLE[row.group]}`}
                 busy={props.busy}
+                disabled={props.actionsDisabled}
                 onClick={props.onStageAll}
               >
                 <Plus />
@@ -612,6 +622,7 @@ function GroupHeader(props: {
                 // the whole-working-copy discard lives in the overflow menu.
                 label={`Discard all ${CHANGES_GROUP_TITLE[row.group]}`}
                 busy={props.busy}
+                disabled={props.actionsDisabled}
                 onClick={props.onDiscardAll}
               >
                 <Undo2 />
@@ -627,6 +638,7 @@ function GroupHeader(props: {
 function HeaderAction(props: {
   label: string;
   busy?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -642,7 +654,7 @@ function HeaderAction(props: {
             // fork: f4 F-04/F-06 — disabled while its own action is in flight.
             // The press used to be accepted, dropped by the busy guard and
             // never reported.
-            disabled={props.busy === true}
+            disabled={props.busy === true || props.disabled === true}
             aria-busy={props.busy === true}
             onClick={props.onClick}
           >
@@ -662,6 +674,7 @@ function FolderRow(props: {
   indentPx: number;
   staged: boolean;
   busy: boolean;
+  actionsDisabled: boolean;
   onToggle: () => void;
   onStage: () => void;
   onUnstage: () => void;
@@ -697,11 +710,21 @@ function FolderRow(props: {
         )}
       >
         {props.staged ? (
-          <HeaderAction label="Unstage folder" busy={props.busy} onClick={props.onUnstage}>
+          <HeaderAction
+            label="Unstage folder"
+            busy={props.busy}
+            disabled={props.actionsDisabled}
+            onClick={props.onUnstage}
+          >
             <Minus />
           </HeaderAction>
         ) : (
-          <HeaderAction label="Stage folder" busy={props.busy} onClick={props.onStage}>
+          <HeaderAction
+            label="Stage folder"
+            busy={props.busy}
+            disabled={props.actionsDisabled}
+            onClick={props.onStage}
+          >
             <Plus />
           </HeaderAction>
         )}

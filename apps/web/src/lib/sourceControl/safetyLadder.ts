@@ -5,7 +5,7 @@
  * undo, and that MAKING an action undoable always beats making it harder to do:
  *
  *   stage / unstage    its own inverse                    →  nothing
- *   discard            undoable (pathspec-stash backup)   →  no dialog, undo toast
+ *   discard            removes working-copy changes       →  confirm, then undo toast if backed up
  *   commit             undoable (reset --soft HEAD~1)     →  no dialog, undo toast
  *   revert / pick      creates a new commit               →  no dialog, undo toast
  *   undo last commit   soft, changes kept staged          →  no dialog
@@ -13,7 +13,7 @@
  *   delete branch      gone (tip SHA printed for recovery)→  confirm, twice if unmerged
  *   dirty checkout     blocked or carried over            →  confirm + alternative
  *   hunk discard       below file granularity, no backup  →  confirm
- *   discard on old git no backup possible                 →  confirm, no undo offered
+ *   discard on old git no backup possible                 →  same confirm, no undo offered
  *   reset --hard       gone, unbounded scope              →  confirm + requireTyped
  *
  * These builders are pure so each rung is testable without mounting the panel,
@@ -149,7 +149,7 @@ export function confirmMergeBranch(
 
 /**
  * Hunk-level discard is sub-file, so it cannot ride the pathspec-stash backup
- * that makes whole-file discard undoable. It is the ONE discard that still asks.
+ * that can make whole-file discard undoable.
  */
 export function confirmDiscardHunk(filePath: string): SourceControlConfirmOptions {
   return {
@@ -163,19 +163,23 @@ export function confirmDiscardHunk(filePath: string): SourceControlConfirmOption
 }
 
 /**
- * Only reachable when the server reports `recoverable: false` — a git too old
- * to take a pathspec stash. Then, and only then, discard asks first.
+ * Whole-file, group, and whole-working-tree discard all pass through this one
+ * confirmation. The server still takes a backup whenever Git supports it, but
+ * recoverability no longer removes the user's explicit safety gate.
  */
-export function confirmDiscardIrrecoverable(
+export function confirmDiscardChanges(
   filePaths: ReadonlyArray<string> | null,
 ): SourceControlConfirmOptions {
-  const scope =
+  const title =
     filePaths === null
-      ? "every uncommitted change in the working tree"
-      : countLabel(filePaths.length, "file");
+      ? "Discard all changes?"
+      : filePaths.length === 1
+        ? "Discard changes in this file?"
+        : `Discard changes in ${countLabel(filePaths.length, "file")}?`;
+  const scope = filePaths === null ? "all uncommitted changes" : "the selected changes";
   return {
-    title: "Discard changes?",
-    consequence: `This git is too old to keep a backup copy, so ${scope} will be lost permanently.`,
+    title,
+    consequence: `This removes ${scope} from the working tree. T3 Code keeps an undo backup when Git supports it; otherwise this cannot be undone.`,
     body: filePaths ? renderList(filePaths) : undefined,
     confirmLabel: "Discard",
     tone: "danger",
@@ -250,34 +254,6 @@ export function branchDeletedToastText(name: string, tipSha?: string): string {
   return tipSha
     ? `Deleted "${name}" — recover with git checkout ${shortenHash(tipSha)}`
     : `Deleted branch "${name}"`;
-}
-
-// ─── Per-repo discard recoverability ────────────────────────────────────────
-//
-// The server answers each discard with whether it could take a backup stash.
-// ONE observation of `recoverable: false` permanently flips that repo onto the
-// confirm-first ladder for the rest of the session: an old git will not get
-// newer mid-session, and re-learning it per action means the first discard on
-// every repo is the unguarded one.
-
-export type DiscardRecoverabilityState = ReadonlySet<string>;
-
-export const EMPTY_DISCARD_RECOVERABILITY: DiscardRecoverabilityState = new Set<string>();
-
-export function noteDiscardRecoverability(
-  state: DiscardRecoverabilityState,
-  cwd: string,
-  recoverable: boolean,
-): DiscardRecoverabilityState {
-  if (recoverable || state.has(cwd)) {
-    return state;
-  }
-  return new Set([...state, cwd]);
-}
-
-/** True when discard in this repo must confirm first and offer no undo. */
-export function discardRequiresConfirm(state: DiscardRecoverabilityState, cwd: string): boolean {
-  return state.has(cwd);
 }
 
 /**

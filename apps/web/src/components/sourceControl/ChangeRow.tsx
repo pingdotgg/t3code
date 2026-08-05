@@ -65,6 +65,7 @@ interface ChangeRowProps extends ChangeRowActions {
   readonly partial: boolean;
   /** An action on THIS file's path is in flight — every rung below disables. */
   readonly busy: boolean;
+  readonly actionsDisabled: boolean;
   /** Flat mode needs directory context; tree mode already renders it as ancestors. */
   readonly showDirectory: boolean;
   readonly indentPx: number;
@@ -152,16 +153,31 @@ function ChangeRowImpl(props: ChangeRowProps) {
           )}
         >
           {staged ? (
-            <RowAction label="Unstage" busy={props.busy} onClick={() => props.onUnstage(row)}>
+            <RowAction
+              label="Unstage"
+              busy={props.busy}
+              disabled={props.actionsDisabled}
+              onClick={() => props.onUnstage(row)}
+            >
               <Minus />
             </RowAction>
           ) : (
-            <RowAction label="Stage" busy={props.busy} onClick={() => props.onStage(row)}>
+            <RowAction
+              label="Stage"
+              busy={props.busy}
+              disabled={props.actionsDisabled}
+              onClick={() => props.onStage(row)}
+            >
               <Plus />
             </RowAction>
           )}
           {!staged && !conflicted ? (
-            <RowAction label="Discard" busy={props.busy} onClick={() => props.onDiscard(row)}>
+            <RowAction
+              label="Discard"
+              busy={props.busy}
+              disabled={props.actionsDisabled}
+              onClick={() => props.onDiscard(row)}
+            >
               <Undo2 />
             </RowAction>
           ) : null}
@@ -189,13 +205,25 @@ function ChangeRowImpl(props: ChangeRowProps) {
           className="flex items-center gap-1 pr-3"
         >
           {/* fork: f4 F-06 — conflict rungs disable while this path resolves. */}
-          <ConflictAction busy={props.busy} onClick={() => props.onResolve(row, "ours")}>
+          <ConflictAction
+            busy={props.busy}
+            disabled={props.actionsDisabled}
+            onClick={() => props.onResolve(row, "ours")}
+          >
             Accept current
           </ConflictAction>
-          <ConflictAction busy={props.busy} onClick={() => props.onResolve(row, "theirs")}>
+          <ConflictAction
+            busy={props.busy}
+            disabled={props.actionsDisabled}
+            onClick={() => props.onResolve(row, "theirs")}
+          >
             Accept incoming
           </ConflictAction>
-          <ConflictAction busy={props.busy} onClick={() => props.onResolve(row)}>
+          <ConflictAction
+            busy={props.busy}
+            disabled={props.actionsDisabled}
+            onClick={() => props.onResolve(row)}
+          >
             Mark resolved
           </ConflictAction>
         </div>
@@ -207,6 +235,7 @@ function ChangeRowImpl(props: ChangeRowProps) {
 function RowAction(props: {
   label: string;
   busy: boolean;
+  disabled: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -226,7 +255,7 @@ function RowAction(props: {
             // fork: f4 F-06 — while this path's action is in flight the button
             // is disabled and spinning, instead of staying live and silently
             // discarding the second press.
-            disabled={props.busy}
+            disabled={props.busy || props.disabled}
             onClick={(event) => {
               event.stopPropagation();
               props.onClick();
@@ -241,13 +270,18 @@ function RowAction(props: {
   );
 }
 
-function ConflictAction(props: { busy: boolean; onClick: () => void; children: React.ReactNode }) {
+function ConflictAction(props: {
+  busy: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <Button
       size="xs"
       variant="outline"
       tabIndex={-1}
-      disabled={props.busy}
+      disabled={props.busy || props.disabled}
       onClick={(event) => {
         event.stopPropagation();
         props.onClick();

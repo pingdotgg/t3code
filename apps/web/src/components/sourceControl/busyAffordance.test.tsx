@@ -190,6 +190,7 @@ describe("SourceControlStatusBand busy affordance (F-06/F-11)", () => {
 function renderChangeRow(
   over: {
     busy?: boolean;
+    actionsDisabled?: boolean;
     group?: "unstaged" | "staged" | "conflicted";
     showDirectory?: boolean;
   } = {},
@@ -208,6 +209,7 @@ function renderChangeRow(
       focused={false}
       partial={false}
       busy={over.busy ?? false}
+      actionsDisabled={over.actionsDisabled ?? false}
       showDirectory={over.showDirectory ?? true}
       indentPx={12}
       onSelect={noop}
@@ -226,6 +228,12 @@ describe("ChangeRow busy affordance (F-06)", () => {
     expect(markup).toContain('aria-label="Stage"');
     expect(markup).toContain('aria-label="Discard"');
     expect(disabledCount(markup)).toBe(0);
+  });
+
+  it("disables file mutations during a repository-wide operation without fake row spinners", () => {
+    const markup = renderChangeRow({ actionsDisabled: true });
+    expect(disabledCount(markup)).toBe(2);
+    expect(markup).not.toContain("animate-spin");
   });
 
   it("disables BOTH row rungs while that path's action is in flight", () => {

@@ -4,17 +4,15 @@
  * The undo ladder's rule is that friction should be proportional to how hard
  * something is to undo, and that making an action undoable always beats making
  * it harder to do. `git stash push -- <paths>` both reverts the paths and
- * keeps them, so discard needs no confirmation dialog at all — just an undo
- * toast wired to `restoreDiscardBackup`.
+ * keeps them, so a confirmed discard can still offer an undo toast wired to
+ * `restoreDiscardBackup`.
  *
  * Pathspec stash needs git >= 2.13. On an older git (or an unborn repository,
  * where there is nothing to stash against) no backup is possible — and that is
  * answered BEFORE anything is destroyed: the call returns
  * `requiresConfirmation` and touches nothing unless the input already carries
- * `confirmedDestructive: true`. That is what makes the ladder's "discard on old
- * git → confirm, no undo offered" rung reachable on the first discard instead
- * of only after one has already been lost. Observing `recoverable: false` also
- * permanently flips that repo onto the confirm-first ladder client-side.
+ * `confirmedDestructive: true`. Current clients confirm every discard before
+ * sending that flag; the refusal remains load-bearing for older clients.
  */
 import * as Effect from "effect/Effect";
 

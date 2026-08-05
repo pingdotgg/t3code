@@ -24,6 +24,8 @@ function renderHeader(over: Partial<Parameters<typeof SourceControlHeader>[0]> =
     activeSection: "changes",
     searchActive: false,
     syncBusy: false,
+    pendingSyncKind: null,
+    actionsBusy: false,
     dirtyCount: 3,
     undoBusy: false,
     discardAllBusy: false,
@@ -61,6 +63,19 @@ describe("SourceControlHeader", () => {
     expect(markup.match(/lucide-refresh-cw/g)).toHaveLength(1);
     expect(markup).not.toContain('<span class="max-w-14 truncate">Refresh</span>');
   });
+
+  it("shows and disables the complete pending push state", () => {
+    const markup = renderHeader({
+      syncBusy: true,
+      pendingSyncKind: "push",
+      actionsBusy: true,
+    });
+
+    expect(markup).toContain("Pushing…");
+    expect(markup).toContain("animate-spin");
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain('aria-label="More source control actions" disabled=""');
+  });
 });
 
 describe("CommitComposer", () => {
@@ -91,5 +106,33 @@ describe("CommitComposer", () => {
     expect(markup.indexOf('aria-label="Commit message"')).toBeLessThan(
       markup.indexOf(">Commit</button>"),
     );
+  });
+
+  it("keeps the commit button disabled and visibly pending across multi-step work", () => {
+    const markup = renderToStaticMarkup(
+      <CommitComposer
+        message="feat: compact source control"
+        onMessageChange={noop}
+        amend={false}
+        onAmendChange={noop}
+        lastCommitMessage={null}
+        stagedCount={0}
+        dirtyCount={2}
+        ahead={0}
+        operationInProgress={false}
+        busy
+        pendingLabel="Committing all…"
+        primaryVariant="default"
+        onCommit={noop}
+        onAmend={noop}
+        onPush={noop}
+        onCommitAndPush={noop}
+      />,
+    );
+
+    expect(markup).toContain("Committing all…");
+    expect(markup).toContain("animate-spin");
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toMatch(/<textarea[^>]*disabled=""[^>]*aria-label="Commit message"/);
   });
 });

@@ -89,7 +89,7 @@ import { ChangesList } from "./ChangesList";
 import { CommitComposer } from "./CommitComposer";
 import { HistoryList } from "./HistoryList";
 import { SourceControlConfirmDialog } from "./SourceControlConfirmDialog";
-import { SourceControlHeader } from "./SourceControlHeader";
+import { SourceControlHeader, type SourceControlSyncKind } from "./SourceControlHeader";
 import { SourceControlStatusBand } from "./SourceControlStatusBand";
 import { SourceControlViewMenu } from "./SourceControlViewMenu";
 import { StashesPanel } from "./StashesSection";
@@ -240,22 +240,28 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   // TTL, not a `git fetch`. It gets its own pending flag so the press is at
   // least visibly acknowledged; the label is corrected in `syncState`.
   const [refreshingRemote, setRefreshingRemote] = useState(false);
+  const [pendingSyncKind, setPendingSyncKind] = useState<SourceControlSyncKind | null>(null);
+  const syncInFlightRef = useRef(false);
 
   const handleSync = useCallback(
-    (kind: "publish" | "push" | "pull" | "sync" | "fetch") => {
-      if (props.cwd === null) return;
-      switch (kind) {
-        case "pull":
-          // fork: f4 F-01 — the result used to be dropped on the floor, so a
-          // rejected pull produced no toast, no banner and no console line.
-          void (async () => {
+    async (kind: SourceControlSyncKind): Promise<boolean> => {
+      if (props.cwd === null || syncInFlightRef.current) return false;
+      syncInFlightRef.current = true;
+      setPendingSyncKind(kind);
+      try {
+        switch (kind) {
+          case "pull": {
+            // fork: f4 F-01 — the result used to be dropped on the floor, so a
+            // rejected pull produced no toast, no banner and no console line.
             const pulled = await pull.run();
-            if (pulled._tag === "Failure") reportSourceControlFailure("Could not pull", pulled);
-          })();
-          return;
-        case "push":
-        case "publish":
-          void (async () => {
+            if (pulled._tag === "Failure") {
+              reportSourceControlFailure("Could not pull", pulled);
+              return false;
+            }
+            return true;
+          }
+          case "push":
+          case "publish": {
             const pushed = await stacked.run({
               actionId: `source-control-${kind}`,
               action: "push",
@@ -265,13 +271,13 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 kind === "publish" ? "Could not publish the branch" : "Could not push",
                 pushed,
               );
+              return false;
             }
-          })();
-          return;
-        case "sync":
-          // Pull first, and push only if the pull landed — pushing over a
-          // behind branch is what produces the "rejected, fetch first" wall.
-          void (async () => {
+            return true;
+          }
+          case "sync": {
+            // Pull first, and push only if the pull landed — pushing over a
+            // behind branch is what produces the "rejected, fetch first" wall.
             const pulled = await pull.run();
             if (pulled._tag === "Failure") {
               // Saying only "could not pull" here would leave the user waiting
@@ -280,17 +286,17 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 "Sync stopped — the pull failed, so nothing was pushed",
                 pulled,
               );
-              return;
+              return false;
             }
             const pushed = await stacked.run({ actionId: "source-control-sync", action: "push" });
             if (pushed._tag === "Failure") {
               reportSourceControlFailure("Sync pulled, but the push failed", pushed);
+              return false;
             }
-          })();
-          return;
-        case "fetch":
-          setRefreshingRemote(true);
-          void (async () => {
+            return true;
+          }
+          case "fetch": {
+            setRefreshingRemote(true);
             try {
               const refreshed = await refreshVcsStatus({
                 environmentId: props.environmentId,
@@ -298,13 +304,18 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
               });
               if (refreshed._tag === "Failure") {
                 reportSourceControlFailure("Could not refresh from the remote", refreshed);
+                return false;
               }
               status.refresh();
+              return true;
             } finally {
               setRefreshingRemote(false);
             }
-          })();
-          return;
+          }
+        }
+      } finally {
+        syncInFlightRef.current = false;
+        setPendingSyncKind(null);
       }
     },
     [props.cwd, props.environmentId, pull, refreshVcsStatus, stacked, status],
@@ -406,6 +417,26 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   }, [actions, amend, commitDraft, confirm, props.cwd, setCommitDraft]);
 
   const [stashDialogOpen, setStashDialogOpen] = useState(false);
+  const [pendingComposerLabel, setPendingComposerLabel] = useState<string | null>(null);
+  const composerInFlightRef = useRef(false);
+
+  const runComposerOperation = useCallback(
+    async (
+      initialLabel: string,
+      operation: (setLabel: (label: string) => void) => Promise<void>,
+    ) => {
+      if (composerInFlightRef.current) return;
+      composerInFlightRef.current = true;
+      setPendingComposerLabel(initialLabel);
+      try {
+        await operation(setPendingComposerLabel);
+      } finally {
+        composerInFlightRef.current = false;
+        setPendingComposerLabel(null);
+      }
+    },
+    [],
+  );
 
   // fork: f4 — per-row spinners were plumbed all the way into `ChangeRow` but
   // fed a module-level empty set, so a slow stage showed no row feedback at all.
@@ -427,6 +458,28 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     commitEnabled: commitDraft.trim().length > 0 && (dirtyCount > 0 || amend),
     syncEmphasis: (status.status?.ahead ?? 0) > 0 || (status.status?.behind ?? 0) > 0,
   });
+  const syncBusy =
+    pendingSyncKind !== null || stacked.isPending || pull.isPending || refreshingRemote;
+  // Generation deliberately stays concurrent with editing/staging: the model
+  // call does not hold the repository lock, and draft reconciliation already
+  // drops a stale result if the user types while it is running.
+  const localMutationBusy = [...actions.busy].some(
+    (key) => key !== GENERATE_COMMIT_MESSAGE_BUSY_KEY,
+  );
+  const actionsBusy = localMutationBusy || syncBusy || pendingComposerLabel !== null;
+  const visibleComposerPendingLabel =
+    pendingComposerLabel ??
+    (pendingSyncKind === null
+      ? null
+      : pendingSyncKind === "push"
+        ? "Pushing…"
+        : pendingSyncKind === "publish"
+          ? "Publishing…"
+          : pendingSyncKind === "pull"
+            ? "Pulling…"
+            : pendingSyncKind === "sync"
+              ? "Syncing…"
+              : "Refreshing…");
 
   const filterActive = onChanges
     ? pathQuery.trim().length > 0 || prefs.filter !== "all"
@@ -482,7 +535,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       repoLabel={props.repoLabel}
       activeSection={prefs.activeSection}
       searchActive={showFilterRow}
-      syncBusy={stacked.isPending || pull.isPending || refreshingRemote}
+      syncBusy={syncBusy}
+      pendingSyncKind={pendingSyncKind}
+      actionsBusy={actionsBusy}
       dirtyCount={dirtyCount}
       undoBusy={actions.isBusy(workingCopyBusyKey.undoCommit())}
       discardAllBusy={actions.isBusy(workingCopyBusyKey.discardAll())}
@@ -502,7 +557,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         setFilterOpen(false);
       }}
       onToggleSearch={handleToggleFilter}
-      onSync={handleSync}
+      onSync={(kind) => void handleSync(kind)}
       onRefresh={status.refresh}
       onUndoLastCommit={() => void actions.undoLastCommit()}
       onDiscardAll={() => void actions.discard(null)}
@@ -522,28 +577,41 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       dirtyCount={dirtyCount}
       ahead={status.status?.ahead ?? 0}
       operationInProgress={operation !== null}
-      busy={actions.busy.has("commit")}
+      busy={actionsBusy}
+      pendingLabel={visibleComposerPendingLabel}
       primaryVariant={
         sourceControlPrimaryVariant(primarySlot, "commit") === "default" ? "default" : "secondary"
       }
-      onCommit={(options) => void handleCommit(options)}
+      onCommit={(options) =>
+        void runComposerOperation(
+          options.stageAllFirst ? "Committing all…" : "Committing…",
+          async () => {
+            await handleCommit(options);
+          },
+        )
+      }
       onAmend={() => {
-        void (async () => {
+        void runComposerOperation("Amending…", async () => {
           const ok = await actions.amend(commitDraft);
-          if (ok && props.cwd !== null) {
-            clearCommitDraft(props.cwd);
-            setAmend(false);
-          }
-        })();
+          if (!ok || props.cwd === null) return;
+          clearCommitDraft(props.cwd);
+          setAmend(false);
+        });
       }}
       onGenerateMessage={handleGenerateMessage}
       generating={actions.busy.has(GENERATE_COMMIT_MESSAGE_BUSY_KEY)}
       textGenerationConfigured={textGenerationConfigured}
-      onPush={() => handleSync("push")}
+      onPush={() =>
+        void runComposerOperation("Pushing…", async () => {
+          await handleSync("push");
+        })
+      }
       onCommitAndPush={(options) => {
-        void (async () => {
-          if (await handleCommit(options)) handleSync("push");
-        })();
+        void runComposerOperation("Committing…", async (setLabel) => {
+          if (!(await handleCommit(options))) return;
+          setLabel("Pushing…");
+          await handleSync("push");
+        });
       }}
     />
   ) : null;
@@ -693,7 +761,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           // copy, not of the tab you happen to be looking at.
           operation={operation}
           conflictCount={conflictedCount}
-          busy={actions.busy.size > 0}
+          busy={actionsBusy}
           abortBusy={actions.isBusy(workingCopyBusyKey.abort())}
           hasMessage={commitDraft.trim().length > 0}
           primaryVariant={
@@ -705,7 +773,11 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           // "Commit merge" is a plain commit of what git already staged while
           // resolving; it must never re-stage, or a deliberately unstaged
           // resolution would be swept in.
-          onContinue={() => void handleCommit({ stageAllFirst: false })}
+          onContinue={() =>
+            void runComposerOperation("Committing merge…", async () => {
+              await handleCommit({ stageAllFirst: false });
+            })
+          }
         />
 
         {/* ── E ── the list gets all remaining height ────────────────────── */}
@@ -718,6 +790,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             collapsedGroups={prefs.collapsedGroups}
             collapsedFolders={prefs.collapsedFolders}
             busyPaths={busyPaths}
+            actionsDisabled={actionsBusy}
             onToggleGroup={(group) => toggleCollapsedGroup(props.scopeKey, group)}
             onToggleFolder={(folderKey) => toggleCollapsedFolder(props.scopeKey, folderKey)}
             onSetCollapsedFolders={(keys) => setCollapsedFolders(props.scopeKey, keys)}

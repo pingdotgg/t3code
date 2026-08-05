@@ -63,6 +63,8 @@ export interface CommitComposerProps {
   readonly ahead: number;
   readonly operationInProgress: boolean;
   readonly busy: boolean;
+  /** Visible operation spanning multi-step flows such as stage-all → commit → push. */
+  readonly pendingLabel?: string | null | undefined;
   /**
    * fork: f4 redesign — `default` only when this composer owns the panel's one
    * primary slot; `secondary` otherwise. Decided by `sourceControlPrimarySlot`
@@ -202,6 +204,7 @@ export function CommitComposer(props: CommitComposerProps) {
           value={props.message}
           onChange={(event) => props.onMessageChange(event.target.value)}
           onKeyDown={handleKeyDown}
+          disabled={props.busy}
           rows={2}
           placeholder={props.amend ? "Amend the last commit…" : "Message (Ctrl+Enter to commit)"}
           aria-label="Commit message"
@@ -243,6 +246,7 @@ export function CommitComposer(props: CommitComposerProps) {
         <label className="flex cursor-pointer select-none items-center gap-1.5 text-muted-foreground text-xs">
           <Checkbox
             checked={props.amend}
+            disabled={props.busy}
             onCheckedChange={(checked) => props.onAmendChange(checked === true)}
             aria-label="Amend the last commit"
           />
@@ -289,10 +293,18 @@ export function CommitComposer(props: CommitComposerProps) {
           size="sm"
           variant={props.primaryVariant}
           disabled={!enabled}
+          aria-busy={props.pendingLabel !== null && props.pendingLabel !== undefined}
           onClick={runPrimary}
           className="min-w-0 flex-1 justify-center rounded-e-none"
         >
-          {commitPrimaryActionLabel(action, props.ahead)}
+          {props.pendingLabel ? (
+            <>
+              <Loader2 className="animate-spin" />
+              {props.pendingLabel}
+            </>
+          ) : (
+            commitPrimaryActionLabel(action, props.ahead)
+          )}
         </Button>
         <Menu>
           <MenuTrigger
