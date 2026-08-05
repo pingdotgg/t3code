@@ -4,13 +4,14 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
+  type PreviewAnnotationPayload,
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -19,7 +20,6 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -29,7 +29,6 @@ import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
-import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
 import {
@@ -60,6 +59,10 @@ interface Props {
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  onSendAnnotation?: (
+    annotation: PreviewAnnotationPayload,
+    image: ComposerImageAttachment | null,
+  ) => void;
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
@@ -68,7 +71,13 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * Single-tab preview surface: chrome row on top, one webview below, empty
  * state when no session exists for the thread.
  */
-export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
+export function PreviewView({
+  threadRef,
+  tabId: requestedTabId,
+  configuredUrls,
+  visible,
+  onSendAnnotation,
+}: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
@@ -80,8 +89,6 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
-  const environment = useEnvironment(threadRef.environmentId);
-  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
@@ -116,14 +123,6 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
-  const displayUrl =
-    url && environment && environmentHttpBaseUrl
-      ? (formatPreviewUrl({
-          url,
-          environmentLabel: environment.label,
-          environmentHttpBaseUrl,
-        }) ?? undefined)
-      : undefined;
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
@@ -523,20 +522,34 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     setPickActive(true);
     void (async () => {
       try {
-        const annotation = await previewBridge.pickElement(runtimeTabId);
-        if (!annotation) return;
+        const result = await previewBridge.pickElement(runtimeTabId);
+        if (!result) return;
+        const { annotation, submission } = result;
         addPreviewAnnotation(threadRef, annotation);
-        const screenshotFile = await previewAnnotationScreenshotFile(annotation);
-        if (screenshotFile && annotation.screenshot) {
-          addImage(threadRef, {
-            type: "image",
-            id: annotation.id,
-            name: screenshotFile.name,
-            mimeType: screenshotFile.type,
-            sizeBytes: screenshotFile.size,
-            previewUrl: annotation.screenshot.dataUrl,
-            file: screenshotFile,
-          });
+        let screenshotFile: File | null = null;
+        try {
+          screenshotFile = await previewAnnotationScreenshotFile(annotation);
+        } catch {
+          // The structured annotation is still sendable when converting its
+          // optional screenshot into a composer attachment fails.
+        }
+        const image =
+          screenshotFile && annotation.screenshot
+            ? ({
+                type: "image",
+                id: annotation.id,
+                name: screenshotFile.name,
+                mimeType: screenshotFile.type,
+                sizeBytes: screenshotFile.size,
+                previewUrl: annotation.screenshot.dataUrl,
+                file: screenshotFile,
+              } satisfies ComposerImageAttachment)
+            : null;
+        if (image) {
+          addImage(threadRef, image);
+        }
+        if (submission === "send") {
+          onSendAnnotation?.(annotation, image);
         }
       } catch {
         // Picker failed (e.g. webview navigated). Treat as silent cancel.
@@ -561,7 +574,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         }
       }
     })();
-  }, [addImage, addPreviewAnnotation, runtimeTabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle
@@ -611,7 +624,6 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     >
       <PreviewChromeRow
         url={url}
-        displayUrl={displayUrl}
         loading={loading}
         loadProgress={loadProgress}
         canGoBack={canGoBack}

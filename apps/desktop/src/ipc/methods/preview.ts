@@ -16,7 +16,7 @@ import {
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
-  PreviewAnnotationPayloadSchema,
+  PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -227,7 +227,7 @@ export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
 export const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: Schema.NullOr(PreviewAnnotationPayloadSchema),
+  result: Schema.NullOr(PreviewAnnotationSubmissionResultSchema),
   handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* manager.pickElement(tabId);

@@ -11,8 +11,10 @@ import type {
   PreviewAnnotationRegionTarget,
   PreviewAnnotationStrokeTarget,
   PreviewAnnotationStyleChange,
+  PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -426,7 +428,7 @@ function startAnnotation(): void {
     "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
   composerRow.appendChild(dragHandle);
 
-  const submit = createButton("Attach", "Attach annotation and screenshot");
+  const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -1182,7 +1184,7 @@ function startAnnotation(): void {
     refreshToolButtons();
   };
 
-  submit.addEventListener("click", () => {
+  const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
@@ -1223,13 +1225,18 @@ function startAnnotation(): void {
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
       ]);
-      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect);
+      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
     });
-  });
-  comment.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+  };
+  submit.addEventListener("click", () => submitAnnotation("attach"));
+  root.addEventListener("keydown", (event) => {
+    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    // Keep this in the bubble phase so editor inputs receive the event before
+    // it is isolated from listeners installed by the inspected page.
+    event.stopImmediatePropagation();
+    if (!submission) return;
     event.preventDefault();
-    submit.click();
+    submitAnnotation(submission);
   });
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
