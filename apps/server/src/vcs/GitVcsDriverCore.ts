@@ -21,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
   type VcsRef,
@@ -46,6 +47,7 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
+const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
@@ -61,6 +63,8 @@ const LIST_REFS_SNAPSHOT_CACHE_CAPACITY = 64;
 const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
+const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
+const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -1119,6 +1123,63 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
 
+  const defaultBranchCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* executeGit(
+          "GitVcsDriver.statusDetails.defaultBranch",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "symbolic-ref", "refs/remotes/origin/HEAD"],
+          { allowNonZeroExit: true },
+        ).pipe(
+          Effect.map((result) => {
+            if (result.exitCode !== 0) return null;
+            return parseDefaultBranchFromRemoteHeadRef(result.stdout, "origin");
+          }),
+        );
+      }),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        onSuccess: () => STATUS_DEFAULT_BRANCH_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const originExistsCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* executeGit(
+          "GitVcsDriver.statusDetails.originExists",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "remote", "get-url", "origin"],
+          { allowNonZeroExit: true },
+        ).pipe(Effect.map((result) => result.exitCode === 0));
+      }),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        onSuccess: () => STATUS_ORIGIN_EXISTS_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const invalidateStatusStaticCaches = (cwd: string) =>
+    Effect.gen(function* () {
+      const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
+        Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+      );
+      const cacheKey = repositoryPaths?.gitCommonDir ?? normalizeRepositoryPathsCacheKey(cwd);
+      yield* Cache.invalidate(defaultBranchCache, cacheKey);
+      yield* Cache.invalidate(originExistsCache, cacheKey);
+    });
+
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const repositoryPaths = yield* resolveRepositoryPaths(cwd);
     if (repositoryPaths !== null) {
@@ -1517,7 +1578,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    const [numstatStdout, defaultRefResult, hasPrimaryRemote] = yield* Effect.all(
+    const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
+      Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+    );
+    const statusCacheKey = repositoryPaths?.gitCommonDir;
+    const [numstatStdout, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
       [
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
@@ -1574,21 +1639,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             );
           }),
         ),
-        executeGit(
-          "GitVcsDriver.statusDetails.defaultRef",
-          cwd,
-          ["symbolic-ref", "refs/remotes/origin/HEAD"],
-          { allowNonZeroExit: true },
-        ),
-        originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
+        statusCacheKey
+          ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
+          : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
+        statusCacheKey
+          ? Cache.get(originExistsCache, statusCacheKey).pipe(Effect.orElseSucceed(() => false))
+          : originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
       ],
       { concurrency: "unbounded" },
     );
     const statusStdout = statusResult.stdout;
-    const defaultBranch =
-      defaultRefResult.exitCode === 0
-        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
-        : null;
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
@@ -2212,6 +2272,163 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const reviewDiffFileError = (
+    input: ReviewDiffFileContentsInput,
+    detail: string,
+    cause?: unknown,
+  ) =>
+    new GitCommandError({
+      operation: "GitVcsDriver.getReviewDiffFileContents",
+      command: "git",
+      cwd: input.cwd,
+      detail,
+      ...(cause === undefined ? {} : { cause }),
+    });
+
+  const isPathWithinRoot = (root: string, candidate: string) => {
+    const relative = path.relative(root, candidate);
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
+  };
+
+  const readReviewFileAtRevision = Effect.fn("readReviewFileAtRevision")(function* (
+    input: ReviewDiffFileContentsInput,
+    revision: string,
+    relativePath: string,
+  ) {
+    const result = yield* executeGit(
+      "GitVcsDriver.getReviewDiffFileContents.revision",
+      input.cwd,
+      ["show", `${revision}:${relativePath}`],
+      { maxOutputBytes: REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES },
+    );
+    if (result.stdout.includes("\0")) {
+      return yield* reviewDiffFileError(input, `Cannot expand binary file '${relativePath}'.`);
+    }
+    return result.stdout;
+  });
+
+  const readWorkingTreeReviewFile = Effect.fn("readWorkingTreeReviewFile")(function* (
+    input: ReviewDiffFileContentsInput,
+    repositoryRoot: string,
+  ) {
+    const fileError = (stage: string, detail: string, cause?: unknown) =>
+      new GitCommandError({
+        operation: `GitVcsDriver.getReviewDiffFileContents.workingTree.${stage}`,
+        command: stage,
+        cwd: input.cwd,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const requestedPath = path.resolve(repositoryRoot, input.newPath);
+    if (!isPathWithinRoot(repositoryRoot, requestedPath)) {
+      return yield* fileError(
+        "path.resolve",
+        `Diff file '${input.newPath}' resolves outside the review workspace.`,
+      );
+    }
+
+    const [realRepositoryRoot, realTarget] = yield* Effect.all([
+      fileSystem.realPath(repositoryRoot),
+      fileSystem.realPath(requestedPath),
+    ]).pipe(
+      Effect.mapError((cause) =>
+        fileError("fs.realPath", `Could not resolve diff file '${input.newPath}'.`, cause),
+      ),
+    );
+    if (!isPathWithinRoot(realRepositoryRoot, realTarget)) {
+      return yield* fileError(
+        "fs.realPath",
+        `Diff file '${input.newPath}' resolves outside the review workspace.`,
+      );
+    }
+
+    const info = yield* fileSystem
+      .stat(realTarget)
+      .pipe(
+        Effect.mapError((cause) =>
+          fileError("fs.stat", `Could not inspect diff file '${input.newPath}'.`, cause),
+        ),
+      );
+    if (info.type !== "File") {
+      return yield* fileError("fs.stat", `Diff path '${input.newPath}' is not a file.`);
+    }
+    if (info.size > BigInt(REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES)) {
+      return yield* fileError(
+        "fs.stat",
+        `Diff file '${input.newPath}' exceeds the 1 MB expansion limit.`,
+      );
+    }
+
+    const bytes = yield* fileSystem
+      .readFile(realTarget)
+      .pipe(
+        Effect.mapError((cause) =>
+          fileError("fs.readFile", `Could not read diff file '${input.newPath}'.`, cause),
+        ),
+      );
+    if (bytes.includes(0)) {
+      return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
+    }
+    return new TextDecoder("utf-8").decode(bytes);
+  });
+
+  const getReviewDiffFileContents = Effect.fn("getReviewDiffFileContents")(function* (
+    input: ReviewDiffFileContentsInput,
+  ) {
+    if (input.sourceKind === "working-tree") {
+      const repositoryRoot = yield* runGitStdout(
+        "GitVcsDriver.getReviewDiffFileContents.repositoryRoot",
+        input.cwd,
+        ["rev-parse", "--show-toplevel"],
+      ).pipe(Effect.map((value) => value.trim()));
+      if (repositoryRoot.length === 0) {
+        return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
+      }
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, input.baseRef ?? "HEAD", input.oldPath),
+          input.changeType === "deleted"
+            ? Effect.succeed("")
+            : readWorkingTreeReviewFile(input, repositoryRoot),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
+    }
+
+    if (!input.baseRef || !input.headRef) {
+      return yield* reviewDiffFileError(
+        input,
+        "Branch diff file expansion requires both base and head refs.",
+      );
+    }
+    const mergeBase = yield* runGitStdout(
+      "GitVcsDriver.getReviewDiffFileContents.mergeBase",
+      input.cwd,
+      ["merge-base", input.baseRef, input.headRef],
+    ).pipe(Effect.map((value) => value.trim()));
+    if (mergeBase.length === 0) {
+      return yield* reviewDiffFileError(input, "Could not resolve the branch comparison base.");
+    }
+    const [oldContents, newContents] = yield* Effect.all(
+      [
+        input.changeType === "new"
+          ? Effect.succeed("")
+          : readReviewFileAtRevision(input, mergeBase, input.oldPath),
+        input.changeType === "deleted"
+          ? Effect.succeed("")
+          : readReviewFileAtRevision(input, input.headRef, input.newPath),
+      ],
+      { concurrency: 2 },
+    );
+    return { oldContents, newContents };
+  });
+
   const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (cwd, key) =>
     runGitStdout("GitVcsDriver.readConfigValue", cwd, ["config", "--get", key], true).pipe(
       Effect.map((stdout) => stdout.trim()),
@@ -2809,7 +3026,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> =>
-    effect.pipe(Effect.ensuring(invalidateListRefsSnapshot(cwd).pipe(Effect.ignore)));
+    effect.pipe(
+      Effect.ensuring(
+        Effect.all([
+          invalidateListRefsSnapshot(cwd).pipe(Effect.ignore),
+          invalidateStatusStaticCaches(cwd).pipe(Effect.ignore),
+        ]),
+      ),
+    );
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>
@@ -2838,6 +3062,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
     readRangeContext,
     getReviewDiffPreview,
+    getReviewDiffFileContents,
     readConfigValue,
     listRefs,
     createWorktree: (input) => withListRefsInvalidation(input.cwd, createWorktree(input)),

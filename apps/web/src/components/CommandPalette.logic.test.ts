@@ -6,8 +6,80 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("reduceCommandPaletteUiState", () => {
+  const closedState = { open: false, mode: "command", openIntent: null } as const;
+
+  it("toggles each overlay mode open and closed", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, {
+      _tag: "ToggleMode",
+      mode: "files",
+    });
+    expect(filesOpen).toEqual({ open: true, mode: "files", openIntent: null });
+
+    const contentOpen = reduceCommandPaletteUiState(filesOpen, {
+      _tag: "ToggleMode",
+      mode: "content",
+    });
+    expect(contentOpen).toEqual({ open: true, mode: "content", openIntent: null });
+
+    expect(
+      reduceCommandPaletteUiState(contentOpen, { _tag: "ToggleMode", mode: "content" }),
+    ).toEqual({ open: false, mode: "command", openIntent: null });
+  });
+
+  it("switches between open modes without closing", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, {
+      _tag: "ToggleMode",
+      mode: "files",
+    });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "ToggleMode", mode: "command" })).toEqual(
+      {
+        open: true,
+        mode: "command",
+        openIntent: null,
+      },
+    );
+  });
+
+  it("routes open intents to command mode", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, {
+      _tag: "ToggleMode",
+      mode: "files",
+    });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenAddProject" })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "add-project" },
+    });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewThreadIn" })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "new-thread-in" },
+    });
+  });
+
+  it("resets to command mode for dialog-driven opens and closes", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, {
+      _tag: "ToggleMode",
+      mode: "files",
+    });
+
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "SetOpen", open: false })).toEqual({
+      open: false,
+      mode: "command",
+      openIntent: null,
+    });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "SetOpen", open: true })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: null,
+    });
+  });
+});
 
 describe("enumerateCommandPaletteItems", () => {
   it("assigns positional jump shortcuts to the first nine displayed items", () => {
@@ -167,6 +239,29 @@ describe("buildThreadActionItems", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0]?.items.map((item) => item.value)).toEqual(["thread:project-context-only"]);
+  });
+
+  it("keeps message excerpts searchable without replacing thread metadata", () => {
+    const [item] = buildThreadActionItems({
+      threads: [makeThread({ branch: "feat/search" })],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      getContentMatch: () => ({
+        source: "assistant",
+        snippet: "The relay reconnect is now bounded.",
+        query: "reconnect",
+      }),
+      runThread: async (_thread) => undefined,
+    });
+
+    expect(item?.searchTerms).toContain("The relay reconnect is now bounded.");
+    expect(item?.threadContentMatch).toEqual({
+      source: "assistant",
+      snippet: "The relay reconnect is now bounded.",
+      query: "reconnect",
+    });
+    expect(item?.description).toBe("T3 Code · #feat/search");
   });
 
   it("filters archived threads out of thread search items", () => {

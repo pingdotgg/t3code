@@ -57,6 +57,15 @@ Done.`),
     expect(() => decodeLenientJson('{ "enabled": true,, }')).toThrow();
   });
 
+  it("preserves commas before brackets inside string values", () => {
+    // A comma inside a string value that happens to precede `}`/`]` must not
+    // be stripped as if it were a trailing comma.
+    expect(decodeLenientJson('{"note":"a,]"}')).toEqual({ note: "a,]" });
+    expect(decodeLenientJson('{"list":["x,}"]}')).toEqual({ list: ["x,}"] });
+    // Genuine trailing commas are still removed.
+    expect(decodeLenientJson('{"values":[1, 2,],}')).toEqual({ values: [1, 2] });
+  });
+
   it("formats schema failures with paths without exposing invalid values", () => {
     const decodeCredential = decodeJsonResult(Schema.Struct({ token: Schema.Number }));
     const decoded = decodeCredential('{"token":"credential=secret-value"}');

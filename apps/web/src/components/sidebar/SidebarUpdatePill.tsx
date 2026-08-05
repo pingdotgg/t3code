@@ -14,9 +14,19 @@ import {
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
+import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+function keyReleaseNoteItems(items: ReadonlyArray<string>) {
+  const occurrences = new Map<string, number>();
+  return items.map((item) => {
+    const occurrence = occurrences.get(item) ?? 0;
+    occurrences.set(item, occurrence + 1);
+    return { item, key: JSON.stringify([item, occurrence]) };
+  });
+}
 
 function SidebarUpdateReleaseNotesTooltip({
   state,
@@ -43,8 +53,8 @@ function SidebarUpdateReleaseNotesTooltip({
                 {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
               </h3>
               <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                {releaseNote.items.map((item, itemIndex) => (
-                  <li className="list-disc break-words" key={`${releaseNote.version}-${itemIndex}`}>
+                {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
+                  <li className="list-disc break-words" key={key}>
                     {item}
                   </li>
                 ))}
@@ -80,11 +90,7 @@ export function SidebarUpdatePill() {
         .downloadUpdate()
         .then((result) => {
           if (result.completed) {
-            toastManager.add({
-              type: "success",
-              title: "Update downloaded",
-              description: "Restart the app from the update button to install it.",
-            });
+            showDesktopUpdateDownloadedToast(bridge, result.state);
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);

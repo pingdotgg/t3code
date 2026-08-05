@@ -34,7 +34,6 @@ function makeElectronAppLayer(
     setName: () => Effect.void,
     setAboutPanelOptions: () => Effect.void,
     setAppUserModelId: () => Effect.void,
-    requestSingleInstanceLock: Effect.succeed(true),
     getAppMetrics: Effect.sync(() => {
       onMetricsRead();
       return metrics;
@@ -44,6 +43,7 @@ function makeElectronAppLayer(
     setDesktopName: () => Effect.void,
     setDockIcon: () => Effect.void,
     appendCommandLineSwitch: () => Effect.void,
+    removeCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);

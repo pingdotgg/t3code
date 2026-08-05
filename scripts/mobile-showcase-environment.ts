@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -44,17 +44,27 @@ const PROJECT_SCRIPTS = JSON.stringify([
   },
 ]);
 
+const SHOWCASE_TERMINAL_PROMPT =
+  "\u001b[1;32m→\u001b[0m \u001b[1;36mt3code\u001b[0m \u001b[1;34mgit:(\u001b[1;31mfeat/remote-command-center\u001b[1;34m)\u001b[0m \u001b[1;33m✗\u001b[0m ";
+
+// A dev-server startup mirroring the web settings' terminal font preview:
+// zsh-style prompt, brand line, addresses, the thread's 612-test summary,
+// and a READY badge, so the scene exercises bold, dim, underline, the six
+// accent colors, and a background cell.
 export const SHOWCASE_TERMINAL_BUFFER = [
-  "\u001b[38;5;75m~/Code/t3code\u001b[0m \u001b[38;5;212mfeat/remote-command-center\u001b[0m",
-  "$ vp test run --changed",
+  `${SHOWCASE_TERMINAL_PROMPT}vpr dev`,
   "",
-  "  \u001b[38;5;117mt3code-mobile\u001b[0m       184 passed",
-  "  \u001b[38;5;213mclient-runtime\u001b[0m      263 passed",
-  "  \u001b[38;5;221mserver\u001b[0m              165 passed",
+  "  \u001b[1;32mVITE\u001b[0m \u001b[32mv7.1.1\u001b[0m  \u001b[2mready in\u001b[0m \u001b[1m1.24s\u001b[0m",
   "",
-  "\u001b[32m✨ 612 tests passed\u001b[0m  ·  3 environments online",
+  "  \u001b[32m→\u001b[0m  \u001b[2mLocal:\u001b[0m    \u001b[4;36mhttp://127.0.0.1:5173/\u001b[0m",
+  "  \u001b[32m→\u001b[0m  \u001b[2mNetwork:\u001b[0m  \u001b[4;36mhttp://192.168.1.24:5173/\u001b[0m",
+  "  \u001b[32m→\u001b[0m  \u001b[2mProject:\u001b[0m  \u001b[1mt3code\u001b[0m \u001b[2m— ~/Code/t3code\u001b[0m",
   "",
-  "\u001b[38;5;75m~/Code/t3code\u001b[0m \u001b[38;5;212mfeat/remote-command-center\u001b[0m $ ",
+  "  \u001b[32m✓ 612 passed\u001b[0m   \u001b[33m△ 2 warnings\u001b[0m   \u001b[31m✗ 0 failed\u001b[0m",
+  "",
+  "  \u001b[42;30m READY \u001b[0m \u001b[2mwatching for changes — press\u001b[0m \u001b[1mq\u001b[0m \u001b[2mto quit\u001b[0m",
+  "",
+  SHOWCASE_TERMINAL_PROMPT,
 ].join("\r\n");
 
 const BASE_ENVIRONMENT_PRESENCE = `export function environmentLabel(count: number): string {
@@ -387,6 +397,48 @@ function insertThread(
     .run(input.id, isWorking ? "running" : "ready", isWorking ? turnId : null, updatedAt);
 }
 
+const SEEDED_PROJECTION_TABLES = [
+  "projection_pending_approvals",
+  "projection_thread_proposed_plans",
+  "projection_thread_activities",
+  "projection_thread_messages",
+  "projection_thread_sessions",
+  "projection_turns",
+  "projection_threads",
+  "projection_projects",
+  "projection_state",
+] as const;
+
+function hasSeedableSchema(dbPath: string): boolean {
+  let database: NodeSqlite.DatabaseSync;
+  try {
+    database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+  } catch {
+    return false;
+  }
+  try {
+    const row = database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN (${SEEDED_PROJECTION_TABLES.map(() => "?").join(", ")})`,
+      )
+      .get(...SEEDED_PROJECTION_TABLES) as { count: number };
+    return row.count === SEEDED_PROJECTION_TABLES.length;
+  } catch {
+    return false;
+  } finally {
+    database.close();
+  }
+}
+
+async function waitForSeedableSchema(dbPath: string, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (hasSeedableSchema(dbPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`The environment server did not migrate ${dbPath} within ${timeoutMs}ms.`);
+}
+
 function seedDatabase(
   dbPath: string,
   workspaceRoots: ReadonlyMap<string, string>,
@@ -401,17 +453,7 @@ function seedDatabase(
   const database = new NodeSqlite.DatabaseSync(dbPath, { timeout: 30_000 });
   try {
     database.exec("BEGIN IMMEDIATE");
-    for (const table of [
-      "projection_pending_approvals",
-      "projection_thread_proposed_plans",
-      "projection_thread_activities",
-      "projection_thread_messages",
-      "projection_thread_sessions",
-      "projection_turns",
-      "projection_threads",
-      "projection_projects",
-      "projection_state",
-    ]) {
+    for (const table of SEEDED_PROJECTION_TABLES) {
       database.exec(`DELETE FROM ${table}`);
     }
     const insertProject = database.prepare(
@@ -594,6 +636,9 @@ export async function seedShowcaseEnvironment(input: {
         });
       }),
   );
+  // The environment server begins listening before it finishes migrating the
+  // database, so wait for the schema before deleting from and reseeding it.
+  await waitForSeedableSchema(dbPath);
   seedDatabase(dbPath, workspaceRoots, projects, threads, now);
 
   const terminalDirectory = NodePath.join(input.baseDir, "userdata", "logs", "terminals");
