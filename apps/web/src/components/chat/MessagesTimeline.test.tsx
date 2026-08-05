@@ -88,6 +88,11 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainVisibleContentPosition.size
             : undefined
         }
+        data-maintain-visible-content-position-restore={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
+            : undefined
+        }
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
@@ -422,6 +427,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-visible-content-position="object"');
     expect(markup).toContain('data-maintain-visible-content-position-data="true"');
     expect(markup).toContain('data-maintain-visible-content-position-size="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
   });
