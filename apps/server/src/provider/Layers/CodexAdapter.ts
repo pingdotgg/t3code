@@ -498,6 +498,16 @@ function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  if (event.method === "t3/session-resume-fallback" && event.message) {
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "runtime.warning",
+        payload: { message: event.message },
+      },
+    ];
+  }
+
   if (event.kind === "error") {
     if (!event.message) {
       return [];

@@ -426,6 +426,7 @@ describe("openCodexThread", () => {
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.equal(opened.resumeFallback, true);
       NodeAssert.deepStrictEqual(
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],

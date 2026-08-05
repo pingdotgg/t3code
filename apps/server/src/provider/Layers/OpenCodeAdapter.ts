@@ -1265,7 +1265,7 @@ export function makeOpenCodeAdapter(
                       permission: buildOpenCodePermissionRules(input.runtimeMode),
                     }),
                   );
-                  return { openCodeSession: reusable, created: false };
+                  return { openCodeSession: reusable, created: false, resumeFallback: false };
                 }
 
                 // The session lives under a different cwd (e.g. the thread
@@ -1292,14 +1292,9 @@ export function makeOpenCodeAdapter(
                       permission: buildOpenCodePermissionRules(input.runtimeMode),
                     }),
                   );
-                  return { openCodeSession: forked, created: true };
+                  return { openCodeSession: forked, created: true, resumeFallback: false };
                 }
 
-                if (resumeSessionId) {
-                  yield* Effect.logWarning(
-                    `OpenCode session '${resumeSessionId}' no longer exists; starting a fresh session.`,
-                  );
-                }
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     permission: buildOpenCodePermissionRules(input.runtimeMode),
@@ -1311,7 +1306,11 @@ export function makeOpenCodeAdapter(
                     detail: "OpenCode session.create returned no session payload.",
                   });
                 }
-                return { openCodeSession: createdSession.data, created: true };
+                return {
+                  openCodeSession: createdSession.data,
+                  created: true,
+                  resumeFallback: resumeSessionId !== undefined,
+                };
               });
 
               return {
@@ -1320,6 +1319,7 @@ export function makeOpenCodeAdapter(
                 client,
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
+                resumeFallback: resolved.resumeFallback,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1397,6 +1397,16 @@ export function makeOpenCodeAdapter(
             message: "OpenCode session started",
           },
         });
+        if (started.resumeFallback) {
+          yield* emit({
+            ...(yield* buildEventBase({ threadId: input.threadId })),
+            type: "runtime.warning",
+            payload: {
+              message:
+                "OpenCode session could not be resumed. A fresh session was started without its previous in-session context.",
+            },
+          });
+        }
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
           type: "thread.started",

@@ -409,6 +409,19 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         schemaVersion: 1,
         sessionId: "http://127.0.0.1:9999/session",
       });
+      const events = Array.from(
+        yield* Stream.runCollect(
+          adapter.streamEvents.pipe(
+            Stream.filter((event) => event.threadId === threadId),
+            Stream.takeUntil((event) => event.type === "thread.started"),
+          ),
+        ),
+      );
+      const warning = events.find((event) => event.type === "runtime.warning");
+      NodeAssert.equal(warning?.type, "runtime.warning");
+      if (warning?.type === "runtime.warning") {
+        NodeAssert.match(warning.payload.message, /fresh session/i);
+      }
 
       yield* adapter.stopSession(threadId);
     }),

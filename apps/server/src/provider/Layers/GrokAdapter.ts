@@ -890,6 +890,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             threadId: input.threadId,
             payload: { resume: started.initializeResult },
           });
+          if (started.resumeFallback) {
+            yield* offerRuntimeEvent({
+              type: "runtime.warning",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              payload: {
+                message:
+                  "Grok session could not be resumed. A fresh session was started without its previous in-session context.",
+              },
+            });
+          }
           yield* offerRuntimeEvent({
             type: "session.state.changed",
             ...(yield* makeEventStamp()),

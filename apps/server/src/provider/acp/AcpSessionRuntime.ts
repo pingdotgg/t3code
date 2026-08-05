@@ -47,6 +47,17 @@ export interface AcpSessionEventStreamBarrier {
 
 export type AcpSessionRuntimeEvent = AcpParsedSessionEvent | AcpSessionEventStreamBarrier;
 
+export function sessionLoadFailureIsRecoverable(
+  cause: Cause.Cause<EffectAcpErrors.AcpError>,
+): boolean {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return false;
+  }
+  return !cause.reasons.some(
+    (reason) => Cause.isFailReason(reason) && reason.error._tag === "AcpTransportError",
+  );
+}
+
 const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 
@@ -88,6 +99,7 @@ export interface AcpSessionRequestLogEvent {
 
 export interface AcpSessionRuntimeStartResult {
   readonly sessionId: string;
+  readonly resumeFallback: boolean;
   readonly initializeResult: EffectAcpSchema.InitializeResponse;
   readonly sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
@@ -556,6 +568,18 @@ export const make = (
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
         | EffectAcpSchema.ResumeSessionResponse;
+      let resumeFallback = false;
+      const createSession = Effect.fn("AcpSessionRuntime.createSession")(function* () {
+        const createPayload = {
+          cwd: options.cwd,
+          mcpServers: options.mcpServers ?? [],
+        } satisfies EffectAcpSchema.NewSessionRequest;
+        return yield* runLoggedRequest(
+          "session/new",
+          createPayload,
+          acp.agent.createSession(createPayload),
+        );
+      });
       if (options.resumeSessionId) {
         const loadPayload = {
           sessionId: options.resumeSessionId,
@@ -610,14 +634,6 @@ export const make = (
                 onSome: Effect.succeed,
               }),
             ),
-            Effect.tap((result) =>
-              logRequest({
-                method: "session/load",
-                payload: loadPayload,
-                status: "succeeded",
-                result,
-              }),
-            ),
             Effect.onError((cause) =>
               logRequest({
                 method: "session/load",
@@ -626,20 +642,33 @@ export const make = (
                 cause,
               }),
             ),
+            Effect.catchCause((cause) =>
+              sessionLoadFailureIsRecoverable(cause)
+                ? Effect.gen(function* () {
+                    yield* Effect.logWarning("ACP session load failed; starting a fresh session", {
+                      sessionId: options.resumeSessionId,
+                      cause,
+                    });
+                    const created = yield* createSession();
+                    sessionId = created.sessionId;
+                    resumeFallback = true;
+                    return created;
+                  })
+                : Effect.failCause(cause),
+            ),
           );
+
+          yield* logRequest({
+            method: "session/load",
+            payload: loadPayload,
+            status: "succeeded",
+            result: loaded,
+          });
 
           return loaded;
         }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
       } else {
-        const createPayload = {
-          cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
-        } satisfies EffectAcpSchema.NewSessionRequest;
-        const created = yield* runLoggedRequest(
-          "session/new",
-          createPayload,
-          acp.agent.createSession(createPayload),
-        );
+        const created = yield* createSession();
         sessionId = created.sessionId;
         sessionSetupResult = created;
       }
@@ -649,6 +678,7 @@ export const make = (
 
       const nextState = {
         sessionId,
+        resumeFallback,
         initializeResult,
         sessionSetupResult,
         modelConfigId: extractModelConfigId(sessionSetupResult),

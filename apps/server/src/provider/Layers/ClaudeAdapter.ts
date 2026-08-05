@@ -36,6 +36,7 @@ import {
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderSessionStartInput,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
@@ -72,6 +73,10 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import {
+  recoverClaudeSession,
+  type ClaudeSessionRecoveryResult,
+} from "../Drivers/ClaudeSessionRecovery.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -201,6 +206,12 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  lastPrompt: SDKUserMessage | undefined;
+  readonly startInput: ProviderSessionStartInput;
+  readonly startResumeCursor: unknown;
+  readonly sessionRecovery: ClaudeSessionRecoveryResult;
+  resumePathRetried: boolean;
+  restarting: boolean;
   stopped: boolean;
 }
 
@@ -231,6 +242,36 @@ function isUuid(value: string): boolean {
 function isSyntheticClaudeThreadId(value: string): boolean {
   return value.startsWith("claude-thread-");
 }
+
+export function isMissingResumePathError(message: string): boolean {
+  return /^Path ".+" does not exist$/.test(message.trim());
+}
+
+function restartTurnState(turnId: TurnId, startedAt: string): ClaudeTurnState {
+  return {
+    turnId,
+    startedAt,
+    items: [],
+    assistantTextBlocks: new Map(),
+    assistantTextBlockOrder: [],
+    capturedProposedPlanKeys: new Set(),
+    nextSyntheticAssistantBlockIndex: -1,
+  };
+}
+
+export function workspaceMovedNotice(cwd: string): string {
+  return [
+    "[t3code] The working directory used earlier in this session no longer exists.",
+    `This session now runs in ${cwd}.`,
+    "Paths, branches, and worktrees mentioned earlier may be stale — check the current state before relying on them.",
+  ].join(" ");
+}
+
+const SESSION_DIRECTORY_MISSING_MESSAGE =
+  "A directory from the previous session was deleted. Reopened this session in the current workspace.";
+
+const SESSION_HISTORY_LOST_MESSAGE =
+  "Previous session history is unavailable. Started a fresh session without earlier context.";
 
 function hasDurableClaudeSessionId(message: SDKMessage): boolean {
   if (message.type !== "system") {
@@ -2545,6 +2586,86 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* updateResumeCursor(context);
   });
 
+  const restartAfterMissingPath = Effect.fn("restartAfterMissingPath")(function* (
+    context: ClaudeSessionContext,
+    errorMessage: string,
+    replayTurnId: TurnId | undefined,
+  ) {
+    const abandonReplayedTurn = Effect.fn("abandonReplayedTurn")(function* (
+      failure: Cause.Cause<unknown> | undefined,
+    ) {
+      yield* emitRuntimeError(
+        context,
+        errorMessage,
+        failure !== undefined ? { cause: failure } : undefined,
+      );
+      if (replayTurnId !== undefined) {
+        context.turnState = restartTurnState(replayTurnId, yield* nowIso);
+        yield* completeTurn(context, "failed", errorMessage);
+      }
+      context.restarting = false;
+      yield* stopSessionInternal(context, { emitExitEvent: false });
+
+      const exitStamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "session.exited",
+        eventId: exitStamp.eventId,
+        provider: PROVIDER,
+        createdAt: exitStamp.createdAt,
+        threadId: context.session.threadId,
+        payload: {
+          reason: errorMessage,
+          exitKind: "error",
+        },
+        providerRefs: {},
+      });
+    });
+
+    const prompt = context.lastPrompt;
+    if (prompt === undefined || replayTurnId === undefined) {
+      yield* abandonReplayedTurn(undefined);
+      return;
+    }
+
+    yield* stopSessionInternal(context, { emitExitEvent: false });
+
+    const restarted = yield* startSession({
+      ...context.startInput,
+      resumeCursor: context.startResumeCursor,
+    }).pipe(Effect.catchCause((cause) => abandonReplayedTurn(cause).pipe(Effect.as(undefined))));
+    if (restarted === undefined) {
+      return;
+    }
+    const next = sessions.get(restarted.threadId);
+    if (next === undefined) {
+      yield* abandonReplayedTurn(undefined);
+      return;
+    }
+    next.resumePathRetried = true;
+    next.lastPrompt = prompt;
+    if (next.sessionRecovery !== "missing") {
+      yield* emitRuntimeWarning(next, SESSION_DIRECTORY_MISSING_MESSAGE);
+    }
+
+    next.turnState = restartTurnState(replayTurnId, yield* nowIso);
+    next.session = {
+      ...next.session,
+      status: "running",
+      activeTurnId: replayTurnId,
+      updatedAt: yield* nowIso,
+    };
+    const workspaceNotice = next.session.cwd;
+    if (workspaceNotice !== undefined) {
+      yield* Queue.offer(next.promptQueue, {
+        type: "message",
+        message: buildUserMessage({
+          sdkContent: [{ type: "text", text: workspaceMovedNotice(workspaceNotice) }],
+        }),
+      });
+    }
+    yield* Queue.offer(next.promptQueue, { type: "message", message: prompt });
+  });
+
   const handleResultMessage = Effect.fn("handleResultMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -2555,6 +2676,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const status = turnStatusFromResult(message);
     const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+
+    if (
+      status === "failed" &&
+      errorMessage !== undefined &&
+      isMissingResumePathError(errorMessage) &&
+      !context.resumePathRetried &&
+      context.lastPrompt !== undefined
+    ) {
+      context.resumePathRetried = true;
+      context.restarting = true;
+      const replayTurnId = context.turnState?.turnId;
+      context.turnState = undefined;
+      yield* restartAfterMissingPath(context, errorMessage, replayTurnId).pipe(Effect.forkDetach);
+      return;
+    }
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -2997,7 +3133,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     exit: Exit.Exit<void, ProviderAdapterProcessError>,
   ) {
-    if (context.stopped) {
+    if (context.stopped || context.restarting) {
       return;
     }
 
@@ -3170,7 +3306,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const startedAt = yield* nowIso;
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
-      const existingResumeSessionId = resumeState?.resume;
+      const requestedResumeSessionId = resumeState?.resume;
+      const sessionRecovery =
+        requestedResumeSessionId && input.cwd
+          ? yield* recoverClaudeSession({
+              environment: claudeEnvironment,
+              cwd: input.cwd,
+              sessionId: requestedResumeSessionId,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("claude.session.recovery.failed", { threadId, cause }).pipe(
+                  Effect.as("available" as const),
+                ),
+              ),
+            )
+          : "available";
+      const existingResumeSessionId =
+        sessionRecovery === "missing" ? undefined : requestedResumeSessionId;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 
@@ -3640,6 +3794,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        lastPrompt: undefined,
+        startInput: input,
+        startResumeCursor: session.resumeCursor,
+        sessionRecovery,
+        resumePathRetried: false,
+        restarting: false,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -3652,9 +3812,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: PROVIDER,
         createdAt: sessionStartedStamp.createdAt,
         threadId,
-        payload: input.resumeCursor !== undefined ? { resume: input.resumeCursor } : {},
+        payload: existingResumeSessionId ? { resume: input.resumeCursor } : {},
         providerRefs: {},
       });
+
+      if (sessionRecovery === "missing" && input.resumeCursor !== undefined) {
+        yield* emitRuntimeWarning(context, SESSION_HISTORY_LOST_MESSAGE);
+      }
 
       const configuredStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -3808,6 +3972,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       boundInstanceId,
     });
 
+    context.lastPrompt = message;
     yield* Queue.offer(context.promptQueue, {
       type: "message",
       message,

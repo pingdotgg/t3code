@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
@@ -502,12 +503,13 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
-  it.effect("fails session startup when session/load returns an error", () =>
+  it.effect("starts a fresh session when session/load returns an error", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      const error = yield* runtime.start().pipe(Effect.flip);
+      const started = yield* runtime.start();
 
-      expect(error._tag).toBe("AcpRequestError");
+      expect(started.sessionId).toBe("mock-session-1");
+      expect(started.resumeFallback).toBe(true);
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -522,6 +524,34 @@ describe("AcpSessionRuntime", () => {
           cwd: process.cwd(),
           resumeSessionId: "stale-session-id",
           clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("does not fall back to a fresh session when the request logger dies", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const exit = yield* Effect.exit(runtime.start());
+
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "stale-session-id",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            event.method === "session/load" && event.status === "succeeded"
+              ? Effect.die(new Error("logger exploded"))
+              : Effect.void,
         }),
       ),
       Effect.scoped,

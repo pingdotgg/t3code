@@ -37,7 +37,12 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  isMissingResumePathError,
+  workspaceMovedNotice,
+  makeClaudeAdapter,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -156,8 +161,10 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly failCreateQueryAfter?: number;
 }) {
   const query = new FakeClaudeQuery();
+  let createQueryCalls = 0;
   let createInput:
     | {
         readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -169,6 +176,13 @@ function makeHarness(config?: {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     createQuery: (input) => {
       createInput = input;
+      createQueryCalls += 1;
+      if (
+        config?.failCreateQueryAfter !== undefined &&
+        createQueryCalls > config.failCreateQueryAfter
+      ) {
+        throw new Error("mock createQuery failure");
+      }
       return query;
     },
     ...(config?.nativeEventLogger
@@ -202,6 +216,7 @@ function makeHarness(config?: {
     ),
     query,
     getLastCreateQueryInput: () => createInput,
+    getCreateQueryCalls: () => createQueryCalls,
   };
 }
 
@@ -457,6 +472,36 @@ describe("ClaudeAdapterLive", () => {
         NodePath.join(NodeOS.homedir(), ".claude-work"),
       );
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("starts fresh and warns when a persisted Claude transcript is missing", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-session-recovery-"));
+    const cwd = NodePath.join(root, "project");
+    const configDirectory = NodePath.join(root, ".claude");
+    NodeFS.mkdirSync(cwd, { recursive: true });
+    const harness = makeHarness({ cwd, claudeConfig: { homePath: configDirectory } });
+    const staleSessionId = "44444444-4444-4444-8444-444444444444";
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        cwd,
+        runtimeMode: "full-access",
+        resumeCursor: { resume: staleSessionId },
+      });
+      const events = Array.from(yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)));
+      const resumedSessionId = (session.resumeCursor as { resume?: string }).resume;
+
+      assert.isUndefined(harness.getLastCreateQueryInput()?.options.resume);
+      assert.notEqual(resumedSessionId, staleSessionId);
+      assert.equal(events[1]?.type, "runtime.warning");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true }))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
@@ -3958,5 +4003,160 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+  it.effect(
+    "restarts against the original transcript and replays the prompt when a session path is missing",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "auto",
+          resumeCursor: {
+            threadId: String(THREAD_ID),
+            resume: "11111111-1111-4111-8111-111111111111",
+          },
+        });
+
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        assert.equal(harness.getCreateQueryCalls(), 1);
+        const startedResumeId = harness.getLastCreateQueryInput()?.options.resume;
+        assert.equal(
+          harness.getLastCreateQueryInput()?.options.resume,
+          "11111111-1111-4111-8111-111111111111",
+        );
+
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ['Path "/tmp/gone-worktree" does not exist'],
+          session_id: "22222222-2222-4222-8222-222222222222",
+          uuid: "result-0",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+        assert.equal(harness.getCreateQueryCalls(), 2);
+        assert.equal(harness.getLastCreateQueryInput()?.options.resume, startedResumeId);
+        assert.deepEqual(
+          runtimeEvents
+            .filter((event) => event.type === "runtime.warning")
+            .map((event) => event.payload.message),
+          [
+            "A directory from the previous session was deleted. Reopened this session in the current workspace.",
+          ],
+        );
+        assert.deepEqual(
+          runtimeEvents
+            .filter((event) => event.type === "turn.started")
+            .map((event) => event.turnId),
+          [turn.turnId],
+        );
+        assert.deepEqual(
+          runtimeEvents
+            .filter((event) => event.type === "turn.started")
+            .map((event) => event.turnId),
+          [turn.turnId],
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("completes the replayed turn when the restart fails", () => {
+    const harness = makeHarness({ failCreateQueryAfter: 1 });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto",
+        resumeCursor: {
+          threadId: String(THREAD_ID),
+          resume: "11111111-1111-4111-8111-111111111111",
+        },
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ['Path "/tmp/gone-worktree" does not exist'],
+        session_id: "22222222-2222-4222-8222-222222222222",
+        uuid: "result-0",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      assert.deepEqual(
+        runtimeEvents
+          .filter((event) => event.type === "turn.completed")
+          .map((event) => event.turnId),
+        [turn.turnId],
+      );
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "runtime.error"),
+        true,
+      );
+      assert.deepEqual(
+        runtimeEvents
+          .filter((event) => event.type === "session.exited")
+          .map((event) => event.payload.exitKind),
+        ["error"],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+});
+
+describe("isMissingResumePathError", () => {
+  it("matches the Claude CLI missing path failure", () => {
+    assert.equal(
+      isMissingResumePathError('Path "/Users/me/Sites/main/.claude/worktrees/gone" does not exist'),
+      true,
+    );
+  });
+
+  it("ignores unrelated failures", () => {
+    assert.equal(isMissingResumePathError("Claude turn failed."), false);
+    assert.equal(isMissingResumePathError("Thread does not exist"), false);
+  });
+});
+
+describe("workspaceMovedNotice", () => {
+  it("names the current workspace and flags stale paths", () => {
+    const notice = workspaceMovedNotice("/repo/main");
+
+    assert.equal(notice.includes("/repo/main"), true);
+    assert.equal(notice.includes("no longer exists"), true);
+    assert.equal(notice.includes("may be stale"), true);
   });
 });
