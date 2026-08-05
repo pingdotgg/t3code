@@ -6,8 +6,13 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunAttemptId,
+  RunId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,6 +33,12 @@ import {
   layer as providerEventIngestorLayer,
 } from "./ProviderEventIngestor.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
+import {
+  makeProviderEventRoutingState,
+  type ProviderEventRouteIdentity,
+  routeProviderEvent,
+  selectInheritedBackgroundTurnItems,
+} from "./RunExecutionService.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 const TestStoresLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
@@ -231,6 +242,263 @@ layer("ProviderEventIngestorV2", (it) => {
 
         assert.deepEqual(normalized, []);
       }),
+  );
+
+  it.effect("persists an interrupted run's inherited terminal through the live run router", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const priorRunId = RunId.make("run:provider-event-inherited:prior");
+      const currentRunId = RunId.make("run:provider-event-inherited:current");
+      const itemId = TurnItemId.make("turn-item:provider-event-inherited");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "native-thread-inherited",
+      });
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: "native-turn-inherited",
+      });
+      const runningItem = {
+        id: itemId,
+        threadId: threadEvent.threadId,
+        runId: priorRunId,
+        nodeId: NodeId.make("node:provider-event-inherited"),
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 101,
+        status: "running",
+        title: "Inherited background command",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution",
+        input: "sleep 60",
+      } satisfies OrchestrationV2TurnItem;
+      const terminalItem = {
+        ...runningItem,
+        status: "completed" as const,
+        completedAt: now,
+        updatedAt: now,
+      };
+
+      yield* eventSink.write({ events: [threadEvent] });
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        runId: priorRunId,
+        event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: runningItem },
+      });
+
+      const identity: ProviderEventRouteIdentity = {
+        threadId: threadEvent.threadId,
+        runId: currentRunId,
+        attemptId: RunAttemptId.make("attempt:provider-event-inherited:current"),
+        providerThreadId,
+      };
+      const inheritedBackgroundTurnItems = selectInheritedBackgroundTurnItems({
+        threadId: threadEvent.threadId,
+        currentProviderThreadId: providerThreadId,
+        currentRunOrdinal: 2,
+        runs: [
+          {
+            id: priorRunId,
+            threadId: threadEvent.threadId,
+            ordinal: 1,
+            status: "interrupted",
+          } as OrchestrationV2Run,
+          {
+            id: currentRunId,
+            threadId: threadEvent.threadId,
+            ordinal: 2,
+            status: "running",
+          } as OrchestrationV2Run,
+        ],
+        turnItems: [runningItem],
+      });
+      const routeState = makeProviderEventRoutingState({
+        identity,
+        inheritedBackgroundTurnItems,
+        providerTurnId: null,
+      });
+      const terminalEvent = {
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: terminalItem,
+      } as const;
+      const [accepted] = routeProviderEvent(terminalEvent, identity, routeState);
+      assert.isTrue(accepted);
+
+      const stored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        runId: currentRunId,
+        event: terminalEvent,
+      });
+      const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      const persisted = projection.turnItems.find((item) => item.id === itemId);
+
+      assert.equal(stored.length, 1);
+      assert.equal(stored[0]?.event.type, "turn-item.updated");
+      assert.equal(persisted?.runId, priorRunId);
+      assert.equal(persisted?.threadId, threadEvent.threadId);
+      assert.equal(persisted?.status, "completed");
+    }),
+  );
+
+  it.effect("persists a completed run's late background terminal exactly once", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const eventStore = yield* EventStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const priorRunId = RunId.make("run:provider-event-completed:prior");
+      const currentRunId = RunId.make("run:provider-event-completed:current");
+      const itemId = TurnItemId.make("turn-item:provider-event-completed");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "native-thread-completed",
+      });
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: "native-turn-completed",
+      });
+      const runningItem = {
+        id: itemId,
+        threadId: threadEvent.threadId,
+        runId: priorRunId,
+        nodeId: NodeId.make("node:provider-event-completed"),
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 101,
+        status: "running",
+        title: "Completed run background command",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution",
+        input: "sleep 60",
+      } satisfies OrchestrationV2TurnItem;
+      const terminalEvent = {
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          ...runningItem,
+          status: "completed" as const,
+          completedAt: now,
+          updatedAt: now,
+        },
+      } as const;
+
+      yield* eventSink.write({ events: [threadEvent] });
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        runId: priorRunId,
+        event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: runningItem },
+      });
+
+      const priorIdentity: ProviderEventRouteIdentity = {
+        threadId: threadEvent.threadId,
+        runId: priorRunId,
+        attemptId: RunAttemptId.make("attempt:provider-event-completed:prior"),
+        providerThreadId,
+      };
+      const currentIdentity: ProviderEventRouteIdentity = {
+        threadId: threadEvent.threadId,
+        runId: currentRunId,
+        attemptId: RunAttemptId.make("attempt:provider-event-completed:current"),
+        providerThreadId,
+      };
+      const inheritedBackgroundTurnItems = selectInheritedBackgroundTurnItems({
+        threadId: threadEvent.threadId,
+        currentProviderThreadId: providerThreadId,
+        currentRunOrdinal: 2,
+        runs: [
+          {
+            id: priorRunId,
+            threadId: threadEvent.threadId,
+            ordinal: 1,
+            status: "completed",
+          } as OrchestrationV2Run,
+          {
+            id: currentRunId,
+            threadId: threadEvent.threadId,
+            ordinal: 2,
+            status: "running",
+          } as OrchestrationV2Run,
+        ],
+        turnItems: [runningItem],
+      });
+      const routers = [
+        {
+          identity: priorIdentity,
+          state: makeProviderEventRoutingState({
+            identity: priorIdentity,
+            providerTurnId: providerTurnId,
+          }),
+        },
+        {
+          identity: currentIdentity,
+          state: makeProviderEventRoutingState({
+            identity: currentIdentity,
+            inheritedBackgroundTurnItems,
+            providerTurnId: null,
+          }),
+        },
+      ];
+      const acceptedRouters = routers.filter(
+        ({ identity, state }) => routeProviderEvent(terminalEvent, identity, state)[0],
+      );
+
+      yield* Effect.forEach(
+        acceptedRouters,
+        ({ identity }) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: threadEvent.threadId,
+            runId: identity.runId,
+            event: terminalEvent,
+          }),
+        { concurrency: 1 },
+      );
+
+      const storedEvents = yield* eventStore
+        .read({ threadId: threadEvent.threadId })
+        .pipe(Stream.runCollect);
+      const storedTerminals = Array.from(storedEvents).filter(
+        (stored) =>
+          stored.event.type === "turn-item.updated" &&
+          stored.event.payload.id === itemId &&
+          stored.event.payload.status === "completed",
+      );
+
+      assert.equal(storedTerminals.length, 1);
+      assert.equal(acceptedRouters.length, 1);
+      assert.equal(acceptedRouters[0]?.identity.runId, priorRunId);
+    }),
   );
 
   it.effect("persists a failed provider terminal as one expected error item", () =>

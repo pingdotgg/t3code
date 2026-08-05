@@ -588,6 +588,25 @@ describe("ProviderContinuationService", () => {
     });
   });
 
+  it.effect("queues a continuation behind an active user run", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer(request());
+        const command = yield* Queue.take(dispatched);
+        assert.deepEqual((command as { readonly dispatchMode?: unknown }).dispatchMode, {
+          type: "queue_after_active",
+        });
+      }).pipe(
+        Effect.provide(
+          testLayer({ dispatched, getThreadProjection: () => Effect.succeed(projection) }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
   it.effect("drops a request invalidated before dispatch", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();

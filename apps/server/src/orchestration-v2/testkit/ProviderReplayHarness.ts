@@ -57,6 +57,7 @@ import {
   type OrchestratorV2Scenario,
   type OrchestratorV2ScenarioResult,
 } from "./OrchestratorScenario.ts";
+import { makeProviderReplayGate, type ProviderReplayGate } from "./ProviderReplayGate.testkit.ts";
 
 export function makeReplayServerConfig(
   scenario: string,
@@ -156,6 +157,7 @@ export interface OrchestratorV2ProviderReplayHarness<
   ) => Effect.Effect<Transcript, Error>;
   readonly makeProviderAdapterRegistryLayer: (
     transcript: Transcript,
+    options?: { readonly replayGate?: ProviderReplayGate },
   ) => Layer.Layer<ProviderAdapterRegistryV2, Error>;
 }
 
@@ -183,9 +185,19 @@ export function runOrchestratorV2ProviderReplayScenario<
   | SqlError,
   never
 > {
-  const layer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, options);
+  const replayGate = makeProviderReplayGate(
+    scenario.steps?.flatMap((step) =>
+      step.type === "release_replay_gate" || step.type === "release_replay_gate_after_waiting"
+        ? [step.label]
+        : [],
+    ) ?? [],
+  );
+  const layer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, {
+    ...options,
+    replayGate,
+  });
 
-  return runOrchestratorV2Scenario(scenario).pipe(Effect.provide(layer));
+  return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
 }
 
 export function makeOrchestratorV2ProviderReplayLayer<
@@ -201,9 +213,13 @@ export function makeOrchestratorV2ProviderReplayLayer<
     >;
     readonly enableAssistantStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
-  const registryLayer = harness.makeProviderAdapterRegistryLayer(scenario.transcript);
+  const registryLayer = harness.makeProviderAdapterRegistryLayer(
+    scenario.transcript,
+    options.replayGate === undefined ? {} : { replayGate: options.replayGate },
+  );
   return makeOrchestratorV2ReplayLayerWithRegistry(scenario, registryLayer, options);
 }
 

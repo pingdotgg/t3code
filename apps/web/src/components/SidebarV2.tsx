@@ -118,9 +118,11 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
+  shouldShowSidebarV2Duration,
   shouldNavigateAfterProjectRemoval,
   sortSidebarV2ProjectGroups,
   sortSettledThreadsForSidebarV2,
@@ -175,6 +177,44 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+const SIDEBAR_V2_TOP_STATUS = {
+  approval: {
+    label: "Approval",
+    icon: null,
+    className: "text-amber-700 dark:text-amber-300",
+  },
+  done: {
+    label: "Done",
+    icon: "done",
+    className: "text-emerald-700 dark:text-emerald-300",
+  },
+  failed: {
+    label: "Failed",
+    icon: null,
+    className: "text-red-700 dark:text-red-300",
+  },
+  input: {
+    label: "Input",
+    icon: null,
+    className: "text-indigo-600 dark:text-indigo-300",
+  },
+  waiting: {
+    label: "Waiting",
+    icon: null,
+    className: "text-muted-foreground",
+  },
+  woke: {
+    label: "Woke",
+    icon: "woke",
+    className: "text-amber-700 dark:text-amber-300",
+  },
+  working: {
+    label: "Working",
+    icon: "working",
+    className:
+      "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
+  },
+} as const;
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -491,45 +531,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
-  const topStatus =
-    status === "working"
-      ? {
-          label: "Working",
-          icon: "working" as const,
-          className:
-            "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
-        }
-      : status === "approval"
-        ? {
-            label: "Approval",
-            icon: null,
-            className: "text-amber-700 dark:text-amber-300",
-          }
-        : status === "input"
-          ? {
-              label: "Input",
-              icon: null,
-              className: "text-indigo-600 dark:text-indigo-300",
-            }
-          : status === "failed"
-            ? {
-                label: "Failed",
-                icon: null,
-                className: "text-red-700 dark:text-red-300",
-              }
-            : isWoke
-              ? {
-                  label: "Woke",
-                  icon: "woke" as const,
-                  className: "text-amber-700 dark:text-amber-300",
-                }
-              : isUnread
-                ? {
-                    label: "Done",
-                    icon: "done" as const,
-                    className: "text-emerald-700 dark:text-emerald-300",
-                  }
-                : null;
+  const topStatusKind = resolveSidebarV2TopStatus({ status, isUnread, isWoke });
+  const topStatus = topStatusKind === null ? null : SIDEBAR_V2_TOP_STATUS[topStatusKind];
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
@@ -987,7 +990,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                           wrapper around the ticking duration would make
                           screen readers announce every second. */}
                       <span role="status">{topStatus.label}</span>
-                      {status === "working" ? (
+                      {shouldShowSidebarV2Duration(status) ? (
                         <span aria-hidden>
                           <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
                         </span>

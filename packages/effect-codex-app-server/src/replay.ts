@@ -144,10 +144,12 @@ export interface CodexAppServerReplayState {
 export interface CodexAppServerReplayDriver {
   readonly transcript: CodexAppServerReplayTranscript;
   readonly state: Ref.Ref<CodexAppServerReplayState>;
+  readonly beforeEmitInbound?: (
+    entry: Extract<CodexAppServerReplayEntry, { readonly type: "emit_inbound" }>,
+  ) => Effect.Effect<void>;
 }
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
@@ -334,10 +336,14 @@ export function layerReplay(
 }
 
 export const makeReplayDriver = Effect.fn("effect-codex-app-server/replay.makeReplayDriver")(
-  function* (transcript: CodexAppServerReplayTranscript) {
+  function* (
+    transcript: CodexAppServerReplayTranscript,
+    options: Pick<CodexAppServerReplayDriver, "beforeEmitInbound"> = {},
+  ) {
     return {
       transcript,
       state: yield* Ref.make<CodexAppServerReplayState>({ cursor: 0, failure: null }),
+      ...options,
     } satisfies CodexAppServerReplayDriver;
   },
 );
@@ -368,6 +374,7 @@ const makeReplayClientWithState = Effect.fn(
   const input = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
   const state = driver.state;
   const outboundRemainder = yield* Ref.make("");
+  const decoder = new TextDecoder();
 
   const failReplay = (error: CodexAppServerReplayError) =>
     Ref.update(state, (current) => ({
@@ -388,6 +395,9 @@ const makeReplayClientWithState = Effect.fn(
       }
 
       if (entry.type === "emit_inbound") {
+        if (driver.beforeEmitInbound !== undefined) {
+          yield* driver.beforeEmitInbound(entry);
+        }
         if (entry.afterMs !== undefined && entry.afterMs > 0) {
           yield* Effect.sleep(Duration.millis(entry.afterMs));
         }

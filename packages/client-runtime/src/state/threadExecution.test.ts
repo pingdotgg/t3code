@@ -85,4 +85,30 @@ describe("thread execution presentation", () => {
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
   });
+
+  it("does not expose a stale active run after the runtime parks at idle", () => {
+    const runtime = {
+      status: "idle" as const,
+      activeRunId: RunId.make("run-stale"),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      providerName: null,
+      lastError: null,
+      updatedAt: DateTime.formatIso(now),
+    };
+
+    expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+  });
+
+  it.each(["preparing", "starting"] as const)("keeps an active %s run interruptible", (status) => {
+    const runtime = {
+      status,
+      activeRunId: RunId.make(`run-${status}`),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      providerName: null,
+      lastError: null,
+      updatedAt: DateTime.formatIso(now),
+    };
+
+    expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
+  });
 });
