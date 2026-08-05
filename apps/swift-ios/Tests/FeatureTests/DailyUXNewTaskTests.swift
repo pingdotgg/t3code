@@ -226,6 +226,43 @@ struct DailyUXNewTaskTests {
         )
     }
 
+    @Test
+    func appDefaultWinsAndExplicitModelCarriesAcrossCompatibleProjects() throws {
+        let appDefault = FeatureSelection(providerID: "codex", modelID: "gpt-5.6-sol")
+        let explicit = FeatureSelection(providerID: "codex", modelID: "gpt-5.6-luna")
+        let project = FeatureProject(
+            id: "project",
+            environmentID: "studio",
+            name: "Project",
+            path: "/project",
+            defaultSelection: .init(providerID: "codex", modelID: "gpt-5.6-terra")
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [project],
+            providers: [
+                .init(
+                    id: "codex",
+                    name: "Codex",
+                    models: [
+                        .init(id: "gpt-5.6-luna", name: "Luna"),
+                        .init(id: "gpt-5.6-terra", name: "Terra"),
+                        .init(id: "gpt-5.6-sol", name: "Sol"),
+                    ]
+                ),
+            ],
+            settings: .init(defaultSelection: appDefault)
+        )
+
+        #expect(DailyUXCreationContext.initialSelection(for: project, in: snapshot) == appDefault)
+        #expect(
+            DailyUXCreationContext.selection(
+                carrying: explicit,
+                to: project,
+                in: snapshot
+            ) == explicit
+        )
+    }
+
     @Test @MainActor
     func imageProcessorDownsamplesUploadAndBuildsSmallThumbnail() throws {
         let source = UIGraphicsImageRenderer(size: CGSize(width: 2_400, height: 1_200))

@@ -53,8 +53,13 @@ public actor T3Client {
         await rpc.isConnected()
     }
 
-    public func shellSnapshot() async throws -> OrchestrationShellSnapshot {
-        try await api.shellSnapshot(for: environment)
+    public func shellSnapshot(
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> OrchestrationShellSnapshot {
+        try await api.shellSnapshot(
+            for: environment,
+            timeoutInterval: timeoutInterval
+        )
     }
 
     public func readModel() async throws -> OrchestrationReadModel {

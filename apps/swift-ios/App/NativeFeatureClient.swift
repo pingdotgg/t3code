@@ -23,6 +23,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let fallbackPollingInitialDelay: Duration
     private let fallbackPollingInterval: Duration
     private let aggregateRefreshInterval: Duration
+    private let environmentShellTimeoutInterval: TimeInterval
     private let aggregateEnvironmentLoader: @Sendable (EnvironmentRuntime) async throws -> [Environment]
     private let stream: AsyncStream<FeatureEvent>
     private let continuation: AsyncStream<FeatureEvent>.Continuation
@@ -90,6 +91,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
+        environmentShellTimeoutInterval: TimeInterval = 6,
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
             try await $0.environments()
         }
@@ -117,6 +119,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.fallbackPollingInitialDelay = fallbackPollingInitialDelay
         self.fallbackPollingInterval = fallbackPollingInterval
         self.aggregateRefreshInterval = aggregateRefreshInterval
+        self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.aggregateEnvironmentLoader = aggregateEnvironmentLoader
         let pair = AsyncStream<FeatureEvent>.makeStream()
         stream = pair.stream
@@ -2522,6 +2525,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) async -> [EnvironmentShellLoad] {
         let activeEnvironmentID = activeEnvironment?.id
         let environmentsWithCachedConfig = Set(serverConfigsByEnvironmentID.keys)
+        let shellTimeoutInterval = environmentShellTimeoutInterval
         let runtime = runtime
         var clients: [(environment: Environment, client: T3Client)] = []
         clients.reserveCapacity(environments.count)
@@ -2534,7 +2538,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return await withTaskGroup(of: EnvironmentShellLoad.self) { group in
             for pair in clients {
                 group.addTask {
-                    let shell = try? await pair.client.shellSnapshot()
+                    let shell = try? await pair.client.shellSnapshot(
+                        timeoutInterval: shellTimeoutInterval
+                    )
                     guard shell != nil else {
                         return EnvironmentShellLoad(
                             environment: pair.environment,

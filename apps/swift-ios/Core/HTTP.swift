@@ -125,13 +125,17 @@ public actor EnvironmentAPI {
         )
     }
 
-    public func shellSnapshot(for environment: Environment) async throws
+    public func shellSnapshot(
+        for environment: Environment,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws
         -> OrchestrationShellSnapshot
     {
         try await authorized(
             environment: environment,
             path: "/api/orchestration/shell",
             method: "GET",
+            timeoutInterval: timeoutInterval,
             as: OrchestrationShellSnapshot.self
         )
     }
@@ -229,6 +233,7 @@ public actor EnvironmentAPI {
         path: String,
         method: String,
         body: Data? = nil,
+        timeoutInterval: TimeInterval? = nil,
         as type: Result.Type
     ) async throws -> Result {
         guard let credential = try await credentials.credential(for: environment.id) else {
@@ -246,6 +251,9 @@ public actor EnvironmentAPI {
                 method: method,
                 body: body
             )
+            if let timeoutInterval {
+                request.timeoutInterval = timeoutInterval
+            }
             request.setValue(
                 "Bearer \(credential.accessToken)",
                 forHTTPHeaderField: "Authorization"
@@ -272,7 +280,7 @@ public actor EnvironmentAPI {
                     using: managedAuthorization
                 )
             }
-            let request = try await managedAuthorization.authorize(
+            var request = try await managedAuthorization.authorize(
                 makeRequest(
                     environment: environment,
                     path: path,
@@ -282,6 +290,9 @@ public actor EnvironmentAPI {
                 environment: environment,
                 credential: current
             )
+            if let timeoutInterval {
+                request.timeoutInterval = timeoutInterval
+            }
             do {
                 return try await send(request, as: type)
             } catch let error as HTTPError where error.isRejectedAuthorization {
@@ -298,7 +309,7 @@ public actor EnvironmentAPI {
                         using: managedAuthorization
                     )
                 }
-                let retry = try await managedAuthorization.authorize(
+                var retry = try await managedAuthorization.authorize(
                     makeRequest(
                         environment: environment,
                         path: path,
@@ -308,6 +319,9 @@ public actor EnvironmentAPI {
                     environment: environment,
                     credential: current
                 )
+                if let timeoutInterval {
+                    retry.timeoutInterval = timeoutInterval
+                }
                 return try await send(retry, as: type)
             }
         }

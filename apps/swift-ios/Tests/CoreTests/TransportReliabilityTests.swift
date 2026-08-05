@@ -54,6 +54,31 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Accept-Encoding"), "gzip")
     }
 
+    func testShellSnapshotAppliesBoundedStartupTimeout() async throws {
+        let environment = Environment(
+            id: "environment-1",
+            label: "Studio",
+            httpBaseURL: URL(string: "https://studio.example")!,
+            webSocketBaseURL: URL(string: "wss://studio.example")!
+        )
+        let credentials = InMemoryCredentialStore(
+            credentials: [
+                environment.id: EnvironmentCredential(accessToken: "access-token"),
+            ]
+        )
+        let transport = RecordingHTTPTransport { request in
+            let body = #"{"snapshotSequence":0,"projects":[],"threads":[],"updatedAt":"2026-08-05T12:00:00.000Z"}"#
+            return (Data(body.utf8), transportResponse(request))
+        }
+        let api = EnvironmentAPI(transport: transport, credentials: credentials)
+
+        _ = try await api.shellSnapshot(for: environment, timeoutInterval: 6)
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.timeoutInterval, 6)
+    }
+
     func testWebSocketHandshakeOffersPerMessageDeflate() {
         let url = URL(string: "wss://studio.example/ws?wsTicket=secret")!
         let compressed = WebSocketHandshakeRequest.make(url: url)

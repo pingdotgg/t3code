@@ -13,6 +13,8 @@ public struct NewThreadView: View {
     @State private var prompt = ""
     @State private var selection: FeatureSelection?
     @State private var selectionIsExplicit = false
+    @State private var preferredSelection: FeatureSelection?
+    @State private var recentProjectByEnvironment: [String: String] = [:]
     @State private var attachments: [FeatureDraftAttachment] = []
     @State private var workspaceMode: FeatureWorkspaceMode = .local
     @State private var workspaceSelectionIsExplicit = false
@@ -190,13 +192,36 @@ public struct NewThreadView: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .overlay(alignment: .bottom) {
-            HStack(spacing: 6) {
-                Image(systemName: "server.rack")
-                    .font(.system(size: 11, weight: .medium))
-                Text("on \(environmentName)")
+            Menu {
+                ForEach(creationEnvironments) { environment in
+                    Button {
+                        selectEnvironment(environment.id)
+                    } label: {
+                        if environment.id == selectedProject?.environmentID {
+                            Label(environment.name, systemImage: "checkmark")
+                        } else {
+                            Text(environment.name)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "server.rack")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("on \(environmentName)")
+                    if creationEnvironments.count > 1 {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                }
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textTertiary)
+                .contentShape(Rectangle())
             }
-            .font(T3Typography.supporting)
-            .foregroundStyle(T3Colors.textTertiary)
+            .buttonStyle(.plain)
+            .disabled(isSubmitting || creationEnvironments.count < 2)
+            .accessibilityLabel("Computer")
+            .accessibilityValue(environmentName)
             .offset(y: 31)
         }
         .accessibilityElement(children: .contain)
@@ -338,6 +363,11 @@ public struct NewThreadView: View {
         creationProjects.map(\.id)
     }
 
+    private var creationEnvironments: [FeatureEnvironment] {
+        let environmentIDs = Set(creationProjects.map(\.environmentID))
+        return model.snapshot.environments.filter { environmentIDs.contains($0.id) }
+    }
+
     private var environmentName: String {
         if let environmentID = selectedProject?.environmentID,
            let environment = model.snapshot.environments.first(where: { $0.id == environmentID }) {
@@ -369,6 +399,7 @@ public struct NewThreadView: View {
             set: { value in
                 selectionIsExplicit = true
                 selection = value
+                preferredSelection = value
             }
         )
     }
@@ -506,6 +537,15 @@ public struct NewThreadView: View {
         prepareProjectIfNeeded(id)
     }
 
+    private func selectEnvironment(_ id: String) {
+        guard selectedProject?.environmentID != id else { return }
+        let project = recentProjectByEnvironment[id].flatMap { recentID in
+            creationProjects.first { $0.id == recentID && $0.environmentID == id }
+        } ?? creationProjects.first { $0.environmentID == id }
+        guard let project else { return }
+        selectProject(project.id)
+    }
+
     private func selectInitialProject(_ id: String) {
         projectID = id
         prepareProjectIfNeeded(id)
@@ -513,6 +553,10 @@ public struct NewThreadView: View {
 
     private func prepareProjectIfNeeded(_ id: String) {
         guard draftRestoreContext?.projectID != id else { return }
+
+        if selectionIsExplicit, let selection {
+            preferredSelection = selection
+        }
 
         restoredDraftProjectID = nil
         draftSaveTask?.cancel()
@@ -534,13 +578,21 @@ public struct NewThreadView: View {
             return
         }
 
+        recentProjectByEnvironment[project.environmentID] = project.id
+
         let providers = ProviderModelCatalogNormalizer.normalized(
             DailyUXCreationContext.providers(for: project, in: model.snapshot)
         )
+        let carriedSelection = DailyUXModelOptions.validated(preferredSelection, in: providers)
         selection = ProviderModelSelectionResolver.materialized(
-            DailyUXCreationContext.initialSelection(for: project, in: model.snapshot),
+            DailyUXCreationContext.selection(
+                carrying: preferredSelection,
+                to: project,
+                in: model.snapshot
+            ),
             in: providers
         )
+        selectionIsExplicit = carriedSelection != nil
         let preferences = DailyUXCreationContext.environmentPreferences(
             for: project,
             in: model.snapshot
@@ -636,8 +688,12 @@ public struct NewThreadView: View {
         )
         prompt = restored.text
         attachments = restored.attachments
-        selection = restored.selection
+        selection = DailyUXModelOptions.validated(restored.selection, in: creationProviders)
+            ?? initialSelection
         selectionIsExplicit = liveSelectionIsExplicit || saved?.selection != nil
+        if selectionIsExplicit, let selection {
+            preferredSelection = selection
+        }
         if let workspace = restored.workspace {
             workspaceMode = workspace.mode
             selectedBranch = workspace.branch.map {

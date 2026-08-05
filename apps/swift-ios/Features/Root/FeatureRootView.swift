@@ -77,9 +77,9 @@ enum FeatureRootPresentation {
         isManagingConnections: Bool
     ) -> Bool {
         snapshot.connection.state != .disconnected
+            || !snapshot.environments.isEmpty
             || !snapshot.projects.isEmpty
             || !snapshot.threads.isEmpty
-            || (isManagingConnections && !snapshot.environments.isEmpty)
     }
 }
 

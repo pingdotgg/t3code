@@ -6,7 +6,7 @@ import Testing
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
-    func connectionManagementStaysMountedForDisconnectedSavedServers() {
+    func savedServersKeepWorkspaceNavigationAvailableWhileDisconnected() {
         let savedEnvironment = FeatureEnvironment(
             id: "offline-demo",
             name: "Offline demo",
@@ -25,7 +25,7 @@ struct FeatureRootModelTests {
             )
         )
         #expect(
-            !FeatureRootPresentation.showsWorkspace(
+            FeatureRootPresentation.showsWorkspace(
                 snapshot: snapshot,
                 isManagingConnections: false
             )

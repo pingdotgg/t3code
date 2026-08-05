@@ -145,14 +145,20 @@ enum DailyUXCreationContext {
         for project: FeatureProject?,
         in snapshot: FeatureSnapshot
     ) -> FeatureSelection? {
-        if let projectDefault = project?.defaultSelection {
-            return projectDefault
-        }
-        return DailyUXModelOptions.initialSelection(
-            projectDefault: nil,
-            appDefault: snapshot.settings.defaultSelection,
-            providers: providers(for: project, in: snapshot)
-        )
+        let providers = providers(for: project, in: snapshot)
+        return DailyUXModelOptions.validated(snapshot.settings.defaultSelection, in: providers)
+            ?? DailyUXModelOptions.validated(project?.defaultSelection, in: providers)
+            ?? DailyUXModelOptions.preferredSelection(in: providers)
+    }
+
+    static func selection(
+        carrying preferredSelection: FeatureSelection?,
+        to project: FeatureProject?,
+        in snapshot: FeatureSnapshot
+    ) -> FeatureSelection? {
+        let providers = providers(for: project, in: snapshot)
+        return DailyUXModelOptions.validated(preferredSelection, in: providers)
+            ?? initialSelection(for: project, in: snapshot)
     }
 
     static func environmentPreferences(
