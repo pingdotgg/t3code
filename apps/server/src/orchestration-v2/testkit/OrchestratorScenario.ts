@@ -510,6 +510,7 @@ export function runOrchestratorV2Scenario(
         status: OrchestrationV2Subagent["status"],
         subagentId?: OrchestrationV2Subagent["id"],
         attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
+        deadlineAt = scenarioWaitDeadline(),
       ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -523,14 +524,20 @@ export function runOrchestratorV2Scenario(
           ) {
             return;
           }
-          if (attemptsRemaining <= 0) {
+          if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
               step: `await_subagent_status:${threadId}:${subagentId ?? "any"}:${status}`,
             });
           }
           yield* yieldToRuntime;
-          return yield* waitForSubagentStatus(threadId, status, subagentId, attemptsRemaining - 1);
+          return yield* waitForSubagentStatus(
+            threadId,
+            status,
+            subagentId,
+            attemptsRemaining - 1,
+            deadlineAt,
+          );
         });
 
       for (const step of scenarioSteps(scenario)) {
