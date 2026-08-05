@@ -9,6 +9,7 @@ import {
   contextWindowsFromSessionModels,
   enrichGrokTokenUsage,
   resolveGrokAcpBaseModelId,
+  resolveInitialGrokContextWindow,
   tokenUsageFromGrokPromptMeta,
   totalContextTokensFromModelMeta,
 } from "./GrokAcpSupport.ts";
@@ -184,5 +185,44 @@ describe("Grok context window helpers", () => {
       maxTokens: 200_000,
       compactsAutomatically: true,
     });
+    // Always stamps max + auto-compact so the meter can show used/max.
+    expect(enrichGrokTokenUsage({ usedTokens: 16_000 }, undefined)).toEqual({
+      usedTokens: 16_000,
+      compactsAutomatically: true,
+    });
+  });
+
+  it("resolves an initial window even when the bound model id is missing", () => {
+    const windows = contextWindowsFromSessionModels({
+      currentModelId: "grok-4.5",
+      availableModels: [
+        {
+          modelId: "grok-4.5",
+          name: "Grok 4.5",
+          _meta: { totalContextTokens: 500_000 },
+        },
+        {
+          modelId: "gpt-5.6-luna",
+          name: "Luna",
+          _meta: { totalContextTokens: 200_000 },
+        },
+      ],
+    });
+
+    expect(
+      resolveInitialGrokContextWindow({
+        windows,
+        boundModelId: undefined,
+        setupModelId: "grok-4.5",
+      }),
+    ).toBe(500_000);
+
+    expect(
+      resolveInitialGrokContextWindow({
+        windows,
+        boundModelId: "missing-model",
+        setupModelId: "also-missing",
+      }),
+    ).toBe(500_000);
   });
 });
