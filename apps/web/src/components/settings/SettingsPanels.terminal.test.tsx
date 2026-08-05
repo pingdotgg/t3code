@@ -5,9 +5,9 @@ import { DraftInput } from "../ui/draft-input";
 import { DefaultTerminalShellSettingRow } from "./SettingsPanels";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 
-function renderRow(value: string, desktop = false) {
+function renderRow(value: string, environmentOs?: "darwin" | "linux" | "windows" | "unknown") {
   const onChange = vi.fn();
-  const row = DefaultTerminalShellSettingRow({ value, desktop, onChange }) as ReactElement<
+  const row = DefaultTerminalShellSettingRow({ value, environmentOs, onChange }) as ReactElement<
     ComponentProps<typeof SettingsRow>
   >;
   return { onChange, row };
@@ -15,7 +15,7 @@ function renderRow(value: string, desktop = false) {
 
 describe("DefaultTerminalShellSettingRow", () => {
   it("commits a shell through the accessible input", () => {
-    const { onChange, row } = renderRow("", true);
+    const { onChange, row } = renderRow("", "windows");
     const input = row.props.control as ReactElement<ComponentProps<typeof DraftInput>>;
 
     expect(row.props.title).toBe("Default terminal shell");
@@ -37,7 +37,7 @@ describe("DefaultTerminalShellSettingRow", () => {
     expect(onChange).toHaveBeenCalledWith("");
   });
 
-  it("describes the browser default without implying a local executable", () => {
+  it("stays neutral when the connected environment platform is unknown", () => {
     const input = renderRow("").row.props.control as ReactElement<
       ComponentProps<typeof DraftInput>
     >;

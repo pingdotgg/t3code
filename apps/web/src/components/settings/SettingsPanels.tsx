@@ -16,6 +16,7 @@ import {
   type BackgroundActivityProfile,
   type BackgroundActivitySettings,
   type DesktopUpdateChannel,
+  type ExecutionEnvironmentPlatformOs,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -90,6 +91,7 @@ import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import {
   primaryServerObservabilityAtom,
+  primaryServerConfigAtom,
   primaryServerProvidersAtom,
   serverEnvironment,
 } from "../../state/server";
@@ -1614,6 +1616,7 @@ export function GeneralSettingsPanel() {
     readLastEnabledProjectGroupingMode(),
   );
   const observability = useAtomValue(primaryServerObservabilityAtom);
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const diagnosticsDescription = formatDiagnosticsDescription({
     localTracingEnabled: observability?.localTracingEnabled ?? false,
@@ -2034,7 +2037,7 @@ export function GeneralSettingsPanel() {
 
         <DefaultTerminalShellSettingRow
           value={settings.defaultTerminalShell}
-          desktop={isElectron}
+          environmentOs={serverConfig?.environment.platform.os}
           onChange={(defaultTerminalShell) => updateSettings({ defaultTerminalShell })}
         />
 
@@ -2190,11 +2193,11 @@ export function GeneralSettingsPanel() {
 
 export function DefaultTerminalShellSettingRow({
   value,
-  desktop,
+  environmentOs,
   onChange,
 }: {
   readonly value: string;
-  readonly desktop: boolean;
+  readonly environmentOs: ExecutionEnvironmentPlatformOs | undefined;
   readonly onChange: (value: string) => void;
 }) {
   return (
@@ -2214,7 +2217,7 @@ export function DefaultTerminalShellSettingRow({
           className="w-full sm:w-72"
           value={value}
           onCommit={onChange}
-          placeholder={desktop ? "pwsh.exe" : "Platform default"}
+          placeholder={environmentOs === "windows" ? "pwsh.exe" : "Platform default"}
           spellCheck={false}
           aria-label="Default terminal shell"
         />

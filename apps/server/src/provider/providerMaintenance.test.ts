@@ -592,6 +592,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
   it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
     Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+
       const tempDir = yield* makeTempDir("t3-npm-capabilities");
       const binDir = NodePath.join(tempDir, "bin");
       const packageBinDir = NodePath.join(
@@ -635,6 +637,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
   it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
     Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+
       const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
       const binDir = NodePath.join(tempDir, "bin");
       const packageBinDir = NodePath.join(
