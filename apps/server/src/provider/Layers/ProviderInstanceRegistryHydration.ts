@@ -28,11 +28,15 @@
  * Hot-reload
  * ----------
  * On layer build we:
- *   1. Read the current `ServerSettings` once and use it to seed the
+ *   1. Subscribe to settings changes, then read the current
+ *      `ServerSettings` once and use it to seed the
  *      registry's initial state via `ProviderInstanceRegistryMutableLayer`.
  *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
  *      subscribes to `ServerSettingsService.streamChanges` and calls
  *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
+ *   3. Once Windows profile hydration completes, refresh provider health
+ *      snapshots in place. PATH hydration does not change provider config,
+ *      so it must not replace adapters or interrupt their active turns.
  *
  * Failures inside the watcher are logged and swallowed so a single bad
  * settings emission cannot kill the registry. Unknown drivers and invalid
@@ -105,6 +109,25 @@ export const deriveProviderInstanceConfigMap = (
   return merged as ProviderInstanceConfigMap;
 };
 
+export const refreshProviderInstancesAfterEnvironmentHydration = Effect.fn(
+  "refreshProviderInstancesAfterEnvironmentHydration",
+)(function* (registry: ProviderInstanceRegistry["Service"]) {
+  const instances = yield* registry.listInstances;
+  yield* Effect.forEach(
+    instances,
+    (instance) =>
+      instance.snapshot.refresh.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Provider instance failed to refresh after environment hydration", {
+            instanceId: instance.instanceId,
+            cause,
+          }),
+        ),
+      ),
+    { concurrency: "unbounded", discard: true },
+  );
+});
+
 /**
  * Layer that consumes `ProviderInstanceRegistryMutator` and forks a
  * settings-watcher fiber. The fiber's lifetime is tied to the enclosing
@@ -116,40 +139,40 @@ export const deriveProviderInstanceConfigMap = (
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const SettingsWatcherLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const mutator = yield* ProviderInstanceRegistryMutator;
-    const serverSettings = yield* ServerSettingsService;
-    const environmentHydration = yield* HostEnvironmentHydration;
-    yield* serverSettings.streamChanges.pipe(
-      Stream.runForEach((next) =>
-        mutator
-          .reconcile(deriveProviderInstanceConfigMap(next))
-          .pipe(
+const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const mutator = yield* ProviderInstanceRegistryMutator;
+      const registry = yield* ProviderInstanceRegistry;
+      const serverSettings = yield* ServerSettingsService;
+      const environmentHydration = yield* HostEnvironmentHydration;
+      yield* settingsChanges.pipe(
+        Stream.runForEach(() =>
+          serverSettings.getSettings.pipe(
+            Effect.flatMap((current) =>
+              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+            ),
             Effect.catchCause((cause) =>
               Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
             ),
           ),
-      ),
-      Effect.forkScoped,
-    );
-    if (Option.isSome(environmentHydration.windowsProfile)) {
-      yield* environmentHydration.windowsProfile.value.pipe(
-        Effect.andThen(serverSettings.getSettings),
-        Effect.flatMap((settings) =>
-          mutator.reconcile(deriveProviderInstanceConfigMap(settings), { force: true }),
-        ),
-        Effect.catchCause((cause) =>
-          Effect.logError(
-            "Provider instances failed to refresh after environment hydration",
-            cause,
-          ),
         ),
         Effect.forkScoped,
       );
-    }
-  }),
-);
+      if (Option.isSome(environmentHydration.windowsProfile)) {
+        yield* environmentHydration.windowsProfile.value.pipe(
+          Effect.andThen(refreshProviderInstancesAfterEnvironmentHydration(registry)),
+          Effect.catchCause((cause) =>
+            Effect.logError(
+              "Provider instances failed to refresh after environment hydration",
+              cause,
+            ),
+          ),
+          Effect.forkScoped,
+        );
+      }
+    }),
+  );
 
 /**
  * Hydrate `ProviderInstanceRegistry` from `ServerSettings` and keep it in
@@ -174,6 +197,7 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
+    const settingsChanges = yield* serverSettings.subscribeChanges;
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
@@ -187,6 +211,6 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
       configMap: initialConfigMap,
     });
 
-    return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
+    return SettingsWatcherLive(settingsChanges).pipe(Layer.provideMerge(mutableLayer));
   }),
 ) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;

@@ -35,8 +35,12 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -49,6 +53,7 @@ import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
@@ -131,6 +136,82 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   serverPassword: "",
   customModels: [],
   ...overrides,
+});
+
+describe("ProviderInstanceRegistryLive — reconcile lifecycle", () => {
+  it.effect("serializes concurrent replacements and leaves only the newest scope live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("test_default");
+        const driverKind = ProviderDriverKind.make("test");
+        const enteredBlockedCreate = yield* Deferred.make<void>();
+        const releaseBlockedCreate = yield* Deferred.make<void>();
+        const created = yield* Ref.make<ReadonlyArray<string>>([]);
+        const finalized = yield* Ref.make<ReadonlyArray<string>>([]);
+        const openScopes = yield* Ref.make(0);
+
+        const driver = {
+          driverKind,
+          metadata: { displayName: "Test" },
+          configSchema: Schema.Struct({ version: Schema.String }),
+          defaultConfig: () => ({ version: "default" }),
+          create: Effect.fn("TestDriver.create")(function* (input) {
+            const version = input.config.version;
+            yield* Ref.update(created, (versions) => [...versions, version]);
+            if (version === "blocked") {
+              yield* Deferred.succeed(enteredBlockedCreate, undefined);
+              yield* Deferred.await(releaseBlockedCreate);
+            }
+            yield* Ref.update(openScopes, (count) => count + 1);
+            yield* Effect.addFinalizer(() =>
+              Ref.update(openScopes, (count) => count - 1).pipe(
+                Effect.andThen(Ref.update(finalized, (versions) => [...versions, version])),
+              ),
+            );
+            return {
+              instanceId: input.instanceId,
+              driverKind,
+              continuationIdentity: {
+                driverKind,
+                continuationKey: `test:${version}`,
+              },
+              displayName: version,
+              enabled: true,
+              snapshot: {} as ProviderInstance["snapshot"],
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+          }),
+        } satisfies ProviderDriver<{ readonly version: string }>;
+
+        const configMap = (version: string): ProviderInstanceConfigMap => ({
+          [instanceId]: {
+            driver: driverKind,
+            config: { version },
+          },
+        });
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: configMap("initial"),
+        });
+
+        const blocked = yield* Effect.forkChild(mutator.reconcile(configMap("blocked")));
+        yield* Deferred.await(enteredBlockedCreate);
+        const newest = yield* Effect.forkChild(mutator.reconcile(configMap("newest")));
+        yield* Effect.yieldNow;
+
+        expect(yield* Ref.get(created)).toEqual(["initial", "blocked"]);
+        yield* Deferred.succeed(releaseBlockedCreate, undefined);
+        yield* Fiber.join(blocked);
+        yield* Fiber.join(newest);
+
+        expect((yield* registry.getInstance(instanceId))?.displayName).toBe("newest");
+        expect(yield* Ref.get(created)).toEqual(["initial", "blocked", "newest"]);
+        expect(yield* Ref.get(finalized)).toEqual(["initial", "blocked"]);
+        expect(yield* Ref.get(openScopes)).toBe(1);
+      }),
+    ),
+  );
 });
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
