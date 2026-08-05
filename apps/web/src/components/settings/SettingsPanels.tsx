@@ -116,7 +116,6 @@ import {
   isMonospaceFamily,
   resolveDefaultFamilyLabel,
 } from "../../appearanceFonts";
-import { DEFAULT_TERMINAL_FONT_FAMILY } from "~/terminal/ghostty/surface";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
