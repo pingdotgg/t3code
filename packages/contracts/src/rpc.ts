@@ -45,6 +45,8 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  ReviewDiffFileContentsInput,
+  ReviewDiffFileContentsResult,
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
@@ -244,6 +246,7 @@ export const WS_METHODS = {
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
+  reviewGetDiffFileContents: "review.getDiffFileContents",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -670,6 +673,12 @@ export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
 export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
   payload: ReviewDiffPreviewInput,
   success: ReviewDiffPreviewResult,
+  error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
+});
+
+export const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileContents, {
+  payload: ReviewDiffFileContentsInput,
+  success: ReviewDiffFileContentsResult,
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
@@ -1154,6 +1163,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkingCopyTagCommitRpc,
   // end fork: f4
   WsReviewGetDiffPreviewRpc,
+  WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

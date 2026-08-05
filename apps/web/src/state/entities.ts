@@ -254,6 +254,15 @@ export function readEnvironmentSupportsSystemPromptInjection(
   );
 }
 
+/** Whether the environment's server understands thread.pin/unpin.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadPinning === true
+  );
+}
+
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }

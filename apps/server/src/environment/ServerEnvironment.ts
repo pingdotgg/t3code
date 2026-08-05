@@ -145,6 +145,7 @@ export const make = Effect.gen(function* () {
       connectionProbe: true,
       threadSettlement: true,
       threadSnooze: true,
+      threadPinning: true,
       threadTitleRegeneration: true,
       systemPromptInjection: true, // fork: f2 system prompt injection
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
