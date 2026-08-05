@@ -7,6 +7,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
@@ -124,13 +125,39 @@ describe("AcpCoreRuntimeEvents", () => {
         turnId,
         itemId: "assistant:session-1:segment:0",
         text: "hello",
+        streamKind: "reasoning_text",
         rawPayload: { sessionId: "session-1" },
       }),
     ).toMatchObject({
       type: "content.delta",
       itemId: "assistant:session-1:segment:0",
       payload: {
+        streamKind: "reasoning_text",
         delta: "hello",
+      },
+    });
+
+    expect(
+      makeAcpTokenUsageEvent({
+        stamp,
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId,
+        usedTokens: 1200,
+        maxTokens: 256_000,
+        rawPayload: {
+          sessionId: "session-1",
+          update: { sessionUpdate: "usage_update", used: 1200, size: 256_000 },
+        },
+      }),
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      payload: {
+        usage: {
+          usedTokens: 1200,
+          lastUsedTokens: 1200,
+          maxTokens: 256_000,
+        },
       },
     });
 

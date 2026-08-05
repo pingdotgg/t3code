@@ -1,7 +1,9 @@
+import { ProviderDriverKind, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type * as EffectAcpSchema from "effect-acp/schema";
 
+import { makeAcpTokenUsageEvent } from "./AcpCoreRuntimeEvents.ts";
 import {
   extractModelConfigId,
   mergeToolCallState,
@@ -363,6 +365,30 @@ describe("AcpRuntimeModel", () => {
     expect(usage.events[0]).toMatchObject({
       _tag: "UsageUpdated",
       usage: { used: 1200, size: 256000, costAmount: 0.01, costCurrency: "USD" },
+    });
+    // Parser → shared runtime event factory (CursorAdapter / GrokAdapter consumer path).
+    const usageEvent = usage.events[0];
+    if (usageEvent?._tag !== "UsageUpdated") {
+      throw new Error("expected UsageUpdated");
+    }
+    expect(
+      makeAcpTokenUsageEvent({
+        stamp: { eventId: "event-usage" as never, createdAt: "2026-03-27T00:00:00.000Z" },
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId: TurnId.make("turn-1"),
+        usedTokens: usageEvent.usage.used,
+        maxTokens: usageEvent.usage.size,
+        rawPayload: usageEvent.rawPayload,
+      }),
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      payload: {
+        usage: {
+          usedTokens: 1200,
+          maxTokens: 256000,
+        },
+      },
     });
 
     const commands = parseSessionUpdateEvent({

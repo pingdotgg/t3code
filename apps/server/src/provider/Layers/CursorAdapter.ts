@@ -57,6 +57,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
@@ -864,6 +865,27 @@ export function makeCursorAdapter(
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         text: event.text,
                         streamKind: event.streamKind,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "UsageUpdated":
+                    // Shared ACP consumer for usage_update (parser → runtime event).
+                    // Same wiring pattern as ContentDelta/streamKind so the helper is live.
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent(
+                      makeAcpTokenUsageEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        usedTokens: event.usage.used,
+                        ...(event.usage.size > 0 ? { maxTokens: event.usage.size } : {}),
                         rawPayload: event.rawPayload,
                       }),
                     );
