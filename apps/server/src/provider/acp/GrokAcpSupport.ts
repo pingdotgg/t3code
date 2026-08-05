@@ -138,21 +138,50 @@ export function contextWindowsFromSessionModels(
   const windows = new Map<string, number>();
   for (const model of models?.availableModels ?? []) {
     const size = totalContextTokensFromModelMeta(model._meta);
-    if (size !== undefined) {
-      windows.set(model.modelId, size);
+    if (size === undefined) {
+      continue;
+    }
+    windows.set(model.modelId, size);
+    // Index the normalized slug too so UI slugs and ACP ids both resolve.
+    const baseId = resolveGrokAcpBaseModelId(model.modelId);
+    if (baseId && baseId !== model.modelId) {
+      windows.set(baseId, size);
     }
   }
   return windows;
 }
 
 export function contextWindowForModelId(
-  windows: ReadonlyMap<string, number>,
+  windows: ReadonlyMap<string, number> | undefined,
   modelId: string | undefined,
 ): number | undefined {
-  if (!modelId) {
+  if (!windows || windows.size === 0) {
     return undefined;
   }
-  return windows.get(modelId) ?? windows.get(resolveGrokAcpBaseModelId(modelId));
+  if (modelId) {
+    const direct = windows.get(modelId) ?? windows.get(resolveGrokAcpBaseModelId(modelId));
+    if (direct !== undefined) {
+      return direct;
+    }
+  }
+  // Prefer the sole known window when the active model id does not match.
+  if (windows.size === 1) {
+    return windows.values().next().value;
+  }
+  return undefined;
+}
+
+/** Best-effort window for a new session: bound model, then setup current, then sole entry. */
+export function resolveInitialGrokContextWindow(input: {
+  readonly windows: ReadonlyMap<string, number>;
+  readonly boundModelId: string | undefined;
+  readonly setupModelId: string | undefined;
+}): number | undefined {
+  return (
+    contextWindowForModelId(input.windows, input.boundModelId) ??
+    contextWindowForModelId(input.windows, input.setupModelId) ??
+    (input.windows.size > 0 ? input.windows.values().next().value : undefined)
+  );
 }
 
 /**
@@ -163,9 +192,10 @@ export function enrichGrokTokenUsage(
   usage: ThreadTokenUsageSnapshot,
   maxTokens: number | undefined,
 ): ThreadTokenUsageSnapshot {
+  const resolvedMax = usage.maxTokens ?? maxTokens;
   return {
     ...usage,
-    ...(usage.maxTokens === undefined && maxTokens !== undefined ? { maxTokens } : {}),
+    ...(resolvedMax !== undefined ? { maxTokens: resolvedMax } : {}),
     compactsAutomatically: usage.compactsAutomatically ?? true,
   };
 }

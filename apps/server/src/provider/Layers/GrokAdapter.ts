@@ -62,6 +62,7 @@ import {
   enrichGrokTokenUsage,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  resolveInitialGrokContextWindow,
   tokenUsageFromGrokPromptMeta,
 } from "../acp/GrokAcpSupport.ts";
 import {
@@ -124,6 +125,8 @@ interface GrokSessionContext {
   currentModelId: string | undefined;
   /** modelId → totalContextTokens from Grok session model `_meta`. */
   contextWindowsByModelId: ReadonlyMap<string, number>;
+  /** Last resolved window size so fill % still works if model id lookup misses. */
+  lastKnownMaxTokens: number | undefined;
   stopped: boolean;
 }
 
@@ -752,9 +755,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          const setupModelId = currentGrokModelIdFromSessionSetup(started.sessionSetupResult);
           const contextWindowsByModelId = contextWindowsFromSessionModels(
             started.sessionSetupResult.models,
           );
+          const lastKnownMaxTokens = resolveInitialGrokContextWindow({
+            windows: contextWindowsByModelId,
+            boundModelId,
+            setupModelId,
+          });
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -787,8 +796,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
-            currentModelId: boundModelId,
+            currentModelId: boundModelId ?? setupModelId,
             contextWindowsByModelId,
+            lastKnownMaxTokens,
             stopped: false,
           };
 
@@ -819,10 +829,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   if (usageTurnId !== undefined && ctx.interruptedTurnIds.has(usageTurnId)) {
                     return;
                   }
-                  const maxTokens = contextWindowForModelId(
-                    ctx.contextWindowsByModelId,
-                    ctx.currentModelId,
-                  );
+                  const maxTokens =
+                    contextWindowForModelId(ctx.contextWindowsByModelId, ctx.currentModelId) ??
+                    contextWindowForModelId(ctx.contextWindowsByModelId, ctx.session.model) ??
+                    ctx.lastKnownMaxTokens;
+                  if (maxTokens !== undefined) {
+                    ctx.lastKnownMaxTokens = maxTokens;
+                  }
                   yield* offerRuntimeEvent(
                     makeAcpTokenUsageUpdatedEvent({
                       stamp: yield* makeEventStamp(),
@@ -1034,6 +1047,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
 
               ctx.currentModelId = currentModelId;
+              const turnMaxTokens = contextWindowForModelId(
+                ctx.contextWindowsByModelId,
+                currentModelId,
+              );
+              if (turnMaxTokens !== undefined) {
+                ctx.lastKnownMaxTokens = turnMaxTokens;
+              }
               const displayModel = currentModelId
                 ? resolveGrokAcpBaseModelId(currentModelId)
                 : undefined;
@@ -1188,10 +1208,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               };
               // Grok streams fill via session/update _meta; prompt response
               // carries the final totals as a reliable end-of-turn snapshot.
-              const promptUsage = tokenUsageFromGrokPromptMeta(
-                result._meta,
-                contextWindowForModelId(ctx.contextWindowsByModelId, ctx.currentModelId),
-              );
+              const promptMaxTokens =
+                contextWindowForModelId(ctx.contextWindowsByModelId, ctx.currentModelId) ??
+                contextWindowForModelId(ctx.contextWindowsByModelId, ctx.session.model) ??
+                ctx.lastKnownMaxTokens;
+              if (promptMaxTokens !== undefined) {
+                ctx.lastKnownMaxTokens = promptMaxTokens;
+              }
+              const promptUsage = tokenUsageFromGrokPromptMeta(result._meta, promptMaxTokens);
               if (promptUsage) {
                 yield* offerRuntimeEvent(
                   makeAcpTokenUsageUpdatedEvent({
