@@ -1040,6 +1040,16 @@ const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
   Order.mapInput(Order.String, (activity) => activity.id),
 ]);
 
+function sortByCreatedAt<T extends { readonly createdAt: string }>(items: Iterable<T>): T[] {
+  const decorated = Array.from(items, (item) => ({ item, timestamp: Date.parse(item.createdAt) }));
+  decorated.sort((left, right) => {
+    if (left.timestamp < right.timestamp) return -1;
+    if (left.timestamp > right.timestamp) return 1;
+    return 0;
+  });
+  return decorated.map(({ item }) => item);
+}
+
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   if (entry.type !== "message") {
     return false;
@@ -1378,7 +1388,7 @@ export function derivePendingApprovals(
     }
   }
 
-  return Arr.sortWith([...openByRequestId.values()], (s) => new Date(s.createdAt), Order.Date);
+  return sortByCreatedAt(openByRequestId.values());
 }
 
 export function derivePendingUserInputs(
@@ -1421,7 +1431,7 @@ export function derivePendingUserInputs(
     }
   }
 
-  return Arr.sortWith(openByRequestId.values(), (s) => new Date(s.createdAt), Order.Date);
+  return sortByCreatedAt(openByRequestId.values());
 }
 
 export function setPendingUserInputCustomAnswer(
@@ -1463,58 +1473,54 @@ export function buildThreadFeed(
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
-  const entries = Arr.sortWith(
-    [
-      ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
-        type: "message",
-        id: message.id,
-        createdAt: message.createdAt,
-        message,
-      })),
-      ...workLogEntries
-        .filter((entry) => {
-          if (options?.loadedMessages === undefined) {
-            return true;
-          }
-          return (
-            oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
-          );
-        })
-        .map<RawThreadFeedEntry>((entry) => {
-          const summary = workEntryHeading(entry);
-          const detail = workEntryPreview(entry);
-          const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
-          const getCopyText = memoizeValue(() =>
-            [summary, detail, getFullDetail()]
-              .filter((value, index, values): value is string => {
-                return Boolean(value) && values.indexOf(value) === index;
-              })
-              .join("\n"),
-          );
-          return {
-            type: "activity",
+  const entries = sortByCreatedAt<RawThreadFeedEntry>([
+    ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
+      type: "message",
+      id: message.id,
+      createdAt: message.createdAt,
+      message,
+    })),
+    ...workLogEntries
+      .filter((entry) => {
+        if (options?.loadedMessages === undefined) {
+          return true;
+        }
+        return (
+          oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
+        );
+      })
+      .map<RawThreadFeedEntry>((entry) => {
+        const summary = workEntryHeading(entry);
+        const detail = workEntryPreview(entry);
+        const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
+        const getCopyText = memoizeValue(() =>
+          [summary, detail, getFullDetail()]
+            .filter((value, index, values): value is string => {
+              return Boolean(value) && values.indexOf(value) === index;
+            })
+            .join("\n"),
+        );
+        return {
+          type: "activity",
+          id: entry.id,
+          createdAt: entry.createdAt,
+          turnId: entry.turnId,
+          activity: {
             id: entry.id,
             createdAt: entry.createdAt,
             turnId: entry.turnId,
-            activity: {
-              id: entry.id,
-              createdAt: entry.createdAt,
-              turnId: entry.turnId,
-              summary,
-              detail,
-              canExpand: workEntryHasExpandedBody(entry),
-              getFullDetail,
-              getCopyText,
-              icon: workEntryIcon(entry),
-              toolLike: workLogEntryIsToolLike(entry),
-              status: workEntryStatus(entry),
-            },
-          };
-        }),
-    ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
-  );
+            summary,
+            detail,
+            canExpand: workEntryHasExpandedBody(entry),
+            getFullDetail,
+            getCopyText,
+            icon: workEntryIcon(entry),
+            toolLike: workLogEntryIsToolLike(entry),
+            status: workEntryStatus(entry),
+          },
+        };
+      }),
+  ]);
 
   return groupAdjacentActivities(entries);
 }

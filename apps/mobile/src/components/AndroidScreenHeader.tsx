@@ -48,6 +48,7 @@ export function AndroidHeaderIconButton(props: {
 export function AndroidScreenHeader(props: {
   readonly title: string;
   readonly subtitle?: string | null;
+  readonly reserveSubtitleSpace?: boolean;
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
@@ -85,12 +86,15 @@ export function AndroidScreenHeader(props: {
           <Text numberOfLines={1} className="text-lg font-t3-bold text-foreground">
             {props.title}
           </Text>
-          {props.subtitle ? (
+          {props.subtitle || props.reserveSubtitleSpace ? (
             <Text
               numberOfLines={1}
-              className="mt-px text-[13px] font-t3-medium text-foreground-muted"
+              className={cn(
+                "mt-px text-[13px] font-t3-medium text-foreground-muted",
+                !props.subtitle && "opacity-0",
+              )}
             >
-              {props.subtitle}
+              {props.subtitle || " "}
             </Text>
           ) : null}
         </View>

@@ -13,6 +13,7 @@ import {
 
 import {
   buildThreadFeed,
+  derivePendingApprovals,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -530,6 +531,86 @@ describe("buildThreadFeed", () => {
       type: "work-toggle",
       expanded: true,
     });
+  });
+
+  it("orders feed entries chronologically without relying on timestamp string order", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-ordering"),
+      projectId: ProjectId.make("project-1"),
+      title: "Ordering",
+      messages: [
+        {
+          id: MessageId.make("message-late"),
+          role: "assistant",
+          text: "Last",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+        },
+        {
+          id: MessageId.make("message-early"),
+          role: "user",
+          text: "First",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T01:00:00.000+02:00",
+          updatedAt: "2026-04-01T01:00:00.000+02:00",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("warning-between"),
+          kind: "runtime.warning",
+          summary: "Runtime warning",
+          createdAt: "2026-03-31T23:30:00.000Z",
+          payload: { message: "Between the messages" },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread).map((entry) => entry.id)).toEqual([
+      "message-early",
+      "warning-between",
+      "message-late",
+    ]);
+  });
+});
+
+describe("derivePendingApprovals", () => {
+  it("returns open approvals oldest-first regardless of event order", () => {
+    const approvals = derivePendingApprovals([
+      makeActivity({
+        id: EventId.make("approval-late"),
+        kind: "approval.requested",
+        summary: "Approve command",
+        createdAt: "2026-04-01T00:00:09.000Z",
+        payload: { requestId: "request-late", requestKind: "command" },
+      }),
+      makeActivity({
+        id: EventId.make("approval-early"),
+        kind: "approval.requested",
+        summary: "Approve file change",
+        createdAt: "2026-04-01T00:00:03.000Z",
+        payload: { requestId: "request-early", requestKind: "file-change" },
+      }),
+      makeActivity({
+        id: EventId.make("approval-resolved"),
+        kind: "approval.requested",
+        summary: "Approve command",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: { requestId: "request-resolved", requestKind: "command" },
+      }),
+      makeActivity({
+        id: EventId.make("approval-resolution"),
+        kind: "approval.resolved",
+        summary: "Approved",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        payload: { requestId: "request-resolved" },
+      }),
+    ]);
+
+    expect(approvals.map(({ requestId }) => requestId)).toEqual(["request-early", "request-late"]);
   });
 });
 

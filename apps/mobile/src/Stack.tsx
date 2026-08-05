@@ -415,7 +415,13 @@ export const RootStack = createNativeStackNavigator({
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
       linking: THREAD_LINKING_PREFIX,
-      options: GLASS_HEADER_OPTIONS,
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        // Android owns an in-flow thread header. Hide the native header before
+        // the route's loading state mounts so hydration cannot move the whole
+        // screen by one toolbar height when runtime options arrive.
+        ...(Platform.OS === "android" ? { headerShown: false } : null),
+      },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
