@@ -22,11 +22,39 @@ import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorag
 import { Schema } from "effect";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
+const SIDEBAR_OPEN_STORAGE_KEY = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+
+function readStoredSidebarOpen(defaultOpen: boolean): boolean {
+  if (typeof window === "undefined") {
+    return defaultOpen;
+  }
+
+  try {
+    const stored = getLocalStorageItem(SIDEBAR_OPEN_STORAGE_KEY, Schema.Boolean);
+    if (stored !== null) {
+      return stored;
+    }
+  } catch {
+    // Fall through to cookie / default when storage is unavailable or corrupt.
+  }
+
+  const cookie = document.cookie
+    .split("; ")
+    .find((entry) => entry.startsWith(`${SIDEBAR_COOKIE_NAME}=`));
+  if (!cookie) {
+    return defaultOpen;
+  }
+
+  const value = cookie.slice(SIDEBAR_COOKIE_NAME.length + 1);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return defaultOpen;
+}
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed";
@@ -103,10 +131,12 @@ function SidebarProvider({
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen);
+  const [_open, _setOpen] = React.useState(() =>
+    openProp === undefined ? readStoredSidebarOpen(defaultOpen) : defaultOpen,
+  );
   const open = openProp ?? _open;
   const setOpen = React.useCallback(
-    async (value: boolean | ((value: boolean) => boolean)) => {
+    (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === "function" ? value(open) : value;
       if (setOpenProp) {
         setOpenProp(openState);
@@ -114,15 +144,31 @@ function SidebarProvider({
         _setOpen(openState);
       }
 
-      // This sets the cookie to keep the sidebar state.
-      await cookieStore.set({
-        expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
-        name: SIDEBAR_COOKIE_NAME,
-        path: "/",
-        value: String(openState),
-      });
+      // Only uncontrolled providers own the shared open-state key. Controlled
+      // nested providers (e.g. the inline diff panel) must not overwrite the
+      // primary app sidebar's persisted expanded/collapsed preference.
+      if (openProp !== undefined) {
+        return;
+      }
+
+      // Persist across reloads. localStorage is the source of truth; cookie stays
+      // for compatibility with the original shadcn sidebar cookie contract.
+      try {
+        setLocalStorageItem(SIDEBAR_OPEN_STORAGE_KEY, openState, Schema.Boolean);
+      } catch {
+        // Ignore quota / private-mode failures; in-memory state still updates.
+      }
+
+      if (typeof cookieStore !== "undefined") {
+        void cookieStore.set({
+          expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
+          name: SIDEBAR_COOKIE_NAME,
+          path: "/",
+          value: String(openState),
+        });
+      }
     },
-    [setOpenProp, open],
+    [setOpenProp, open, openProp],
   );
 
   // Helper to toggle the sidebar.
@@ -310,23 +356,30 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar, openMobile } = useSidebar();
+  const { toggleSidebar, open, openMobile, isMobile } = useSidebar();
+  // Mobile sheet state is independent of desktop open; keep trigger attrs aligned.
+  const isOpen = isMobile ? openMobile : open;
+  const state = isOpen ? "expanded" : "collapsed";
 
   return (
     <Button
+      aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+      aria-expanded={isOpen}
       className={cn("size-7", className)}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
+      data-state={state}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();
       }}
       size="icon"
+      title={isOpen ? "Collapse sidebar" : "Expand sidebar"}
       variant="ghost"
       {...props}
     >
-      {openMobile ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
-      <span className="sr-only">Toggle Sidebar</span>
+      {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      <span className="sr-only">{isOpen ? "Collapse sidebar" : "Expand sidebar"}</span>
     </Button>
   );
 }

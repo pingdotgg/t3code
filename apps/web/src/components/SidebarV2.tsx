@@ -319,6 +319,13 @@ export default function SidebarV2() {
       },
     },
   );
+  const sidebarToggleShortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
+    platform: navigator.platform,
+    context: {
+      terminalFocus: false,
+      terminalOpen: false,
+    },
+  });
   const hasMacSidebarChrome = shouldReserveMacSidebarChrome({
     isElectron,
     platform: navigator.platform,
@@ -715,6 +722,7 @@ export default function SidebarV2() {
       <SidebarContent className="gap-1 pt-1">
         <SidebarTopActions
           commandPaletteShortcutLabel={commandPaletteShortcutLabel}
+          sidebarToggleShortcutLabel={sidebarToggleShortcutLabel}
           newThread={{
             disabled: defaultProjectRef === null,
             onClick: handleNewThreadClick,

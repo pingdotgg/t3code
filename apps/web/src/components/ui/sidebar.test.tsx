@@ -6,6 +6,7 @@ import {
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
+  SidebarTrigger,
 } from "./sidebar";
 
 function renderSidebarButton(className?: string) {
@@ -49,5 +50,31 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-sub-button"');
     expect(html).toContain("cursor-pointer");
+  });
+});
+
+describe("sidebar collapse trigger", () => {
+  it("exposes expanded state and a collapse label when open", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider defaultOpen>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-slot="sidebar-trigger"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("Collapse sidebar");
+  });
+
+  it("exposes collapsed state and an expand label when closed", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider defaultOpen={false}>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-slot="sidebar-trigger"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("Expand sidebar");
   });
 });

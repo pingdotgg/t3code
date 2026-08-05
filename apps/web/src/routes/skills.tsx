@@ -155,7 +155,7 @@ function SkillsHeader({
       )}
     >
       <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        <SidebarTrigger className="no-drag size-7 shrink-0" />
         <SparklesIcon className="size-4 text-muted-foreground" />
         <span className="text-sm font-medium text-foreground">Skills</span>
         <Badge variant="outline" size="sm">

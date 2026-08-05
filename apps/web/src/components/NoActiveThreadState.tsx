@@ -15,18 +15,24 @@ export function NoActiveThreadState() {
               : "py-2 sm:py-3",
           )}
         >
-          {isElectron ? (
-            <span className="text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+          <div
+            className={cn(
+              "flex items-center gap-2",
+              isElectron &&
+                "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+            )}
+          >
+            <SidebarTrigger className="no-drag size-7 shrink-0" />
+            <span
+              className={cn(
+                isElectron
+                  ? "text-xs text-muted-foreground/50"
+                  : "text-sm font-medium text-foreground md:text-muted-foreground/60",
+              )}
+            >
               No active thread
             </span>
-          ) : (
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-              <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                No active thread
-              </span>
-            </div>
-          )}
+          </div>
         </header>
 
         <Empty className="flex-1">
