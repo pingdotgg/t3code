@@ -28,7 +28,7 @@ export function makeThreadSearchKey(
   query: string,
 ): string {
   return JSON.stringify([
-    [...environmentIds].toSorted((left, right) => left.localeCompare(right)),
+    [...environmentIds].sort((left, right) => left.localeCompare(right)),
     query,
   ]);
 }
