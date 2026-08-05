@@ -76,7 +76,6 @@ import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
-  MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveTimelineToolPresentation,
@@ -88,6 +87,7 @@ import {
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
+  selectCollapsedWorkLogEntries,
   shouldPreserveAssistantLineBreaks,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
@@ -1792,17 +1792,19 @@ const WorkGroupSection = memo(function WorkGroupSection({
   const anchorBottomBeforeToggleRef = useRef<number | null>(null);
   // Keep rows the provider reported as running or stopped. Filtering every
   // neutral row also removed those, so an in-flight tool had no row while it
-  // ran and an interrupted one left nothing behind.
+  // ran and an interrupted one left nothing behind. Collapsed view still pins
+  // executing and stopped rows so a later completed tool cannot bury them.
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter(workEntryShouldRenderInWorkLog),
     [groupedEntries],
   );
-  const hasOverflow = nonEmptyEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-  const visibleEntries =
-    hasOverflow && !isExpanded
-      ? nonEmptyEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-      : nonEmptyEntries;
-  const hiddenCount = nonEmptyEntries.length - visibleEntries.length;
+  const collapsedEntries = useMemo(
+    () => selectCollapsedWorkLogEntries(nonEmptyEntries),
+    [nonEmptyEntries],
+  );
+  const hiddenCount = nonEmptyEntries.length - collapsedEntries.length;
+  const hasOverflow = hiddenCount > 0;
+  const visibleEntries = isExpanded || !hasOverflow ? nonEmptyEntries : collapsedEntries;
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
   const groupLabel = onlyToolEntries
     ? nonEmptyEntries.length === 1

@@ -1968,4 +1968,80 @@ describe("MessagesTimeline", () => {
   it("still omits a tool row carrying no lifecycle signal", () => {
     expect(workRow(undefined)).not.toContain("Ran command");
   });
+
+  const multiToolWorkEntries = (
+    rows: Array<{
+      id: string;
+      label: string;
+      itemStatus: OrchestrationV2TurnItem["status"];
+    }>,
+  ) =>
+    rows.map((row, index) => {
+      const toolLifecycleStatus = toolLifecycleStatusForItemStatus(row.itemStatus);
+      return {
+        id: `entry-${row.id}`,
+        kind: "work" as const,
+        createdAt: `2026-03-17T19:12:${String(28 + index).padStart(2, "0")}.000Z`,
+        entry: {
+          id: row.id,
+          createdAt: `2026-03-17T19:12:${String(28 + index).padStart(2, "0")}.000Z`,
+          label: row.label,
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          command: row.label,
+          ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+          structuredPayload: { status: row.itemStatus } as OrchestrationV2TurnItem,
+        },
+      };
+    });
+
+  // Collapsed groups used to keep only slice(-1), so a later completed tool
+  // buried the running or stopped row the work-log filter retained.
+  it("keeps pinned running and stopped tools visible in a collapsed work group", () => {
+    const runningAndCompleted = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={multiToolWorkEntries([
+          { id: "running", label: "Active shell", itemStatus: "running" },
+          { id: "completed", label: "Finished shell", itemStatus: "completed" },
+        ])}
+      />,
+    );
+    expect(runningAndCompleted).toContain("Active shell");
+    expect(runningAndCompleted).toContain("Finished shell");
+    expect(runningAndCompleted).toContain("lucide-loader-circle");
+    expect(runningAndCompleted).not.toContain("previous tool");
+
+    const stoppedAndCompleted = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={multiToolWorkEntries([
+          { id: "stopped", label: "Interrupted shell", itemStatus: "interrupted" },
+          { id: "completed", label: "Finished shell", itemStatus: "completed" },
+        ])}
+      />,
+    );
+    expect(stoppedAndCompleted).toContain("Interrupted shell");
+    expect(stoppedAndCompleted).toContain("Finished shell");
+    expect(stoppedAndCompleted).toContain(', stopped"');
+    expect(stoppedAndCompleted).not.toContain("previous tool");
+  });
+
+  it("does not pin pending or waiting rows in a collapsed work group", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={multiToolWorkEntries([
+          { id: "pending", label: "Queued shell", itemStatus: "pending" },
+          { id: "waiting", label: "Blocked shell", itemStatus: "waiting" },
+          { id: "completed", label: "Finished shell", itemStatus: "completed" },
+        ])}
+      />,
+    );
+
+    expect(markup).toContain("Finished shell");
+    expect(markup).not.toContain("Queued shell");
+    expect(markup).not.toContain("Blocked shell");
+    expect(markup).toContain("+2 previous tool calls");
+  });
 });

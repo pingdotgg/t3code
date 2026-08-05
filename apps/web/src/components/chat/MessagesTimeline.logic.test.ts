@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { WorkLogEntry } from "../../session-logic";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -6,6 +8,7 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineToolPresentation,
+  selectCollapsedWorkLogEntries,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
 
@@ -17,6 +20,170 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("selectCollapsedWorkLogEntries", () => {
+  const toolEntry = (input: {
+    id: string;
+    label: string;
+    toolLifecycleStatus?: WorkLogEntry["toolLifecycleStatus"];
+    itemStatus?: OrchestrationV2TurnItem["status"];
+  }): WorkLogEntry => ({
+    id: input.id,
+    createdAt: "2026-03-17T19:12:28.000Z",
+    label: input.label,
+    tone: "tool",
+    itemType: "command_execution",
+    command: input.label,
+    ...(input.toolLifecycleStatus ? { toolLifecycleStatus: input.toolLifecycleStatus } : {}),
+    ...(input.itemStatus
+      ? { structuredPayload: { status: input.itemStatus } as OrchestrationV2TurnItem }
+      : {}),
+  });
+
+  it("keeps only the latest ordinary row for pending and waiting before completed", () => {
+    const entries = [
+      toolEntry({
+        id: "pending",
+        label: "Pending command",
+        toolLifecycleStatus: "inProgress",
+        itemStatus: "pending",
+      }),
+      toolEntry({
+        id: "waiting",
+        label: "Waiting command",
+        toolLifecycleStatus: "inProgress",
+        itemStatus: "waiting",
+      }),
+      toolEntry({
+        id: "completed",
+        label: "Completed command",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+    ];
+
+    const collapsed = selectCollapsedWorkLogEntries(entries);
+    expect(collapsed.map((entry) => entry.id)).toEqual(["completed"]);
+    expect(entries.length - collapsed.length).toBe(2);
+  });
+
+  it("pins a running tool ahead of a later completed ordinary row", () => {
+    const entries = [
+      toolEntry({
+        id: "running",
+        label: "Running command",
+        toolLifecycleStatus: "inProgress",
+        itemStatus: "running",
+      }),
+      toolEntry({
+        id: "completed",
+        label: "Completed command",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+    ];
+
+    const collapsed = selectCollapsedWorkLogEntries(entries);
+    expect(collapsed.map((entry) => entry.id)).toEqual(["running", "completed"]);
+    expect(entries.length - collapsed.length).toBe(0);
+  });
+
+  it("keeps the preceding completed ordinary row when the final source entry is running", () => {
+    const entries = [
+      toolEntry({
+        id: "completed",
+        label: "Completed command",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+      toolEntry({
+        id: "running",
+        label: "Running command",
+        toolLifecycleStatus: "inProgress",
+        itemStatus: "running",
+      }),
+    ];
+
+    const collapsed = selectCollapsedWorkLogEntries(entries);
+    expect(collapsed.map((entry) => entry.id)).toEqual(["completed", "running"]);
+    expect(entries.length - collapsed.length).toBe(0);
+  });
+
+  it("pins a stopped tool ahead of a later completed ordinary row", () => {
+    const entries = [
+      toolEntry({
+        id: "stopped",
+        label: "Stopped command",
+        toolLifecycleStatus: "stopped",
+        itemStatus: "interrupted",
+      }),
+      toolEntry({
+        id: "completed",
+        label: "Completed command",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+    ];
+
+    const collapsed = selectCollapsedWorkLogEntries(entries);
+    expect(collapsed.map((entry) => entry.id)).toEqual(["stopped", "completed"]);
+    expect(entries.length - collapsed.length).toBe(0);
+  });
+
+  it("keeps the preceding completed ordinary row when the final source entry is stopped", () => {
+    const entries = [
+      toolEntry({
+        id: "completed",
+        label: "Completed command",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+      toolEntry({
+        id: "stopped",
+        label: "Stopped command",
+        toolLifecycleStatus: "stopped",
+        itemStatus: "interrupted",
+      }),
+    ];
+
+    const collapsed = selectCollapsedWorkLogEntries(entries);
+    expect(collapsed.map((entry) => entry.id)).toEqual(["completed", "stopped"]);
+    expect(entries.length - collapsed.length).toBe(0);
+  });
+
+  it("preserves source order when pinning earlier executing and stopped rows", () => {
+    const entries = [
+      toolEntry({
+        id: "older-completed",
+        label: "Older completed",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+      toolEntry({
+        id: "running",
+        label: "Running command",
+        toolLifecycleStatus: "inProgress",
+        itemStatus: "running",
+      }),
+      toolEntry({
+        id: "stopped",
+        label: "Stopped command",
+        toolLifecycleStatus: "stopped",
+        itemStatus: "cancelled",
+      }),
+      toolEntry({
+        id: "latest-completed",
+        label: "Latest completed",
+        toolLifecycleStatus: "completed",
+        itemStatus: "completed",
+      }),
+    ];
+
+    const collapsed = selectCollapsedWorkLogEntries(entries);
+    expect(collapsed.map((entry) => entry.id)).toEqual(["running", "stopped", "latest-completed"]);
+    expect(entries.length - collapsed.length).toBe(1);
   });
 });
 

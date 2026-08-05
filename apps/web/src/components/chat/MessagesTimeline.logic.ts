@@ -2,6 +2,7 @@ import * as Equal from "effect/Equal";
 import {
   formatDuration,
   timelineEntryIsPersistentResourceCard,
+  workEntryIsExecuting,
   type TimelineEntry,
   type WorkLogEntry,
 } from "../../session-logic";
@@ -25,6 +26,38 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+
+/**
+ * Collapsed work-group selection. Keeps source order and naturally dedupes by
+ * entry id. Pins every genuinely executing tool and every stopped tool, plus
+ * the latest ordinary density-budget row(s) among the remaining non-pinned
+ * rows. Does not pin pending/waiting rows merely because projected lifecycle
+ * is the aggregate `inProgress`.
+ */
+export function selectCollapsedWorkLogEntries(
+  nonEmptyEntries: readonly WorkLogEntry[],
+): WorkLogEntry[] {
+  if (nonEmptyEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+    return nonEmptyEntries.slice();
+  }
+
+  const keepIds = new Set<string>();
+  const ordinaryIds: string[] = [];
+  for (const entry of nonEmptyEntries) {
+    if (workEntryIsExecuting(entry) || entry.toolLifecycleStatus === "stopped") {
+      keepIds.add(entry.id);
+      continue;
+    }
+    ordinaryIds.push(entry.id);
+  }
+
+  const ordinaryKeepStart = Math.max(0, ordinaryIds.length - MAX_VISIBLE_WORK_LOG_ENTRIES);
+  for (const id of ordinaryIds.slice(ordinaryKeepStart)) {
+    keepIds.add(id);
+  }
+
+  return nonEmptyEntries.filter((entry) => keepIds.has(entry.id));
+}
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
