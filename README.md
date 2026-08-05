@@ -33,6 +33,13 @@ This will launch T3 Code's backend on your machine as well as the local web app 
 
 Tip: Use `npx t3@latest --help` for the full CLI reference.
 
+### Mobile apps
+
+Control your T3 Code environments from your phone or tablet:
+
+- [Download for iPhone and iPad on the App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824)
+- [Get the Android app on Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code)
+
 ### Desktop app
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:

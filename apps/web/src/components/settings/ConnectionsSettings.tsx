@@ -1,5 +1,6 @@
 import {
   ChevronsLeftRightEllipsisIcon,
+  ExternalLinkIcon,
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
@@ -132,6 +133,8 @@ import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectLis
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+const IOS_APP_URL = "https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824";
+const ANDROID_APP_URL = "https://play.google.com/store/apps/details?id=com.t3tools.t3code&pli=1";
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -3429,6 +3432,41 @@ export function ConnectionsSettings() {
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Mobile apps">
+        <SettingsRow
+          title="iPhone and iPad"
+          description="Control your environments and follow agent activity from the native iOS app."
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              render={
+                <a href={IOS_APP_URL} target="_blank" rel="noreferrer">
+                  App Store
+                  <ExternalLinkIcon aria-hidden />
+                </a>
+              }
+            />
+          }
+        />
+        <SettingsRow
+          title="Android"
+          description="Connect to T3 Code from an Android phone or tablet."
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              render={
+                <a href={ANDROID_APP_URL} target="_blank" rel="noreferrer">
+                  Google Play
+                  <ExternalLinkIcon aria-hidden />
+                </a>
+              }
+            />
+          }
         />
       </SettingsSection>
     </SettingsPageContainer>
