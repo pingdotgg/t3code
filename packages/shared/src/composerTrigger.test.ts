@@ -40,4 +40,11 @@ describe("serializeComposerFileLink", () => {
       "[package.json](@scope/package.json)",
     );
   });
+
+  it("escapes markdown syntax in filenames", () => {
+    expect(serializeComposerFileLink("/custom/*draft* &amp;")).toBe(
+      "[\\*draft\\* \\&amp;](/custom/*draft*%20%26amp;)",
+    );
+    expect(serializeComposerFileLink("/tmp/a|b")).toBe("[a\\|b](/tmp/a%7Cb)");
+  });
 });
