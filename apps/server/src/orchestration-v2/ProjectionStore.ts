@@ -206,6 +206,8 @@ export function applyToProjection(
     case "thread.unsettled":
     case "thread.snoozed":
     case "thread.unsnoozed":
+    case "thread.pinned":
+    case "thread.unpinned":
     case "thread.metadata-updated":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
@@ -896,6 +898,7 @@ export function threadShellFromProjection(
     settledAt: projection.thread.settledAt,
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
+    pinnedAt: projection.thread.pinnedAt ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     deletedAt: projection.thread.deletedAt,
@@ -1065,6 +1068,7 @@ function shellFromState(input: {
     settledAt: input.state.thread.settledAt,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
+    pinnedAt: input.state.thread.pinnedAt ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     deletedAt: input.state.thread.deletedAt,
@@ -1087,6 +1091,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.unsettled":
           case "thread.snoozed":
           case "thread.unsnoozed":
+          case "thread.pinned":
+          case "thread.unpinned":
           case "thread.visited":
           case "thread.marked-unread":
           case "thread.metadata-updated":
@@ -1886,6 +1892,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.unsettled" &&
           event.type !== "thread.snoozed" &&
           event.type !== "thread.unsnoozed" &&
+          event.type !== "thread.pinned" &&
+          event.type !== "thread.unpinned" &&
           event.type !== "thread.visited" &&
           event.type !== "thread.marked-unread" &&
           event.type !== "thread.metadata-updated" &&

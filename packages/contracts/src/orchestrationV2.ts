@@ -324,6 +324,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1079,6 +1080,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.unsettled",
       "thread.snoozed",
       "thread.unsnoozed",
+      "thread.pinned",
+      "thread.unpinned",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -1272,6 +1275,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Omitted by servers that predate thread pinning. */
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /**
    * Omitted by servers that predate server-side visited tracking; clients fall
    * back to their local visited state when the field is absent.
@@ -1360,6 +1365,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   ),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1742,6 +1748,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   settledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
@@ -1785,6 +1792,8 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.unsettled",
       "thread.snoozed",
       "thread.unsnoozed",
+      "thread.pinned",
+      "thread.unpinned",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -1956,6 +1965,16 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.pin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unpin"),
+    commandId: CommandId,
+    threadId: ThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),
