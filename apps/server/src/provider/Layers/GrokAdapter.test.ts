@@ -188,6 +188,63 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("maps /compact session notifications to thread.state.changed compacted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-compact-thread");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const compacted = yield* Deferred.make<void>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "thread.state.changed" && event.payload.state === "compacted"
+              ? Deferred.succeed(compacted, undefined)
+              : event.type === "turn.completed"
+                ? Deferred.succeed(turnCompleted, undefined)
+                : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/compact keep the auth details",
+        attachments: [],
+      });
+
+      yield* Deferred.await(compacted).pipe(Effect.timeout("3 seconds"));
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("3 seconds"));
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const compactEvent = runtimeEvents.find(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "thread.state.changed" }> =>
+          event.type === "thread.state.changed" && event.payload.state === "compacted",
+      );
+      assert.isDefined(compactEvent);
+      if (compactEvent?.type === "thread.state.changed") {
+        assert.deepEqual(compactEvent.payload.detail, {
+          tokensBefore: 12_000,
+          tokensAfter: 4_000,
+        });
+        assert.equal(compactEvent.raw?.method, "_x.ai/session_notification");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
