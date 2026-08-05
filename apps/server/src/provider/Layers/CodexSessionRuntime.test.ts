@@ -291,18 +291,40 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
+
+  it("omits T3 Preview routing unless the t3-code MCP server is mounted", () => {
+    for (const mode of ["default", "plan"] as const) {
+      const withoutPreview = buildCodexDeveloperInstructions(mode, {
+        model: "gpt-5.3-codex",
+        reasoningEffort: "medium",
+      });
+      const withPreview = buildCodexDeveloperInstructions(
+        mode,
+        {
+          model: "gpt-5.3-codex",
+          reasoningEffort: "medium",
+        },
+        { includeT3PreviewTools: true },
+      );
+
+      NodeAssert.doesNotMatch(withoutPreview, /preview_status/);
+      NodeAssert.doesNotMatch(withoutPreview, /t3-code/);
+      NodeAssert.match(withPreview, /t3-code/);
+      NodeAssert.match(withPreview, /preview_status/);
+      NodeAssert.match(withPreview, /preview_open/);
+      NodeAssert.match(withPreview, /Do not switch to global browser skills/);
+    }
+  });
 });
 
 describe("T3 browser developer instructions", () => {
-  it("prefers the product-native preview tools in both collaboration modes", () => {
+  it("keeps base collaboration mode instructions free of T3 Preview routing", () => {
     for (const instructions of [
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
-      NodeAssert.match(instructions, /t3-code/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.doesNotMatch(instructions, /t3-code/);
+      NodeAssert.doesNotMatch(instructions, /preview_status/);
     }
   });
 });

@@ -187,6 +187,35 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings.agentVisualToolsMode", () => {
+  it("defaults to provider-native for legacy configs", () => {
+    expect(decodeServerSettings({}).agentVisualToolsMode).toBe("provider-native");
+    expect(DEFAULT_SERVER_SETTINGS.agentVisualToolsMode).toBe("provider-native");
+  });
+
+  it("accepts both routing modes through the patch schema", () => {
+    expect(
+      decodeServerSettingsPatch({ agentVisualToolsMode: "t3-preview" }).agentVisualToolsMode,
+    ).toBe("t3-preview");
+    expect(
+      decodeServerSettingsPatch({ agentVisualToolsMode: "provider-native" }).agentVisualToolsMode,
+    ).toBe("provider-native");
+  });
+
+  it("rejects unsupported routing modes", () => {
+    expect(() => decodeServerSettings({ agentVisualToolsMode: "both" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ agentVisualToolsMode: "both" })).toThrow();
+  });
+
+  it("round-trips the selected mode through encode/decode", () => {
+    const encoded = encodeServerSettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      agentVisualToolsMode: "t3-preview",
+    });
+    expect(decodeServerSettings(encoded).agentVisualToolsMode).toBe("t3-preview");
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

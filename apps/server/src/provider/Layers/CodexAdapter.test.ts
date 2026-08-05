@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -35,6 +36,7 @@ import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -286,6 +288,63 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+
+  it.effect("omits t3-code MCP config when no provider MCP session exists", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-no-mcp");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const options = validationRuntimeFactory.factory.mock.calls[0]?.[0] as
+        | CodexSessionRuntimeOptions
+        | undefined;
+      NodeAssert.equal(options?.appServerArgs, undefined);
+      NodeAssert.equal(options?.environment, undefined);
+    }),
+  );
+
+  it.effect("mounts t3-code MCP config when a provider MCP session exists", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-with-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer preview-token",
+      });
+
+      try {
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        const options = validationRuntimeFactory.factory.mock.calls[0]?.[0] as
+          | CodexSessionRuntimeOptions
+          | undefined;
+        NodeAssert.deepStrictEqual(options?.appServerArgs, [
+          "-c",
+          "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp",
+          "-c",
+          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ]);
+        NodeAssert.equal(options?.environment?.T3_MCP_BEARER_TOKEN, "preview-token");
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
     }),
   );
 });
