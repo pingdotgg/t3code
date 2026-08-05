@@ -10,6 +10,8 @@ import {
   buildInitialGrokProviderSnapshot,
   capabilitiesFromGrokModelMeta,
   checkGrokProviderStatus,
+  ensureGrokStaticSlashCommands,
+  GROK_STATIC_SLASH_COMMANDS,
   mapAcpCommandsToCatalog,
 } from "./GrokProvider.ts";
 
@@ -38,6 +40,7 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.message).toContain("Checking Grok");
       expect(snapshot.requiresNewThreadForModelChange).toBe(false);
       expect(snapshot.showInteractionModeToggle).toBe(true);
+      expect(snapshot.slashCommands).toEqual(GROK_STATIC_SLASH_COMMANDS);
     }),
   );
 });
@@ -144,5 +147,20 @@ describe("Grok capability and command helpers", () => {
     ]);
     expect(catalog.slashCommands).toHaveLength(2);
     expect(catalog.skills).toEqual([expect.objectContaining({ name: "review", enabled: true })]);
+  });
+
+  it("re-adds compact when live catalog omits it", () => {
+    expect(ensureGrokStaticSlashCommands([])).toEqual(GROK_STATIC_SLASH_COMMANDS);
+    expect(
+      ensureGrokStaticSlashCommands([{ name: "review", description: "Review" }]).map(
+        (command) => command.name,
+      ),
+    ).toEqual(["review", "compact"]);
+    expect(
+      ensureGrokStaticSlashCommands([
+        { name: "compact", description: "Live compact" },
+        { name: "review" },
+      ]).map((command) => command.name),
+    ).toEqual(["compact", "review"]);
   });
 });

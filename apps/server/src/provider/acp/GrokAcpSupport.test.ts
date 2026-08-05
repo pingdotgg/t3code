@@ -70,11 +70,17 @@ describe("resolveGrokReasoningEffortSelection", () => {
 
 describe("applyGrokAcpModelSelection", () => {
   const makeRecordingRuntime = (failure?: EffectAcpErrors.AcpError) => {
-    const modelCalls: Array<string> = [];
+    const modelCalls: Array<{
+      modelId: string;
+      options?: { readonly _meta?: { readonly [x: string]: unknown } | null };
+    }> = [];
     const runtime = {
-      setSessionModel: (modelId: string) =>
+      setSessionModel: (
+        modelId: string,
+        options?: { readonly _meta?: { readonly [x: string]: unknown } | null },
+      ) =>
         Effect.gen(function* () {
-          modelCalls.push(modelId);
+          modelCalls.push({ modelId, ...(options ? { options } : {}) });
           if (failure) return yield* failure;
           return {};
         }),
@@ -91,12 +97,12 @@ describe("applyGrokAcpModelSelection", () => {
         requestedModelId: "grok-mock-alt",
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual(["grok-mock-alt"]);
+      expect(modelCalls).toEqual([{ modelId: "grok-mock-alt" }]);
       expect(result).toBe("grok-mock-alt");
     }),
   );
 
-  it.effect("skips set_model when requested matches current", () =>
+  it.effect("skips set_model when requested matches current and no effort", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
@@ -110,7 +116,7 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 
-  it.effect("skips set_model when no model is requested", () =>
+  it.effect("skips set_model when no model is requested and no effort", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
@@ -121,6 +127,46 @@ describe("applyGrokAcpModelSelection", () => {
       });
       expect(modelCalls).toEqual([]);
       expect(result).toBe("grok-build");
+    }),
+  );
+
+  it.effect("calls set_model with reasoningEffort _meta for effort-only change", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        requestedModelId: undefined,
+        selections: [{ id: "reasoningEffort", value: "high" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([
+        {
+          modelId: "grok-build",
+          options: { _meta: { reasoningEffort: "high" } },
+        },
+      ]);
+      expect(result).toBe("grok-build");
+    }),
+  );
+
+  it.effect("calls set_model with model switch and effort _meta together", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        requestedModelId: "grok-mock-alt",
+        selections: [{ id: "reasoningEffort", value: "low" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([
+        {
+          modelId: "grok-mock-alt",
+          options: { _meta: { reasoningEffort: "low" } },
+        },
+      ]);
+      expect(result).toBe("grok-mock-alt");
     }),
   );
 
@@ -226,11 +272,21 @@ describe("applyGrokPlanModeToPromptText", () => {
     );
   });
 
-  it("returns undefined/empty for blank plan prompts", () => {
+  it("returns /plan for blank plan prompts", () => {
     expect(applyGrokPlanModeToPromptText({ text: undefined, interactionMode: "plan" })).toBe(
+      "/plan",
+    );
+    expect(applyGrokPlanModeToPromptText({ text: "   ", interactionMode: "plan" })).toBe("/plan");
+  });
+
+  it("returns undefined/empty for blank non-plan prompts", () => {
+    expect(applyGrokPlanModeToPromptText({ text: undefined, interactionMode: "default" })).toBe(
       undefined,
     );
-    expect(applyGrokPlanModeToPromptText({ text: "   ", interactionMode: "plan" })).toBe("");
+    expect(applyGrokPlanModeToPromptText({ text: "   ", interactionMode: "default" })).toBe("");
+    expect(applyGrokPlanModeToPromptText({ text: undefined, interactionMode: undefined })).toBe(
+      undefined,
+    );
   });
 });
 
@@ -244,7 +300,7 @@ describe("isGrokSubagentToolCall", () => {
     ).toBe(true);
   });
 
-  it("matches titles that mention subagent", () => {
+  it("matches spawn-style titles after normalize", () => {
     expect(
       isGrokSubagentToolCall({
         toolCallId: "tc_2",
@@ -252,6 +308,18 @@ describe("isGrokSubagentToolCall", () => {
         data: {},
       }),
     ).toBe(true);
+  });
+
+  it("does not match ordinary tools whose detail mentions subagent", () => {
+    expect(
+      isGrokSubagentToolCall({
+        toolCallId: "tc_detail",
+        title: "Read file",
+        kind: "read",
+        detail: "notes about a subagent workflow",
+        data: { name: "read_file" },
+      }),
+    ).toBe(false);
   });
 
   it("does not match ordinary tools", () => {

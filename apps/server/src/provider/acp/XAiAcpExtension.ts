@@ -227,10 +227,155 @@ export function makeXAiExitPlanModeReviseResponse(feedback: string): {
   readonly outcome: "rejected";
   readonly feedback: string;
 } {
-  const trimmed = feedback.trim();
+  const feedbackText = feedback.trim();
   return {
     outcome: "rejected",
-    feedback: trimmed.length > 0 ? trimmed : "Please revise the plan.",
+    feedback: feedbackText.length > 0 ? feedbackText : "Please revise the plan.",
+  };
+}
+
+export const XAI_EMPTY_PLAN_MARKDOWN =
+  "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)";
+
+export function extractXAiExitPlanMarkdown(
+  params: XAiExitPlanModeRequest,
+  fallback?: string | null,
+): string {
+  const content = unwrapExitPlanModeParams(params).planContent;
+  const fromRequest = typeof content === "string" ? trimmed(content) : undefined;
+  if (fromRequest) {
+    return fromRequest;
+  }
+  const fromFallback = fallback?.trim();
+  if (fromFallback && fromFallback.length > 0) {
+    return fromFallback;
+  }
+  return XAI_EMPTY_PLAN_MARKDOWN;
+}
+
+export type XAiExitPlanModeOutcome = "approved" | "abandoned" | "request_changes" | "rejected";
+
+export interface XAiExitPlanModeResponse {
+  readonly outcome: XAiExitPlanModeOutcome;
+  readonly feedback?: string;
+}
+
+/**
+ * Client captured the plan for T3's proposed-plan card. Abandon the native
+ * Grok plan-approval gate so the turn unblocks; the user implements via T3 UI.
+ */
+export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitPlanModeResponse {
+  return {
+    outcome: "abandoned",
+    feedback:
+      feedback ??
+      "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+  };
+}
+
+/**
+ * True when a path is Grok's session plan file under `~/.grok/sessions/.../plan.md`.
+ * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md).
+ */
+export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean {
+  if (typeof path !== "string") {
+    return false;
+  }
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (normalized.length === 0 || !normalized.endsWith("/plan.md")) {
+    return false;
+  }
+  // Session layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
+  return normalized.includes("/.grok/sessions/");
+}
+
+/**
+ * Extract plan markdown from a Grok write/edit tool call targeting plan.md.
+ * Used so T3 can show the plan while plan mode is still active (before exit).
+ */
+export function extractGrokPlanMarkdownFromToolCallData(
+  data: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!data) {
+    return undefined;
+  }
+
+  const rawInput = data.rawInput;
+  if (isRecord(rawInput)) {
+    const filePath =
+      (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
+      (typeof rawInput.path === "string" ? rawInput.path : undefined);
+    const content = typeof rawInput.content === "string" ? rawInput.content : undefined;
+    if (isGrokPlanMarkdownPath(filePath) && content && content.trim().length > 0) {
+      return content.trim();
+    }
+  }
+
+  const content = data.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!isRecord(block) || block.type !== "diff") {
+        continue;
+      }
+      const path = typeof block.path === "string" ? block.path : undefined;
+      const newText = typeof block.newText === "string" ? block.newText : undefined;
+      if (isGrokPlanMarkdownPath(path) && newText && newText.trim().length > 0) {
+        return newText.trim();
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Manual `/compact` and auto-compact complete as `auto_compact_completed`.
+ */
+const XAiSessionNotificationUpdate = Schema.Struct({
+  sessionUpdate: Schema.String,
+  tokens_before: Schema.optional(Schema.Number),
+  tokens_after: Schema.optional(Schema.Number),
+  summary_preview: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+export const XAiSessionNotification = Schema.Struct({
+  sessionId: Schema.String,
+  update: XAiSessionNotificationUpdate,
+  _meta: Schema.optional(Schema.Unknown),
+});
+
+export type XAiSessionNotification = typeof XAiSessionNotification.Type;
+
+export interface XAiAutoCompactCompleted {
+  readonly sessionId: string;
+  readonly tokensBefore: number | undefined;
+  readonly tokensAfter: number | undefined;
+  readonly summaryPreview: string | undefined;
+  readonly raw: XAiSessionNotification;
+}
+
+function finiteNonNegative(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Returns compact details when the notification is a completed compaction; otherwise null. */
+export function extractXAiAutoCompactCompleted(
+  notification: XAiSessionNotification,
+): XAiAutoCompactCompleted | null {
+  if (notification.update.sessionUpdate !== "auto_compact_completed") {
+    return null;
+  }
+  const summaryPreview = trimmed(notification.update.summary_preview ?? undefined);
+  return {
+    sessionId: notification.sessionId,
+    tokensBefore: finiteNonNegative(notification.update.tokens_before),
+    tokensAfter: finiteNonNegative(notification.update.tokens_after),
+    summaryPreview,
+    raw: notification,
   };
 }
 

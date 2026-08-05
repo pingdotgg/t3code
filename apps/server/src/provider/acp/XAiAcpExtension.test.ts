@@ -9,11 +9,18 @@ import * as Schema from "effect/Schema";
 import { describe, expect } from "vite-plus/test";
 
 import {
+  extractGrokPlanMarkdownFromToolCallData,
   extractXAiAskUserQuestions,
+  extractXAiAutoCompactCompleted,
+  extractXAiExitPlanMarkdown,
+  isGrokPlanMarkdownPath,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  makeXAiExitPlanModeCapturedResponse,
   makeXAiPromptCompletionRuntime,
+  XAI_EMPTY_PLAN_MARKDOWN,
   XAiAskUserQuestionRequest,
+  XAiSessionNotification,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -237,6 +244,109 @@ describe("XAiAcpExtension", () => {
     expect(makeXAiAskUserQuestionCancelledResponse()).toEqual({
       outcome: "cancelled",
     });
+  });
+
+  it("extracts exit_plan markdown with fallback and empty placeholder", () => {
+    const direct = {
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+      planContent: "  # Plan\n\n- do the thing  ",
+    };
+    expect(extractXAiExitPlanMarkdown(direct)).toBe("# Plan\n\n- do the thing");
+
+    const wrapped = {
+      method: "_x.ai/exit_plan_mode" as const,
+      params: {
+        sessionId: "session-1",
+        toolCallId: "tool-1",
+        planContent: null,
+      },
+    };
+    expect(extractXAiExitPlanMarkdown(wrapped, "  # fallback plan  ")).toBe("# fallback plan");
+    expect(extractXAiExitPlanMarkdown(wrapped)).toBe(XAI_EMPTY_PLAN_MARKDOWN);
+  });
+
+  it("returns captured abandoned response for exit_plan_mode gate", () => {
+    expect(makeXAiExitPlanModeCapturedResponse()).toEqual({
+      outcome: "abandoned",
+      feedback:
+        "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+    });
+  });
+
+  it("matches only Grok session plan.md paths", () => {
+    expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/abc/plan.md")).toBe(true);
+    expect(
+      isGrokPlanMarkdownPath(
+        "/Users/me/.grok/sessions/%2FUsers%2Fme%2Fproj/sess-123/plan.md",
+      ),
+    ).toBe(true);
+    expect(isGrokPlanMarkdownPath("plan.md")).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md")).toBe(false);
+    expect(isGrokPlanMarkdownPath("/tmp/other.md")).toBe(false);
+  });
+
+  it("extracts plan markdown from tool call rawInput and diff content", () => {
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        rawInput: {
+          path: "/home/x/.grok/sessions/s1/plan.md",
+          content: "# Mid-plan draft\n",
+        },
+      }),
+    ).toBe("# Mid-plan draft");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        content: [
+          {
+            type: "diff",
+            path: "/home/x/.grok/sessions/s1/plan.md",
+            newText: "# Diff plan\n",
+          },
+        ],
+      }),
+    ).toBe("# Diff plan");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        rawInput: { path: "/repo/docs/plan.md", content: "# Workspace plan" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        rawInput: { path: "/home/x/.grok/sessions/s1/plan.md", content: "   " },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("extracts auto_compact_completed session notifications", () => {
+    const notification = Schema.decodeUnknownSync(XAiSessionNotification)({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "auto_compact_completed",
+        tokens_before: 12_000,
+        tokens_after: 4_000,
+        summary_preview: "kept auth",
+      },
+    });
+    const compact = extractXAiAutoCompactCompleted(notification);
+    expect(compact).toEqual({
+      sessionId: "session-1",
+      tokensBefore: 12_000,
+      tokensAfter: 4_000,
+      summaryPreview: "kept auth",
+      raw: notification,
+    });
+  });
+
+  it("ignores non-compact session notifications", () => {
+    const notification = Schema.decodeUnknownSync(XAiSessionNotification)({
+      sessionId: "session-1",
+      update: { sessionUpdate: "something_else" },
+    });
+    expect(extractXAiAutoCompactCompleted(notification)).toBeNull();
   });
 
   it("does not echo preview annotations for multi-select answers", () => {

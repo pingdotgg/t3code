@@ -67,15 +67,17 @@ import {
   type GrokAcpSpawnOptions,
 } from "../acp/GrokAcpSupport.ts";
 import {
+  extractGrokPlanMarkdownFromToolCallData,
   extractXAiAskUserQuestions,
+  extractXAiAutoCompactCompleted,
+  extractXAiExitPlanMarkdown,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
-  makeXAiExitPlanModeApprovedResponse,
-  makeXAiExitPlanModeReviseResponse,
+  makeXAiExitPlanModeCapturedResponse,
   promptResponseHasMissingXAiStopReason,
-  unwrapExitPlanModeParams,
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
+  XAiSessionNotification,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -132,14 +134,30 @@ interface GrokSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   currentModelId: string | undefined;
-  /** Process-level effort from CLI --reasoning-effort (not ACP config). */
+  /**
+   * Sticky effort for this process: CLI spawn value initially, then last
+   * successful `session/set_model` `_meta.reasoningEffort`.
+   */
   processReasoningEffort: string | undefined;
   stopped: boolean;
   availableCommands: ReadonlyArray<AcpAvailableCommand>;
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   sessionTitle: string | undefined;
-  /** Context window size from model meta when known. */
+  /** Context window size for the active model when known. */
   contextWindowTokens: number | undefined;
+  /** Per-model context windows from session/initialize model meta. */
+  modelContextWindows: ReadonlyMap<string, number>;
+  /** Last proposed plan markdown for this turn (exit_plan_mode fallback). */
+  lastKnownProposedPlanMarkdown: string | undefined;
+  lastKnownProposedPlanTurnId: TurnId | undefined;
+  /** True after enter_plan_mode until the turn ends or exit_plan_mode resolves. */
+  planModeActive: boolean;
+  /** toolCallIds already emitted as task.started (subagent dedupe). */
+  startedSubagentTaskIds: Set<string>;
+  /** toolCallIds already emitted as task.completed (subagent dedupe). */
+  completedSubagentTaskIds: Set<string>;
+  /** turnIds that already received a prompt token-usage event. */
+  promptUsageOfferedTurnIds: Set<TurnId>;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -285,10 +303,12 @@ function preferredModelMeta(input: {
     preferred: string | undefined,
   ): unknown => {
     if (!models || models.length === 0) return undefined;
-    const preferredMatch = preferred
-      ? models.find((model) => model.modelId === preferred)
-      : undefined;
-    return preferredMatch?._meta ?? models[0]?._meta;
+    if (preferred) {
+      // Preferred id set: only that model's meta (may be undefined). Never fall back to models[0].
+      const preferredMatch = models.find((model) => model.modelId === preferred);
+      return preferredMatch?._meta;
+    }
+    return models[0]?._meta;
   };
   const fromSession = pick(
     input.sessionModels?.availableModels,
@@ -297,11 +317,14 @@ function preferredModelMeta(input: {
   if (fromSession !== undefined) return fromSession;
   const initializeModelState = input.initializeMeta?.modelState;
   if (isRecord(initializeModelState) && Array.isArray(initializeModelState.availableModels)) {
+    const availableModels = initializeModelState.availableModels.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.modelId !== "string") {
+        return [] as Array<{ modelId: string; _meta?: unknown }>;
+      }
+      return [{ modelId: entry.modelId, _meta: entry._meta }];
+    });
     return pick(
-      initializeModelState.availableModels as ReadonlyArray<{
-        modelId: string;
-        _meta?: unknown;
-      }>,
+      availableModels,
       input.preferredModelId ??
         (typeof initializeModelState.currentModelId === "string"
           ? initializeModelState.currentModelId
@@ -340,11 +363,48 @@ function parseGrokAvailableCommandsFromMeta(
   });
 }
 
+function buildGrokModelContextWindows(input: {
+  readonly sessionModels: EffectAcpSchema.SessionModelState | null | undefined;
+  readonly initializeMeta: Record<string, unknown> | undefined;
+}): Map<string, number> {
+  const windows = new Map<string, number>();
+  const ingest = (models: ReadonlyArray<{ modelId: string; _meta?: unknown }> | undefined) => {
+    if (!models) return;
+    for (const model of models) {
+      const tokens = totalContextTokensFromMeta(model._meta);
+      if (tokens !== undefined && model.modelId.trim()) {
+        windows.set(model.modelId.trim(), tokens);
+      }
+    }
+  };
+  ingest(input.sessionModels?.availableModels);
+  const initializeModelState = input.initializeMeta?.modelState;
+  if (isRecord(initializeModelState) && Array.isArray(initializeModelState.availableModels)) {
+    const availableModels = initializeModelState.availableModels.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.modelId !== "string") {
+        return [] as Array<{ modelId: string; _meta?: unknown }>;
+      }
+      return [{ modelId: entry.modelId, _meta: entry._meta }];
+    });
+    ingest(availableModels);
+  }
+  return windows;
+}
+
 function resolveGrokContextWindowTokens(input: {
   readonly sessionModels: EffectAcpSchema.SessionModelState | null | undefined;
   readonly initializeMeta: Record<string, unknown> | undefined;
   readonly preferredModelId: string | undefined;
+  readonly modelContextWindows?: ReadonlyMap<string, number>;
 }): number | undefined {
+  if (input.preferredModelId && input.modelContextWindows) {
+    const fromMap = input.modelContextWindows.get(input.preferredModelId);
+    if (fromMap !== undefined) {
+      return fromMap;
+    }
+  }
+  // Prefer the selected model's meta only — never steal another model's window
+  // when a preferred id is set but missing from the map.
   return totalContextTokensFromMeta(preferredModelMeta(input));
 }
 
@@ -355,6 +415,33 @@ function resolveProcessReasoningEffort(input: {
   readonly preferredModelId: string | undefined;
 }): string | undefined {
   return input.spawnEffort ?? reasoningEffortFromMeta(preferredModelMeta(input));
+}
+
+function clearProposedPlanFallback(ctx: GrokSessionContext): void {
+  ctx.lastKnownProposedPlanMarkdown = undefined;
+  ctx.lastKnownProposedPlanTurnId = undefined;
+  ctx.planModeActive = false;
+}
+
+/** Detect Grok's enter_plan_mode tool call from ACP tool state. */
+export function isGrokEnterPlanModeToolCall(toolCall: {
+  readonly title?: string;
+  readonly data: Record<string, unknown>;
+}): boolean {
+  const title = toolCall.title?.trim().toLowerCase() ?? "";
+  if (
+    title === "enter_plan_mode" ||
+    title === "plan: enter" ||
+    title === "plan mode entered" ||
+    title.includes("enter_plan_mode")
+  ) {
+    return true;
+  }
+  const rawInput = toolCall.data.rawInput;
+  if (isRecord(rawInput) && rawInput.variant === "EnterPlanMode") {
+    return true;
+  }
+  return false;
 }
 
 function selectPermissionOptionId(
@@ -461,14 +548,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       turnId: TurnId,
       meta: unknown,
     ): Effect.Effect<void> => {
+      if (ctx.promptUsageOfferedTurnIds.has(turnId)) {
+        return Effect.void;
+      }
       const promptUsage = tokenUsageFromGrokPromptMeta(meta);
       if (!promptUsage) {
         return Effect.void;
       }
-      const maxTokens =
-        ctx.contextWindowTokens !== undefined && ctx.contextWindowTokens > 0
-          ? ctx.contextWindowTokens
-          : undefined;
+      ctx.promptUsageOfferedTurnIds.add(turnId);
+      const maxTokens = resolveActiveContextWindowTokens(ctx);
       return makeEventStamp().pipe(
         Effect.flatMap((stamp) =>
           offerRuntimeEvent(
@@ -520,6 +608,19 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+
+    const resolveActiveContextWindowTokens = (ctx: GrokSessionContext): number | undefined => {
+      if (ctx.currentModelId) {
+        const fromMap = ctx.modelContextWindows.get(ctx.currentModelId);
+        if (fromMap !== undefined && fromMap > 0) {
+          return fromMap;
+        }
+      }
+      if (ctx.contextWindowTokens !== undefined && ctx.contextWindowTokens > 0) {
+        return ctx.contextWindowTokens;
+      }
+      return undefined;
+    };
 
     const settlePromptInFlight = (
       threadId: ThreadId,
@@ -624,6 +725,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           options?.completedStopReason !== undefined && canEmitTurnCompletion;
         const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
         liveCtx.activeTurnId = undefined;
+        // Drop turn-scoped plan fallback so a later empty exit_plan cannot
+        // resurrect this turn's markdown as a fresh proposal.
+        clearProposedPlanFallback(liveCtx);
         liveCtx.session = {
           ...readySession,
           status: "ready",
@@ -720,6 +824,43 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             rawPayload,
           }),
         );
+      });
+
+    /** Surface Grok plan.md as T3's proposed-plan card (while writing + on exit). */
+    const emitProposedPlanCompleted = (
+      ctx: GrokSessionContext,
+      turnId: TurnId | undefined,
+      stamp: { readonly eventId: EventId; readonly createdAt: string },
+      planMarkdown: string,
+      raw: { readonly method: string; readonly payload: unknown },
+    ) =>
+      Effect.gen(function* () {
+        const trimmedPlan = planMarkdown.trim();
+        if (trimmedPlan.length === 0) {
+          return;
+        }
+        // Turn-scoped dedupe: identical text on a later turn must still emit.
+        if (
+          ctx.lastKnownProposedPlanMarkdown === trimmedPlan &&
+          ctx.lastKnownProposedPlanTurnId === turnId
+        ) {
+          return;
+        }
+        ctx.lastKnownProposedPlanMarkdown = trimmedPlan;
+        ctx.lastKnownProposedPlanTurnId = turnId;
+        yield* offerRuntimeEvent({
+          type: "turn.proposed.completed",
+          ...stamp,
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          payload: { planMarkdown: trimmedPlan },
+          raw: {
+            source: "acp.grok.extension",
+            method: raw.method,
+            payload: raw.payload,
+          },
+        });
       });
 
     const requireSession = (
@@ -900,6 +1041,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ),
               { discard: true },
             );
+            // Grok intercepts exit_plan_mode and reverse-requests client approval.
+            // Capture plan into T3 proposed-plan UI and abandon the native gate so
+            // the turn does not hang (Claude ExitPlanMode pattern).
             yield* Effect.forEach(
               ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"] as const,
               (method) =>
@@ -907,13 +1051,22 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpCallbackFailure(
                     Effect.gen(function* () {
                       yield* logNative(input.threadId, method, params);
-                      const exitParams = unwrapExitPlanModeParams(params);
-                      const planMarkdown =
-                        typeof exitParams.planContent === "string"
-                          ? exitParams.planContent.trim()
-                          : "";
                       const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                      if (planMarkdown.length > 0) {
+                      const ctx = sessions.get(input.threadId);
+                      const planMarkdown = extractXAiExitPlanMarkdown(
+                        params,
+                        ctx?.lastKnownProposedPlanMarkdown,
+                      );
+                      if (ctx) {
+                        yield* emitProposedPlanCompleted(
+                          ctx,
+                          turnId,
+                          yield* makeEventStamp(),
+                          planMarkdown,
+                          { method, payload: params },
+                        );
+                        ctx.planModeActive = false;
+                      } else {
                         yield* offerRuntimeEvent({
                           type: "turn.proposed.completed",
                           ...(yield* makeEventStamp()),
@@ -928,55 +1081,55 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                           },
                         });
                       }
-                      const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
-                      const runtimeRequestId = RuntimeRequestId.make(requestId);
-                      const decision = yield* Deferred.make<ProviderApprovalDecision>();
-                      pendingApprovals.set(requestId, { decision });
-                      yield* offerRuntimeEvent(
-                        makeAcpRequestOpenedEvent({
-                          stamp: yield* makeEventStamp(),
-                          provider: PROVIDER,
-                          threadId: input.threadId,
-                          turnId,
-                          requestId: runtimeRequestId,
-                          permissionRequest: {
-                            kind: "unknown",
-                            detail: planMarkdown.length > 0 ? planMarkdown : "Approve Grok plan",
+                      return makeXAiExitPlanModeCapturedResponse();
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
+            // Manual `/compact` and auto-compact complete as x.ai session notifications.
+            // Map them to thread.state.changed → UI work log "Context compacted".
+            yield* Effect.forEach(
+              ["x.ai/session_notification", "_x.ai/session_notification"] as const,
+              (method) =>
+                acp.handleExtNotification(method, XAiSessionNotification, (notification) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, notification);
+                      const compact = extractXAiAutoCompactCompleted(notification);
+                      if (!compact) {
+                        return;
+                      }
+                      const live = sessions.get(input.threadId);
+                      if (!live || live.stopped) {
+                        return;
+                      }
+                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                      if (turnId !== undefined && live.interruptedTurnIds.has(turnId)) {
+                        return;
+                      }
+                      yield* offerRuntimeEvent({
+                        type: "thread.state.changed",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId,
+                        payload: {
+                          state: "compacted",
+                          detail: {
+                            tokensBefore: compact.tokensBefore,
+                            tokensAfter: compact.tokensAfter,
+                            ...(compact.summaryPreview
+                              ? { summaryPreview: compact.summaryPreview }
+                              : {}),
                           },
-                          detail:
-                            planMarkdown.length > 0
-                              ? "Grok is waiting for plan approval"
-                              : "Grok is waiting for plan approval (empty plan content)",
-                          args: exitParams,
+                        },
+                        raw: {
                           source: "acp.grok.extension",
                           method,
-                          rawPayload: params,
-                        }),
-                      );
-                      const resolved = yield* Deferred.await(decision);
-                      pendingApprovals.delete(requestId);
-                      yield* offerRuntimeEvent(
-                        makeAcpRequestResolvedEvent({
-                          stamp: yield* makeEventStamp(),
-                          provider: PROVIDER,
-                          threadId: input.threadId,
-                          turnId,
-                          requestId: runtimeRequestId,
-                          permissionRequest: {
-                            kind: "unknown",
-                            detail: "Grok plan approval",
-                          },
-                          decision: resolved,
-                        }),
-                      );
-                      if (resolved === "accept" || resolved === "acceptForSession") {
-                        return makeXAiExitPlanModeApprovedResponse();
-                      }
-                      return makeXAiExitPlanModeReviseResponse(
-                        resolved === "decline"
-                          ? "User rejected the plan."
-                          : "Plan approval cancelled.",
-                      );
+                          payload: notification,
+                        },
+                      });
                     }),
                   ),
                 ),
@@ -1061,6 +1214,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             runtime: acp,
             currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
             requestedModelId: requestedStartModelId,
+            selections: grokModelSelection?.options,
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
@@ -1088,15 +1242,22 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             !Array.isArray(started.initializeResult._meta)
               ? (started.initializeResult._meta as Record<string, unknown>)
               : undefined;
+          const modelContextWindows = buildGrokModelContextWindows({
+            sessionModels: started.sessionSetupResult.models,
+            initializeMeta,
+          });
           const metaSource = {
             sessionModels: started.sessionSetupResult.models,
             initializeMeta,
             preferredModelId: boundModelId,
+            modelContextWindows,
           };
           const contextWindowTokens = resolveGrokContextWindowTokens(metaSource);
           const processReasoningEffort = resolveProcessReasoningEffort({
             spawnEffort,
-            ...metaSource,
+            sessionModels: started.sessionSetupResult.models,
+            initializeMeta,
+            preferredModelId: boundModelId,
           });
           const initializeCommands = parseGrokAvailableCommandsFromMeta(initializeMeta);
           if (initializeCommands.length > 0 && options?.onAvailableCommands) {
@@ -1130,6 +1291,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             configOptions: started.sessionSetupResult.configOptions ?? [],
             sessionTitle: undefined,
             contextWindowTokens,
+            modelContextWindows,
+            lastKnownProposedPlanMarkdown: undefined,
+            lastKnownProposedPlanTurnId: undefined,
+            planModeActive: false,
+            startedSubagentTaskIds: new Set(),
+            completedSubagentTaskIds: new Set(),
+            promptUsageOfferedTurnIds: new Set(),
           };
 
           const nf = yield* Stream.runDrain(
@@ -1271,7 +1439,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     // Surface Grok spawn_subagent (and similar) as T3 task rows
                     // so multi-agent work is visible like Claude Task tools.
                     if (isGrokSubagentToolCall(event.toolCall)) {
-                      const taskId = RuntimeTaskId.make(event.toolCall.toolCallId);
+                      const toolCallId = event.toolCall.toolCallId;
+                      const taskId = RuntimeTaskId.make(toolCallId);
                       const description =
                         event.toolCall.title?.trim() ||
                         event.toolCall.detail?.trim() ||
@@ -1280,44 +1449,75 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         event.toolCall.status === "pending" ||
                         event.toolCall.status === "inProgress"
                       ) {
-                        yield* offerRuntimeEvent({
-                          type: "task.started",
-                          ...stamp,
-                          provider: PROVIDER,
-                          threadId: ctx.threadId,
-                          turnId: notificationTurnId,
-                          payload: {
-                            taskId,
-                            description,
-                            taskType: "subagent",
-                          },
-                          raw: {
-                            source: "acp.jsonrpc",
-                            method: "session/update",
-                            payload: event.rawPayload,
-                          },
-                        });
+                        if (!ctx.startedSubagentTaskIds.has(toolCallId)) {
+                          ctx.startedSubagentTaskIds.add(toolCallId);
+                          const taskStamp = yield* makeEventStamp();
+                          yield* offerRuntimeEvent({
+                            type: "task.started",
+                            ...taskStamp,
+                            provider: PROVIDER,
+                            threadId: ctx.threadId,
+                            turnId: notificationTurnId,
+                            payload: {
+                              taskId,
+                              description,
+                              taskType: "subagent",
+                            },
+                            raw: {
+                              source: "acp.jsonrpc",
+                              method: "session/update",
+                              payload: event.rawPayload,
+                            },
+                          });
+                        }
                       } else if (
                         event.toolCall.status === "completed" ||
                         event.toolCall.status === "failed"
                       ) {
-                        yield* offerRuntimeEvent({
-                          type: "task.completed",
-                          ...stamp,
-                          provider: PROVIDER,
-                          threadId: ctx.threadId,
-                          turnId: notificationTurnId,
-                          payload: {
-                            taskId,
-                            status: event.toolCall.status === "failed" ? "failed" : "completed",
-                            ...(event.toolCall.detail ? { summary: event.toolCall.detail } : {}),
-                          },
-                          raw: {
-                            source: "acp.jsonrpc",
+                        if (!ctx.completedSubagentTaskIds.has(toolCallId)) {
+                          ctx.completedSubagentTaskIds.add(toolCallId);
+                          const taskStamp = yield* makeEventStamp();
+                          yield* offerRuntimeEvent({
+                            type: "task.completed",
+                            ...taskStamp,
+                            provider: PROVIDER,
+                            threadId: ctx.threadId,
+                            turnId: notificationTurnId,
+                            payload: {
+                              taskId,
+                              status: event.toolCall.status === "failed" ? "failed" : "completed",
+                              ...(event.toolCall.detail ? { summary: event.toolCall.detail } : {}),
+                            },
+                            raw: {
+                              source: "acp.jsonrpc",
+                              method: "session/update",
+                              payload: event.rawPayload,
+                            },
+                          });
+                        }
+                      }
+                    }
+                    if (isGrokEnterPlanModeToolCall(event.toolCall)) {
+                      ctx.planModeActive = true;
+                    }
+                    // Only promote session plan.md writes while plan mode is
+                    // active — avoids treating unrelated plan files as proposals.
+                    // Fresh stamp: must not share eventId with the tool lifecycle event.
+                    if (ctx.planModeActive) {
+                      const planMarkdown = extractGrokPlanMarkdownFromToolCallData(
+                        event.toolCall.data,
+                      );
+                      if (planMarkdown) {
+                        yield* emitProposedPlanCompleted(
+                          ctx,
+                          notificationTurnId,
+                          yield* makeEventStamp(),
+                          planMarkdown,
+                          {
                             method: "session/update",
                             payload: event.rawPayload,
                           },
-                        });
+                        );
                       }
                     }
                     return;
@@ -1340,9 +1540,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     const maxTokens =
                       event.usage.size > 0
                         ? event.usage.size
-                        : ctx.contextWindowTokens !== undefined && ctx.contextWindowTokens > 0
-                          ? ctx.contextWindowTokens
-                          : undefined;
+                        : resolveActiveContextWindowTokens(ctx);
                     yield* offerRuntimeEvent(
                       makeAcpTokenUsageEvent({
                         stamp,
@@ -1398,49 +1596,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const sendTurn: GrokAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
-        // Grok effort is process-scoped (--reasoning-effort). Changing it requires
-        // restarting the agent process while holding no nested thread lock.
-        // Resume the same ACP session so transcript continuity is preserved.
-        const restartDecision = yield* withThreadLock(
-          input.threadId,
-          Effect.gen(function* () {
-            const ctx = yield* requireSession(input.threadId);
-            const turnModelSelection =
-              input.modelSelection?.instanceId === boundInstanceId
-                ? input.modelSelection
-                : undefined;
-            const nextEffort = resolveGrokReasoningEffortSelection(turnModelSelection?.options);
-            if (nextEffort !== undefined && nextEffort !== ctx.processReasoningEffort) {
-              if (ctx.promptsInFlight > 0) {
-                return yield* new ProviderAdapterValidationError({
-                  provider: PROVIDER,
-                  operation: "sendTurn",
-                  issue:
-                    "Cannot change Grok reasoning effort while a turn is running. Wait for the turn to finish, then try again.",
-                });
-              }
-              const restart = {
-                cwd: ctx.session.cwd,
-                runtimeMode: ctx.session.runtimeMode,
-                resumeCursor: ctx.session.resumeCursor,
-              };
-              yield* stopSessionInternal(ctx);
-              return { _tag: "restart" as const, ...restart };
-            }
-            return { _tag: "continue" as const };
-          }),
-        );
-        if (restartDecision._tag === "restart") {
-          yield* startSession({
-            threadId: input.threadId,
-            provider: PROVIDER,
-            cwd: restartDecision.cwd,
-            runtimeMode: restartDecision.runtimeMode,
-            ...(restartDecision.resumeCursor ? { resumeCursor: restartDecision.resumeCursor } : {}),
-            ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
-          });
-        }
-
+        // Effort is applied in-session via session/set_model _meta.reasoningEffort
+        // (Ahmed #5403). CLI --reasoning-effort is only used on initial spawn.
         const prepared = yield* withThreadLock(
           input.threadId,
           Effect.gen(function* () {
@@ -1457,6 +1614,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // Bind the turn id before cooperative yields so interruptTurn can
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
+            // New turn: do not fall back to a previous turn's plan.md body when
+            // exit_plan_mode omits planContent.
+            if (steeringTurnId === undefined) {
+              clearProposedPlanFallback(ctx);
+            }
             ctx.session = {
               ...ctx.session,
               status: steeringTurnId === undefined ? "connecting" : "running",
@@ -1472,16 +1634,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveGrokAcpBaseModelId(turnModelSelection.model)
                 : undefined;
+              const appliedEffort = resolveGrokReasoningEffortSelection(
+                turnModelSelection?.options,
+              );
               const currentModelId = yield* applyGrokAcpModelSelection({
                 runtime: ctx.acp,
                 currentModelId: ctx.currentModelId,
                 requestedModelId: requestedTurnModelId,
+                selections: turnModelSelection?.options,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
               // Secondary path only when Grok advertises effort as ACP config
               // options. Live 0.2.x returns empty configOptions (no-op here);
-              // process-scoped restart above is the real effort contract.
+              // primary effort contract is set_model _meta above.
               yield* applyGrokAcpConfigSelections({
                 runtime: ctx.acp,
                 selections: turnModelSelection?.options,
@@ -1493,6 +1659,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     cause,
                   ),
               });
+              if (appliedEffort !== undefined) {
+                ctx.processReasoningEffort = appliedEffort;
+              }
 
               const text = applyGrokPlanModeToPromptText({
                 text: input.input?.trim(),
@@ -1545,6 +1714,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
 
               ctx.currentModelId = currentModelId;
+              if (currentModelId) {
+                const windowForModel = ctx.modelContextWindows.get(currentModelId);
+                if (windowForModel !== undefined) {
+                  ctx.contextWindowTokens = windowForModel;
+                }
+              }
               const displayModel = currentModelId
                 ? resolveGrokAcpBaseModelId(currentModelId)
                 : undefined;
@@ -1722,6 +1897,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 const completedAt = yield* nowIso;
                 const { activeTurnId: _completedTurnId, ...readySession } = ctx.session;
                 ctx.activeTurnId = undefined;
+                clearProposedPlanFallback(ctx);
                 ctx.session = {
                   ...readySession,
                   status: "ready",

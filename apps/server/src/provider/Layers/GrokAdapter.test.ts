@@ -1335,10 +1335,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   );
 
   it.effect(
-    "restarts the process with --reasoning-effort and resumes the ACP session when effort changes",
+    "applies mid-thread effort via session/set_model _meta without process restart",
     () =>
       Effect.gen(function* () {
-        const threadId = ThreadId.make("grok-effort-process-restart");
+        const threadId = ThreadId.make("grok-effort-set-model-meta");
         const tmpDir = yield* Effect.promise(() =>
           NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-effort-")),
         );
@@ -1348,18 +1348,22 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           makeMockGrokWrapper(
             {
               T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-              T3_ACP_EMIT_LOAD_REPLAY: "1",
             },
             { argvLogPath },
           ),
         );
         const adapter = yield* makeTestAdapter(wrapperPath);
         const turnCompleted = yield* Deferred.make<void>();
-        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-          event.type === "turn.completed" && String(event.threadId) === String(threadId)
-            ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore)
-            : Effect.void,
-        ).pipe(Effect.forkChild);
+        const sessionExited = yield* Deferred.make<void>();
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+          if (event.type === "turn.completed" && String(event.threadId) === String(threadId)) {
+            return Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "session.exited" && String(event.threadId) === String(threadId)) {
+            return Deferred.succeed(sessionExited, undefined).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        }).pipe(Effect.forkChild);
 
         const instanceId = ProviderInstanceId.make("grok");
         yield* adapter.startSession({
@@ -1391,38 +1395,52 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
         yield* Deferred.await(turnCompleted);
 
-        const argvAfter = yield* waitForFileContent(argvLogPath, 40, "--reasoning-effort low");
+        // Process must not restart: still a single argv line with the spawn effort.
+        const argvAfter = yield* waitForFileContent(argvLogPath, 10, "--reasoning-effort high");
         const argvLines = argvAfter
           .split("\n")
           .map((line) => line.trim())
           .filter((line) => line.length > 0);
-        assert.isAtLeast(argvLines.length, 2);
+        assert.equal(argvLines.length, 1);
         assert.include(argvLines[0] ?? "", "--reasoning-effort high");
-        assert.include(argvLines[argvLines.length - 1] ?? "", "--reasoning-effort low");
 
-        const requestLog = yield* waitForFileContent(requestLogPath, 40, "session/load");
-        assert.include(requestLog, "session/load");
+        const requestLog = yield* waitForFileContent(requestLogPath, 40, "session/set_model");
+        assert.include(requestLog, "session/set_model");
+        assert.include(requestLog, "reasoningEffort");
+        assert.include(requestLog, "low");
+        assert.notInclude(requestLog, "session/load");
+
+        const exitedRace = yield* Deferred.await(sessionExited).pipe(
+          Effect.timeoutOption("100 millis"),
+        );
+        assert.isTrue(exitedRace._tag === "None");
 
         yield* Fiber.interrupt(eventsFiber);
         yield* adapter.stopSession(threadId);
       }).pipe(TestClock.withLive),
   );
 
-  it.effect("rejects effort change while a turn is still running", () =>
+  it.effect("maps /compact session notifications to thread.state.changed compacted", () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("grok-effort-busy");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
-      );
+      const threadId = ThreadId.make("grok-compact-thread");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
       const adapter = yield* makeTestAdapter(wrapperPath);
-      const instanceId = ProviderInstanceId.make("grok");
-      const turnStarted = yield* Deferred.make<TurnId>();
-      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        event.type === "turn.started" &&
-        event.turnId !== undefined &&
-        String(event.threadId) === String(threadId)
-          ? Deferred.succeed(turnStarted, event.turnId).pipe(Effect.asVoid)
-          : Effect.void,
+
+      const runtimeEvents: Array<{ type: string; payload?: unknown; raw?: unknown }> = [];
+      const compacted = yield* Deferred.make<void>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "thread.state.changed" && event.payload.state === "compacted"
+              ? Deferred.succeed(compacted, undefined)
+              : event.type === "turn.completed"
+                ? Deferred.succeed(turnCompleted, undefined)
+                : Effect.void,
+          ),
+        ),
       ).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
@@ -1430,43 +1448,35 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         provider: ProviderDriverKind.make("grok"),
         cwd: process.cwd(),
         runtimeMode: "full-access",
-        modelSelection: {
-          instanceId,
-          model: "grok-mock-alt",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
       });
 
-      const hangingTurn = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "hang please",
-          attachments: [],
-        })
-        .pipe(Effect.forkChild);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/compact keep the auth details",
+        attachments: [],
+      });
 
-      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* Deferred.await(compacted).pipe(Effect.timeout("3 seconds"));
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("3 seconds"));
 
-      const failure = yield* Effect.flip(
-        adapter.sendTurn({
-          threadId,
-          input: "change effort while busy",
-          attachments: [],
-          modelSelection: {
-            instanceId,
-            model: "grok-mock-alt",
-            options: [{ id: "reasoningEffort", value: "low" }],
-          },
-        }),
+      const compactEvent = runtimeEvents.find(
+        (event) =>
+          event.type === "thread.state.changed" &&
+          (event.payload as { state?: string } | undefined)?.state === "compacted",
       );
-      assert.equal(failure._tag, "ProviderAdapterValidationError");
-      if (failure._tag === "ProviderAdapterValidationError") {
-        assert.include(failure.issue, "reasoning effort");
+      assert.isDefined(compactEvent);
+      if (compactEvent?.type === "thread.state.changed") {
+        assert.deepEqual(compactEvent.payload.detail, {
+          tokensBefore: 12_000,
+          tokensAfter: 4_000,
+        });
+        assert.equal(
+          (compactEvent as { raw?: { method?: string } }).raw?.method,
+          "_x.ai/session_notification",
+        );
       }
 
-      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("2 seconds"));
-      yield* Fiber.join(hangingTurn).pipe(Effect.timeout("2 seconds"));
-      yield* Fiber.interrupt(eventsFiber);
+      yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
     }).pipe(TestClock.withLive),
   );

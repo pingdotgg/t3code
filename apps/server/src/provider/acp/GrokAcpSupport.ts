@@ -16,6 +16,9 @@ import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
+/** Option id for Grok reasoning effort — matches ACP `session/set_model` `_meta.reasoningEffort`. */
+export const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
 const T3_CODE_OAUTH_REFERRER = "t3code";
@@ -76,7 +79,7 @@ export function resolveGrokReasoningEffortSelection(
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): string | undefined {
   return (
-    getProviderOptionStringSelectionValue(selections, "reasoningEffort") ??
+    getProviderOptionStringSelectionValue(selections, GROK_REASONING_EFFORT_OPTION_ID) ??
     getProviderOptionStringSelectionValue(selections, "reasoning") ??
     getProviderOptionStringSelectionValue(selections, "effort")
   );
@@ -93,7 +96,8 @@ export function applyGrokPlanModeToPromptText(input: {
 }): string | undefined {
   const trimmed = input.text?.trim();
   if (!trimmed) {
-    return trimmed;
+    // Plan mode still needs the slash command so Grok enters plan mode.
+    return input.interactionMode === "plan" ? "/plan" : trimmed;
   }
   if (input.interactionMode === "plan") {
     if (/^\/plan(?:\s|$)/i.test(trimmed)) {
@@ -104,9 +108,22 @@ export function applyGrokPlanModeToPromptText(input: {
   return trimmed;
 }
 
+function normalizeGrokToolToken(value: string): string {
+  return value.toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function isGrokSpawnSubagentToken(normalized: string): boolean {
+  return (
+    normalized === "spawn_subagent" ||
+    normalized === "spawn_agent" ||
+    normalized.startsWith("spawn_subagent")
+  );
+}
+
 /**
  * Detect Grok in-process subagent tools (spawn_subagent and relatives) so the
  * adapter can emit T3 task.* events for multi-agent visibility.
+ * Matches only spawn-like tokens on name/toolName/title/kind — not detail/id.
  */
 export function isGrokSubagentToolCall(toolCall: {
   readonly toolCallId: string;
@@ -115,20 +132,17 @@ export function isGrokSubagentToolCall(toolCall: {
   readonly detail?: string;
   readonly data: Record<string, unknown>;
 }): boolean {
-  const haystack = [
-    toolCall.toolCallId,
-    toolCall.title ?? "",
-    toolCall.kind ?? "",
-    toolCall.detail ?? "",
-    typeof toolCall.data.name === "string" ? toolCall.data.name : "",
-    typeof toolCall.data.toolName === "string" ? toolCall.data.toolName : "",
-  ]
-    .join(" ")
-    .toLowerCase();
-  return (
-    haystack.includes("spawn_subagent") ||
-    haystack.includes("subagent") ||
-    haystack.includes("spawn_agent")
+  const candidates = [
+    toolCall.title,
+    toolCall.kind,
+    typeof toolCall.data.name === "string" ? toolCall.data.name : undefined,
+    typeof toolCall.data.toolName === "string" ? toolCall.data.toolName : undefined,
+  ];
+  return candidates.some(
+    (candidate) =>
+      typeof candidate === "string" &&
+      candidate.length > 0 &&
+      isGrokSpawnSubagentToken(normalizeGrokToolToken(candidate)),
   );
 }
 
@@ -183,20 +197,37 @@ export function currentGrokModelIdFromSessionSetup(
   return sessionSetupResult.models?.currentModelId?.trim() || undefined;
 }
 
+/**
+ * Apply model and/or reasoning effort via Grok ACP `session/set_model`.
+ * Effort is sent as `_meta.reasoningEffort` (Grok private extension).
+ * Calls set_model when the model changes or when an effort selection is present
+ * (effort can change without a model id change). Mid-thread effort no longer
+ * requires a process restart.
+ */
 export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly selections?: ReadonlyArray<ProviderOptionSelection> | null;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
+  const targetModelId = input.requestedModelId ?? input.currentModelId;
+  const reasoningEffort = resolveGrokReasoningEffortSelection(input.selections);
   const shouldSwitchModel =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  if (!shouldSwitchModel) {
+  const shouldApplyEffort = reasoningEffort !== undefined;
+
+  if (!targetModelId || (!shouldSwitchModel && !shouldApplyEffort)) {
     return Effect.succeed(input.currentModelId);
   }
+
+  const setOptions = shouldApplyEffort
+    ? { _meta: { reasoningEffort } satisfies { readonly [x: string]: unknown } }
+    : undefined;
+
   return input.runtime
-    .setSessionModel(input.requestedModelId)
-    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+    .setSessionModel(targetModelId, setOptions)
+    .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));
 }
 
 function isEffortConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
@@ -216,8 +247,8 @@ function isEffortConfigOption(option: EffectAcpSchema.SessionConfigOption): bool
 
 /**
  * Secondary path: only when Grok advertises effort as ACP config options.
- * Live Grok 0.2.x has no session/set_config_option; effort is CLI
- * `--reasoning-effort` via buildGrokAcpSpawnInput / process restart.
+ * Live Grok 0.2.x has no session/set_config_option; primary effort path is
+ * `session/set_model` `_meta.reasoningEffort` (and CLI flag on initial spawn).
  */
 export function applyGrokAcpConfigSelections<E>(input: {
   readonly runtime: Pick<
