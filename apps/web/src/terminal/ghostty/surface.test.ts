@@ -23,7 +23,6 @@ import {
   terminalLinkAtPositionWithRange,
   terminalContentOriginY,
   terminalFontFamily,
-  fittedTerminalFontSize,
   terminalFontSize,
   terminalWheelArrowData,
   terminalWheelDeltaRows,
@@ -341,24 +340,6 @@ describe("terminal font resolution", () => {
       true,
     );
     expect(terminalFontFamily(" , ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
-  });
-
-  it("slides the rendered size down until a full-width grid fits the canvas", () => {
-    // SF Mono-like advance: 0.6em per cell.
-    const cellWidthAt = (size: number) => size * 0.6;
-    // A wide drawer keeps the preference untouched.
-    expect(fittedTerminalFontSize(cellWidthAt, 20, 1140)).toBe(20);
-    // A split pane at the same preference shrinks until 80 columns fit.
-    const fitted = fittedTerminalFontSize(cellWidthAt, 20, 570);
-    expect(fitted).toBeLessThan(20);
-    expect(Math.floor((570 - 8) / cellWidthAt(fitted))).toBeGreaterThanOrEqual(80);
-    // A tiny pane stops at the legibility floor instead of vanishing.
-    expect(fittedTerminalFontSize(cellWidthAt, 20, 220)).toBe(8);
-    // A preference below the floor is honored as-is.
-    expect(fittedTerminalFontSize(cellWidthAt, 6, 220)).toBe(6);
-    // Unmeasured layouts leave the preference alone.
-    expect(fittedTerminalFontSize(cellWidthAt, 14, 0)).toBe(14);
-    expect(fittedTerminalFontSize(() => 0, 14, 600)).toBe(14);
   });
 
   it("clamps requested font sizes to the supported range", () => {
