@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { GhosttyCell, GhosttyRow } from "./core";
 import {
@@ -11,6 +11,7 @@ import {
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
@@ -295,6 +296,27 @@ describe("application mouse reporting", () => {
 });
 
 describe("terminal font resolution", () => {
+  it("validates the requested face after its styles load", async () => {
+    let loaded = false;
+    const load = vi.fn(async () => {
+      loaded = true;
+      return [];
+    });
+    const resolve = vi.fn(() => {
+      expect(loaded).toBe(true);
+      return DEFAULT_TERMINAL_FONT_FAMILY;
+    });
+
+    await expect(
+      loadTerminalFontFamily("Proportional Test", 12, {
+        load,
+        resolve,
+      }),
+    ).resolves.toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+    expect(load).toHaveBeenCalledTimes(4);
+    expect(resolve).toHaveBeenCalledWith("Proportional Test");
+  });
+
   it("keeps the glyph fallbacks behind a custom text face", () => {
     expect(terminalFontFamily()).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
     expect(terminalFontFamily("  ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);

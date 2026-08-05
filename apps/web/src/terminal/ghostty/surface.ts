@@ -36,6 +36,13 @@ const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
+const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
+const TERMINAL_FONT_LOAD_VARIANTS = [
+  "normal 400",
+  "normal 700",
+  "italic 400",
+  "italic 700",
+] as const;
 
 /** Requested terminal font; omitted fields fall back to the defaults. */
 export interface GhosttyTerminalFont {
@@ -78,6 +85,13 @@ function quoteTerminalFontFamilies(list: string): string {
     .join(", ");
 }
 
+function uncheckedTerminalFontFamily(family?: string): string {
+  const custom = family === undefined ? "" : quoteTerminalFontFamilies(family);
+  return custom.length === 0
+    ? DEFAULT_TERMINAL_FONT_FAMILY
+    : `${custom}, ${TERMINAL_GLYPH_FALLBACKS}`;
+}
+
 export function terminalFontFamily(family?: string): string {
   // Quote non-ident names ("3270 Nerd Font", "M+ 1m"): an unquoted one makes
   // the whole canvas font string invalid and the assignment silently no-ops.
@@ -88,7 +102,31 @@ export function terminalFontFamily(family?: string): string {
   // it here rather than render a ragged grid with a stranded cursor.
   if (!isMonospaceFamily(custom)) return DEFAULT_TERMINAL_FONT_FAMILY;
   // A custom face keeps the glyph fallbacks so prompt symbols stay covered.
-  return `${custom}, ${TERMINAL_GLYPH_FALLBACKS}`;
+  return uncheckedTerminalFontFamily(custom);
+}
+
+/** Load every style the renderer can request, then validate the actual face. */
+export async function loadTerminalFontFamily(
+  family: string | undefined,
+  size: number,
+  environment?: {
+    readonly load: (font: string, text: string) => Promise<unknown>;
+    readonly resolve: (family: string | undefined) => string;
+  },
+): Promise<string> {
+  const candidate = uncheckedTerminalFontFamily(family);
+  const load =
+    environment?.load ?? ((font: string, text: string) => document.fonts.load(font, text));
+  try {
+    await Promise.all(
+      TERMINAL_FONT_LOAD_VARIANTS.map((variant) =>
+        load(`${variant} ${size}px ${candidate}`, TERMINAL_FONT_LOAD_TEXT),
+      ),
+    );
+  } catch {
+    // The fixed-width fallback stack remains available if a face cannot load.
+  }
+  return (environment?.resolve ?? terminalFontFamily)(family);
 }
 
 /**
@@ -479,9 +517,11 @@ export class GhosttyTerminalSurface {
   private readonly options: GhosttyTerminalSurfaceOptions;
   private metrics: GhosttyCellMetrics;
   private fontFamily: string;
+  private requestedFontFamily: string | undefined;
   private fontSize: number;
   private requestedFontSize: number;
   private fontEpoch = 0;
+  private pendingFontEpoch: number | null = null;
   private readonly resizeObserver: ResizeObserver;
   private readonly scrollbarThumb: HTMLDivElement;
   private snapshot: GhosttySnapshot | null = null;
@@ -545,6 +585,7 @@ export class GhosttyTerminalSurface {
     context: CanvasRenderingContext2D,
     core: GhosttyTerminalCore,
     metrics: GhosttyCellMetrics,
+    fontFamily: string,
     options: GhosttyTerminalSurfaceOptions,
   ) {
     this.mount = mount;
@@ -557,7 +598,8 @@ export class GhosttyTerminalSurface {
     this.metrics = metrics;
     this.options = options;
     this.theme = options.theme;
-    this.fontFamily = terminalFontFamily(options.font?.family);
+    this.fontFamily = fontFamily;
+    this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
     this.requestedFontSize = this.fontSize;
     this.resizeObserver = new ResizeObserver(() => this.fit());
@@ -600,16 +642,15 @@ export class GhosttyTerminalSurface {
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
-    const fontFamily = terminalFontFamily(options.font?.family);
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Cell metrics must come from the faces that will render; measuring before
       // the bundled webfonts load would size the grid from a fallback font.
       await ensureTerminalSymbolsFont();
-      await document.fonts.load(`${fontSize}px ${fontFamily}`);
     } catch {
       // Metrics fall back to whichever faces are already available.
     }
+    const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
@@ -629,6 +670,7 @@ export class GhosttyTerminalSurface {
       context,
       core,
       metrics,
+      fontFamily,
       options,
     );
     surface.fit();
@@ -667,18 +709,16 @@ export class GhosttyTerminalSurface {
 
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return;
-    const fontFamily = terminalFontFamily(font.family);
     const fontSize = terminalFontSize(font.size);
     // The fields only change together with their metrics after the load, and
     // the epoch lets the newest overlapping call win regardless of load order.
     const epoch = ++this.fontEpoch;
-    try {
-      await document.fonts.load(`${fontSize}px ${fontFamily}`);
-    } catch {
-      // Metrics fall back to whichever faces are already available.
-    }
+    this.pendingFontEpoch = epoch;
+    const fontFamily = await loadTerminalFontFamily(font.family, fontSize);
     if (this.disposed || epoch !== this.fontEpoch) return;
+    this.pendingFontEpoch = null;
     this.fontFamily = fontFamily;
+    this.requestedFontFamily = font.family;
     this.requestedFontSize = fontSize;
     this.fontSize = fontSize;
     this.applyFontMetrics();
@@ -706,6 +746,17 @@ export class GhosttyTerminalSurface {
 
   private readonly onFontsLoaded = () => {
     if (this.disposed) return;
+    // The explicit load validates every style and applies the newest request.
+    // Its own loading events must not revalidate the previously applied face.
+    if (this.pendingFontEpoch !== null) return;
+    // A face may become available after an earlier fallback measurement. Run
+    // the fixed-width guard again before using its newly loaded metrics.
+    const fontFamily = terminalFontFamily(this.requestedFontFamily);
+    if (fontFamily !== this.fontFamily) {
+      this.fontFamily = fontFamily;
+      this.applyFontMetrics();
+      return;
+    }
     // A face that finished loading after the initial measurement changes glyph
     // advances; re-measure and refit so the grid matches what actually renders.
     const metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
