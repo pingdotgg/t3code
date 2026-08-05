@@ -366,6 +366,20 @@ export class DemoShellStore {
           updatedAt: nowIso,
         });
       }
+      case "thread.pin": {
+        const thread = this.threads.get(command.threadId);
+        if (!thread) {
+          return this.sequence;
+        }
+        return this.upsertThread({ ...thread, pinnedAt: nowIso, updatedAt: nowIso });
+      }
+      case "thread.unpin": {
+        const thread = this.threads.get(command.threadId);
+        if (!thread) {
+          return this.sequence;
+        }
+        return this.upsertThread({ ...thread, pinnedAt: null, updatedAt: nowIso });
+      }
       case "thread.meta.update": {
         const thread = this.threads.get(command.threadId);
         if (!thread) {
@@ -1125,6 +1139,8 @@ function makeHandlersLayer(backend: DemoBackend) {
         [WS_METHODS.vcsInit]: () => unsupported("vcsInit"),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
           Effect.succeed(demoReviewDiffPreview(input.cwd)),
+        [WS_METHODS.reviewGetDiffFileContents]: () =>
+          Effect.succeed({ oldContents: "", newContents: "" }),
         [WS_METHODS.terminalOpen]: () => unsupported("terminalOpen"),
         [WS_METHODS.terminalAttach]: () => Stream.fail(unsupportedError("terminalAttach")),
         [WS_METHODS.terminalWrite]: () => unsupported("terminalWrite"),

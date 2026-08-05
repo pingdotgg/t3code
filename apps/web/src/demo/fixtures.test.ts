@@ -60,6 +60,11 @@ describe("demo diff fixtures", () => {
     expect(flakyTurn).not.toContain("ChatComposer.tsx");
   });
 
+  it("uses the complete composer diff for branch review", () => {
+    const preview = demoReviewDiffPreview("~/code/t3code-worktrees/composer-attachments");
+    expect(preview.sources[0]?.diff).toContain("DropOverlay.tsx");
+  });
+
   it("matches review previews to their checkout", () => {
     const flaky = demoReviewDiffPreview("~/code/t3code-worktrees/git-manager-test");
     expect(flaky.sources[0]?.headRef).toBe("fix/git-manager-test");

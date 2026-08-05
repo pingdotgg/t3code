@@ -4,7 +4,7 @@ export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;
 
 const LATEST_API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-const RELEASES_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
+const RELEASES_API_URL = `https://api.github.com/repos/${REPO}/releases`;
 const LATEST_CACHE_KEY = "t3code-latest-release";
 const NIGHTLY_CACHE_KEY = "t3code-nightly-release";
 const RELEASE_CACHE_TTL_MS = 5 * 60 * 1_000;
@@ -155,11 +155,14 @@ export async function fetchNightlyRelease(): Promise<Release> {
   const cached = readCachedRelease(NIGHTLY_CACHE_KEY);
   if (cached) return cached;
 
-  const data = await fetchJson(RELEASES_API_URL);
-  if (!Array.isArray(data)) throw new Error("GitHub returned an invalid releases list");
-
-  const nightly = selectNightlyRelease(data.filter(isRelease));
-  if (!nightly) throw new Error("No nightly release was found");
+  let nightly: Release | null = null;
+  for (let page = 1; nightly === null; page += 1) {
+    const data = await fetchJson(`${RELEASES_API_URL}?per_page=100&page=${page}`);
+    if (!Array.isArray(data)) throw new Error("GitHub returned an invalid releases list");
+    nightly = selectNightlyRelease(data.filter(isRelease));
+    if (data.length < 100) break;
+  }
+  if (nightly === null) throw new Error("No nightly release was found");
 
   writeCachedRelease(NIGHTLY_CACHE_KEY, nightly);
   return nightly;

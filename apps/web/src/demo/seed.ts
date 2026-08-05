@@ -62,6 +62,9 @@ const DEMO_SEED_VERSION = JSON.stringify({
 });
 
 const encodeCatalogDocument = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
+const decodeCatalogDocument = Schema.decodeUnknownSync(
+  Schema.fromJsonString(ConnectionCatalogDocument),
+);
 
 function readLocalStorage(key: string): string | null {
   try {
@@ -80,11 +83,11 @@ function writeLocalStorage(key: string, value: string): boolean {
   }
 }
 
-function demoCatalogDocument(): string {
+function demoCatalog() {
   const remotes = demoEnvironments.filter(
     (environment) => environment.origin !== null && environment.bearerToken !== null,
   );
-  return encodeCatalogDocument({
+  return {
     schemaVersion: 1,
     targets: remotes.map(
       (environment) =>
@@ -109,7 +112,48 @@ function demoCatalogDocument(): string {
       credential: new BearerConnectionCredential({ token: environment.bearerToken as string }),
     })),
     remoteDpopTokens: [],
-  });
+  } as const;
+}
+
+function mergeDemoCatalogDocument(raw: unknown): string {
+  const demo = demoCatalog();
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return encodeCatalogDocument(demo);
+  }
+
+  try {
+    const current = decodeCatalogDocument(raw);
+    const demoEnvironmentIds = new Set(demo.targets.map((target) => target.environmentId));
+    const replacedConnectionIds = new Set(demo.profiles.map((profile) => profile.connectionId));
+    for (const target of current.targets) {
+      if (
+        demoEnvironmentIds.has(target.environmentId) &&
+        (target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget")
+      ) {
+        replacedConnectionIds.add(target.connectionId);
+      }
+    }
+    return encodeCatalogDocument({
+      schemaVersion: 1,
+      targets: [
+        ...current.targets.filter((target) => !demoEnvironmentIds.has(target.environmentId)),
+        ...demo.targets,
+      ],
+      profiles: [
+        ...current.profiles.filter((profile) => !replacedConnectionIds.has(profile.connectionId)),
+        ...demo.profiles,
+      ],
+      credentials: [
+        ...current.credentials.filter(
+          (credential) => !replacedConnectionIds.has(credential.connectionId),
+        ),
+        ...demo.credentials,
+      ],
+      remoteDpopTokens: current.remoteDpopTokens,
+    });
+  } catch {
+    return encodeCatalogDocument(demo);
+  }
 }
 
 /** Registers the fake remote machines unless a current catalog already exists. */
@@ -135,7 +179,10 @@ function seedConnectionCatalog(force: boolean): Promise<boolean> {
         }
       }
     });
-    request.addEventListener("blocked", () => settle(false));
+    // A blocked upgrade may still proceed after another tab closes its
+    // connection. Keep the request pending so that late success can seed the
+    // upgraded database instead of leaving an empty catalog behind.
+    request.addEventListener("blocked", () => undefined);
     request.addEventListener("error", () => settle(false));
     request.addEventListener("success", () => {
       const database = request.result;
@@ -164,21 +211,17 @@ function seedConnectionCatalog(force: boolean): Promise<boolean> {
           settle(true);
           return;
         }
-        const staleStores = ["shell", "thread", "server-config", "vcs-refs"].filter((store) =>
-          database.objectStoreNames.contains(store),
-        );
         let write: IDBTransaction;
         try {
-          write = database.transaction([CATALOG_STORE_NAME, ...staleStores], "readwrite");
+          write = database.transaction(CATALOG_STORE_NAME, "readwrite");
         } catch {
           database.close();
           settle(false);
           return;
         }
-        for (const store of staleStores) {
-          write.objectStore(store).clear();
-        }
-        write.objectStore(CATALOG_STORE_NAME).put(demoCatalogDocument(), CATALOG_KEY);
+        write
+          .objectStore(CATALOG_STORE_NAME)
+          .put(mergeDemoCatalogDocument(read.result), CATALOG_KEY);
         write.addEventListener("complete", () => {
           database.close();
           settle(true);
@@ -201,7 +244,8 @@ function seedConnectionCatalog(force: boolean): Promise<boolean> {
  * desktop bridge) on the showcase threads for first-time visitors.
  */
 function seedRightPanelState(force: boolean): boolean {
-  if (!force && readLocalStorage(RIGHT_PANEL_STORAGE_KEY) !== null) {
+  const persisted = readLocalStorage(RIGHT_PANEL_STORAGE_KEY);
+  if (!force && persisted !== null) {
     return true;
   }
   const byThreadKey = Object.fromEntries(
@@ -214,9 +258,31 @@ function seedRightPanelState(force: boolean): boolean {
       },
     ]),
   );
+  let existingState: Record<string, unknown> = {};
+  let existingByThreadKey: Record<string, unknown> = {};
+  if (persisted !== null) {
+    try {
+      const parsed: unknown = JSON.parse(persisted);
+      if (parsed !== null && typeof parsed === "object" && "state" in parsed) {
+        const state = parsed.state;
+        if (state !== null && typeof state === "object") {
+          existingState = state as Record<string, unknown>;
+          const existing = existingState.byThreadKey;
+          if (existing !== null && typeof existing === "object") {
+            existingByThreadKey = existing as Record<string, unknown>;
+          }
+        }
+      }
+    } catch {
+      // Replace malformed persisted demo state with a valid document.
+    }
+  }
   return writeLocalStorage(
     RIGHT_PANEL_STORAGE_KEY,
-    JSON.stringify({ state: { byThreadKey }, version: RIGHT_PANEL_STORAGE_VERSION }),
+    JSON.stringify({
+      state: { ...existingState, byThreadKey: { ...existingByThreadKey, ...byThreadKey } },
+      version: RIGHT_PANEL_STORAGE_VERSION,
+    }),
   );
 }
 
@@ -225,7 +291,8 @@ function seedRightPanelState(force: boolean): boolean {
  * rendered diff (not an empty working-tree view) greets first-time visitors.
  */
 function seedDiffPanelSelection(force: boolean): boolean {
-  if (!force && readLocalStorage(DIFF_PANEL_STORAGE_KEY) !== null) {
+  const persisted = readLocalStorage(DIFF_PANEL_STORAGE_KEY);
+  if (!force && persisted !== null) {
     return true;
   }
   const byThreadKey = Object.fromEntries(
@@ -239,12 +306,37 @@ function seedDiffPanelSelection(force: boolean): boolean {
       },
     ]),
   );
+  let existingState: Record<string, unknown> = {};
+  let existingByThreadKey: Record<string, unknown> = {};
+  let existingBranchBaseRefs: Record<string, unknown> = {};
+  if (persisted !== null) {
+    try {
+      const parsed: unknown = JSON.parse(persisted);
+      if (parsed !== null && typeof parsed === "object" && "state" in parsed) {
+        const state = parsed.state;
+        if (state !== null && typeof state === "object") {
+          existingState = state as Record<string, unknown>;
+          const existingSelections = existingState.byThreadKey;
+          if (existingSelections !== null && typeof existingSelections === "object") {
+            existingByThreadKey = existingSelections as Record<string, unknown>;
+          }
+          const existingRefs = existingState.branchBaseRefByThreadKey;
+          if (existingRefs !== null && typeof existingRefs === "object") {
+            existingBranchBaseRefs = existingRefs as Record<string, unknown>;
+          }
+        }
+      }
+    } catch {
+      // Replace malformed persisted demo state with a valid document.
+    }
+  }
   return writeLocalStorage(
     DIFF_PANEL_STORAGE_KEY,
     JSON.stringify({
       state: {
-        byThreadKey,
-        branchBaseRefByThreadKey: {},
+        ...existingState,
+        byThreadKey: { ...existingByThreadKey, ...byThreadKey },
+        branchBaseRefByThreadKey: existingBranchBaseRefs,
       },
       version: DIFF_PANEL_STORAGE_VERSION,
     }),

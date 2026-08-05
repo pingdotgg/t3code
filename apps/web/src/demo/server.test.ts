@@ -75,6 +75,32 @@ describe("demo shell mutations", () => {
     });
   });
 
+  it("pins and unpins threads", () => {
+    const environment = demoEnvironments.find(
+      (candidate) => candidate.environmentId === "demo-mac-studio",
+    );
+    if (!environment) throw new Error("Missing Mac Studio demo environment");
+
+    const store = new DemoShellStore(environment.shellSnapshot);
+    store.dispatch(
+      decodeCommand({
+        type: "thread.pin",
+        commandId: "command-pin",
+        threadId: "thread-composer",
+      }),
+    );
+    expect(store.thread("thread-composer")?.pinnedAt).not.toBeNull();
+
+    store.dispatch(
+      decodeCommand({
+        type: "thread.unpin",
+        commandId: "command-unpin",
+        threadId: "thread-composer",
+      }),
+    );
+    expect(store.thread("thread-composer")?.pinnedAt).toBeNull();
+  });
+
   it("moves archived threads out of the active shell stream and restores them on unarchive", () => {
     const environment = demoEnvironments.find(
       (candidate) => candidate.environmentId === "demo-mac-studio",

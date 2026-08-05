@@ -673,7 +673,7 @@ const DEMO_COMPOSER_DIFF = `diff --git a/apps/web/src/components/chat/ChatCompos
 index 3f1c2aa..9e84b71 100644
 --- a/apps/web/src/components/chat/ChatComposer.tsx
 +++ b/apps/web/src/components/chat/ChatComposer.tsx
-@@ -41,6 +41,9 @@ export function ChatComposer(props: ChatComposerProps) {
+@@ -41,4 +41,7 @@ export function ChatComposer(props: ChatComposerProps) {
    const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
 +  const dragDepthRef = useRef(0);
 +  const [isDragOverComposer, setIsDragOverComposer] = useState(false);
@@ -681,7 +681,7 @@ index 3f1c2aa..9e84b71 100644
    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 ${" "}
    const onSubmit = useCallback(() => {
-@@ -108,7 +111,16 @@ export function ChatComposer(props: ChatComposerProps) {
+@@ -108,2 +111,12 @@ export function ChatComposer(props: ChatComposerProps) {
 -  return <form onSubmit={onSubmit}>{children}</form>;
 +  return (
 +    <form
@@ -700,7 +700,7 @@ new file mode 100644
 index 0000000..b2d61c4
 --- /dev/null
 +++ b/apps/web/src/components/chat/DropOverlay.tsx
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,7 @@
 +export function DropOverlay() {
 +  return (
 +    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80 backdrop-blur-sm">
@@ -819,7 +819,9 @@ export function demoThreadDiff(
     checkpoints.flatMap((checkpoint) => checkpoint.files).map((file) => [file.path, file]),
   );
   const diff =
-    threadId === "thread-composer" && fromTurnCount >= 1 && filesByPath.size > 0
+    threadId === "thread-composer" &&
+    filesByPath.size > 0 &&
+    (fromTurnCount >= 1 || toTurnCount === Number.MAX_SAFE_INTEGER)
       ? DEMO_COMPOSER_DIFF
       : [...filesByPath.values()].map(demoUnifiedDiffForFile).join("");
   return decodeThreadTurnDiff({ threadId, fromTurnCount, toTurnCount, diff });
@@ -989,16 +991,10 @@ export const demoThreadDetails: Record<string, DemoThreadDetail> = {
             deletions: 24,
           },
           {
-            path: "apps/web/src/components/ChatView.tsx",
-            kind: "modified",
-            additions: 36,
-            deletions: 5,
-          },
-          {
-            path: "apps/web/src/composerDraftStore.ts",
-            kind: "modified",
-            additions: 54,
-            deletions: 9,
+            path: "apps/web/src/components/chat/DropOverlay.tsx",
+            kind: "added",
+            additions: 7,
+            deletions: 0,
           },
         ],
         assistantMessageId: "msg-composer-a1",

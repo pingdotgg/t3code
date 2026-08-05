@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.7",
+    "@t3tools/web": "workspace:*",
     "@vercel/config": "^0.3.0",
     "playwright-core": "1.60.0",
     "typescript": "catalog:"
