@@ -211,7 +211,9 @@ export function QueuedRunsControl(props: {
                     className="size-6 text-muted-foreground"
                     disabled={item.runId === null || busyRunId !== null}
                     onClick={() => {
-                      if (item.runId !== null) setEditing({ runId: item.runId, draft: item.text });
+                      if (item.runId !== null) {
+                        setEditing({ runId: item.runId, draft: item.text });
+                      }
                     }}
                   >
                     <PencilIcon className="size-3" />
@@ -229,7 +231,9 @@ export function QueuedRunsControl(props: {
                       item.serverIndex === 0
                     }
                     onClick={() => {
-                      if (item.runId === null || item.serverIndex === null) return;
+                      if (item.runId === null || item.serverIndex === null) {
+                        return;
+                      }
                       void move(item.runId, queued[item.serverIndex - 1]?.run.id ?? null);
                     }}
                   >
@@ -248,7 +252,9 @@ export function QueuedRunsControl(props: {
                       item.serverIndex === queued.length - 1
                     }
                     onClick={() => {
-                      if (item.runId === null || item.serverIndex === null) return;
+                      if (item.runId === null || item.serverIndex === null) {
+                        return;
+                      }
                       void move(item.runId, queued[item.serverIndex + 2]?.run.id ?? null);
                     }}
                   >
@@ -267,7 +273,9 @@ export function QueuedRunsControl(props: {
                         : "Send as a steer instead"
                     }
                     onClick={() => {
-                      if (item.runId !== null) void steer(item.runId);
+                      if (item.runId !== null) {
+                        void steer(item.runId);
+                      }
                     }}
                   >
                     <CornerUpRightIcon className="size-3" />
