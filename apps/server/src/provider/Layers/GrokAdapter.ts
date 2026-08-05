@@ -368,16 +368,22 @@ function buildGrokModelContextWindows(input: {
   readonly initializeMeta: Record<string, unknown> | undefined;
 }): Map<string, number> {
   const windows = new Map<string, number>();
-  const ingest = (models: ReadonlyArray<{ modelId: string; _meta?: unknown }> | undefined) => {
+  const ingest = (
+    models: ReadonlyArray<{ modelId: string; _meta?: unknown }> | undefined,
+    { overwrite }: { overwrite: boolean },
+  ) => {
     if (!models) return;
     for (const model of models) {
       const tokens = totalContextTokensFromMeta(model._meta);
-      if (tokens !== undefined && model.modelId.trim()) {
-        windows.set(model.modelId.trim(), tokens);
+      if (tokens === undefined || !model.modelId.trim()) continue;
+      const id = model.modelId.trim();
+      // Session models are ingested first and must win over initializeMeta.
+      if (overwrite || !windows.has(id)) {
+        windows.set(id, tokens);
       }
     }
   };
-  ingest(input.sessionModels?.availableModels);
+  ingest(input.sessionModels?.availableModels, { overwrite: true });
   const initializeModelState = input.initializeMeta?.modelState;
   if (isRecord(initializeModelState) && Array.isArray(initializeModelState.availableModels)) {
     const availableModels = initializeModelState.availableModels.flatMap((entry) => {
@@ -386,7 +392,8 @@ function buildGrokModelContextWindows(input: {
       }
       return [{ modelId: entry.modelId, _meta: entry._meta }];
     });
-    ingest(availableModels);
+    // Only fill gaps; never overwrite live session model windows.
+    ingest(availableModels, { overwrite: false });
   }
   return windows;
 }
@@ -1642,6 +1649,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 currentModelId: ctx.currentModelId,
                 requestedModelId: requestedTurnModelId,
                 selections: turnModelSelection?.options,
+                currentEffort: ctx.processReasoningEffort,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
@@ -1659,14 +1667,23 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     cause,
                   ),
               });
-              if (appliedEffort !== undefined) {
+              // Only sticky-update effort when set_model had a model target
+              // (effort-only with no model id is a no-op and must not claim apply).
+              if (appliedEffort !== undefined && currentModelId !== undefined) {
                 ctx.processReasoningEffort = appliedEffort;
               }
 
               const text = applyGrokPlanModeToPromptText({
                 text: input.input?.trim(),
                 interactionMode: input.interactionMode,
+                planModeActive: ctx.planModeActive,
               });
+              // Track local plan-mode state so Build can exit with /default.
+              if (input.interactionMode === "plan") {
+                ctx.planModeActive = true;
+              } else if (input.interactionMode === "default" && ctx.planModeActive) {
+                ctx.planModeActive = false;
+              }
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>

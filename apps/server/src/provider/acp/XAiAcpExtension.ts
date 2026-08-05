@@ -274,19 +274,21 @@ export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitP
 }
 
 /**
- * True when a path is Grok's session plan file under `~/.grok/sessions/.../plan.md`.
- * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md).
+ * True when a path is Grok's session plan file under
+ * `~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md`.
+ * Requires at least two path segments after `.grok/sessions/` so workspace
+ * files like `/repo/.grok/sessions/demo/plan.md` are rejected.
  */
 export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean {
   if (typeof path !== "string") {
     return false;
   }
   const normalized = path.trim().replace(/\\/g, "/");
-  if (normalized.length === 0 || !normalized.endsWith("/plan.md")) {
+  if (normalized.length === 0) {
     return false;
   }
-  // Session layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
-  return normalized.includes("/.grok/sessions/");
+  // Real layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
+  return /(?:^|\/)\.grok\/sessions\/[^/]+\/.+\/plan\.md$/i.test(normalized);
 }
 
 /**
