@@ -1042,13 +1042,19 @@ export function deriveEffectiveComposerModelState(input: {
   // must not short-circuit sticky/thread/project for the current selection.
   // Sticky (and legacy kind-keyed draft hits) are re-keyed under
   // stickyInstanceKey so custom instances resolve options.
+  //
+  // Mirror the model path: only fall back to the kind-keyed draft when the
+  // selected instance has *no* draft entry. An entry that exists without
+  // options must not pull sibling/kind options ahead of sticky.
   const legacyProviderKey = ProviderInstanceId.make(input.selectedProvider);
+  const hasInstanceDraftEntry =
+    input.draft?.modelSelectionByProvider?.[stickyInstanceKey] !== undefined;
   const draftOptionsAtInstance = optionsForInstance(
     input.draft?.modelSelectionByProvider,
     stickyInstanceKey,
   );
   const legacyDraftOptions =
-    String(stickyInstanceKey) !== String(legacyProviderKey)
+    !hasInstanceDraftEntry && String(stickyInstanceKey) !== String(legacyProviderKey)
       ? optionsForInstance(input.draft?.modelSelectionByProvider, legacyProviderKey)?.[
           String(legacyProviderKey)
         ]

@@ -1262,6 +1262,58 @@ describe("composerDraftStore modelSelection", () => {
     expect(derived.modelOptions?.[String(CODEX_INSTANCE)]).toBeUndefined();
   });
 
+  it("does not let kind-keyed draft options outrank sticky when instance entry has no options", () => {
+    // Selected custom Codex instance has a model-only draft entry; kind-keyed
+    // codex draft holds high effort. Sticky for the custom instance is low —
+    // sticky must win (same rule as the model path: legacy only when entry missing).
+    const derived = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {
+          [CODEX_SECONDARY_INSTANCE]: modelSelection(CODEX_DRIVER, "gpt-5.4"),
+          [CODEX_INSTANCE]: modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
+            reasoningEffort: "high",
+          }),
+        },
+        activeProvider: null,
+      },
+      providers: [
+        {
+          instanceId: CODEX_SECONDARY_INSTANCE,
+          driver: CODEX_DRIVER,
+          enabled: true,
+          isAvailable: true,
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "GPT-5.4",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        } as never,
+      ],
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: CODEX_SECONDARY_INSTANCE,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      stickyModelSelectionByProvider: {
+        [CODEX_SECONDARY_INSTANCE]: modelSelection(CODEX_DRIVER, "gpt-5.4", {
+          reasoningEffort: "low",
+        }),
+      },
+      settings: {
+        providers: {
+          codex: { customModels: [] },
+        },
+        providerInstances: {},
+        models: {},
+      } as never,
+    });
+    expect(derived.modelOptions?.[String(CODEX_SECONDARY_INSTANCE)]).toEqual(
+      toSelections({ reasoningEffort: "low" }),
+    );
+  });
+
   it("uses sticky options only and keeps thread model when draft is empty", () => {
     const derived = deriveEffectiveComposerModelState({
       draft: {
