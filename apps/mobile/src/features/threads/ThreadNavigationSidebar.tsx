@@ -24,6 +24,7 @@ import type { SearchBarCommands } from "react-native-screens";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
+import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -1314,7 +1315,10 @@ function ThreadNavigationSidebarPane(
               contentContainerStyle={[
                 styles.threadListContent,
                 {
-                  paddingBottom: 16 + insets.bottom,
+                  paddingBottom:
+                    Platform.OS === "android"
+                      ? Math.max(insets.bottom, 16) + 88
+                      : 16 + insets.bottom,
                   paddingTop: topListInset,
                 },
               ]}
@@ -1370,16 +1374,16 @@ function ThreadNavigationSidebarPane(
         </View>
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
           {/* Title slot doubles as the connection status surface: while an
-              environment reconnects, "Threads" fades to a status label in
+              environment reconnects, the brand fades to a status label in
               place (no layout shift in the list below). */}
           <WorkspaceConnectionTitle
             grow
             onPress={props.onOpenEnvironmentSettings}
             size="pageTitle"
             brand={
-              <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
-                Threads
-              </Text>
+              <View className="h-11 flex-1 justify-center overflow-hidden">
+                <CompactBrandTitle />
+              </View>
             }
           />
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>
