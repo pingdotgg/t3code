@@ -35,17 +35,39 @@ const style = (
 // ─── Context reads (real repositories) ──────────────────────────────────────
 
 it.layer(WorkingCopyTestLayer)("readCommitMessageContext", (it) => {
-  it.effect("answers null when nothing is staged, even with a dirty worktree", () =>
+  it.effect("describes every active change through a temporary index when nothing is staged", () =>
     Effect.gen(function* () {
-      // The load-bearing rule: generation never silently widens to the
-      // unstaged tree. `b.ts` is modified and untracked work exists; both are
-      // invisible to the prompt.
       const repo = yield* makeTestRepository();
       yield* writeFile(repo.cwd, "b.ts", "b\n");
       yield* git(repo.cwd, ["add", "b.ts"]);
       yield* git(repo.cwd, ["commit", "-m", "base"]);
       yield* writeFile(repo.cwd, "b.ts", "b changed\n");
       yield* writeFile(repo.cwd, "untracked.ts", "new\n");
+
+      const context = yield* readCommitMessageContext(repo.git, {
+        amend: false,
+        wantsRecentSubjects: false,
+      });
+
+      assert.isNotNull(context);
+      assert.include(context.stagedSummary, "b.ts");
+      assert.include(context.stagedSummary, "untracked.ts");
+      assert.include(context.stagedPatch, "b changed");
+      assert.include(context.stagedPatch, "new");
+
+      // Generation is a read from the user's perspective: its temporary index
+      // must not stage anything in the actual repository.
+      const stagedAfter = yield* git(repo.cwd, ["diff", "--cached", "--name-only"]);
+      assert.strictEqual(stagedAfter.trim(), "");
+    }),
+  );
+
+  it.effect("answers null only when both the index and working tree are clean", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeTestRepository();
+      yield* writeFile(repo.cwd, "clean.ts", "clean\n");
+      yield* git(repo.cwd, ["add", "clean.ts"]);
+      yield* git(repo.cwd, ["commit", "-m", "base"]);
 
       const context = yield* readCommitMessageContext(repo.git, {
         amend: false,

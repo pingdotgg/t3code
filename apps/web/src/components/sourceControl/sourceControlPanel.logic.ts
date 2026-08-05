@@ -467,7 +467,7 @@ export function isCwdDeniedError(error: unknown): boolean {
   );
 }
 
-/** "Nothing staged" is guidance, not a failure — it gets a plain toast. */
+/** The legacy tag now means "nothing to describe" and gets a plain toast. */
 export function isNothingStagedError(error: unknown): boolean {
   return (
     typeof error === "object" &&

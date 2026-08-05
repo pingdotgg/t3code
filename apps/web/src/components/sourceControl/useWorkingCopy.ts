@@ -126,6 +126,7 @@ function undoToast(title: string, undoLabel: string, onUndo: () => void): void {
 export interface WorkingCopyStatusView {
   readonly status: WorkingCopyStatusResult | null;
   readonly isPending: boolean;
+  readonly isRefreshing: boolean;
   readonly showErrorBanner: boolean;
   readonly errorMessage: string | null;
   readonly dismissErrorBanner: () => void;
@@ -164,9 +165,54 @@ export function useWorkingCopyStatus(
     [vcsStatusQuery.data],
   );
 
+  const scopeKey = scope === null ? null : JSON.stringify([scope.environmentId, scope.cwd]);
+  const [lastGood, setLastGood] = useState<{
+    readonly scopeKey: string;
+    readonly status: WorkingCopyStatusResult;
+  } | null>(null);
+  useEffect(() => {
+    const nextStatus = query.data;
+    if (scopeKey === null || nextStatus === null) return;
+    setLastGood((current) =>
+      current?.scopeKey === scopeKey && current.status === nextStatus
+        ? current
+        : { scopeKey, status: nextStatus },
+    );
+  }, [query.data, scopeKey]);
+  // A failed background refresh must not blank a perfectly usable tree. The
+  // error band says the snapshot may be stale while the last good data remains
+  // actionable, matching VS Code's stale-while-revalidate behavior.
+  const status = query.data ?? (lastGood?.scopeKey === scopeKey ? lastGood.status : null);
+
   const [failureStreak, setFailureStreak] = useState(0);
   const [dismissed, setDismissed] = useState(false);
-  const { refresh } = query;
+  const refreshPendingRef = useRef(query.isPending);
+  refreshPendingRef.current = query.isPending;
+  const queuedRefreshRef = useRef(false);
+  const requestRefresh = useCallback(() => {
+    if (scopeKey === null) return;
+    if (refreshPendingRef.current) {
+      queuedRefreshRef.current = true;
+      return;
+    }
+    query.refresh();
+  }, [query.refresh, scopeKey]);
+
+  // Multiple mutation invalidations, status pushes and poll ticks may arrive
+  // during one read. Collapse them into at most one follow-up read.
+  useEffect(() => {
+    if (query.isPending || !queuedRefreshRef.current || scopeKey === null) return;
+    queuedRefreshRef.current = false;
+    query.refresh();
+  }, [query.isPending, query.refresh, scopeKey]);
+
+  const pushSeenRef = useRef<string | null>(null);
+  useEffect(() => {
+    setFailureStreak(0);
+    setDismissed(false);
+    pushSeenRef.current = null;
+    queuedRefreshRef.current = false;
+  }, [scopeKey]);
 
   useEffect(() => {
     if (query.isPending) return;
@@ -175,7 +221,6 @@ export function useWorkingCopyStatus(
   }, [query.error, query.isPending]);
 
   // Re-read once per MEANINGFUL push, not once per stream frame.
-  const pushSeenRef = useRef<string | null>(null);
   useEffect(() => {
     if (scope === null) return;
     if (pushSeenRef.current === null) {
@@ -184,8 +229,8 @@ export function useWorkingCopyStatus(
     }
     if (pushSeenRef.current === vcsStatusSignature) return;
     pushSeenRef.current = vcsStatusSignature;
-    refresh();
-  }, [refresh, scope, vcsStatusSignature]);
+    requestRefresh();
+  }, [requestRefresh, scope, vcsStatusSignature]);
 
   /**
    * fork: f4 F-29 — the poll interval is NOT re-created on every busy
@@ -195,7 +240,7 @@ export function useWorkingCopyStatus(
    */
   const pollBusyRef = useRef(options.busy);
   pollBusyRef.current = options.busy;
-  const isRepo = query.data?.isRepo ?? null;
+  const isRepo = status?.isRepo ?? null;
   useEffect(() => {
     if (
       !shouldPollWorkingCopy({
@@ -215,27 +260,28 @@ export function useWorkingCopyStatus(
       // call site, so the document's own visibility is the real gate on
       // "no work while nobody is looking".
       if (typeof document !== "undefined" && document.hidden) return;
-      refresh();
+      requestRefresh();
     }, WORKING_COPY_POLL_INTERVAL_MS);
     return () => {
       window.clearInterval(timer);
     };
-  }, [isRepo, options.visible, refresh, scope]);
+  }, [isRepo, options.visible, requestRefresh, scope]);
 
   const dismissErrorBanner = useCallback(() => {
     setDismissed(true);
   }, []);
 
   return {
-    status: query.data,
+    status,
     isPending: query.isPending,
+    isRefreshing: query.isPending && status !== null,
     showErrorBanner: shouldShowStatusErrorBanner({
       consecutiveFailures: failureStreak,
       dismissed,
     }),
     errorMessage: query.error,
     dismissErrorBanner,
-    refresh,
+    refresh: requestRefresh,
   };
 }
 
@@ -616,7 +662,7 @@ export function useWorkingCopyActions(
 
       /**
        * fork: f4 AI commit message. Not routed through `run` for one reason:
-       * "nothing staged" is guidance rather than a failure, and rendering it in
+       * "nothing to describe" is guidance rather than a failure, and rendering it in
        * the same red, timeout-0 toast as a git stderr dump reads as a bug.
        */
       generateCommitMessage: async ({ amend }) => {

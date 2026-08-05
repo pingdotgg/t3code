@@ -16,16 +16,7 @@
  * fork: f4 source-control panel
  */
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import {
-  ChevronDown,
-  ChevronRight,
-  FileX2,
-  Folder,
-  Loader2,
-  Minus,
-  Plus,
-  Undo2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Loader2, Minus, Plus, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -36,9 +27,9 @@ import {
   changesAllFolderKeys,
   changesGroupPaths,
   changesListEmptyState,
+  changesMatchingFileCount,
   changesRowHeight,
   changesRowIndent,
-  changesVisibleFileCount,
   partiallyStagedPaths,
   type ChangesGroup,
   type ChangesGroupScope,
@@ -47,16 +38,7 @@ import {
   type ChangesViewMode,
 } from "~/lib/sourceControl/changesRows";
 import type { WorkingCopyFile } from "@t3tools/contracts";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "~/components/ui/empty";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
@@ -158,6 +140,10 @@ export function ChangesList(props: ChangesListProps) {
         query: props.query,
       }),
     [collapsedFolders, collapsedGroups, props.files, props.filter, props.query, props.viewMode],
+  );
+  const matchingFileCount = useMemo(
+    () => changesMatchingFileCount(props.files, props.filter, props.query),
+    [props.files, props.filter, props.query],
   );
 
   // Computed once per status, not per row.
@@ -432,6 +418,7 @@ export function ChangesList(props: ChangesListProps) {
           focused={selection.focusedKey === row.key}
           partial={partialPaths.has(file.path)}
           busy={props.busyPaths.has(file.path)}
+          showDirectory={props.viewMode === "flat"}
           indentPx={changesRowIndent(row.depth)}
           onSelect={handleSelect}
           onOpen={(target) => target.file && props.onOpenDiff(target.file)}
@@ -463,36 +450,24 @@ export function ChangesList(props: ChangesListProps) {
    */
   const emptyState = changesListEmptyState({
     fileCount: props.files.length,
-    visibleFileCount: changesVisibleFileCount(rows),
+    matchingFileCount,
   });
 
   if (emptyState !== null) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <Empty className="min-h-0 flex-1 justify-center gap-4 p-6">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              {emptyState === "clean" ? <Folder /> : <FileX2 />}
-            </EmptyMedia>
-            <EmptyTitle className="text-base">
-              {emptyState === "clean" ? "No changes" : "Nothing matches"}
-            </EmptyTitle>
-            <EmptyDescription className="text-xs">
-              {emptyState === "clean"
-                ? "Your working tree is clean."
-                : props.query.trim().length > 0
-                  ? `No files match “${props.query.trim()}”.`
-                  : "No files match the current status filter."}
-            </EmptyDescription>
-          </EmptyHeader>
-          {emptyState === "filtered" ? (
-            <EmptyContent>
-              <Button size="sm" variant="outline" onClick={props.onClearFilters}>
-                Clear filter
-              </Button>
-            </EmptyContent>
-          ) : null}
-        </Empty>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+        <p className="text-xs text-muted-foreground">
+          {emptyState === "clean"
+            ? "There are no changes."
+            : props.query.trim().length > 0
+              ? `No files match “${props.query.trim()}”.`
+              : "No files match the current status filter."}
+        </p>
+        {emptyState === "filtered" ? (
+          <Button size="xs" variant="ghost" onClick={props.onClearFilters}>
+            Clear filter
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -563,7 +538,7 @@ function GroupHeader(props: {
     <div
       style={{ height: CHANGES_ROW_HEIGHT.header, paddingLeft: CHANGES_GUTTER }}
       className={cn(
-        "group flex items-center gap-1.5 border-border/60 border-b bg-background pr-3",
+        "group flex items-center gap-1.5 border-border/50 border-b bg-background pr-3",
         row.group === "conflicted" && "bg-warning/8",
       )}
     >
@@ -588,9 +563,18 @@ function GroupHeader(props: {
           <span className="size-3" />
         )}
         <span className="truncate">{CHANGES_GROUP_TITLE[row.group]}</span>
-        <Badge size="sm" variant="secondary" className="shrink-0 tracking-normal">
+        <span className="shrink-0 text-[11px] font-normal tracking-normal text-muted-foreground tabular-nums">
           {groupHeaderCountLabel(row.total ?? 0, row.visible ?? row.total ?? 0)}
-        </Badge>
+        </span>
+        {row.insertions !== undefined || row.deletions !== undefined ? (
+          <span
+            className="flex shrink-0 items-center gap-1.5 text-[11px] font-normal tracking-normal tabular-nums"
+            aria-label={`${row.insertions ?? 0} additions, ${row.deletions ?? 0} deletions`}
+          >
+            <span className="text-success-foreground">+{row.insertions ?? 0}</span>
+            <span className="text-destructive-foreground">−{row.deletions ?? 0}</span>
+          </span>
+        ) : null}
       </button>
       {row.group === "conflicted" ? (
         <span className={cn(EYEBROW_CLASS, "shrink-0")}>Stage to resolve</span>
@@ -686,7 +670,7 @@ function FolderRow(props: {
   return (
     <div
       style={{ height: CHANGES_ROW_HEIGHT.folder, paddingLeft: props.indentPx }}
-      className="group flex items-center gap-1.5 pr-3 text-sm hover:bg-accent/50"
+      className="group relative flex items-center gap-1.5 pr-3 text-sm hover:bg-accent/50"
     >
       <button
         type="button"
@@ -695,21 +679,21 @@ function FolderRow(props: {
         tabIndex={-1}
       >
         {row.collapsed ? (
-          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground/50" />
         ) : (
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground/50" />
         )}
-        <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{row.name}</span>
-        <span className="shrink-0 text-muted-foreground/70 text-xs tabular-nums">
+        <Folder className="size-3.5 shrink-0 text-muted-foreground/60" />
+        <span className="truncate font-medium text-muted-foreground/80">{row.name}</span>
+        <span className="shrink-0 text-muted-foreground/50 text-xs tabular-nums transition-opacity group-hover:opacity-0 pointer-coarse:opacity-0">
           {row.folderFiles?.length ?? 0}
         </span>
       </button>
       <span
-        style={{ width: 24 }}
         className={cn(
-          "flex shrink-0 items-center justify-end opacity-0 transition-opacity",
+          "absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-end rounded-sm bg-background opacity-0 transition-opacity group-hover:bg-accent",
           "group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100",
+          props.busy && "opacity-100",
         )}
       >
         {props.staged ? (

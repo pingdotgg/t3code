@@ -331,9 +331,9 @@ export const WorkingCopyAmendCommitInput = Schema.Struct({
 export type WorkingCopyAmendCommitInput = typeof WorkingCopyAmendCommitInput.Type;
 
 /**
- * fork: f4 AI commit message. There is no `paths` and no `message`: the panel
- * hand-builds the index, so the model describes exactly what is staged and
- * nothing else. The server never runs `add`.
+ * fork: f4 AI commit message. There is no `paths` and no `message`: a non-empty
+ * hand-built index stays authoritative; an empty index falls back to all active
+ * changes through a temporary index that never alters the user's staging.
  */
 export const WorkingCopyGenerateCommitMessageInput = Schema.Struct({
   cwd: WorkingCopyCwd,
@@ -485,12 +485,8 @@ export class WorkingCopyIndexLockedError extends Schema.TaggedErrorClass<Working
 }
 
 /**
- * fork: f4 AI commit message — the empty-index answer.
- *
- * Generating from the *unstaged* tree when nothing is staged would describe
- * changes the user is about to not commit, so this is a refusal rather than a
- * silent widening. It is a plain sentence in the UI, not a stderr dump, which
- * is why it carries no `detail`.
+ * fork: f4 AI commit message — the no-changes answer. The tag is retained for
+ * wire compatibility with clients that know the earlier empty-index behavior.
  */
 export class WorkingCopyNothingStagedError extends Schema.TaggedErrorClass<WorkingCopyNothingStagedError>()(
   "WorkingCopyNothingStagedError",
@@ -504,7 +500,7 @@ export class WorkingCopyNothingStagedError extends Schema.TaggedErrorClass<Worki
   override get message(): string {
     return this.amend
       ? "Nothing to describe: the amended commit would be empty."
-      : "Stage some changes first — the message is generated from the staged diff.";
+      : "Nothing to describe: the working tree is clean.";
   }
 }
 

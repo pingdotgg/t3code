@@ -54,6 +54,9 @@ export interface ChangesRow {
   readonly total?: number | undefined;
   /** Files in the group that survive the filter. */
   readonly visible?: number | undefined;
+  /** Aggregate diff stats for the files represented by this header. */
+  readonly insertions?: number | undefined;
+  readonly deletions?: number | undefined;
   readonly detail?: string | undefined;
 }
 
@@ -195,6 +198,14 @@ export function buildChangesRows(input: BuildChangesRowsInput): ReadonlyArray<Ch
       continue;
     }
     const visible = visibleByGroup[group];
+    let insertions = 0;
+    let deletions = 0;
+    let hasDiffStats = false;
+    for (const file of visible) {
+      if (file.insertions !== undefined || file.deletions !== undefined) hasDiffStats = true;
+      insertions += file.insertions ?? 0;
+      deletions += file.deletions ?? 0;
+    }
 
     // Conflicted is never collapsible — it is the one thing the user must act
     // on, so a stale collapse flag cannot hide it.
@@ -207,6 +218,7 @@ export function buildChangesRows(input: BuildChangesRowsInput): ReadonlyArray<Ch
       depth: 0,
       total: all.length,
       visible: visible.length,
+      ...(hasDiffStats ? { insertions, deletions } : {}),
       collapsed,
       detail: group === "conflicted" ? "edit, then stage to mark resolved" : undefined,
     });
@@ -381,10 +393,10 @@ export const DISCARD_CONFIRM_HEIGHT = 28;
 export const CHANGES_GUTTER = 12;
 
 /**
- * Tree indent per level, on the app's 4px grid. Was 13 — a value copied from
- * another app's 16px base inset and then applied to an 8px one.
+ * Tree indent per level, on the app's 4px grid. A full 16px step remains
+ * readable beside the disclosure + icon gutter at deeper nesting levels.
  */
-export const CHANGES_INDENT_PER_LEVEL = 12;
+export const CHANGES_INDENT_PER_LEVEL = 16;
 
 /** The left inset of a row at `depth`, gutter included. */
 export function changesRowIndent(depth: number): number {
@@ -406,13 +418,26 @@ export type ChangesEmptyState = "clean" | "filtered";
 export function changesListEmptyState(input: {
   /** Files in the working copy, before any filter. */
   readonly fileCount: number;
-  /** File rows that survived the status filter and the path query. */
-  readonly visibleFileCount: number;
+  /** Files that survived filters, before group/folder collapse hides rows. */
+  readonly matchingFileCount: number;
 }): ChangesEmptyState | null {
   if (input.fileCount === 0) {
     return "clean";
   }
-  return input.visibleFileCount === 0 ? "filtered" : null;
+  return input.matchingFileCount === 0 ? "filtered" : null;
+}
+
+export function changesMatchingFileCount(
+  files: ReadonlyArray<WorkingCopyFile>,
+  filter: ChangesStatusFilter,
+  query: string,
+): number {
+  const normalizedQuery = query.trim().toLowerCase();
+  let count = 0;
+  for (const file of files) {
+    if (passesFilters(file, filter, normalizedQuery)) count += 1;
+  }
+  return count;
 }
 
 /** File rows in a built row list — the input `changesListEmptyState` needs. */

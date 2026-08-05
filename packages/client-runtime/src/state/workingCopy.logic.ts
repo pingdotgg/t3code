@@ -197,6 +197,7 @@ export interface CommitMessageGenerationInput {
   /** No cwd, no repository, nothing to describe. */
   readonly hasScope: boolean;
   readonly stagedCount: number;
+  readonly dirtyCount: number;
   readonly amend: boolean;
   /** A generation is already in flight for this repository. */
   readonly generating: boolean;
@@ -214,7 +215,7 @@ export type CommitMessageGenerationDisabledReason =
   | "no-scope"
   | "generating"
   | "busy"
-  | "nothing-staged"
+  | "nothing-to-commit"
   | "no-model";
 
 export interface CommitMessageGenerationState {
@@ -223,9 +224,8 @@ export interface CommitMessageGenerationState {
 }
 
 /**
- * Order matters: the *most actionable* reason wins. "Stage something" is the
- * one the user can fix in one click, so it outranks "no model configured",
- * which is a settings trip.
+ * Order matters: the *most actionable* reason wins. A clean tree outranks
+ * "no model configured" because there is no content to send to any model.
  *
  * Amend is the one mode that does not require a staged file: `git commit
  * --amend` with an empty index still rewrites HEAD, and the server describes
@@ -249,8 +249,8 @@ export function commitMessageGenerationState(
   if (input.busy) {
     return disabled("busy");
   }
-  if (!input.amend && input.stagedCount === 0) {
-    return disabled("nothing-staged");
+  if (!input.amend && input.stagedCount === 0 && input.dirtyCount === 0) {
+    return disabled("nothing-to-commit");
   }
   if (input.modelConfigured === false) {
     return disabled("no-model");
@@ -268,8 +268,8 @@ export function commitMessageGenerationLabel(state: CommitMessageGenerationState
       return "Generating…";
     case "busy":
       return "Wait for the current action to finish";
-    case "nothing-staged":
-      return "Stage some changes first";
+    case "nothing-to-commit":
+      return "No changes to describe";
     case "no-model":
       return "Set a text generation model in Settings";
   }

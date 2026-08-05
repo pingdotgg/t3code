@@ -4,8 +4,10 @@
  * Everything here is view state the user would be annoyed to lose across a
  * reload — never anything git owns. Note the one deliberate asymmetry:
  *
- *   view/collapse/history preferences are keyed **per thread scope**, because
- *   they follow the surface the user is looking at,
+ *   panel visibility is **global**, so an open panel follows the user between
+ *   chats and rebinds to the newly active project,
+ *
+ *   view/collapse/history preferences are keyed per repository scope,
  *
  *   the **commit draft is keyed by `cwd`**, because a draft is about a
  *   repository. Keying it per thread would silently lose the draft on every
@@ -40,7 +42,7 @@ export interface SourceControlPrefs {
 
 export const DEFAULT_SOURCE_CONTROL_PREFS: SourceControlPrefs = {
   activeSection: "changes",
-  viewMode: "flat",
+  viewMode: "tree",
   filter: "all",
   collapsedGroups: [],
   collapsedFolders: [],
@@ -51,10 +53,14 @@ export const DEFAULT_SOURCE_CONTROL_PREFS: SourceControlPrefs = {
 };
 
 interface SourceControlStoreState {
-  /** Keyed by `scopedThreadKey(ref)`. */
+  /** Global across chats. The mounted panel derives its repository from the active chat. */
+  isOpen: boolean;
+  /** Keyed by the active environment and repository cwd. */
   prefsByScope: Record<string, SourceControlPrefs>;
   /** Keyed by `cwd`. See the header comment — this key is load-bearing. */
   commitDraftByCwd: Record<string, string>;
+  setOpen: (open: boolean) => void;
+  toggleOpen: () => void;
   setPrefs: (scope: string, patch: Partial<SourceControlPrefs>) => void;
   toggleCollapsedGroup: (scope: string, group: string) => void;
   toggleCollapsedFolder: (scope: string, folderKey: string) => void;
@@ -77,7 +83,7 @@ function toggleIn(list: ReadonlyArray<string>, value: string): ReadonlyArray<str
 // in, and every thread scope that ever existed, kept for the life of the
 // install.
 
-export const SOURCE_CONTROL_STORE_VERSION = 1;
+export const SOURCE_CONTROL_STORE_VERSION = 3;
 
 /** Enough scopes for any plausible session; the oldest are dropped first. */
 export const MAX_PERSISTED_PREF_SCOPES = 200;
@@ -150,7 +156,11 @@ export function sanitizeSourceControlPrefs(value: unknown): SourceControlPrefs {
  * by a future version, a downgrade, or a hand edit). Never throws: a broken
  * store must degrade to defaults, not wedge the panel.
  */
-export function migrateSourceControlState(persisted: unknown): {
+export function migrateSourceControlState(
+  persisted: unknown,
+  options?: { readonly legacyFlatAsTree?: boolean },
+): {
+  isOpen: boolean;
   prefsByScope: Record<string, SourceControlPrefs>;
   commitDraftByCwd: Record<string, string>;
 } {
@@ -167,7 +177,11 @@ export function migrateSourceControlState(persisted: unknown): {
   // Insertion order is the only recency signal a JSON object carries, and
   // zustand rewrites the whole map on every set, so the tail is the newest.
   for (const key of Object.keys(prefsSource).slice(-MAX_PERSISTED_PREF_SCOPES)) {
-    prefsByScope[key] = sanitizeSourceControlPrefs(prefsSource[key]);
+    const prefs = sanitizeSourceControlPrefs(prefsSource[key]);
+    prefsByScope[key] =
+      options?.legacyFlatAsTree === true && prefs.viewMode === "flat"
+        ? { ...prefs, viewMode: "tree" }
+        : prefs;
   }
 
   const draftSource =
@@ -184,7 +198,7 @@ export function migrateSourceControlState(persisted: unknown): {
         : draft;
   }
 
-  return { prefsByScope, commitDraftByCwd };
+  return { isOpen: boolOr(record.isOpen, false), prefsByScope, commitDraftByCwd };
 }
 
 /** Drops the oldest entries once a map passes its cap. */
@@ -201,8 +215,11 @@ function capMap<T>(map: Record<string, T>, limit: number): Record<string, T> {
 export const useSourceControlStore = create<SourceControlStoreState>()(
   persist(
     (set) => ({
+      isOpen: false,
       prefsByScope: {},
       commitDraftByCwd: {},
+      setOpen: (isOpen) => set({ isOpen }),
+      toggleOpen: () => set((state) => ({ isOpen: !state.isOpen })),
       setPrefs: (scope, patch) =>
         set((state) => ({
           prefsByScope: capMap(
@@ -273,6 +290,7 @@ export const useSourceControlStore = create<SourceControlStoreState>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({
+        isOpen: state.isOpen,
         prefsByScope: state.prefsByScope,
         commitDraftByCwd: state.commitDraftByCwd,
       }),
@@ -280,7 +298,8 @@ export const useSourceControlStore = create<SourceControlStoreState>()(
       // runs for a mismatched version and `merge` for every load, so both go
       // through the same sanitizer.
       version: SOURCE_CONTROL_STORE_VERSION,
-      migrate: (persisted) => migrateSourceControlState(persisted),
+      migrate: (persisted, version) =>
+        migrateSourceControlState(persisted, { legacyFlatAsTree: version < 3 }),
       merge: (persisted, current) => ({ ...current, ...migrateSourceControlState(persisted) }),
     },
   ),

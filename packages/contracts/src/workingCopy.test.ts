@@ -345,14 +345,14 @@ describe("WorkingCopyCommitMessageError", () => {
     ).toBe(false);
   });
 
-  it("wording distinguishes the amend case", () => {
+  it("wording distinguishes a clean tree from an empty amend", () => {
     expect(
       new WorkingCopyNothingStagedError({
         operation: "workingCopy.generateCommitMessage",
         cwd: "/work/proj",
         amend: false,
       }).message,
-    ).toContain("Stage some changes first");
+    ).toContain("working tree is clean");
     expect(
       new WorkingCopyNothingStagedError({
         operation: "workingCopy.generateCommitMessage",

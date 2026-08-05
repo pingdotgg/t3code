@@ -40,6 +40,7 @@ export interface WorkingCopyGitRunInput {
   readonly operation: string;
   readonly args: ReadonlyArray<string>;
   readonly stdin?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
   readonly timeoutMs?: number | undefined;
   readonly maxOutputBytes?: number | undefined;
   /** Enables the `index.lock` contention retry. Reads never retry. */
@@ -96,6 +97,7 @@ export function makeWorkingCopyGit(driver: WorkingCopyExecutor, cwd: string): Wo
       maxOutputBytes: input.maxOutputBytes ?? WORKING_COPY_MAX_OUTPUT_BYTES,
       appendTruncationMarker: false,
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      ...(input.env !== undefined ? { env: input.env } : {}),
     });
   });
 

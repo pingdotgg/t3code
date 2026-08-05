@@ -188,7 +188,11 @@ describe("SourceControlStatusBand busy affordance (F-06/F-11)", () => {
 });
 
 function renderChangeRow(
-  over: { busy?: boolean; group?: "unstaged" | "staged" | "conflicted" } = {},
+  over: {
+    busy?: boolean;
+    group?: "unstaged" | "staged" | "conflicted";
+    showDirectory?: boolean;
+  } = {},
 ) {
   const group = over.group ?? "unstaged";
   const file: WorkingCopyFile = {
@@ -204,6 +208,7 @@ function renderChangeRow(
       focused={false}
       partial={false}
       busy={over.busy ?? false}
+      showDirectory={over.showDirectory ?? true}
       indentPx={12}
       onSelect={noop}
       onOpen={noop}
@@ -248,6 +253,16 @@ describe("ChangeRow busy affordance (F-06)", () => {
     const staged = renderChangeRow({ group: "staged" });
     expect(staged).toContain('aria-label="Unstage"');
     expect(staged).not.toContain("group-hover:flex");
+  });
+
+  it("omits the redundant directory label in tree mode", () => {
+    const flat = renderChangeRow({ showDirectory: true });
+    const tree = renderChangeRow({ showDirectory: false });
+
+    expect(flat).toContain("<bdi");
+    expect(flat).not.toContain("lucide-file");
+    expect(tree).not.toContain("<bdi");
+    expect(tree).toContain("lucide-file");
   });
 });
 

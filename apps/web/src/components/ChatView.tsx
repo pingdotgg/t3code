@@ -142,6 +142,7 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
+import { useSourceControlStore } from "../sourceControlStore";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
@@ -293,6 +294,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { SourceControlPanelShell } from "./sourceControl/SourceControlPanelShell";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
@@ -1538,6 +1540,7 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
+  const sourceControlOpen = useSourceControlStore((state) => state.isOpen);
   const diffOpen = activeRightPanelKind === "diff";
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
@@ -1565,12 +1568,24 @@ function ChatViewContent(props: ChatViewProps) {
     [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const sourceControlOpen = activeRightPanelKind === "source-control";
   const rightPanelOpen = rightPanelState.isOpen;
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const workspacePanelOpen = sourceControlOpen || rightPanelOpen;
+  const canMaximizeRightPanel = workspacePanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
-  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const inlineRightPanelOwnsTitleBar = workspacePanelOpen && !shouldUsePlanSidebarSheet;
+
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    const legacySurface = rightPanelState.surfaces.find(
+      (surface) => surface.kind === "source-control",
+    );
+    if (!legacySurface) return;
+    if (rightPanelState.isOpen && rightPanelState.activeSurfaceId === legacySurface.id) {
+      useSourceControlStore.getState().setOpen(true);
+    }
+    useRightPanelStore.getState().closeSurface(activeThreadRef, legacySurface.id);
+  }, [activeThreadRef, rightPanelState]);
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -3186,15 +3201,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
-  // fork: f4 source-control surface
-  const addSourceControlSurface = useCallback(() => {
-    if (!activeThreadRef || !isGitRepo) return;
-    useRightPanelStore.getState().open(activeThreadRef, "source-control");
-  }, [activeThreadRef, isGitRepo]);
   const toggleSourceControlSurface = useCallback(() => {
-    if (!activeThreadRef || !isGitRepo) return;
-    useRightPanelStore.getState().toggle(activeThreadRef, "source-control");
-  }, [activeThreadRef, isGitRepo]);
+    if (!activeProject && !sourceControlOpen) return;
+    useSourceControlStore.getState().toggleOpen();
+  }, [activeProject, sourceControlOpen]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -3342,6 +3352,13 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
+    if (sourceControlOpen && shouldUsePlanSidebarSheet) {
+      useSourceControlStore.getState().setOpen(false);
+      if (!rightPanelOpen) {
+        useRightPanelStore.getState().toggleVisibility(activeThreadRef);
+      }
+      return;
+    }
     if (rightPanelOpen) {
       if (planSidebarOpen) {
         closePlanSidebar();
@@ -3351,7 +3368,15 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
+  }, [
+    activeThreadRef,
+    closePlanSidebar,
+    closePreviewPanel,
+    planSidebarOpen,
+    rightPanelOpen,
+    shouldUsePlanSidebarSheet,
+    sourceControlOpen,
+  ]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -5790,7 +5815,7 @@ function ChatViewContent(props: ChatViewProps) {
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-      sourceControlAvailable={isGitRepo}
+      sourceControlAvailable={activeProject !== null || sourceControlOpen}
       sourceControlOpen={sourceControlOpen}
       sourceControlShortcutLabel={formatShortcutLabel({
         key: "g",
@@ -5801,7 +5826,7 @@ function ChatViewContent(props: ChatViewProps) {
         altKey: false,
       })}
       rightPanelAvailable={activeProject !== null}
-      rightPanelOpen={rightPanelOpen && !sourceControlOpen}
+      rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       onToggleTerminal={toggleTerminalVisibility}
       onToggleSourceControl={toggleSourceControlSurface}
@@ -5812,12 +5837,12 @@ function ChatViewContent(props: ChatViewProps) {
     <div
       className={cn(
         "workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]",
-        rightPanelOpen && !shouldUsePlanSidebarSheet
+        workspacePanelOpen && !shouldUsePlanSidebarSheet
           ? "right-2 wco:right-[var(--workspace-controls-right)]"
           : "mr-px",
       )}
     >
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
+      {workspacePanelOpen && !shouldUsePlanSidebarSheet ? (
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
@@ -5825,6 +5850,22 @@ function ChatViewContent(props: ChatViewProps) {
       ) : null}
       {panelToggleControls}
     </div>
+  );
+  const sourceControlScopeKey = `${environmentId}:${gitCwd ?? activeProject?.workspaceRoot ?? "no-project"}`;
+  const sourceControlContent = (
+    <Suspense fallback={null}>
+      <SourceControlPanel
+        key={sourceControlScopeKey}
+        mode="embedded"
+        environmentId={environmentId}
+        cwd={gitCwd}
+        scopeKey={sourceControlScopeKey}
+        repoLabel={activeProject?.title ?? gitCwd ?? "Repository"}
+        visible={sourceControlOpen}
+        onOpenDiff={onOpenWorkingCopyDiff}
+        onOpenCommitFile={onOpenCommitFileDiff}
+      />
+    </Suspense>
   );
   const rightPanelContent = activeThreadRef ? (
     activeRightPanelSurface?.kind === "preview" ? (
@@ -5867,19 +5908,6 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
-    ) : /* fork: f4 source-control surface */ activeRightPanelSurface?.kind === "source-control" ? (
-      <Suspense fallback={null}>
-        <SourceControlPanel
-          mode="embedded"
-          environmentId={environmentId}
-          cwd={gitCwd}
-          scopeKey={activeThreadKey ?? routeThreadKey}
-          repoLabel={activeProject?.title ?? gitCwd ?? "Repository"}
-          visible
-          onOpenDiff={onOpenWorkingCopyDiff}
-          onOpenCommitFile={onOpenCommitFileDiff}
-        />
-      </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
         activePlan={activePlan}
@@ -5919,7 +5947,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
+      {workspacePanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -5943,7 +5971,7 @@ function ChatViewContent(props: ChatViewProps) {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen ? panelLayoutControls : null}
+          {!workspacePanelOpen ? panelLayoutControls : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
@@ -5958,7 +5986,7 @@ function ChatViewContent(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
+            rightPanelOpen={workspacePanelOpen}
             gitCwd={gitCwd}
             agentRuns={agentRunsState.runs /* fork: f3 agent-run visibility */}
             onJumpToAgentRun={onJumpToAgentRun /* fork: f3 agent-run visibility */}
@@ -6310,6 +6338,11 @@ function ChatViewContent(props: ChatViewProps) {
         ))}
       </div>
 
+      {!shouldUsePlanSidebarSheet && sourceControlOpen ? (
+        <SourceControlPanelShell mode="inline" maximized={rightPanelMaximized}>
+          {sourceControlContent}
+        </SourceControlPanelShell>
+      ) : null}
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
@@ -6329,16 +6362,20 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
-          onAddSourceControl={addSourceControlSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
-          sourceControlAvailable={isGitRepo}
         >
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
+      {shouldUsePlanSidebarSheet && sourceControlOpen ? (
+        <RightPanelSheet open onClose={() => useSourceControlStore.getState().setOpen(false)}>
+          <SourceControlPanelShell mode="sheet" layoutControls={panelToggleControls}>
+            {sourceControlContent}
+          </SourceControlPanelShell>
+        </RightPanelSheet>
+      ) : shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelSheet open onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}>
           <RightPanelTabs
             mode="sheet"
@@ -6358,11 +6395,9 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
-            onAddSourceControl={addSourceControlSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
-            sourceControlAvailable={isGitRepo}
           >
             {rightPanelContent}
           </RightPanelTabs>

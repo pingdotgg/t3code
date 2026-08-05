@@ -6,6 +6,7 @@ import { PanelLayoutControls } from "./PanelLayoutControls";
 function renderControls(options?: {
   sourceControlAvailable?: boolean;
   sourceControlOpen?: boolean;
+  rightPanelOpen?: boolean;
 }) {
   return renderToStaticMarkup(
     <PanelLayoutControls
@@ -16,7 +17,7 @@ function renderControls(options?: {
       sourceControlOpen={options?.sourceControlOpen ?? false}
       sourceControlShortcutLabel="Ctrl+Shift+G"
       rightPanelAvailable
-      rightPanelOpen={false}
+      rightPanelOpen={options?.rightPanelOpen ?? false}
       rightPanelShortcutLabel="Ctrl+Shift+B"
       onToggleTerminal={() => {}}
       onToggleSourceControl={() => {}}
@@ -38,5 +39,12 @@ describe("PanelLayoutControls", () => {
     const markup = renderControls({ sourceControlAvailable: false });
 
     expect(markup).toMatch(/aria-label="Toggle source control"[^>]*disabled/);
+  });
+
+  it("shows source control and the standard right panel as open at the same time", () => {
+    const markup = renderControls({ sourceControlOpen: true, rightPanelOpen: true });
+
+    expect(markup).toMatch(/aria-label="Toggle source control"[^>]*data-pressed/);
+    expect(markup).toMatch(/aria-label="Toggle right panel"[^>]*data-pressed/);
   });
 });

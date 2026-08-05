@@ -13,6 +13,21 @@ T3 Code works with the platforms your team already uses:
 
 ## What You Can Do
 
+### Work with Local Changes
+
+- Open the Source Control panel from the branch icon in the workspace title bar or with
+  `Cmd/Ctrl + Shift + G`. The panel stays open when you switch threads and follows the active
+  project.
+- Write a commit message at the top of the panel, then stage individual files or whole change
+  groups. Changed files use a collapsible folder tree by default. When nothing is staged, the
+  message generator describes all active changes, and the primary commit action stages and commits
+  them together. If anything is already staged, generation and commit continue to use only that
+  staged selection.
+- Use the graph button in the repository toolbar to switch between working-copy changes and commit
+  history. Search, refresh, sync, stash, undo, and discard actions live in the same toolbar.
+- Source Control can remain open beside the standard right panel, including while viewing a file
+  diff.
+
 ### Start Projects from Anywhere
 
 **Clone repositories directly**

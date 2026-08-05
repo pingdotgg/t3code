@@ -53,11 +53,9 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddSourceControl: () => void; // fork: f4 source-control surface
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
-  sourceControlAvailable: boolean; // fork: f4 source-control surface
   children: ReactNode;
 }
 
@@ -65,8 +63,6 @@ const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
-  // fork: f4 source-control surface
-  sourceControl: "Source control is only available for threads in Git repositories.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -104,11 +100,9 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddSourceControl: () => void; // fork: f4 source-control surface
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
-  sourceControlAvailable: boolean; // fork: f4 source-control surface
 }) {
   const actions = [
     {
@@ -142,15 +136,6 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
-    },
-    // fork: f4 source-control surface
-    {
-      label: "Source control",
-      description: "Stage, commit and browse history.",
-      icon: GitBranch,
-      available: props.sourceControlAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
-      onClick: props.onAddSourceControl,
     },
   ] as const;
 
@@ -387,8 +372,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         className={cn(
           "workspace-topbar gap-1 pl-2",
           props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          props.mode === "inline" ? "pr-32" : "pr-3",
+          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+8rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -494,15 +479,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <FileDiff />
                     Diff
                   </SurfaceMenuItem>
-                  {/* fork: f4 source-control surface */}
-                  <SurfaceMenuItem
-                    available={props.sourceControlAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.sourceControl}
-                    onClick={props.onAddSourceControl}
-                  >
-                    <GitBranch />
-                    Source control
-                  </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -517,11 +493,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
-            onAddSourceControl={props.onAddSourceControl}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
-            sourceControlAvailable={props.sourceControlAvailable}
           />
         ) : (
           props.children

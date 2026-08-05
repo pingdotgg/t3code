@@ -66,6 +66,7 @@ const registryLayer = (options: {
   readonly repositoryRoot: (cwd: string) => string;
   readonly execute?: (input: {
     readonly args: ReadonlyArray<string>;
+    readonly env?: NodeJS.ProcessEnv;
   }) => Effect.Effect<VcsProcess.VcsProcessOutput, never>;
 }) =>
   Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
@@ -345,6 +346,8 @@ interface GenerationHarness {
   readonly workspace?: Workspace;
   /** stdout for `git diff --cached --name-status`; empty means "nothing staged". */
   readonly stagedSummary?: string;
+  /** Summary produced by the isolated all-changes index fallback. */
+  readonly allChangesSummary?: string;
   readonly generate?: (input: {
     readonly stagedSummary: string;
     readonly stagedPatch: string;
@@ -368,7 +371,12 @@ const generationLayer = (harness: GenerationHarness) =>
           Effect.sync(() => {
             harness.onGitArgs?.(input.args);
             if (input.args.includes("--name-status")) {
-              return stdout(harness.stagedSummary ?? "M\tsrc/a.ts\n");
+              const usesTemporaryIndex = input.env?.GIT_INDEX_FILE !== undefined;
+              return stdout(
+                usesTemporaryIndex
+                  ? (harness.allChangesSummary ?? harness.stagedSummary ?? "M\tsrc/a.ts\n")
+                  : (harness.stagedSummary ?? "M\tsrc/a.ts\n"),
+              );
             }
             if (input.args.includes("--patch")) {
               return stdout("diff --git a/src/a.ts b/src/a.ts\n");
@@ -428,7 +436,31 @@ it.effect(
   },
 );
 
-it.effect("generateCommitMessage refuses an empty index and never reaches the model", () => {
+it.effect("generateCommitMessage falls back to all active changes when the index is empty", () => {
+  let generatedSummary = "";
+  return Effect.gen(function* () {
+    const service = yield* WorkingCopyService;
+
+    const result = yield* service.generateCommitMessage({ cwd: "/work/proj" });
+
+    assert.strictEqual(result.subject, "all changes");
+    assert.strictEqual(generatedSummary, "M\tsrc/all.ts");
+  }).pipe(
+    Effect.provide(
+      generationLayer({
+        stagedSummary: "   \n",
+        allChangesSummary: "M\tsrc/all.ts\n",
+        generate: (input) =>
+          Effect.sync(() => {
+            generatedSummary = input.stagedSummary;
+            return { subject: "all changes", body: "" };
+          }),
+      }),
+    ),
+  );
+});
+
+it.effect("generateCommitMessage refuses a clean tree and never reaches the model", () => {
   let generated = 0;
   return Effect.gen(function* () {
     const service = yield* WorkingCopyService;
@@ -438,13 +470,12 @@ it.effect("generateCommitMessage refuses an empty index and never reaches the mo
     assert.instanceOf(failure, WorkingCopyNothingStagedError);
     assert.strictEqual(failure.amend, false);
     assert.strictEqual(failure.cwd, "/work/proj");
-    // Generating from the unstaged tree instead would describe changes the
-    // user is about to not commit.
     assert.strictEqual(generated, 0);
   }).pipe(
     Effect.provide(
       generationLayer({
-        stagedSummary: "   \n",
+        stagedSummary: "",
+        allChangesSummary: "",
         generate: () =>
           Effect.sync(() => {
             generated += 1;

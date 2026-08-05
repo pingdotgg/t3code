@@ -14,9 +14,12 @@
  * `sanitizeCommitSubject`. There is no second prompt in this fork.
  */
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import {
   TextGenerationError,
+  VcsProcessSpawnError,
   type ModelSelection,
   type SourceControlWritingStyleSettings,
   type WorkingCopyError,
@@ -91,36 +94,117 @@ const readBranch = Effect.fn("workingCopy.readGenerationBranch")(function* (
 });
 
 /**
- * Reads everything the prompt needs, and **nothing else** — no `add`, no
- * `reset`, no stash. Answers `null` when the staged summary is empty, which is
- * what the caller turns into `WorkingCopyNothingStagedError`.
+ * Builds the all-changes fallback in an isolated temporary index. This gives
+ * Git the exact tree that `add -A` would commit, including untracked files,
+ * without changing the user's real index.
+ */
+const readAllChangesDiff = Effect.fn("workingCopy.readAllChangesDiff")(function* (
+  git: WorkingCopyGit,
+): Effect.fn.Return<
+  { readonly summary: string; readonly patch: string } | null,
+  WorkingCopyError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const directory = yield* fileSystem
+        .makeTempDirectoryScoped({
+          prefix: "t3code-commit-message-",
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsProcessSpawnError({
+                operation: OPERATION,
+                command: "create temporary Git index",
+                cwd: git.cwd,
+                argumentCount: 0,
+                cause,
+              }),
+          ),
+        );
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        GIT_INDEX_FILE: path.join(directory, "index"),
+      };
+
+      const head = yield* git.run({
+        operation: OPERATION,
+        args: ["rev-parse", "--verify", "HEAD"],
+      });
+      if (head.exitCode === 0) {
+        yield* git.ok({ operation: OPERATION, args: ["read-tree", "HEAD"], env });
+      }
+      yield* git.ok({ operation: OPERATION, args: ["add", "-A"], env });
+
+      const summary = yield* git.ok({
+        operation: OPERATION,
+        args: commands.stagedSummaryArgs(),
+        env,
+      });
+      const value = summary.stdout.trim();
+      if (value.length === 0) {
+        return null;
+      }
+      const patch = yield* git.ok({
+        operation: OPERATION,
+        args: commands.stagedPatchArgs(),
+        env,
+        maxOutputBytes: STAGED_PATCH_MAX_OUTPUT_BYTES,
+      });
+      return { summary: value, patch: patch.stdout };
+    }),
+  );
+});
+
+/**
+ * Reads everything the prompt needs. A hand-built index remains authoritative;
+ * only when it is empty does generation describe all active changes. Answers
+ * `null` only when neither the index nor the working tree has anything to
+ * describe.
  */
 export const readCommitMessageContext = Effect.fn("workingCopy.readCommitMessageContext")(
   function* (
     git: WorkingCopyGit,
     options: { readonly amend: boolean; readonly wantsRecentSubjects: boolean },
-  ): Effect.fn.Return<CommitMessageContext | null, WorkingCopyError> {
+  ): Effect.fn.Return<
+    CommitMessageContext | null,
+    WorkingCopyError,
+    FileSystem.FileSystem | Path.Path
+  > {
     const base = options.amend ? yield* resolveAmendBase(git) : undefined;
 
     const summary = yield* git.ok({
       operation: OPERATION,
       args: commands.stagedSummaryArgs(base),
     });
-    const stagedSummary = summary.stdout.trim();
-    if (stagedSummary.length === 0) {
-      return null;
+    let stagedSummary = summary.stdout.trim();
+    let stagedPatch: string;
+    if (stagedSummary.length === 0 && !options.amend) {
+      const allChanges = yield* readAllChangesDiff(git);
+      if (allChanges === null) {
+        return null;
+      }
+      stagedSummary = allChanges.summary;
+      stagedPatch = allChanges.patch;
+    } else {
+      if (stagedSummary.length === 0) {
+        return null;
+      }
+      const patch = yield* git.ok({
+        operation: OPERATION,
+        args: commands.stagedPatchArgs(base),
+        maxOutputBytes: STAGED_PATCH_MAX_OUTPUT_BYTES,
+      });
+      stagedPatch = patch.stdout;
     }
-
-    const patch = yield* git.ok({
-      operation: OPERATION,
-      args: commands.stagedPatchArgs(base),
-      maxOutputBytes: STAGED_PATCH_MAX_OUTPUT_BYTES,
-    });
 
     return {
       branch: yield* readBranch(git),
       stagedSummary,
-      stagedPatch: patch.stdout,
+      stagedPatch,
       recentSubjects: options.wantsRecentSubjects ? yield* readRecentCommitSubjects(git) : [],
     };
   },

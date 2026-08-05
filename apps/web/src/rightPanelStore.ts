@@ -14,7 +14,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-// fork: f4 source-control surface — appended last so upstream's order is untouched.
+// `source-control` remains decodable only so v8 can remove the old thread-scoped
+// surface. New source-control visibility lives in sourceControlStore.
 export const RIGHT_PANEL_KINDS = [
   "plan",
   "diff",
@@ -50,7 +51,7 @@ export type RightPanelSurface =
   | { id: "source-control"; kind: "source-control" }; // fork: f4 source-control surface
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 7;
+const RIGHT_PANEL_STORAGE_VERSION = 8;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -60,7 +61,10 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  open: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "source-control">,
+  ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
@@ -82,7 +86,10 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  toggle: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "source-control">,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -93,7 +100,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "source-control">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -102,8 +109,6 @@ const singletonSurface = (
       return { id: "files", kind };
     case "plan":
       return { id: "plan", kind };
-    case "source-control": // fork: f4 source-control surface
-      return { id: "source-control", kind };
   }
 };
 
@@ -180,65 +185,71 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             ([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
-              const surfaces = Array.isArray(validThreadState?.surfaces)
-                ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    if (surface.kind === "file") {
-                      const revealLine =
-                        typeof surface.revealLine === "number" &&
-                        Number.isFinite(surface.revealLine)
-                          ? Math.max(1, Math.trunc(surface.revealLine))
-                          : null;
-                      const revealRequestId =
-                        typeof surface.revealRequestId === "number" &&
-                        Number.isSafeInteger(surface.revealRequestId) &&
-                        surface.revealRequestId >= 0
-                          ? surface.revealRequestId
-                          : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
-                    }
-                    if (surface.kind !== "terminal") return [surface];
-                    if (
-                      !("resourceId" in surface) ||
-                      typeof surface.resourceId !== "string" ||
-                      surface.id !== `terminal:${surface.resourceId}`
-                    ) {
-                      return [];
-                    }
-                    const terminalIds =
-                      "terminalIds" in surface && Array.isArray(surface.terminalIds)
-                        ? [
-                            ...new Set(
-                              surface.terminalIds.filter(
-                                (terminalId): terminalId is string =>
-                                  typeof terminalId === "string",
-                              ),
-                            ),
-                          ]
-                        : [surface.resourceId];
-                    const activeTerminalId =
-                      "activeTerminalId" in surface &&
-                      typeof surface.activeTerminalId === "string" &&
-                      terminalIds.includes(surface.activeTerminalId)
-                        ? surface.activeTerminalId
-                        : (terminalIds[0] ?? surface.resourceId);
-                    return [
-                      {
-                        ...surface,
-                        terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
-                        activeTerminalId,
-                      },
-                    ];
-                  })
+              const persistedSurfaces = Array.isArray(validThreadState?.surfaces)
+                ? validThreadState.surfaces
                 : [];
+              const removedGlobalSourceControlSurface = persistedSurfaces.some(
+                (surface) => surface.kind === "source-control",
+              );
+              const surfaces = persistedSurfaces.flatMap<RightPanelSurface>((surface) => {
+                // Source control moved to its own global panel in v8.
+                if (surface.kind === "source-control") return [];
+                if (surface.kind === "file") {
+                  const revealLine =
+                    typeof surface.revealLine === "number" && Number.isFinite(surface.revealLine)
+                      ? Math.max(1, Math.trunc(surface.revealLine))
+                      : null;
+                  const revealRequestId =
+                    typeof surface.revealRequestId === "number" &&
+                    Number.isSafeInteger(surface.revealRequestId) &&
+                    surface.revealRequestId >= 0
+                      ? surface.revealRequestId
+                      : 0;
+                  return [{ ...surface, revealLine, revealRequestId }];
+                }
+                if (surface.kind !== "terminal") return [surface];
+                if (
+                  !("resourceId" in surface) ||
+                  typeof surface.resourceId !== "string" ||
+                  surface.id !== `terminal:${surface.resourceId}`
+                ) {
+                  return [];
+                }
+                const terminalIds =
+                  "terminalIds" in surface && Array.isArray(surface.terminalIds)
+                    ? [
+                        ...new Set(
+                          surface.terminalIds.filter(
+                            (terminalId): terminalId is string => typeof terminalId === "string",
+                          ),
+                        ),
+                      ]
+                    : [surface.resourceId];
+                const activeTerminalId =
+                  "activeTerminalId" in surface &&
+                  typeof surface.activeTerminalId === "string" &&
+                  terminalIds.includes(surface.activeTerminalId)
+                    ? surface.activeTerminalId
+                    : (terminalIds[0] ?? surface.resourceId);
+                return [
+                  {
+                    ...surface,
+                    terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
+                    activeTerminalId,
+                  },
+                ];
+              });
               const activeSurfaceId = surfaces.some(
                 (surface) => surface.id === validThreadState?.activeSurfaceId,
               )
                 ? (validThreadState?.activeSurfaceId ?? null)
                 : null;
               const isOpen =
-                typeof validThreadState?.isOpen === "boolean"
-                  ? validThreadState.isOpen
-                  : activeSurfaceId !== null;
+                removedGlobalSourceControlSurface && surfaces.length === 0
+                  ? false
+                  : typeof validThreadState?.isOpen === "boolean"
+                    ? validThreadState.isOpen
+                    : activeSurfaceId !== null;
               return [threadKey, { isOpen, surfaces, activeSurfaceId }];
             },
           ),

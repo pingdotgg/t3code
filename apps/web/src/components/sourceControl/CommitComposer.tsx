@@ -1,12 +1,10 @@
 /**
- * The commit composer: pinned at the BOTTOM of the Changes tab, flex-none.
+ * The commit composer at the top of the Changes view, matching VS Code's SCM
+ * flow: write the message, choose options, then commit the groups below.
  *
  * fork: f4 redesign (audit §8 F) — it used to be a fixed ~110px block above the
- * list, so opening the panel on a clean repo showed a large empty textarea over
- * an empty list, and the box that acts on the list sat above the list it acts
- * on. Bottom-pinned and auto-growing (one row → six, `field-sizing-content` is
- * already the `Textarea` default) it costs ~64px at rest and expands as you
- * type — the same model the app's own chat composer teaches.
+ * list. It now uses a compact two-line input and a full-width primary action,
+ * while still auto-growing for longer messages.
  *
  * Two behaviours are load-bearing rather than cosmetic:
  *
@@ -122,6 +120,7 @@ export function CommitComposer(props: CommitComposerProps) {
   const generation = commitMessageGenerationState({
     hasScope: props.onGenerateMessage !== undefined,
     stagedCount: props.stagedCount,
+    dirtyCount: props.dirtyCount,
     amend: props.amend,
     generating: props.generating === true,
     busy: props.busy,
@@ -193,25 +192,23 @@ export function CommitComposer(props: CommitComposerProps) {
   const showCounter = subject.length >= COUNTER_REVEAL_AT;
 
   return (
-    <div className="flex flex-none flex-col gap-2 border-border/60 border-t px-3 py-2">
+    <div
+      className="flex flex-none flex-col gap-1.5 border-border/60 border-b bg-muted/10 px-2 py-2"
+      data-source-control-commit-composer
+    >
       <div className="relative">
         <Textarea
           ref={textareaRef}
           value={props.message}
           onChange={(event) => props.onMessageChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          rows={1}
-          placeholder={props.amend ? "Amend the last commit…" : "Commit message"}
+          rows={2}
+          placeholder={props.amend ? "Amend the last commit…" : "Message (Ctrl+Enter to commit)"}
           aria-label="Commit message"
           size="sm"
-          // fork: f4 redesign — one row at rest, growing to six. The height is
-          // overridden on the INNER textarea (the house form, `DiffPanel.tsx`),
-          // never on the wrapper that draws the border: `Textarea`'s own
-          // `min-h-16.5` lives on the child, and a wrapper height would just
-          // clip it.
           className={cn(
-            "[&_textarea]:max-h-36 [&_textarea]:min-h-7 [&_textarea]:max-sm:min-h-8",
-            "[&_textarea]:py-[calc(--spacing(1)-1px)] [&_textarea]:text-sm",
+            "[&_textarea]:max-h-36 [&_textarea]:min-h-12 [&_textarea]:resize-none",
+            "[&_textarea]:py-1.5 [&_textarea]:text-sm",
             showCounter && "[&_textarea]:pr-14",
             lengthState === "hard" && "border-destructive/64",
           )}
@@ -241,7 +238,7 @@ export function CommitComposer(props: CommitComposerProps) {
         ) : null}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex min-h-6 items-center gap-2 px-0.5">
         {/* fork: f4 redesign (M19) — the repo's Checkbox, not the OS one. */}
         <label className="flex cursor-pointer select-none items-center gap-1.5 text-muted-foreground text-xs">
           <Checkbox
@@ -277,46 +274,52 @@ export function CommitComposer(props: CommitComposerProps) {
           </Tooltip>
         )}
 
-        {/* fork: f4 redesign (C2) — both halves are the SAME Button primitive,
-            with the SAME variant and the SAME disabled state, so the chevron
-            can no longer stay clickable while Commit is impossible. */}
-        <div className="ml-auto flex items-center">
-          <Button
-            size="sm"
-            variant={props.primaryVariant}
-            disabled={!enabled}
-            onClick={runPrimary}
-            className="rounded-e-none"
+        <span className="ml-auto text-[10px] text-muted-foreground/70">
+          {props.stagedCount > 0
+            ? `${props.stagedCount} staged`
+            : props.dirtyCount > 0
+              ? "Commits all changes"
+              : "Working tree clean"}
+        </span>
+      </div>
+
+      {/* VS Code keeps the primary SCM action full-width below the input. */}
+      <div className="flex w-full items-center">
+        <Button
+          size="sm"
+          variant={props.primaryVariant}
+          disabled={!enabled}
+          onClick={runPrimary}
+          className="min-w-0 flex-1 justify-center rounded-e-none"
+        >
+          {commitPrimaryActionLabel(action, props.ahead)}
+        </Button>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                size="sm"
+                variant={props.primaryVariant}
+                disabled={!enabled}
+                aria-label="More commit actions"
+                className="rounded-s-none border-s-0 px-1.5"
+              />
+            }
           >
-            {commitPrimaryActionLabel(action, props.ahead)}
-          </Button>
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  size="sm"
-                  variant={props.primaryVariant}
-                  disabled={!enabled}
-                  aria-label="More commit actions"
-                  className="rounded-s-none border-s-0 px-1.5"
-                />
-              }
+            <ChevronDown className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end" side="top" sideOffset={6} className="min-w-52">
+            <MenuItem
+              disabled={!commitAndPushEnabled}
+              onClick={() => props.onCommitAndPush({ stageAllFirst: props.stagedCount === 0 })}
             >
-              <ChevronDown className="size-3.5" />
-            </MenuTrigger>
-            <MenuPopup align="end" side="top" sideOffset={6} className="min-w-52">
-              <MenuItem
-                disabled={!commitAndPushEnabled}
-                onClick={() => props.onCommitAndPush({ stageAllFirst: props.stagedCount === 0 })}
-              >
-                Commit &amp; push
-              </MenuItem>
-              <MenuItem disabled={!amendEnabled} onClick={props.onAmend}>
-                Amend last commit
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
-        </div>
+              Commit &amp; push
+            </MenuItem>
+            <MenuItem disabled={!amendEnabled} onClick={props.onAmend}>
+              Amend last commit
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
     </div>
   );

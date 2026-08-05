@@ -287,6 +287,7 @@ describe("commitMessageGenerationState", () => {
   const base = {
     hasScope: true,
     stagedCount: 1,
+    dirtyCount: 1,
     amend: false,
     generating: false,
     busy: false,
@@ -297,11 +298,18 @@ describe("commitMessageGenerationState", () => {
     expect(commitMessageGenerationState(base)).toEqual({ enabled: true, reason: null });
   });
 
-  it("disables with nothing staged", () => {
-    const state = commitMessageGenerationState({ ...base, stagedCount: 0 });
+  it("enables with unstaged changes and nothing staged", () => {
+    expect(commitMessageGenerationState({ ...base, stagedCount: 0, dirtyCount: 3 })).toEqual({
+      enabled: true,
+      reason: null,
+    });
+  });
+
+  it("disables only when the whole working tree is clean", () => {
+    const state = commitMessageGenerationState({ ...base, stagedCount: 0, dirtyCount: 0 });
     expect(state.enabled).toBe(false);
-    expect(state.reason).toBe("nothing-staged");
-    expect(commitMessageGenerationLabel(state)).toBe("Stage some changes first");
+    expect(state.reason).toBe("nothing-to-commit");
+    expect(commitMessageGenerationLabel(state)).toBe("No changes to describe");
   });
 
   it("amend needs nothing staged — the commit being rewritten is the context", () => {
@@ -342,10 +350,15 @@ describe("commitMessageGenerationState", () => {
     expect(commitMessageGenerationState({ ...base, modelConfigured: null }).enabled).toBe(true);
   });
 
-  it("nothing-staged outranks no-model: it is the one the user can fix in a click", () => {
+  it("a clean tree outranks no-model because there is nothing to describe", () => {
     expect(
-      commitMessageGenerationState({ ...base, stagedCount: 0, modelConfigured: false }).reason,
-    ).toBe("nothing-staged");
+      commitMessageGenerationState({
+        ...base,
+        stagedCount: 0,
+        dirtyCount: 0,
+        modelConfigured: false,
+      }).reason,
+    ).toBe("nothing-to-commit");
   });
 
   it("the enabled label is the tooltip for the action itself", () => {

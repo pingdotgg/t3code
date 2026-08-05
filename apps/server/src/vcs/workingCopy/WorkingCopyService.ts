@@ -19,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
@@ -133,9 +134,10 @@ export interface WorkingCopyServiceShape {
     input: WorkingCopyCwdInput,
   ) => Effect.Effect<WorkingCopyLastCommitMessageResult, WorkingCopyError>;
   /**
-   * fork: f4 AI commit message. A read: the staged diff in, text out. Its
+   * fork: f4 AI commit message. A read: the staged diff (or, when the index is
+   * empty, an isolated snapshot of all changes) in, text out. Its
    * error channel is wider than every sibling's because only it can fail with
-   * "nothing staged" or a model failure.
+   * "nothing to describe" or a model failure.
    */
   readonly generateCommitMessage: (
     input: WorkingCopyGenerateCommitMessageInput,
@@ -184,6 +186,7 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const projections = yield* ProjectionSnapshotQuery;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const semaphores = yield* Ref.make(new Map<string, Semaphore.Semaphore>());
   // fork: f4 AI commit message — the same three services `GitManager` resolves
   // the writer model from, so the panel and the stacked action cannot drift.
@@ -278,18 +281,23 @@ export const make = Effect.gen(function* () {
   const withRepository = <A>(
     operation: string,
     cwd: string,
-    run: (git: WorkingCopyGit) => Effect.Effect<A, WorkingCopyError, FileSystem.FileSystem>,
+    run: (
+      git: WorkingCopyGit,
+    ) => Effect.Effect<A, WorkingCopyError, FileSystem.FileSystem | Path.Path>,
   ): Effect.Effect<A, WorkingCopyError> =>
     openRepository(operation, cwd).pipe(
       Effect.flatMap(run),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
 
   /** Mutations: one at a time per repository. */
   const runMutating = <A>(
     operation: string,
     cwd: string,
-    run: (git: WorkingCopyGit) => Effect.Effect<A, WorkingCopyError, FileSystem.FileSystem>,
+    run: (
+      git: WorkingCopyGit,
+    ) => Effect.Effect<A, WorkingCopyError, FileSystem.FileSystem | Path.Path>,
   ): Effect.Effect<A, WorkingCopyError> =>
     openRepository(operation, cwd).pipe(
       Effect.flatMap((git) =>
@@ -298,6 +306,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
 
   /**

@@ -7,6 +7,7 @@ import {
   changesGroupOf,
   changesGroupPaths,
   changesListEmptyState,
+  changesMatchingFileCount,
   changesRowHeight,
   changesRowIndent,
   changesVisibleFileCount,
@@ -99,6 +100,36 @@ describe("buildChangesRows — flat", () => {
       "file:unstaged-u.ts",
     ]);
     expect(rows[0]!.collapsed).toBe(true);
+  });
+
+  it("aggregates additions and deletions for the files represented by a header", () => {
+    const rows = build({
+      files: [
+        { ...file("src/a.ts"), insertions: 14, deletions: 2 },
+        { ...file("src/b.ts"), insertions: 5, deletions: 3 },
+      ],
+      collapsedGroups: new Set(["unstaged"]),
+    });
+
+    expect(rows[0]).toMatchObject({
+      kind: "header",
+      group: "unstaged",
+      insertions: 19,
+      deletions: 5,
+      collapsed: true,
+    });
+  });
+
+  it("uses filtered files for the header diff totals", () => {
+    const rows = build({
+      files: [
+        { ...file("src/a.ts"), insertions: 14, deletions: 2 },
+        { ...file("test/b.ts"), insertions: 5, deletions: 3 },
+      ],
+      query: "src/",
+    });
+
+    expect(rows[0]).toMatchObject({ insertions: 14, deletions: 2, total: 2, visible: 1 });
   });
 
   it("never collapses the conflicted group — it is the one thing you must act on", () => {
@@ -451,23 +482,23 @@ describe("changes list geometry", () => {
 
 describe("changesListEmptyState", () => {
   it("says CLEAN when the working copy has no files at all", () => {
-    expect(changesListEmptyState({ fileCount: 0, visibleFileCount: 0 })).toBe("clean");
+    expect(changesListEmptyState({ fileCount: 0, matchingFileCount: 0 })).toBe("clean");
   });
 
   it("says FILTERED when files exist but none survived the filter", () => {
-    expect(changesListEmptyState({ fileCount: 12, visibleFileCount: 0 })).toBe("filtered");
+    expect(changesListEmptyState({ fileCount: 12, matchingFileCount: 0 })).toBe("filtered");
   });
 
   it("says nothing at all when there are rows to draw", () => {
-    expect(changesListEmptyState({ fileCount: 12, visibleFileCount: 3 })).toBeNull();
+    expect(changesListEmptyState({ fileCount: 12, matchingFileCount: 3 })).toBeNull();
   });
 
   it("prefers CLEAN over FILTERED — an empty tree is not a filter problem", () => {
     // Both inputs are zero here; "clear the filter" would be useless advice.
-    expect(changesListEmptyState({ fileCount: 0, visibleFileCount: 0 })).toBe("clean");
+    expect(changesListEmptyState({ fileCount: 0, matchingFileCount: 0 })).toBe("clean");
   });
 
-  it("reads its visible count off the SAME rows the virtualizer renders", () => {
+  it("distinguishes filter matches from rows hidden by collapse", () => {
     const files = [file("a.ts"), file("b.ts", "staged"), file("c.ts")];
     const rows = buildChangesRows({
       files,
@@ -481,7 +512,7 @@ describe("changesListEmptyState", () => {
     expect(
       changesListEmptyState({
         fileCount: files.length,
-        visibleFileCount: changesVisibleFileCount(rows),
+        matchingFileCount: changesMatchingFileCount(files, "all", ""),
       }),
     ).toBeNull();
 
@@ -497,9 +528,25 @@ describe("changesListEmptyState", () => {
     expect(
       changesListEmptyState({
         fileCount: files.length,
-        visibleFileCount: changesVisibleFileCount(filtered),
+        matchingFileCount: changesMatchingFileCount(files, "all", "no-such-path"),
       }),
     ).toBe("filtered");
+
+    const collapsed = buildChangesRows({
+      files,
+      viewMode: "flat",
+      collapsedGroups: new Set(["staged", "unstaged"]),
+      collapsedFolders: EMPTY,
+      filter: "all",
+      query: "",
+    });
+    expect(changesVisibleFileCount(collapsed)).toBe(0);
+    expect(
+      changesListEmptyState({
+        fileCount: files.length,
+        matchingFileCount: changesMatchingFileCount(files, "all", ""),
+      }),
+    ).toBeNull();
   });
 
   it("counts only file rows — headers and placeholders are not content", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_SOURCE_CONTROL_PREFS,
@@ -7,7 +7,22 @@ import {
   migrateSourceControlState,
   sanitizeSourceControlPrefs,
   selectSourceControlPrefs,
+  useSourceControlStore,
 } from "./sourceControlStore";
+
+beforeEach(() => {
+  useSourceControlStore.setState({ isOpen: false });
+});
+
+describe("global source control visibility", () => {
+  it("toggles independently of any thread scope", () => {
+    useSourceControlStore.getState().toggleOpen();
+    expect(useSourceControlStore.getState().isOpen).toBe(true);
+
+    useSourceControlStore.getState().setOpen(false);
+    expect(useSourceControlStore.getState().isOpen).toBe(false);
+  });
+});
 
 // F-31 — the store was persisted with no version, no migration and no
 // validation, so a hand-edited or downgrade-written value rendered a control
@@ -42,19 +57,36 @@ describe("sanitizeSourceControlPrefs (F-31)", () => {
 });
 
 describe("migrateSourceControlState (F-31)", () => {
+  it("moves the old flat default to the new tree default once", () => {
+    const persisted = { prefsByScope: { repo: { viewMode: "flat" } } };
+
+    expect(
+      migrateSourceControlState(persisted, { legacyFlatAsTree: true }).prefsByScope.repo?.viewMode,
+    ).toBe("tree");
+    expect(migrateSourceControlState(persisted).prefsByScope.repo?.viewMode).toBe("flat");
+  });
+
   it("survives a payload of any shape", () => {
     expect(migrateSourceControlState(undefined)).toEqual({
+      isOpen: false,
       prefsByScope: {},
       commitDraftByCwd: {},
     });
     expect(migrateSourceControlState("garbage")).toEqual({
+      isOpen: false,
       prefsByScope: {},
       commitDraftByCwd: {},
     });
     expect(migrateSourceControlState({ prefsByScope: 7, commitDraftByCwd: [] })).toEqual({
+      isOpen: false,
       prefsByScope: {},
       commitDraftByCwd: {},
     });
+  });
+
+  it("preserves global panel visibility only when it is a boolean", () => {
+    expect(migrateSourceControlState({ isOpen: true }).isOpen).toBe(true);
+    expect(migrateSourceControlState({ isOpen: "yes" }).isOpen).toBe(false);
   });
 
   it("drops non-string and empty drafts rather than persisting them", () => {
@@ -92,6 +124,10 @@ describe("migrateSourceControlState (F-31)", () => {
 });
 
 describe("selectSourceControlPrefs", () => {
+  it("uses the folder tree for new repositories", () => {
+    expect(DEFAULT_SOURCE_CONTROL_PREFS.viewMode).toBe("tree");
+  });
+
   it("returns the module-level default object (stable identity, no render loop)", () => {
     expect(selectSourceControlPrefs({}, null)).toBe(DEFAULT_SOURCE_CONTROL_PREFS);
     expect(selectSourceControlPrefs({}, "missing")).toBe(DEFAULT_SOURCE_CONTROL_PREFS);

@@ -29,7 +29,7 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
-import { useRightPanelStore } from "../rightPanelStore"; // fork: f4 — back to source control
+import { useSourceControlStore } from "../sourceControlStore"; // fork: f4 — back to source control
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
@@ -910,7 +910,7 @@ export default function DiffPanel({
                   className="-me-1.5 shrink-0"
                   aria-label="Back to source control"
                   onClick={() => {
-                    useRightPanelStore.getState().open(routeThreadRef, "source-control");
+                    useSourceControlStore.getState().setOpen(true);
                   }}
                 />
               }

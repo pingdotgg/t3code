@@ -18,6 +18,7 @@ import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { useSourceControlStore } from "../sourceControlStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -96,7 +97,7 @@ function ChatRouteGlobalShortcuts() {
         }
         event.preventDefault();
         event.stopPropagation();
-        useRightPanelStore.getState().toggle(routeThreadRef, "source-control");
+        useSourceControlStore.getState().toggleOpen();
         return;
       }
 

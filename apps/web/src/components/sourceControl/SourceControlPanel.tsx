@@ -1,24 +1,22 @@
 /**
  * The source-control right-panel surface.
  *
- * Layout (audit §8): ONE 12px gutter, top to bottom —
+ * Layout: compact VS Code-style source control, top to bottom —
  *
- *   A  shell subheader — branch · tracking · [Sync | ⋯]
- *   B  h-9  — ToggleGroup (Changes / History) + ONE View menu
- *   C  h-8  — one full-width filter row, shared by both tabs
- *   D       — ONE status slot (read error OR operation in progress)
- *   E       — the list, min-h-0 flex-1, all remaining height
- *   F       — the commit composer, bottom-pinned and auto-growing
+ *   A  repository toolbar — repo, branch, filter, graph, refresh, sync, more
+ *   B  commit composer — message, options, full-width primary action
+ *   C  optional filter row — hidden until requested or filtering is active
+ *   D  one status slot — read error or operation in progress
+ *   E  staged / conflicts / changes groups using all remaining height
  *
  * The panel used to stack six different left insets down its own height, put a
- * fixed ~110px composer *above* the list it acts on, and spread "something is
- * wrong" across two places. Everything here is one inset, and the composer sits
- * where the app's own chat composer sits.
+ * spread "something is wrong" across two places. The panel now keeps its
+ * repository chrome stable while reads refresh in the background.
  *
- * Scoping: thread-scoped like every other surface, so the panel automatically
- * follows the thread's worktree (`gitCwd` is already derived per thread). The
- * ONE exception is the commit draft, which `sourceControlStore` keys by cwd —
- * see the note there; it is not an oversight.
+ * Scoping: visibility is global, while the mounted panel receives the active
+ * chat's environment and worktree. Switching chats keeps the panel open and
+ * rebinds every query to the new project. Preferences and commit drafts are
+ * repository-scoped so one project's state never leaks into another.
  *
  * Refresh: server push + post-mutation re-read + a slow visible-only poll. No
  * timer runs while the panel is hidden, and nothing here animates continuously.
@@ -32,8 +30,8 @@ import {
   historyAuthorFacets,
 } from "@t3tools/client-runtime/state/working-copy-logic";
 import { useAtomValue } from "@effect/atom-react";
-import { GitBranch, FolderGit2, Search, Settings2, X } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { GitBranch, FolderGit2, Search, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   confirmReplaceCommitDraft,
@@ -50,13 +48,7 @@ import {
   workingCopyBusyKey,
 } from "./sourceControlPanel.logic";
 import type { ChangesStatusFilter } from "~/lib/sourceControl/changesRows";
-import {
-  DiffPanelHeaderSkeleton,
-  DiffPanelLoadingState,
-  DiffPanelShell,
-  type DiffPanelMode,
-} from "~/components/DiffPanelShell";
-import { Badge } from "~/components/ui/badge";
+import { DiffPanelShell, type DiffPanelMode } from "~/components/DiffPanelShell";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
@@ -78,21 +70,6 @@ import {
 } from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "~/components/ui/menu";
-import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -114,6 +91,7 @@ import { HistoryList } from "./HistoryList";
 import { SourceControlConfirmDialog } from "./SourceControlConfirmDialog";
 import { SourceControlHeader } from "./SourceControlHeader";
 import { SourceControlStatusBand } from "./SourceControlStatusBand";
+import { SourceControlViewMenu } from "./SourceControlViewMenu";
 import { StashesPanel } from "./StashesSection";
 import { useSourceControlConfirm } from "./useSourceControlConfirm";
 import {
@@ -141,7 +119,7 @@ export interface SourceControlPanelProps {
   readonly mode: DiffPanelMode;
   readonly environmentId: EnvironmentId;
   readonly cwd: string | null;
-  /** `scopedThreadKey(ref)` — the persistence scope for view preferences. */
+  /** Environment + repository cwd — the persistence scope for view preferences. */
   readonly scopeKey: string;
   readonly repoLabel: string;
   readonly visible: boolean;
@@ -186,6 +164,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
 
   const filterInputRef = useRef<HTMLInputElement | null>(null);
   const [pathQuery, setPathQuery] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
   const [amend, setAmend] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>(EMPTY_FILTER);
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
@@ -449,22 +428,125 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     syncEmphasis: (status.status?.ahead ?? 0) > 0 || (status.status?.behind ?? 0) > 0,
   });
 
-  const showFilterRow = onChanges
-    ? dirtyCount > 0 || pathQuery.trim().length > 0
-    : history.entries.length > 0 || history.filterActive;
+  const filterActive = onChanges
+    ? pathQuery.trim().length > 0 || prefs.filter !== "all"
+    : history.filterActive;
+  const showFilterRow = filterOpen || filterActive;
+
+  const clearActiveFilter = useCallback(() => {
+    if (onChanges) {
+      setPathQuery("");
+      setPrefs(props.scopeKey, { filter: "all" });
+    } else {
+      setHistoryFilter(EMPTY_FILTER);
+    }
+  }, [onChanges, props.scopeKey, setPrefs]);
+
+  const handleToggleFilter = useCallback(() => {
+    if (showFilterRow) {
+      clearActiveFilter();
+      setFilterOpen(false);
+      return;
+    }
+    setFilterOpen(true);
+  }, [clearActiveFilter, showFilterRow]);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const input = filterInputRef.current;
+    input?.focus();
+    input?.select();
+  }, [filterOpen, onChanges]);
 
   /** `/` focuses the one filter box, from anywhere in the panel body. */
-  const handleBodyKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("input, textarea, [contenteditable='true']")) return;
-    const input = filterInputRef.current;
-    if (input === null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    input.focus();
-    input.select();
-  }, []);
+  const handleBodyKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!showFilterRow) {
+        setFilterOpen(true);
+        return;
+      }
+      filterInputRef.current?.focus();
+      filterInputRef.current?.select();
+    },
+    [showFilterRow],
+  );
+
+  const sourceControlHeader = (
+    <SourceControlHeader
+      status={status.status}
+      repoLabel={props.repoLabel}
+      activeSection={prefs.activeSection}
+      searchActive={showFilterRow}
+      syncBusy={stacked.isPending || pull.isPending || refreshingRemote}
+      dirtyCount={dirtyCount}
+      undoBusy={actions.isBusy(workingCopyBusyKey.undoCommit())}
+      discardAllBusy={actions.isBusy(workingCopyBusyKey.discardAll())}
+      stashBusy={actions.isBusy(workingCopyBusyKey.stashPush())}
+      refreshBusy={status.isPending}
+      viewActions={
+        <SourceControlViewMenu
+          prefs={prefs}
+          historyFilter={historyFilter}
+          authors={authors}
+          onPrefsChange={(patch) => setPrefs(props.scopeKey, patch)}
+          onHistoryFilterChange={setHistoryFilter}
+        />
+      }
+      onSelectSection={(activeSection) => {
+        setPrefs(props.scopeKey, { activeSection });
+        setFilterOpen(false);
+      }}
+      onToggleSearch={handleToggleFilter}
+      onSync={handleSync}
+      onRefresh={status.refresh}
+      onUndoLastCommit={() => void actions.undoLastCommit()}
+      onDiscardAll={() => void actions.discard(null)}
+      onOpenStashDialog={() => setStashDialogOpen(true)}
+      onOpenStashes={() => setPrefs(props.scopeKey, { stashesOpen: true })}
+    />
+  );
+
+  const commitComposer = onChanges ? (
+    <CommitComposer
+      message={commitDraft}
+      onMessageChange={(message) => setCommitDraft(props.cwd ?? "", message)}
+      amend={amend}
+      onAmendChange={setAmend}
+      lastCommitMessage={lastCommitQuery.data?.message ?? null}
+      stagedCount={stagedCount}
+      dirtyCount={dirtyCount}
+      ahead={status.status?.ahead ?? 0}
+      operationInProgress={operation !== null}
+      busy={actions.busy.has("commit")}
+      primaryVariant={
+        sourceControlPrimaryVariant(primarySlot, "commit") === "default" ? "default" : "secondary"
+      }
+      onCommit={(options) => void handleCommit(options)}
+      onAmend={() => {
+        void (async () => {
+          const ok = await actions.amend(commitDraft);
+          if (ok && props.cwd !== null) {
+            clearCommitDraft(props.cwd);
+            setAmend(false);
+          }
+        })();
+      }}
+      onGenerateMessage={handleGenerateMessage}
+      generating={actions.busy.has(GENERATE_COMMIT_MESSAGE_BUSY_KEY)}
+      textGenerationConfigured={textGenerationConfigured}
+      onPush={() => handleSync("push")}
+      onCommitAndPush={(options) => {
+        void (async () => {
+          if (await handleCommit(options)) handleSync("push");
+        })();
+      }}
+    />
+  ) : null;
 
   if (props.cwd === null) {
     return (
@@ -502,46 +584,16 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     );
   }
 
-  // fork: f4 redesign (M8) — the shell's own skeletons, which shipped two files
-  // away and were never imported. The header used to read "no branch" over an
-  // empty list until the first status landed, and then everything snapped in.
-  //
-  // The `showErrorBanner` guard matters: a status read that FAILS never
-  // produces a `status`, so a skeleton gated only on `=== null` would spin
-  // forever instead of falling through to the error band below.
   if (status.status === null && !status.showErrorBanner) {
     return (
-      <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
-        <DiffPanelLoadingState label="Reading the working copy…" />
+      <DiffPanelShell mode={props.mode} header={sourceControlHeader}>
+        <SourceControlInitialLoading />
       </DiffPanelShell>
     );
   }
 
   return (
-    <DiffPanelShell
-      mode={props.mode}
-      header={
-        <SourceControlHeader
-          status={status.status}
-          repoLabel={props.repoLabel}
-          syncBusy={stacked.isPending || pull.isPending || refreshingRemote}
-          syncVariant={
-            sourceControlPrimaryVariant(primarySlot, "sync") === "default" ? "default" : "outline"
-          }
-          dirtyCount={dirtyCount}
-          undoBusy={actions.isBusy(workingCopyBusyKey.undoCommit())}
-          discardAllBusy={actions.isBusy(workingCopyBusyKey.discardAll())}
-          stashBusy={actions.isBusy(workingCopyBusyKey.stashPush())}
-          refreshBusy={status.isPending}
-          onSync={handleSync}
-          onRefresh={status.refresh}
-          onUndoLastCommit={() => void actions.undoLastCommit()}
-          onDiscardAll={() => void actions.discard(null)}
-          onOpenStashDialog={() => setStashDialogOpen(true)}
-          onOpenStashes={() => setPrefs(props.scopeKey, { stashesOpen: true })}
-        />
-      }
-    >
+    <DiffPanelShell mode={props.mode} header={sourceControlHeader}>
       {/* fork: f4 focus model — the panel owns its keys (`/` here, `j/k/s/u/x`
           in the lists below), so the chat composer's type-to-focus must not
           swallow them before they are dispatched. */}
@@ -549,155 +601,10 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         className="flex min-h-0 flex-1 flex-col"
         onKeyDown={handleBodyKeyDown}
         data-keys-owned=""
+        data-source-control-refreshing={status.isRefreshing ? "true" : "false"}
+        aria-busy={status.isRefreshing}
       >
-        {/* ── B ── segment + one View menu ───────────────────────────────── */}
-        <div className="flex h-9 flex-none items-center gap-2 border-border/60 border-b px-3">
-          <ToggleGroup
-            // `default` is the borderless segmented look (gap-0.5, pressed =
-            // filled) that matches `RightPanelTabs` directly above this panel;
-            // the old hand-rolled pair copied that colour scheme but at h-6 /
-            // text-xs, one size below the tab strip it sat under.
-            size="sm"
-            variant="default"
-            value={[prefs.activeSection]}
-            onValueChange={(value) => {
-              const next = value[0];
-              if (next === "changes" || next === "history") {
-                setPrefs(props.scopeKey, { activeSection: next });
-              }
-            }}
-          >
-            <Toggle value="changes" className="gap-1.5 px-2">
-              Changes
-              {dirtyCount > 0 ? (
-                <Badge size="sm" variant="secondary">
-                  {dirtyCount}
-                </Badge>
-              ) : null}
-            </Toggle>
-            <Toggle value="history" className="px-2">
-              History
-            </Toggle>
-          </ToggleGroup>
-
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button size="xs" variant="ghost" className="ml-auto" aria-label="View options" />
-              }
-            >
-              <Settings2 />
-              View
-            </MenuTrigger>
-            <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
-              {onChanges ? (
-                <>
-                  <MenuGroup>
-                    <MenuGroupLabel>Show</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={prefs.filter}
-                      onValueChange={(value) =>
-                        setPrefs(props.scopeKey, { filter: value as ChangesStatusFilter })
-                      }
-                    >
-                      {(
-                        Object.keys(CHANGES_FILTER_LABEL) as ReadonlyArray<ChangesStatusFilter>
-                      ).map((value) => (
-                        <MenuRadioItem key={value} value={value}>
-                          {CHANGES_FILTER_LABEL[value]}
-                        </MenuRadioItem>
-                      ))}
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                  <MenuSeparator />
-                  <MenuGroup>
-                    <MenuGroupLabel>Layout</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={prefs.viewMode}
-                      onValueChange={(value) =>
-                        setPrefs(props.scopeKey, { viewMode: value === "tree" ? "tree" : "flat" })
-                      }
-                    >
-                      <MenuRadioItem value="flat">Flat list</MenuRadioItem>
-                      <MenuRadioItem value="tree">Folder tree</MenuRadioItem>
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                </>
-              ) : (
-                <>
-                  <MenuSub>
-                    <MenuSubTrigger>
-                      <span className="min-w-0 max-w-40 truncate">
-                        {historyFilter.author.length > 0
-                          ? `Author: ${historyFilter.author}`
-                          : "Author: all"}
-                      </span>
-                    </MenuSubTrigger>
-                    <MenuSubPopup className="max-h-64 min-w-48 overflow-auto">
-                      <MenuItem onClick={() => setHistoryFilter({ ...historyFilter, author: "" })}>
-                        All authors
-                      </MenuItem>
-                      {authors.map((author) => (
-                        <MenuItem
-                          key={author.name}
-                          onClick={() =>
-                            setHistoryFilter({ ...historyFilter, author: author.name })
-                          }
-                        >
-                          <span className="min-w-0 max-w-48 truncate">{author.name}</span>
-                          <span className="ml-auto text-muted-foreground">{author.count}</span>
-                        </MenuItem>
-                      ))}
-                    </MenuSubPopup>
-                  </MenuSub>
-                  <MenuSeparator />
-                  <MenuGroup>
-                    <MenuGroupLabel>Group</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={prefs.historyGrouped ? "day" : "none"}
-                      onValueChange={(value) =>
-                        setPrefs(props.scopeKey, { historyGrouped: value === "day" })
-                      }
-                    >
-                      <MenuRadioItem value="none">No grouping</MenuRadioItem>
-                      <MenuRadioItem value="day">By day</MenuRadioItem>
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                  <MenuSeparator />
-                  <MenuGroup>
-                    <MenuGroupLabel>Sort</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={prefs.historySort}
-                      onValueChange={(value) =>
-                        setPrefs(props.scopeKey, {
-                          historySort: value === "oldest" ? "oldest" : "newest",
-                        })
-                      }
-                    >
-                      <MenuRadioItem value="newest">Newest first</MenuRadioItem>
-                      <MenuRadioItem value="oldest">Oldest first</MenuRadioItem>
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                  <MenuSeparator />
-                  <MenuGroup>
-                    <MenuGroupLabel>Density</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={prefs.historyDensity}
-                      onValueChange={(value) =>
-                        setPrefs(props.scopeKey, {
-                          historyDensity: value === "compact" ? "compact" : "comfort",
-                        })
-                      }
-                    >
-                      <MenuRadioItem value="comfort">Comfortable rows</MenuRadioItem>
-                      <MenuRadioItem value="compact">Compact rows</MenuRadioItem>
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                </>
-              )}
-            </MenuPopup>
-          </Menu>
-        </div>
+        {commitComposer}
 
         {/* ── C ── one filter row, full width, shared by both tabs ────────── */}
         {showFilterRow ? (
@@ -898,46 +805,6 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             }}
           />
         )}
-
-        {/* ── F ── the composer, bottom-pinned and auto-growing ──────────── */}
-        {onChanges ? (
-          <CommitComposer
-            message={commitDraft}
-            onMessageChange={(message) => setCommitDraft(props.cwd ?? "", message)}
-            amend={amend}
-            onAmendChange={setAmend}
-            lastCommitMessage={lastCommitQuery.data?.message ?? null}
-            stagedCount={stagedCount}
-            dirtyCount={dirtyCount}
-            ahead={status.status?.ahead ?? 0}
-            operationInProgress={operation !== null}
-            busy={actions.busy.has("commit")}
-            primaryVariant={
-              sourceControlPrimaryVariant(primarySlot, "commit") === "default"
-                ? "default"
-                : "secondary"
-            }
-            onCommit={(options) => void handleCommit(options)}
-            onAmend={() => {
-              void (async () => {
-                const ok = await actions.amend(commitDraft);
-                if (ok && props.cwd !== null) {
-                  clearCommitDraft(props.cwd);
-                  setAmend(false);
-                }
-              })();
-            }}
-            onGenerateMessage={handleGenerateMessage}
-            generating={actions.busy.has(GENERATE_COMMIT_MESSAGE_BUSY_KEY)}
-            textGenerationConfigured={textGenerationConfigured}
-            onPush={() => handleSync("push")}
-            onCommitAndPush={(options) => {
-              void (async () => {
-                if (await handleCommit(options)) handleSync("push");
-              })();
-            }}
-          />
-        ) : null}
       </div>
 
       <SourceControlConfirmDialog pending={confirm.pending} onResolve={confirm.resolve} />
@@ -1006,6 +873,32 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         </DialogPopup>
       </Dialog>
     </DiffPanelShell>
+  );
+}
+
+function SourceControlInitialLoading() {
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      role="status"
+      aria-live="polite"
+      aria-label="Reading the working copy"
+      data-source-control-initial-loading
+    >
+      <div className="space-y-1.5 border-border/60 border-b px-2 py-2">
+        <div className="h-12 rounded-md bg-muted/60" />
+        <div className="h-7 rounded-md bg-muted/45" />
+      </div>
+      <div className="flex h-7 items-center gap-2 border-border/60 border-b px-3">
+        <div className="h-2.5 w-20 rounded-full bg-muted/60" />
+      </div>
+      <div className="space-y-2 px-3 py-2">
+        <div className="h-2.5 w-3/5 rounded-full bg-muted/45" />
+        <div className="h-2.5 w-4/5 rounded-full bg-muted/45" />
+        <div className="h-2.5 w-1/2 rounded-full bg-muted/45" />
+      </div>
+      <span className="sr-only">Reading the working copy…</span>
+    </div>
   );
 }
 

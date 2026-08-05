@@ -37,6 +37,7 @@ const makeRecordingDriver = (respond: (attempt: number) => VcsProcess.VcsProcess
   const calls: Array<{
     readonly args: ReadonlyArray<string>;
     readonly stdin?: string;
+    readonly env?: NodeJS.ProcessEnv;
     readonly maxOutputBytes?: number;
   }> = [];
   const driver: WorkingCopyExecutor = {
@@ -45,6 +46,7 @@ const makeRecordingDriver = (respond: (attempt: number) => VcsProcess.VcsProcess
         calls.push({
           args: input.args,
           ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+          ...(input.env !== undefined ? { env: input.env } : {}),
           ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
         });
         return respond(calls.length);
@@ -86,6 +88,21 @@ describe("makeWorkingCopyGit", () => {
       });
 
       assert.strictEqual(calls[0]?.stdin, "subject\n\nbody\n");
+    }),
+  );
+
+  it.effect("forwards an isolated Git index environment", () =>
+    Effect.gen(function* () {
+      const { calls, driver } = makeRecordingDriver(() => output({}));
+      const env = { ...process.env, GIT_INDEX_FILE: "/tmp/t3-commit-message-index" };
+
+      yield* makeWorkingCopyGit(driver, "/repo").ok({
+        operation: "test",
+        args: ["add", "-A"],
+        env,
+      });
+
+      assert.strictEqual(calls[0]?.env?.GIT_INDEX_FILE, "/tmp/t3-commit-message-index");
     }),
   );
 
