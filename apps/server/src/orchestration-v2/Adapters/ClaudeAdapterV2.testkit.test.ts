@@ -8,6 +8,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
@@ -20,14 +21,19 @@ import {
 } from "./ClaudeAdapterV2.ts";
 import {
   CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+  ClaudeReplayIncompleteError,
   ClaudeReplayRuntimeExitError,
+  ClaudeReplayUnexpectedOutboundError,
   makeReplayQueryRunner,
   recordInterruptedClaudeQuery,
   recordMessagesUntilTurnResultAndFinalize,
 } from "./ClaudeAdapterV2.testkit.ts";
+import { makeProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 
 const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
+const isClaudeReplayIncompleteError = Schema.is(ClaudeReplayIncompleteError);
 const isClaudeReplayRuntimeExitError = Schema.is(ClaudeReplayRuntimeExitError);
+const isClaudeReplayUnexpectedOutboundError = Schema.is(ClaudeReplayUnexpectedOutboundError);
 
 const claudeSdkMock = vi.hoisted(() => {
   const close = vi.fn();
@@ -63,7 +69,284 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: claudeSdkMock.query,
 }));
 
+function makeGatedReplaySession() {
+  const options = {
+    model: "claude-sonnet-4-6",
+    tools: [],
+    permissionMode: "default",
+    sessionId: "session-replay-gate",
+  } satisfies ClaudeAgentSdkQueryOptions;
+  const label = "background_tasks_changed:empty";
+  const replayGate = makeProviderReplayGate([label]);
+  const runner = makeReplayQueryRunner(
+    {
+      provider: CLAUDE_PROVIDER,
+      protocol: CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+      version: "test",
+      scenario: "labeled-inbound-replay-gate",
+      entries: [
+        {
+          type: "expect_outbound",
+          frame: {
+            type: "query.open",
+            options,
+          },
+        },
+        {
+          type: "emit_inbound",
+          label,
+          frame: {
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "replay-gate-message",
+            session_id: options.sessionId,
+          },
+        },
+        {
+          type: "runtime_exit",
+          status: "success",
+        },
+      ],
+    },
+    { replayGate },
+  );
+  const session = runner.open({
+    options,
+    threadId: ThreadId.make("thread-replay-gate"),
+    providerSessionId: ProviderSessionId.make("provider-session-replay-gate"),
+  });
+  return { label, replayGate, runner, session };
+}
+
+const yieldToReplayStream = Effect.promise(
+  () =>
+    new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    }),
+);
+
 describe("ClaudeAdapterV2 replay testkit", () => {
+  it.effect("holds a labeled inbound frame until its replay gate is released", () =>
+    Effect.gen(function* () {
+      const { label, replayGate, runner, session } = makeGatedReplaySession();
+      const streamFiber = yield* Stream.runDrain(session.messages).pipe(Effect.forkChild);
+
+      yield* yieldToReplayStream;
+      assert.isTrue(replayGate.hasReached(label));
+      assert.isUndefined(streamFiber.pollUnsafe());
+
+      assert.isTrue(replayGate.release(label));
+      yield* Fiber.join(streamFiber);
+      runner.assertComplete();
+    }),
+  );
+
+  it.effect("releases a replay gate when its stream consumer is interrupted", () =>
+    Effect.gen(function* () {
+      const { label, replayGate, session } = makeGatedReplaySession();
+      const streamFiber = yield* Stream.runDrain(session.messages).pipe(Effect.forkChild);
+
+      yield* yieldToReplayStream;
+      assert.isTrue(replayGate.hasReached(label));
+
+      yield* Fiber.interrupt(streamFiber);
+      assert.isFalse(replayGate.release(label));
+    }),
+  );
+
+  it.effect("interrupts a delayed inbound frame without emitting or advancing it", () =>
+    Effect.gen(function* () {
+      const options = {
+        model: "claude-sonnet-4-6",
+        tools: [],
+        permissionMode: "default",
+        sessionId: "session-replay-delayed-interrupt",
+      } satisfies ClaudeAgentSdkQueryOptions;
+      const label = "delayed-inbound";
+      const replayGate = makeProviderReplayGate([label]);
+      const runner = makeReplayQueryRunner(
+        {
+          provider: CLAUDE_PROVIDER,
+          protocol: CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+          version: "test",
+          scenario: "delayed-inbound-interruption",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: {
+                type: "query.open",
+                options,
+              },
+            },
+            {
+              type: "emit_inbound",
+              label,
+              afterMs: 30_000,
+              frame: {
+                type: "assistant",
+                message: { content: [] },
+                parent_tool_use_id: null,
+                session_id: options.sessionId,
+                uuid: "delayed-inbound-message",
+              },
+            },
+            {
+              type: "runtime_exit",
+              status: "success",
+            },
+          ],
+        },
+        { replayGate },
+      );
+      const session = runner.open({
+        options,
+        threadId: ThreadId.make("thread-replay-delayed-interrupt"),
+        providerSessionId: ProviderSessionId.make("provider-session-replay-delayed-interrupt"),
+      });
+      const emittedMessages: Array<unknown> = [];
+      const streamFiber = yield* session.messages.pipe(
+        Stream.tap((message) => Effect.sync(() => emittedMessages.push(message))),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+
+      yield* yieldToReplayStream;
+      assert.isTrue(replayGate.hasReached(label));
+      assert.isTrue(replayGate.release(label));
+      yield* yieldToReplayStream;
+
+      yield* Fiber.interrupt(streamFiber);
+
+      assert.deepEqual(emittedMessages, []);
+      const incomplete = assert.throws(() => runner.assertComplete());
+      assert.isTrue(isClaudeReplayIncompleteError(incomplete));
+      if (isClaudeReplayIncompleteError(incomplete)) {
+        assert.equal(incomplete.cursor, 1);
+        assert.equal(incomplete.remaining, 2);
+      }
+    }),
+  );
+
+  it.effect("wakes a gated replay stream when an outbound frame mismatches", () =>
+    Effect.gen(function* () {
+      const { label, replayGate, session } = makeGatedReplaySession();
+      const emittedMessages: Array<unknown> = [];
+      const streamFiber = yield* session.messages.pipe(
+        Stream.tap((message) => Effect.sync(() => emittedMessages.push(message))),
+        Stream.runDrain,
+        Effect.exit,
+        Effect.forkChild,
+      );
+
+      yield* yieldToReplayStream;
+      assert.isTrue(replayGate.hasReached(label));
+
+      const offerExit = yield* Effect.exit(
+        session.offer(makeClaudeUserMessage({ text: "unexpected gated prompt" })),
+      );
+      assert.isTrue(Exit.isFailure(offerExit));
+
+      const streamExit = yield* Fiber.join(streamFiber);
+      assert.isTrue(Exit.isFailure(streamExit));
+      if (Exit.isFailure(streamExit)) {
+        const error = Cause.squash(streamExit.cause);
+        assert.isTrue(isClaudeAgentSdkQueryRunnerError(error));
+        if (isClaudeAgentSdkQueryRunnerError(error)) {
+          assert.isTrue(isClaudeReplayUnexpectedOutboundError(error.cause));
+        }
+      }
+      assert.deepEqual(emittedMessages, []);
+    }),
+  );
+
+  it.effect("surfaces an outbound mismatch during a delay without inbound callbacks", () =>
+    Effect.gen(function* () {
+      const stableOptions = {
+        model: "claude-sonnet-4-6",
+        tools: [],
+        permissionMode: "default",
+        sessionId: "session-replay-gated-permission",
+      } satisfies ClaudeAgentSdkQueryOptions;
+      const canUseTool = vi.fn<NonNullable<ClaudeAgentSdkQueryOptions["canUseTool"]>>(
+        async (_toolName, input, options) => ({
+          behavior: "allow",
+          updatedInput: input,
+          toolUseID: options.toolUseID,
+        }),
+      );
+      const label = "permission_request";
+      const replayGate = makeProviderReplayGate([label]);
+      const runner = makeReplayQueryRunner(
+        {
+          provider: CLAUDE_PROVIDER,
+          protocol: CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+          version: "test",
+          scenario: "gated-permission-stops-after-failure",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: {
+                type: "query.open",
+                options: stableOptions,
+              },
+            },
+            {
+              type: "emit_inbound",
+              label,
+              afterMs: 30_000,
+              frame: {
+                type: "permission.request",
+                toolName: "Read",
+                input: { file_path: "/workspace/gated.ts" },
+                options: { toolUseID: "tool-use-gated" },
+              },
+            },
+            {
+              type: "runtime_exit",
+              status: "success",
+            },
+          ],
+        },
+        { replayGate },
+      );
+      const session = runner.open({
+        options: { ...stableOptions, canUseTool },
+        threadId: ThreadId.make("thread-replay-gated-permission"),
+        providerSessionId: ProviderSessionId.make("provider-session-replay-gated-permission"),
+      });
+      const emittedMessages: Array<unknown> = [];
+      const streamFiber = yield* session.messages.pipe(
+        Stream.tap((message) => Effect.sync(() => emittedMessages.push(message))),
+        Stream.runDrain,
+        Effect.exit,
+        Effect.forkChild,
+      );
+
+      yield* yieldToReplayStream;
+      assert.isTrue(replayGate.hasReached(label));
+      assert.isTrue(replayGate.release(label));
+      yield* yieldToReplayStream;
+
+      const offerExit = yield* Effect.exit(
+        session.offer(makeClaudeUserMessage({ text: "unexpected gated prompt" })),
+      );
+      assert.isTrue(Exit.isFailure(offerExit));
+
+      const streamExit = yield* Fiber.join(streamFiber);
+      assert.isTrue(Exit.isFailure(streamExit));
+      if (Exit.isFailure(streamExit)) {
+        const error = Cause.squash(streamExit.cause);
+        assert.isTrue(isClaudeAgentSdkQueryRunnerError(error));
+        if (isClaudeAgentSdkQueryRunnerError(error)) {
+          assert.isTrue(isClaudeReplayUnexpectedOutboundError(error.cause));
+        }
+      }
+      assert.deepEqual(emittedMessages, []);
+      assert.equal(canUseTool.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("wakes a replay stream waiting on an outbound frame when that frame mismatches", () =>
     Effect.gen(function* () {
       const options = {
@@ -115,6 +398,146 @@ describe("ClaudeAdapterV2 replay testkit", () => {
         streamFiber.pollUnsafe(),
         "expected the replay stream to finish after the mismatch",
       );
+    }),
+  );
+
+  it.effect("interrupts a replay stream waiting on its next outbound frame", () =>
+    Effect.gen(function* () {
+      const options = {
+        model: "claude-sonnet-4-6",
+        tools: [],
+        permissionMode: "default",
+        sessionId: "session-replay-outbound-interrupt",
+      } satisfies ClaudeAgentSdkQueryOptions;
+      const runner = makeReplayQueryRunner({
+        provider: CLAUDE_PROVIDER,
+        protocol: CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+        version: "test",
+        scenario: "outbound-wait-interruption",
+        entries: [
+          {
+            type: "expect_outbound",
+            frame: {
+              type: "query.open",
+              options,
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              type: "prompt.offer",
+              message: makeClaudeUserMessage({ text: "next prompt" }),
+            },
+          },
+        ],
+      });
+      const session = runner.open({
+        options,
+        threadId: ThreadId.make("thread-replay-outbound-interrupt"),
+        providerSessionId: ProviderSessionId.make("provider-session-replay-outbound-interrupt"),
+      });
+      const streamFiber = yield* Stream.runDrain(session.messages).pipe(Effect.forkChild);
+
+      yield* yieldToReplayStream;
+      assert.isUndefined(streamFiber.pollUnsafe());
+
+      yield* Fiber.interrupt(streamFiber);
+
+      const incomplete = assert.throws(() => runner.assertComplete());
+      assert.isTrue(isClaudeReplayIncompleteError(incomplete));
+      if (isClaudeReplayIncompleteError(incomplete)) {
+        assert.equal(incomplete.cursor, 1);
+        assert.equal(incomplete.remaining, 1);
+      }
+    }),
+  );
+
+  it.effect("aborts a pending permission callback when replay fails", () =>
+    Effect.gen(function* () {
+      const stableOptions = {
+        model: "claude-sonnet-4-6",
+        tools: [],
+        permissionMode: "default",
+        sessionId: "session-replay-permission-abort",
+      } satisfies ClaudeAgentSdkQueryOptions;
+      let callbackSignal: AbortSignal | undefined;
+      let notifyCallbackStarted = () => {};
+      const callbackStarted = new Promise<void>((resolve) => {
+        notifyCallbackStarted = resolve;
+      });
+      const canUseTool = vi.fn<NonNullable<ClaudeAgentSdkQueryOptions["canUseTool"]>>(
+        async (_toolName, _input, options) => {
+          callbackSignal = options.signal;
+          notifyCallbackStarted();
+          await new Promise<never>((_resolve, reject) => {
+            const rejectOnAbort = () => reject(new Error("permission callback aborted"));
+            options.signal.addEventListener("abort", rejectOnAbort, { once: true });
+            if (options.signal.aborted) {
+              rejectOnAbort();
+            }
+          });
+          return {
+            behavior: "allow",
+            updatedInput: _input,
+            toolUseID: options.toolUseID,
+          };
+        },
+      );
+      const runner = makeReplayQueryRunner({
+        provider: CLAUDE_PROVIDER,
+        protocol: CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+        version: "test",
+        scenario: "pending-permission-aborts-on-replay-failure",
+        entries: [
+          {
+            type: "expect_outbound",
+            frame: {
+              type: "query.open",
+              options: stableOptions,
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "permission.request",
+              toolName: "Read",
+              input: { file_path: "/workspace/pending.ts" },
+              options: { toolUseID: "tool-use-pending" },
+            },
+          },
+          {
+            type: "runtime_exit",
+            status: "success",
+          },
+        ],
+      });
+      const session = runner.open({
+        options: { ...stableOptions, canUseTool },
+        threadId: ThreadId.make("thread-replay-permission-abort"),
+        providerSessionId: ProviderSessionId.make("provider-session-replay-permission-abort"),
+      });
+      const streamFiber = yield* Stream.runDrain(session.messages).pipe(
+        Effect.exit,
+        Effect.forkChild,
+      );
+
+      yield* Effect.promise(() => callbackStarted);
+      const offerExit = yield* Effect.exit(
+        session.offer(makeClaudeUserMessage({ text: "unexpected prompt" })),
+      );
+
+      assert.isTrue(Exit.isFailure(offerExit));
+      const streamExit = yield* Fiber.join(streamFiber);
+      assert.isTrue(Exit.isFailure(streamExit));
+      if (Exit.isFailure(streamExit)) {
+        const error = Cause.squash(streamExit.cause);
+        assert.isTrue(isClaudeAgentSdkQueryRunnerError(error));
+        if (isClaudeAgentSdkQueryRunnerError(error)) {
+          assert.isTrue(isClaudeReplayUnexpectedOutboundError(error.cause));
+        }
+      }
+      assert.equal(canUseTool.mock.calls.length, 1);
+      assert.isTrue(callbackSignal?.aborted);
     }),
   );
 
