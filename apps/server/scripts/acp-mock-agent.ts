@@ -816,6 +816,18 @@ const program = Effect.gen(function* () {
         // Match Grok's real session layout so isGrokPlanMarkdownPath accepts it.
         const planPath = `/tmp/mock-home/.grok/sessions/${requestedSessionId}/plan.md`;
         const planBody = "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it\n";
+        // enter_plan_mode first so the adapter arms planModeActive.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "enter-plan-mode-1",
+            title: "enter_plan_mode",
+            kind: "other",
+            status: "completed",
+            rawInput: { variant: "EnterPlanMode" },
+          },
+        });
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
