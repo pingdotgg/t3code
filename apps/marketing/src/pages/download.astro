@@ -1,4 +1,7 @@
 ---
+import devAppIcon from "../assets/t3-dev-384.webp?url";
+import nightlyAppIcon from "../assets/t3-nightly-384.webp?url";
+import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
 import {
@@ -14,22 +17,37 @@ import {
   pageClass="marketing-downloads"
 >
   <div class="download-page">
-  <h1 class="heading">Download T3 Code</h1>
-  <div class="download-stage-picker" aria-label="Desktop release channel">
-    <button type="button" data-download-stage="latest" aria-pressed="true">
-      <span>Latest</span>
-    </button>
-    <button type="button" data-download-stage="nightly" aria-pressed="false">
-      <span>Nightly</span>
-    </button>
-    <button type="button" data-download-stage="dev" aria-pressed="false">
-      <span>Dev</span>
-    </button>
-  </div>
-  <p class="subheading">
-    <span id="version-label">Loading latest desktop release&hellip;</span>
-    <a id="changelog-link" class="changelog-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">View changelog<span aria-hidden="true"> &#8599;</span></a>
-  </p>
+  <section id="download-channel-hero" class="download-channel-hero" data-stage="latest">
+    <div class="download-channel-art" aria-hidden="true">
+      <span class="download-stage-art download-stage-art--latest"></span>
+      <span class="download-stage-art download-stage-art--nightly"></span>
+      <span class="download-stage-art download-stage-art--dev"></span>
+    </div>
+    <div class="download-channel-inner">
+      <div class="download-app-icons" aria-hidden="true">
+        <img class="download-app-icon download-app-icon--latest" src={stableAppIcon} alt="" />
+        <img class="download-app-icon download-app-icon--nightly" src={nightlyAppIcon} alt="" />
+        <img class="download-app-icon download-app-icon--dev" src={devAppIcon} alt="" />
+      </div>
+      <h1 class="heading">Download T3 Code</h1>
+      <p class="download-channel-copy">Choose the channel that matches how you work.</p>
+      <div class="download-stage-picker" aria-label="Desktop release channel">
+        <button type="button" data-download-stage="latest" aria-pressed="true">
+          <span>Latest</span>
+        </button>
+        <button type="button" data-download-stage="nightly" aria-pressed="false">
+          <span>Nightly</span>
+        </button>
+        <button type="button" data-download-stage="dev" aria-pressed="false">
+          <span>Dev</span>
+        </button>
+      </div>
+      <p class="subheading">
+        <span id="version-label">Loading latest desktop release&hellip;</span>
+        <a id="changelog-link" class="changelog-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">View changelog<span aria-hidden="true"> &#8599;</span></a>
+      </p>
+    </div>
+  </section>
 
   <div class="platforms" id="platforms">
     <section class="platform-section dev-source" id="dev-source" data-platform="source" hidden>
@@ -221,6 +239,8 @@ import {
 
   async function applyStage(stage: Stage) {
     const request = ++releaseRequest;
+    const channelHero = document.getElementById("download-channel-hero");
+    if (channelHero) channelHero.dataset.stage = stage;
     updateStageControls(stage);
     const isDev = stage === "dev";
     devSource?.toggleAttribute("hidden", !isDev);
@@ -308,6 +328,120 @@ import {
     padding: calc(8vh + 60px) 1.5rem 4rem;
   }
 
+  .download-channel-hero {
+    --channel-fade-duration: 700ms;
+    position: relative;
+    display: grid;
+    width: min(100%, 1120px);
+    min-height: 460px;
+    overflow: hidden;
+    place-items: center;
+    margin-bottom: 72px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    background: #050506;
+    isolation: isolate;
+    box-shadow: 0 42px 120px -64px rgba(0, 0, 0, 0.86);
+  }
+
+  .download-channel-hero::after {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    background:
+      radial-gradient(circle at 0 100%, rgba(255, 255, 255, 0.06), transparent 30%),
+      radial-gradient(circle at 100% 0, rgba(255, 255, 255, 0.05), transparent 26%);
+    content: "";
+    pointer-events: none;
+  }
+
+  .download-channel-art,
+  .download-stage-art {
+    position: absolute;
+    inset: 0;
+  }
+
+  .download-stage-art {
+    opacity: 0;
+    transition: opacity var(--channel-fade-duration) ease;
+  }
+
+  .download-channel-hero[data-stage="latest"] .download-stage-art--latest,
+  .download-channel-hero[data-stage="nightly"] .download-stage-art--nightly,
+  .download-channel-hero[data-stage="dev"] .download-stage-art--dev {
+    opacity: 1;
+  }
+
+  .download-stage-art--latest {
+    background:
+      radial-gradient(circle at 50% 25%, rgba(255, 255, 255, 0.055), transparent 35%),
+      linear-gradient(180deg, #030304, #090a0d);
+  }
+
+  .download-stage-art--latest::after {
+    position: absolute;
+    inset: -35% 12%;
+    background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.04), transparent 70%);
+    content: "";
+    transform: rotate(-8deg);
+  }
+
+  .download-stage-art--nightly {
+    background:
+      url("/nightly-stars.svg") center / cover,
+      url("/nightly-clouds-foreground.webp") center bottom / 130% auto no-repeat,
+      linear-gradient(138deg, #0b162e 0%, #171a3c 46%, #2d1948 100%);
+  }
+
+  .download-stage-art--dev {
+    background:
+      linear-gradient(rgba(199, 225, 255, 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(199, 225, 255, 0.12) 1px, transparent 1px),
+      radial-gradient(circle at 50% 42%, rgba(125, 186, 255, 0.3), transparent 36%),
+      linear-gradient(180deg, #102a55, #173d82);
+    background-size: 32px 32px, 32px 32px, auto, auto;
+  }
+
+  .download-channel-inner {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    padding: 56px 28px;
+    text-align: center;
+  }
+
+  .download-app-icons {
+    position: relative;
+    width: 116px;
+    height: 116px;
+    margin-bottom: 22px;
+  }
+
+  .download-app-icon {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 26px;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity var(--channel-fade-duration) ease;
+  }
+
+  .download-channel-hero[data-stage="latest"] .download-app-icon--latest,
+  .download-channel-hero[data-stage="nightly"] .download-app-icon--nightly,
+  .download-channel-hero[data-stage="dev"] .download-app-icon--dev {
+    opacity: 1;
+  }
+
+  .download-channel-copy {
+    margin-top: 10px;
+    color: rgba(218, 222, 239, 0.68);
+    font-size: 1rem;
+  }
+
   /* ── Heading ── */
 
   .heading {
@@ -316,7 +450,7 @@ import {
     letter-spacing: -0.035em;
     line-height: 1.15;
     text-align: center;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0;
     opacity: 0;
     animation: fade-in 1s ease-out forwards;
   }
