@@ -8,11 +8,11 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("041_OrchestrationV2EffectCancellation", (it) => {
+layer("043_OrchestrationV2EffectCancellation", (it) => {
   it.effect("preserves existing effects and adds the cancelled terminal status", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 41 });
+      yield* runMigrations({ toMigrationInclusive: 42 });
       yield* sql`
         INSERT INTO orchestration_v2_effect_outbox (
           effect_id,
@@ -47,7 +47,7 @@ layer("041_OrchestrationV2EffectCancellation", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 42 });
+      yield* runMigrations({ toMigrationInclusive: 43 });
       yield* sql`
         UPDATE orchestration_v2_effect_outbox
         SET
