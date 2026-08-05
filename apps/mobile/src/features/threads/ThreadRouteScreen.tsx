@@ -100,6 +100,27 @@ function OpeningThreadLoadingScreen() {
   return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
 }
 
+const ANDROID_THREAD_LOADING_ACTIONS: ReadonlyArray<AndroidHeaderAction> = [
+  {
+    accessibilityLabel: "Open files",
+    icon: "folder",
+    disabled: true,
+    onPress: () => undefined,
+  },
+  {
+    accessibilityLabel: "Open terminal",
+    icon: "terminal",
+    disabled: true,
+    onPress: () => undefined,
+  },
+  {
+    accessibilityLabel: "Open git controls",
+    icon: "point.topleft.down.curvedto.point.bottomright.up",
+    disabled: true,
+    onPress: () => undefined,
+  },
+];
+
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
@@ -110,27 +131,65 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly renderInspector?: (headerInset: number) => ReactNode;
 }
 
-function ThreadUnavailableScreen() {
+function ThreadRouteStateScreen(props: {
+  readonly children: ReactNode;
+  readonly onNavigateUp: () => void;
+  readonly title: string;
+}) {
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "center",
-        paddingHorizontal: 24,
-        paddingVertical: 32,
-      }}
-      className="bg-screen flex-1"
-    >
-      <EmptyState
-        title="Thread unavailable"
-        detail="This thread is not available in the current mobile snapshot."
-      />
-    </ScrollView>
+    <>
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title={props.title}
+          reserveSubtitleSpace
+          onBack={props.onNavigateUp}
+          actions={ANDROID_THREAD_LOADING_ACTIONS}
+        />
+      ) : null}
+      {props.children}
+    </>
+  );
+}
+
+function ThreadUnavailableScreen(props: { readonly onNavigateUp: () => void }) {
+  return (
+    <ThreadRouteStateScreen title="Thread unavailable" onNavigateUp={props.onNavigateUp}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: "center",
+          paddingHorizontal: 24,
+          paddingVertical: 32,
+        }}
+        className="bg-screen flex-1"
+      >
+        <EmptyState
+          title="Thread unavailable"
+          detail="This thread is not available in the current mobile snapshot."
+        />
+      </ScrollView>
+    </ThreadRouteStateScreen>
+  );
+}
+
+function OpeningThreadRouteScreen(props: { readonly onNavigateUp: () => void }) {
+  return (
+    <ThreadRouteStateScreen title="Opening thread…" onNavigateUp={props.onNavigateUp}>
+      <OpeningThreadLoadingScreen />
+    </ThreadRouteStateScreen>
   );
 }
 
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+  const navigation = useNavigation();
+  const handleNavigateUp = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(StackActions.replace("Home"));
+  }, [navigation]);
   const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
@@ -152,7 +211,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const selectedThreadDetailState = useSelectedThreadDetailState();
 
   if (environmentId === null || threadIdRaw === null) {
-    return <OpeningThreadLoadingScreen />;
+    return <OpeningThreadRouteScreen onNavigateUp={handleNavigateUp} />;
   }
 
   // Render the full thread chrome (header, feed, composer) as soon as the
@@ -169,10 +228,10 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     routeConnectionState === "reconnecting";
 
   if (stillHydrating) {
-    return <OpeningThreadLoadingScreen />;
+    return <OpeningThreadRouteScreen onNavigateUp={handleNavigateUp} />;
   }
 
-  return <ThreadUnavailableScreen />;
+  return <ThreadUnavailableScreen onNavigateUp={handleNavigateUp} />;
 }
 
 function ThreadRouteContent(
@@ -730,6 +789,13 @@ function ThreadRouteContent(
   // native back button does not render. Provide an explicit Home escape for
   // that case; when history exists the native back button is used instead.
   const canGoBack = navigation.canGoBack();
+  const handleNavigateUp = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(StackActions.replace("Home"));
+  }, [navigation]);
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       withNativeGlassHeaderItem({
@@ -856,7 +922,7 @@ function ThreadRouteContent(
           title={selectedThread.title}
           subtitle={headerSubtitle}
           reserveSubtitleSpace
-          onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
+          onBack={layout.usesSplitView ? undefined : handleNavigateUp}
           actions={androidHeaderActions}
         />
       ) : null}

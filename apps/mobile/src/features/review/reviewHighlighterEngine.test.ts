@@ -6,9 +6,9 @@ import {
 } from "./reviewHighlighterEngine";
 
 describe("resolveReviewHighlighterEnginePreference", () => {
-  it("defaults invalid values to native", () => {
-    expect(resolveReviewHighlighterEnginePreference(undefined)).toBe("native");
-    expect(resolveReviewHighlighterEnginePreference("bogus")).toBe("native");
+  it("defaults invalid values to javascript", () => {
+    expect(resolveReviewHighlighterEnginePreference(undefined)).toBe("javascript");
+    expect(resolveReviewHighlighterEnginePreference("bogus")).toBe("javascript");
   });
 
   it("accepts supported values", () => {
