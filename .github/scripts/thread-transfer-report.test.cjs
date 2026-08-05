@@ -145,6 +145,61 @@ test("resolves the current PR artifact and exact main baseline", async () => {
   assert.equal(outputs.baseline_matches_base, "true");
 });
 
+test("does not guess when a fallback commit belongs to multiple PRs", async () => {
+  const outputs = {};
+  const listPullRequestsAssociatedWithCommit = () => {};
+  let fetchedPull = false;
+  await resolve({
+    github: {
+      paginate: async (method) => {
+        assert.equal(method, listPullRequestsAssociatedWithCommit);
+        return [5350, 5351].map((number) => ({
+          number,
+          state: "open",
+          head: {
+            sha: "head-sha",
+            ref: "feature-branch",
+            repo: { full_name: "pingdotgg/t3code" },
+          },
+        }));
+      },
+      rest: {
+        actions: {},
+        pulls: {
+          get: async () => {
+            fetchedPull = true;
+          },
+        },
+        repos: { listPullRequestsAssociatedWithCommit },
+      },
+    },
+    context: {
+      repo: { owner: "pingdotgg", repo: "t3code" },
+      payload: {
+        workflow_run: {
+          id: 2,
+          event: "pull_request",
+          workflow_id: 3,
+          head_sha: "head-sha",
+          head_branch: "feature-branch",
+          head_repository: { full_name: "pingdotgg/t3code" },
+          conclusion: "success",
+          pull_requests: [],
+        },
+      },
+    },
+    core: {
+      info: () => {},
+      setOutput: (key, value) => {
+        outputs[key] = value;
+      },
+    },
+  });
+
+  assert.equal(outputs.publish, "false");
+  assert.equal(fetchedPull, false);
+});
+
 test("does not publish a stale result after the PR head advances", async () => {
   let listedComments = false;
   const info = [];

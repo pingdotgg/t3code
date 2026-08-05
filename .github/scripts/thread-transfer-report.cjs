@@ -243,7 +243,21 @@ async function resolve({ github, context, core }) {
       github.rest.repos.listPullRequestsAssociatedWithCommit,
       { owner, repo, commit_sha: source.head_sha, per_page: 100 },
     );
-    pullNumber = associated.find((pull) => pull.state === "open")?.number;
+    const matchingPulls = associated.filter(
+      (pull) =>
+        pull.state === "open" &&
+        pull.head.sha === source.head_sha &&
+        pull.head.ref === source.head_branch &&
+        pull.head.repo?.full_name === source.head_repository?.full_name,
+    );
+    if (matchingPulls.length !== 1) {
+      core.info(
+        `Expected one open pull request for ${source.head_repository?.full_name ?? "unknown repository"}:${source.head_branch ?? "unknown branch"} at ${source.head_sha}; found ${matchingPulls.length}.`,
+      );
+      core.setOutput("publish", "false");
+      return;
+    }
+    pullNumber = matchingPulls[0].number;
   }
   if (!pullNumber) {
     core.info("No open pull request is associated with the completed CI run.");
