@@ -527,17 +527,20 @@ function providerSelectionsFromModelSelection(
   return { [modelSelection.instanceId]: options };
 }
 
-function modelSelectionByProviderToOptions(
+/**
+ * Options for a single instance key from a modelSelectionByProvider map.
+ * Returns null when that key has no non-empty options — callers must not
+ * treat options for other instances as a hit for the selected one.
+ */
+function optionsForInstance(
   map: Partial<Record<string, ModelSelection>> | null | undefined,
+  instanceId: string,
 ): ProviderOptionSelectionsByProvider | null {
-  if (!map) return null;
-  const result: ProviderOptionSelectionsByProvider = {};
-  for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options && selection.options.length > 0) {
-      result[provider] = selection.options;
-    }
+  const selection = map?.[instanceId];
+  if (!selection?.options || selection.options.length === 0) {
+    return null;
   }
-  return Object.keys(result).length > 0 ? result : null;
+  return { [instanceId]: selection.options };
 }
 
 function cloneModelSelection(selection: ModelSelection): DeepMutable<ModelSelection> {
@@ -1034,15 +1037,33 @@ export function deriveEffectiveComposerModelState(input: {
         draftSelection.model,
       ))
     : baseModel;
-  // Prefer draft options, then sticky (user's last picker choice) re-keyed
-  // under the selected instance so custom instances resolve options, then
-  // thread/project so changing effort on an existing thread reaches sendTurn.
+  // Prefer draft options for the *selected* instance only. Options for
+  // another instance (e.g. codex effort on a draft while Grok is selected)
+  // must not short-circuit sticky/thread/project for the current selection.
+  // Sticky (and legacy kind-keyed draft hits) are re-keyed under
+  // stickyInstanceKey so custom instances resolve options.
+  const legacyProviderKey = ProviderInstanceId.make(input.selectedProvider);
+  const draftOptionsAtInstance = optionsForInstance(
+    input.draft?.modelSelectionByProvider,
+    stickyInstanceKey,
+  );
+  const legacyDraftOptions =
+    String(stickyInstanceKey) !== String(legacyProviderKey)
+      ? optionsForInstance(input.draft?.modelSelectionByProvider, legacyProviderKey)?.[
+          String(legacyProviderKey)
+        ]
+      : undefined;
+  const draftOptionsForSelected =
+    draftOptionsAtInstance ??
+    (legacyDraftOptions && legacyDraftOptions.length > 0
+      ? { [stickyInstanceKey]: legacyDraftOptions }
+      : null);
   const stickyOptions =
     stickySelection?.options && stickySelection.options.length > 0
       ? { [stickyInstanceKey]: stickySelection.options }
       : null;
   const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
+    draftOptionsForSelected ??
     stickyOptions ??
     providerSelectionsFromModelSelection(input.threadModelSelection) ??
     providerSelectionsFromModelSelection(input.projectModelSelection) ??

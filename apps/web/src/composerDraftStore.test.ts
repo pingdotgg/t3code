@@ -1209,6 +1209,59 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("ignores draft options for other instances when resolving sticky for selected", () => {
+    // Draft has Codex effort; selected is Grok with sticky low — must not let
+    // the codex map entry short-circuit sticky Grok options.
+    const derived = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {
+          [CODEX_INSTANCE]: modelSelection(CODEX_DRIVER, "gpt-5.4", {
+            reasoningEffort: "high",
+          }),
+        },
+        activeProvider: null,
+      },
+      providers: [
+        {
+          instanceId: GROK_INSTANCE,
+          driver: GROK_DRIVER,
+          enabled: true,
+          isAvailable: true,
+          models: [
+            {
+              slug: "grok-4.5",
+              name: "Grok 4.5",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        } as never,
+      ],
+      selectedProvider: GROK_DRIVER,
+      selectedInstanceId: GROK_INSTANCE,
+      threadModelSelection: modelSelection(GROK_DRIVER, "grok-4.5", {
+        reasoningEffort: "high",
+      }),
+      projectModelSelection: null,
+      stickyModelSelectionByProvider: {
+        [GROK_INSTANCE]: modelSelection(GROK_DRIVER, "grok-4.5", {
+          reasoningEffort: "low",
+        }),
+      },
+      settings: {
+        providers: {
+          grok: { customModels: [] },
+        },
+        providerInstances: {},
+        models: {},
+      } as never,
+    });
+    expect(derived.modelOptions?.[String(GROK_INSTANCE)]).toEqual(
+      toSelections({ reasoningEffort: "low" }),
+    );
+    expect(derived.modelOptions?.[String(CODEX_INSTANCE)]).toBeUndefined();
+  });
+
   it("uses sticky options only and keeps thread model when draft is empty", () => {
     const derived = deriveEffectiveComposerModelState({
       draft: {
