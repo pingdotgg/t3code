@@ -51,6 +51,192 @@ describe("orchestrator replay fixture contract", () => {
     }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
   );
 
+  it.effect(
+    "keeps consecutive queue_message inputs queued without an intermediate idle barrier",
+    () =>
+      Effect.gen(function* () {
+        const materialized = yield* materializeFixtureInput({
+          scenario: "consecutive-queue-message-ordering",
+          fixtureInput: {
+            steps: [
+              { type: "message", text: "active run" },
+              { type: "queue_message", text: "queued run 1" },
+              { type: "queue_message", text: "queued run 2" },
+            ],
+          },
+          driver: ProviderDriverKind.make("codex"),
+          modelSelection: CODEX_MODEL_SELECTION,
+        });
+        const queueCommands = materialized.commands.filter(
+          (command) =>
+            command.type === "message.dispatch" &&
+            (command.text === "queued run 1" || command.text === "queued run 2"),
+        );
+        assert.lengthOf(queueCommands, 2);
+        for (const command of queueCommands) {
+          assert.deepInclude(command, {
+            dispatchMode: { type: "queue_after_active" },
+          });
+        }
+
+        const firstQueueDispatchIndex = materialized.steps.findIndex(
+          (step) =>
+            step.type === "dispatch" &&
+            step.command.type === "message.dispatch" &&
+            step.command.text === "queued run 1",
+        );
+        const secondQueueDispatchIndex = materialized.steps.findIndex(
+          (step) =>
+            step.type === "dispatch" &&
+            step.command.type === "message.dispatch" &&
+            step.command.text === "queued run 2",
+        );
+        assert.isAtLeast(firstQueueDispatchIndex, 0);
+        assert.isAbove(secondQueueDispatchIndex, firstQueueDispatchIndex);
+
+        const betweenQueueSteps = materialized.steps.slice(
+          firstQueueDispatchIndex + 1,
+          secondQueueDispatchIndex,
+        );
+        assert.isFalse(
+          betweenQueueSteps.some(
+            (step) => step.type === "await" || step.type === "await_thread_idle",
+          ),
+          "consecutive queue_message steps must not await the active run or thread idle between queues",
+        );
+
+        const afterSecondQueue = materialized.steps.slice(secondQueueDispatchIndex + 1);
+        const barrierAwaitIndex = afterSecondQueue.findIndex((step) => step.type === "await");
+        const barrierIdleIndex = afterSecondQueue.findIndex(
+          (step) => step.type === "await_thread_idle",
+        );
+        assert.isAtLeast(
+          barrierAwaitIndex,
+          0,
+          "the final queue_message still inserts the post-queue await barrier",
+        );
+        assert.deepEqual(afterSecondQueue[barrierAwaitIndex], {
+          type: "await",
+          key: "run:1",
+        });
+        assert.isAbove(
+          barrierIdleIndex,
+          barrierAwaitIndex,
+          "the final queue_message still inserts await_thread_idle after its await",
+        );
+      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+  );
+
+  it.effect(
+    "does not await thread idle between steer/restart and answer_next_user_input_request",
+    () =>
+      Effect.gen(function* () {
+        for (const steeringType of ["steer", "restart"] as const) {
+          const answers = { "question-0": "answer" };
+          const materialized = yield* materializeFixtureInput({
+            scenario: `${steeringType}-then-answer-user-input-ordering`,
+            fixtureInput: {
+              steps: [
+                { type: "message", text: "active run" },
+                {
+                  type: steeringType,
+                  text: `${steeringType} active run`,
+                  targetRunIndex: 1,
+                },
+                {
+                  type: "answer_next_user_input_request",
+                  answers,
+                },
+              ],
+            },
+            driver: ProviderDriverKind.make("codex"),
+            modelSelection: CODEX_MODEL_SELECTION,
+          });
+
+          const steeringDispatchIndex = materialized.steps.findIndex(
+            (step) =>
+              step.type === "dispatch" &&
+              step.command.type === "message.dispatch" &&
+              step.command.text === `${steeringType} active run`,
+          );
+          const answerStepIndex = materialized.steps.findIndex(
+            (step) =>
+              step.type === "respond_to_next_runtime_request" &&
+              step.answers !== undefined &&
+              Object.keys(step.answers).includes("question-0"),
+          );
+          assert.isAtLeast(steeringDispatchIndex, 0, `${steeringType} dispatch must materialize`);
+          assert.isAbove(
+            answerStepIndex,
+            steeringDispatchIndex,
+            `${steeringType} answer must follow the steering dispatch`,
+          );
+
+          const betweenSteps = materialized.steps.slice(steeringDispatchIndex + 1, answerStepIndex);
+          assert.isFalse(
+            betweenSteps.some((step) => step.type === "await" || step.type === "await_thread_idle"),
+            `${steeringType} followed by answer_next_user_input_request must not await idle before answering`,
+          );
+        }
+      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+  );
+
+  it.effect("keeps the active dispatch barrier through queued-run replacement", () =>
+    Effect.gen(function* () {
+      const materialized = yield* materializeFixtureInput({
+        scenario: "queued-run-replacement-ordering",
+        fixtureInput: {
+          steps: [
+            { type: "message", text: "active run" },
+            { type: "queue_message", text: "queued run" },
+            { type: "cancel_queued_run", targetRunIndex: 2 },
+            { type: "queue_message", text: "replacement queued run" },
+          ],
+        },
+        driver: ProviderDriverKind.make("codex"),
+        modelSelection: CODEX_MODEL_SELECTION,
+      });
+      const replacementQueueDispatchIndex = materialized.steps.findIndex(
+        (step) =>
+          step.type === "dispatch" &&
+          step.command.type === "message.dispatch" &&
+          step.command.text === "replacement queued run",
+      );
+      assert.isAtLeast(replacementQueueDispatchIndex, 0);
+
+      const afterReplacementQueue = materialized.steps.slice(replacementQueueDispatchIndex + 1);
+      const barrierAwait = afterReplacementQueue.find((step) => step.type === "await");
+      assert.deepEqual(barrierAwait, {
+        type: "await",
+        key: "run:1",
+      });
+    }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+  );
+
+  it.effect("materializes fixture run-status waits against derived run IDs", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      const materialized = yield* materializeFixtureInput({
+        scenario: "await-fixture-run-status",
+        fixtureInput: {
+          steps: [{ type: "await_run_status", targetRunIndex: 1, status: "running" }],
+        },
+        driver: ProviderDriverKind.make("codex"),
+        modelSelection: CODEX_MODEL_SELECTION,
+      });
+      const threadId = materialized.projectionThreadIds[0];
+      assert.isDefined(threadId);
+      const runStatusWait = materialized.steps.find((step) => step.type === "await_run_status");
+
+      assert.deepEqual(runStatusWait, {
+        type: "await_run_status",
+        threadId,
+        runId: idAllocator.derive.run({ threadId, ordinal: 1 }),
+        status: "running",
+      });
+    }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+  );
+
   it.effect("keeps message ordinals separate from app run ordinals after steering", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;
@@ -112,6 +298,14 @@ describe("orchestrator replay fixture contract", () => {
 
           for (const provider of fixture.providers) {
             const transcript = yield* readTranscript(provider.transcriptFile);
+            const replayGateLabels = fixture
+              .buildInput()
+              .steps.flatMap((step) =>
+                step.type === "release_replay_gate" ||
+                step.type === "release_replay_gate_after_waiting"
+                  ? [step.label]
+                  : [],
+              );
             const materialized = yield* materializeFixtureInput({
               scenario: fixture.name,
               fixtureInput: fixture.buildInput(),
@@ -120,7 +314,7 @@ describe("orchestrator replay fixture contract", () => {
             }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
             const firstCommand = materialized.commands[0];
 
-            assert.equal(transcript.scenario, fixture.name);
+            assert.equal(transcript.scenario, provider.recordedScenario ?? fixture.name);
             if (provider.driver === "acpRegistry") {
               assert.include(
                 ["acpRegistry", "grok"],
@@ -140,14 +334,39 @@ describe("orchestrator replay fixture contract", () => {
               throw new Error(`${fixture.name}/${provider.driver} must start with thread.create`);
             }
             assert.equal(firstCommand.threadId, materialized.projectionThreadIds[0]);
-            // advance_clock only moves the test clock; every other input step
-            // dispatches a command.
+            // These fixture steps coordinate the test runtime; every other
+            // input step dispatches a command.
             const commandProducingSteps = fixture
               .buildInput()
-              .steps.filter((step) => step.type !== "advance_clock");
+              .steps.filter(
+                (step) =>
+                  step.type !== "advance_clock" &&
+                  step.type !== "await_run_status" &&
+                  step.type !== "capture_shell_snapshot" &&
+                  step.type !== "release_replay_gate" &&
+                  step.type !== "release_replay_gate_after_waiting",
+              );
             assert.equal(materialized.commands.length, commandProducingSteps.length + 1);
             assert.isAtLeast(materialized.steps.length, materialized.commands.length);
             assert.equal(typeof provider.assertOutput, "function");
+            for (const label of replayGateLabels) {
+              assert.isTrue(
+                transcript.entries.some(
+                  (entry) => entry.type === "emit_inbound" && entry.label === label,
+                ),
+                `${fixture.name}/${provider.driver} replay gate ${label} must label an inbound frame`,
+              );
+            }
+            if (provider.transcriptEntriesThroughLabel !== undefined) {
+              assert.isTrue(
+                transcript.entries.some(
+                  (entry) =>
+                    entry.type === "emit_inbound" &&
+                    entry.label === provider.transcriptEntriesThroughLabel,
+                ),
+                `${fixture.name}/${provider.driver} transcript slice must name an inbound frame`,
+              );
+            }
 
             assertUnique(
               materialized.commands.map((command) => command.commandId),

@@ -39,6 +39,25 @@ function normalizeTestError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
 
+function transcriptEntriesThroughLabel(
+  transcript: ProviderReplayTranscript,
+  label: string | undefined,
+): ProviderReplayTranscript {
+  if (label === undefined) {
+    return transcript;
+  }
+  const entryIndex = transcript.entries.findIndex(
+    (entry) => entry.type === "emit_inbound" && entry.label === label,
+  );
+  if (entryIndex === -1) {
+    throw new Error(`${transcript.scenario} is missing inbound transcript label ${label}.`);
+  }
+  return {
+    ...transcript,
+    entries: transcript.entries.slice(0, entryIndex + 1),
+  };
+}
+
 function isStreamingAssistantEvent(event: OrchestrationV2DomainEvent): boolean {
   switch (event.type) {
     case "node.updated":
@@ -63,11 +82,15 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   readonly enableAssistantStreaming?: boolean;
 }) {
   const rawTranscript = yield* readTranscript(input.driver.transcriptFile);
+  const replayTranscript = transcriptEntriesThroughLabel(
+    rawTranscript,
+    input.driver.transcriptEntriesThroughLabel,
+  );
   const workspace = yield* checkpointWorkspace(input.fixtureName);
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"
-      ? materializeReplayTranscriptWorkspace(rawTranscript, workspace)
-      : rawTranscript,
+      ? materializeReplayTranscriptWorkspace(replayTranscript, workspace)
+      : replayTranscript,
   );
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
