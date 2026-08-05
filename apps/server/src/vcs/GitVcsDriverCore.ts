@@ -1471,7 +1471,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const branchResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetailsRemote.branch",
       cwd,
-      ["rev-parse", "--abbrev-ref", "HEAD"],
+      ["branch", "--show-current"],
       { allowNonZeroExit: true },
     ).pipe(
       Effect.catchTags({
@@ -1491,7 +1491,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...gitCommandContext({
           operation: "GitVcsDriver.statusDetailsRemote.branch",
           cwd,
-          args: ["rev-parse", "--abbrev-ref", "HEAD"],
+          args: ["branch", "--show-current"],
         }),
         detail: "Git branch lookup failed.",
         exitCode: branchResult.exitCode,

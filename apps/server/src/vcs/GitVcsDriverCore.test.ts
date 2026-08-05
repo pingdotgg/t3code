@@ -147,7 +147,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
 
     assert.deepStrictEqual(commands, [
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
-      { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
+      { args: ["branch", "--show-current"], lcAll: "C" },
       { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));
@@ -913,6 +913,51 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadOfDefaultCount, 1);
         assert.notProperty(status, "workingTree");
         assert.notProperty(status, "hasWorkingTreeChanges");
+      }),
+    );
+
+    it.effect("reports an unborn branch when its configured remote repository is unavailable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const unavailableRemoteParent = yield* makeTmpDir("git-vcs-driver-missing-remote-");
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, [
+          "remote",
+          "add",
+          "origin",
+          pathService.join(unavailableRemoteParent, "not-created.git"),
+        ]);
+        const branch = yield* git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, branch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
+      }),
+    );
+
+    it.effect("reports an unborn branch when its remote exists without an uploaded branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-empty-remote-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        const branch = yield* git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, branch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
       }),
     );
 
