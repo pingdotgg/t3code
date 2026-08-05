@@ -100,9 +100,9 @@ export class ServiceLauncherClient extends Context.Service<
   ServiceLauncherClient,
   {
     readonly managed: boolean;
-    readonly trial: boolean;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
+      readonly dbPath: string;
     }) => Effect.Effect<string, ServiceLauncherClientError | ServiceLauncherRejectedError>;
     readonly prepareTrial: Effect.Effect<
       ServerSelfUpdateOutcome | undefined,
@@ -137,8 +137,8 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
 
 export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_client.resolve_mode")(
   function* () {
-    const { context, managed } = yield* resolveStartup();
-    return { managed, trial: context?.update?.status === "pending" };
+    const { managed } = yield* resolveStartup();
+    return { managed };
   },
 );
 
@@ -199,7 +199,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
       }),
     );
 
-  const requestUpdate = (input: { readonly targetVersion: string }) =>
+  const requestUpdate = (input: { readonly targetVersion: string; readonly dbPath: string }) =>
     exchange(
       { type: "request-update", ...input },
       (reply) => reply.type === "update-accepted" || reply.type === "update-rejected",
@@ -233,14 +233,18 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
             if (reply.type !== "committed") {
               return Effect.die("service launcher returned an impossible prepared response");
             }
-            return Effect.succeed({ ...pending, status: "committed" as const });
+            return Effect.succeed({
+              id: pending.id,
+              fromVersion: pending.fromVersion,
+              targetVersion: pending.targetVersion,
+              status: "committed" as const,
+            });
           }),
         )
       : Effect.succeed(outcome);
 
   return ServiceLauncherClient.of({
     managed,
-    trial: pending !== undefined,
     requestUpdate,
     prepareTrial,
   });
