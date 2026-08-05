@@ -13,7 +13,7 @@ layer("037_038_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 44 }, (_, index) => index + 1),
+        Array.from({ length: 45 }, (_, index) => index + 1),
       );
     }),
   );
@@ -30,24 +30,24 @@ layer("037_038_OrchestrationV2", (it) => {
       }>`
         SELECT migration_id, name
         FROM effect_sql_migrations
-        WHERE migration_id IN (34, 35, 36, 37)
+        WHERE migration_id IN (35, 36, 37, 38)
         ORDER BY migration_id
       `;
       assert.deepStrictEqual(migrations, [
-        {
-          migration_id: 34,
-          name: "ProjectionThreadsSnoozed",
-        },
         {
           migration_id: 35,
           name: "ProjectionThreadTitleRegeneration",
         },
         {
           migration_id: 36,
-          name: "OrchestrationV2",
+          name: "ProjectionThreadsPinned",
         },
         {
           migration_id: 37,
+          name: "OrchestrationV2",
+        },
+        {
+          migration_id: 38,
           name: "OrchestrationV2Subagents",
         },
       ]);
@@ -171,7 +171,7 @@ layer("037_038_OrchestrationV2", (it) => {
   );
 });
 
-it.effect("upgrades a database already at released main migration 034", () =>
+it.effect("upgrades a database already at released main migration 036", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
@@ -190,23 +190,23 @@ it.effect("upgrades a database already at released main migration 034", () =>
     }>`
       SELECT migration_id, name
       FROM effect_sql_migrations
-      WHERE migration_id BETWEEN 34 AND 44
+      WHERE migration_id BETWEEN 35 AND 45
       ORDER BY migration_id
     `;
     assert.deepStrictEqual(
       migrations.map(({ migration_id, name }) => [migration_id, name]),
       [
-        [34, "ProjectionThreadsSnoozed"],
         [35, "ProjectionThreadTitleRegeneration"],
-        [36, "OrchestrationV2"],
-        [37, "OrchestrationV2Subagents"],
-        [38, "OrchestrationV2Foundation"],
-        [39, "OrchestrationV2ProviderSessionBindings"],
-        [40, "OrchestrationV2ThreadLaunchWorkflows"],
-        [41, "ApplicationEventSource"],
-        [42, "OrchestrationV2EffectCancellation"],
-        [43, "ScheduledTasks"],
-        [44, "LegacyV1ImportState"],
+        [36, "ProjectionThreadsPinned"],
+        [37, "OrchestrationV2"],
+        [38, "OrchestrationV2Subagents"],
+        [39, "OrchestrationV2Foundation"],
+        [40, "OrchestrationV2ProviderSessionBindings"],
+        [41, "OrchestrationV2ThreadLaunchWorkflows"],
+        [42, "ApplicationEventSource"],
+        [43, "OrchestrationV2EffectCancellation"],
+        [44, "ScheduledTasks"],
+        [45, "LegacyV1ImportState"],
       ],
     );
 
