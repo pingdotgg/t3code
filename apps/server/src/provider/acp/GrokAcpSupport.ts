@@ -1,4 +1,8 @@
-import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type GrokSettings,
+  ProviderDriverKind,
+  type ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -105,4 +109,112 @@ export function applyGrokAcpModelSelection<E>(input: {
   return input.runtime
     .setSessionModel(input.requestedModelId)
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finitePositiveInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const truncated = Math.trunc(value);
+  return truncated > 0 ? truncated : undefined;
+}
+
+/** Model context window from Grok ACP `availableModels[]._meta.totalContextTokens`. */
+export function totalContextTokensFromModelMeta(meta: unknown): number | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  return finitePositiveInt(meta.totalContextTokens);
+}
+
+/** Build modelId → context-window map from a Grok session model state. */
+export function contextWindowsFromSessionModels(
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): ReadonlyMap<string, number> {
+  const windows = new Map<string, number>();
+  for (const model of models?.availableModels ?? []) {
+    const size = totalContextTokensFromModelMeta(model._meta);
+    if (size !== undefined) {
+      windows.set(model.modelId, size);
+    }
+  }
+  return windows;
+}
+
+export function contextWindowForModelId(
+  windows: ReadonlyMap<string, number>,
+  modelId: string | undefined,
+): number | undefined {
+  if (!modelId) {
+    return undefined;
+  }
+  return windows.get(modelId) ?? windows.get(resolveGrokAcpBaseModelId(modelId));
+}
+
+/**
+ * Enrich a token-usage snapshot with the current model context window and
+ * Grok's auto-compact behavior so the composer meter can show fill %.
+ */
+export function enrichGrokTokenUsage(
+  usage: ThreadTokenUsageSnapshot,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot {
+  return {
+    ...usage,
+    ...(usage.maxTokens === undefined && maxTokens !== undefined ? { maxTokens } : {}),
+    compactsAutomatically: usage.compactsAutomatically ?? true,
+  };
+}
+
+/**
+ * Grok does not yet emit ACP `usage_update`, but prompt responses carry
+ * `_meta.totalTokens` / `_meta.usage` for the session context fill.
+ */
+export function tokenUsageFromGrokPromptMeta(
+  meta: unknown,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+
+  const usageRecord = isRecord(meta.usage) ? meta.usage : undefined;
+  const usedTokens =
+    finitePositiveInt(meta.totalTokens) ?? finitePositiveInt(usageRecord?.totalTokens);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+
+  const inputTokens =
+    finitePositiveInt(meta.inputTokens) ?? finitePositiveInt(usageRecord?.inputTokens);
+  const outputTokens =
+    finitePositiveInt(meta.outputTokens) ?? finitePositiveInt(usageRecord?.outputTokens);
+  const cachedInputTokens =
+    finitePositiveInt(meta.cachedReadTokens) ?? finitePositiveInt(usageRecord?.cachedReadTokens);
+  const reasoningOutputTokens =
+    finitePositiveInt(meta.reasoningTokens) ?? finitePositiveInt(usageRecord?.reasoningTokens);
+  const window =
+    maxTokens ??
+    finitePositiveInt(meta.totalContextTokens) ??
+    finitePositiveInt(usageRecord?.totalContextTokens);
+
+  return enrichGrokTokenUsage(
+    {
+      usedTokens,
+      ...(inputTokens !== undefined ? { inputTokens, lastInputTokens: inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+      ...(cachedInputTokens !== undefined
+        ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+        : {}),
+      ...(reasoningOutputTokens !== undefined
+        ? { reasoningOutputTokens, lastReasoningOutputTokens: reasoningOutputTokens }
+        : {}),
+      lastUsedTokens: usedTokens,
+    },
+    window,
+  );
 }
