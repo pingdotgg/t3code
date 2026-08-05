@@ -138,8 +138,19 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
+import type { Project } from "../types";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+
+function projectFavicon(project: Project) {
+  return (
+    <ProjectFavicon
+      environmentId={project.environmentId}
+      cwd={project.workspaceRoot}
+      className={ITEM_ICON_CLASS}
+    />
+  );
+}
 
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
@@ -924,13 +935,7 @@ function OpenCommandPaletteDialog(props: {
             group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
           );
         },
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.workspaceRoot}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: projectFavicon,
         runProject: openProjectFromSearch,
       }),
     [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
@@ -948,13 +953,7 @@ function OpenCommandPaletteDialog(props: {
               group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
             );
           },
-          icon: (project) => (
-            <ProjectFavicon
-              environmentId={project.environmentId}
-              cwd={project.workspaceRoot}
-              className={ITEM_ICON_CLASS}
-            />
-          ),
+          icon: projectFavicon,
           runProject: async (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             const contextualRefBelongsToGroup =

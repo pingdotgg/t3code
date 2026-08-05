@@ -129,7 +129,6 @@ export function FontFamilyPicker({
     if (initialOpen) setOpen(true);
     // The prop is only meaningful at mount - the control just swapped in
     // under an active focus - so later changes are deliberately ignored.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const listRef = useRef<LegendListRef | null>(null);
   const enumeration = useFontEnumeration();

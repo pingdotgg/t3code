@@ -113,8 +113,8 @@ export function CodeFontPreview() {
   if (htmlByFile === null) return null;
   return (
     <div className="mt-1 mb-2 space-y-2">
-      {htmlByFile.map((html, index) => (
-        <StaticDiffHtml key={index} html={html} />
+      {htmlByFile.map((html) => (
+        <StaticDiffHtml key={html} html={html} />
       ))}
     </div>
   );
