@@ -94,6 +94,8 @@ export interface AcpSessionRuntimeStartResult {
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse;
   readonly modelConfigId: string | undefined;
+  /** Authenticate response payload when the agent returned one (process-observed). */
+  readonly authenticateResult?: EffectAcpSchema.AuthenticateResponse;
 }
 
 export class AcpSessionRuntime extends Context.Service<
@@ -545,7 +547,7 @@ export const make = (
         methodId: options.authMethodId,
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
+      const authenticateResult = yield* runLoggedRequest(
         "authenticate",
         authenticatePayload,
         acp.agent.authenticate(authenticatePayload),
@@ -652,6 +654,7 @@ export const make = (
         initializeResult,
         sessionSetupResult,
         modelConfigId: extractModelConfigId(sessionSetupResult),
+        authenticateResult,
       } satisfies AcpStartedState;
       return nextState;
     });

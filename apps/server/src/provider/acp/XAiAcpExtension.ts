@@ -196,6 +196,44 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
   return { outcome: "cancelled" };
 }
 
+const XAiExitPlanModeParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  planContent: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const XAiWrappedExitPlanModeParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]),
+  params: XAiExitPlanModeParams,
+});
+
+export const XAiExitPlanModeRequest = Schema.Union([
+  XAiExitPlanModeParams,
+  XAiWrappedExitPlanModeParams,
+]);
+
+export type XAiExitPlanModeRequest = typeof XAiExitPlanModeRequest.Type;
+export type XAiExitPlanModeParams = typeof XAiExitPlanModeParams.Type;
+
+export function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanModeParams {
+  return "method" in params ? params.params : params;
+}
+
+export function makeXAiExitPlanModeApprovedResponse(): { readonly outcome: "approved" } {
+  return { outcome: "approved" };
+}
+
+export function makeXAiExitPlanModeReviseResponse(feedback: string): {
+  readonly outcome: "rejected";
+  readonly feedback: string;
+} {
+  const trimmed = feedback.trim();
+  return {
+    outcome: "rejected",
+    feedback: trimmed.length > 0 ? trimmed : "Please revise the plan.",
+  };
+}
+
 /**
  * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
  * The underlying runtime remains unaware of xAI methods and metadata.

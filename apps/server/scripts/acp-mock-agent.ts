@@ -38,6 +38,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const emitSessionInfoUpdate = process.env.T3_ACP_EMIT_SESSION_INFO === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
@@ -77,6 +78,10 @@ function logExit(reason: string): void {
 
 function writeJsonRpcNotification(method: string, params: unknown): void {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+}
+
+function writeJsonRpcResponse(id: string | number, result: unknown): void {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
 }
 
 process.once("SIGTERM", () => {
@@ -300,9 +305,33 @@ const program = Effect.gen(function* () {
     Effect.sync(() => {
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      // #4109-class: unsolicited response with non-numeric id must not crash the client.
+      if (process.env.T3_ACP_EMIT_SKILLS_RELOAD_ID === "1") {
+        queueMicrotask(() => {
+          writeJsonRpcResponse("skills-reload", { ok: true });
+        });
+      }
+      const initMeta =
+        process.env.T3_ACP_EMIT_INIT_AVAILABLE_COMMANDS === "1"
+          ? {
+              availableCommands: [
+                {
+                  name: "compact",
+                  description: "Compress conversation history",
+                  input: { hint: "optional context" },
+                },
+                {
+                  name: "session-info",
+                  description: "Show session details",
+                  input: null,
+                },
+              ],
+            }
+          : undefined;
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        ...(initMeta ? { _meta: initMeta } : {}),
       };
     }),
   );
@@ -865,6 +894,16 @@ const program = Effect.gen(function* () {
         },
       });
 
+      if (emitSessionInfoUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "session_info_update",
+            title: "Mock Grok session title",
+          },
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -873,7 +912,17 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      // Live Grok stamps usage on prompt result `_meta` (not only usage_update).
+      return {
+        stopReason: "end_turn",
+        _meta: {
+          totalTokens: 12_345,
+          inputTokens: 10_000,
+          outputTokens: 2_000,
+          cachedReadTokens: 8_000,
+          reasoningTokens: 345,
+        },
+      };
     }),
   );
 
