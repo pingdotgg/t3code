@@ -115,12 +115,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function finitePositiveInt(value: unknown): number | undefined {
+function finiteNonNegativeInt(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
   }
   const truncated = Math.trunc(value);
-  return truncated > 0 ? truncated : undefined;
+  return truncated >= 0 ? truncated : undefined;
+}
+
+function finitePositiveInt(value: unknown): number | undefined {
+  const valueInt = finiteNonNegativeInt(value);
+  return valueInt !== undefined && valueInt > 0 ? valueInt : undefined;
 }
 
 /** Model context window from Grok ACP `availableModels[]._meta.totalContextTokens`. */
@@ -180,7 +185,8 @@ export function resolveInitialGrokContextWindow(input: {
   return (
     contextWindowForModelId(input.windows, input.boundModelId) ??
     contextWindowForModelId(input.windows, input.setupModelId) ??
-    (input.windows.size > 0 ? input.windows.values().next().value : undefined)
+    // Only fall back when a single window is known — never pick an arbitrary model.
+    (input.windows.size === 1 ? input.windows.values().next().value : undefined)
   );
 }
 
@@ -219,14 +225,17 @@ export function tokenUsageFromGrokPromptMeta(
     return undefined;
   }
 
+  // Breakdown fields may legitimately be 0; usedTokens/window stay strictly positive.
   const inputTokens =
-    finitePositiveInt(meta.inputTokens) ?? finitePositiveInt(usageRecord?.inputTokens);
+    finiteNonNegativeInt(meta.inputTokens) ?? finiteNonNegativeInt(usageRecord?.inputTokens);
   const outputTokens =
-    finitePositiveInt(meta.outputTokens) ?? finitePositiveInt(usageRecord?.outputTokens);
+    finiteNonNegativeInt(meta.outputTokens) ?? finiteNonNegativeInt(usageRecord?.outputTokens);
   const cachedInputTokens =
-    finitePositiveInt(meta.cachedReadTokens) ?? finitePositiveInt(usageRecord?.cachedReadTokens);
+    finiteNonNegativeInt(meta.cachedReadTokens) ??
+    finiteNonNegativeInt(usageRecord?.cachedReadTokens);
   const reasoningOutputTokens =
-    finitePositiveInt(meta.reasoningTokens) ?? finitePositiveInt(usageRecord?.reasoningTokens);
+    finiteNonNegativeInt(meta.reasoningTokens) ??
+    finiteNonNegativeInt(usageRecord?.reasoningTokens);
   const window =
     maxTokens ??
     finitePositiveInt(meta.totalContextTokens) ??

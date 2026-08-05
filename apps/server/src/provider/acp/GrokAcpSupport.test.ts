@@ -217,12 +217,59 @@ describe("Grok context window helpers", () => {
       }),
     ).toBe(500_000);
 
+    // Multiple known windows + no matching model id → do not guess.
     expect(
       resolveInitialGrokContextWindow({
         windows,
         boundModelId: "missing-model",
         setupModelId: "also-missing",
       }),
+    ).toBeUndefined();
+
+    const singleWindow = contextWindowsFromSessionModels({
+      currentModelId: "model-a",
+      availableModels: [
+        {
+          modelId: "model-a",
+          name: "Model A",
+          _meta: { totalContextTokens: 500_000 },
+        },
+      ],
+    });
+    expect(
+      resolveInitialGrokContextWindow({
+        windows: singleWindow,
+        boundModelId: "missing-model",
+        setupModelId: "also-missing",
+      }),
     ).toBe(500_000);
+  });
+
+  it("preserves zero-valued token breakdowns from prompt meta", () => {
+    expect(
+      tokenUsageFromGrokPromptMeta(
+        {
+          totalTokens: 100,
+          inputTokens: 100,
+          outputTokens: 0,
+          cachedReadTokens: 0,
+          reasoningTokens: 0,
+        },
+        50_000,
+      ),
+    ).toEqual({
+      usedTokens: 100,
+      maxTokens: 50_000,
+      inputTokens: 100,
+      lastInputTokens: 100,
+      outputTokens: 0,
+      lastOutputTokens: 0,
+      cachedInputTokens: 0,
+      lastCachedInputTokens: 0,
+      reasoningOutputTokens: 0,
+      lastReasoningOutputTokens: 0,
+      lastUsedTokens: 100,
+      compactsAutomatically: true,
+    });
   });
 });
