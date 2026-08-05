@@ -17,6 +17,7 @@ import { searchableSetting } from "./settingsSearch";
 const AUTO_SETTLE_MIN_DAYS = 1;
 const AUTO_SETTLE_MAX_DAYS = 90;
 const AUTO_SETTLE_DEFAULT_DAYS = 3;
+const REDACTED_SENTRY_DSN = "••••••••••••••••";
 
 function AutoSettleDaysInput({
   value,
@@ -62,12 +63,16 @@ function AutoSettleDaysInput({
 function SentryAgentMonitoringSettings() {
   const monitoring = usePrimarySettings((settings) => settings.observability.sentryAgentMonitoring);
   const updateSettings = useUpdatePrimarySettings();
-  const [dsnDraft, setDsnDraft] = useState("");
+  const [dsnDraft, setDsnDraft] = useState(monitoring.dsnRedacted ? REDACTED_SENTRY_DSN : "");
   const validDsn = parseSentryDsn(dsnDraft) !== null;
+  const showingStoredDsn = monitoring.dsnRedacted && dsnDraft === REDACTED_SENTRY_DSN;
   const sentrySetting = searchableSetting("sentry-agent-monitoring");
 
   useEffect(() => {
-    if (monitoring.dsnRedacted) setDsnDraft("");
+    setDsnDraft((current) => {
+      if (monitoring.dsnRedacted) return REDACTED_SENTRY_DSN;
+      return current === REDACTED_SENTRY_DSN ? "" : current;
+    });
   }, [monitoring.dsnRedacted]);
 
   return (
@@ -108,11 +113,15 @@ function SentryAgentMonitoringSettings() {
               type="password"
               value={dsnDraft}
               onChange={(event) => setDsnDraft(event.target.value)}
-              placeholder={
-                monitoring.dsnRedacted
-                  ? "Stored DSN — enter a new one to replace"
-                  : "https://public-key@o0.ingest.sentry.io/project-id"
-              }
+              onFocus={() => {
+                if (showingStoredDsn) setDsnDraft("");
+              }}
+              onBlur={() => {
+                if (monitoring.dsnRedacted && dsnDraft.length === 0) {
+                  setDsnDraft(REDACTED_SENTRY_DSN);
+                }
+              }}
+              placeholder="https://public-key@o0.ingest.sentry.io/project-id"
               autoComplete="off"
               spellCheck={false}
               aria-label="Sentry DSN"
@@ -154,10 +163,10 @@ function SentryAgentMonitoringSettings() {
                     },
                   },
                 });
-                setDsnDraft("");
+                if (monitoring.dsnRedacted) setDsnDraft(REDACTED_SENTRY_DSN);
               }}
             >
-              Save DSN
+              {showingStoredDsn ? "DSN saved" : monitoring.dsnRedacted ? "Replace DSN" : "Save DSN"}
             </Button>
           </div>
         </div>
