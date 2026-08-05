@@ -84,6 +84,28 @@ export function resolveGrokReasoningEffortSelection(
 
 
 
+/**
+ * Grok has no ACP session modes on live 0.2.x. Plan mode is entered via the
+ * `/plan` slash command (see Grok Build user guide). Map T3 interactionMode
+ * onto that command so Plan/Build in the composer does real work.
+ */
+export function applyGrokPlanModeToPromptText(input: {
+  readonly text: string | undefined;
+  readonly interactionMode: "plan" | "default" | undefined;
+}): string | undefined {
+  const trimmed = input.text?.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (input.interactionMode === "plan") {
+    if (/^\/plan(?:\s|$)/i.test(trimmed)) {
+      return trimmed;
+    }
+    return `/plan ${trimmed}`;
+  }
+  return trimmed;
+}
+
 function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
   return environment?.[GROK_API_KEY_ENV]?.trim()
     ? GROK_AUTH_METHOD_API_KEY

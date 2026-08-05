@@ -5,6 +5,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpConfigSelections,
   applyGrokAcpModelSelection,
+  applyGrokPlanModeToPromptText,
   buildGrokAcpSpawnInput,
   resolveGrokAcpBaseModelId,
   resolveGrokReasoningEffortSelection,
@@ -199,4 +200,35 @@ describe("applyGrokAcpConfigSelections", () => {
   );
 });
 
+describe("applyGrokPlanModeToPromptText", () => {
+  it("prefixes /plan when interactionMode is plan", () => {
+    expect(applyGrokPlanModeToPromptText({ text: "design auth", interactionMode: "plan" })).toBe(
+      "/plan design auth",
+    );
+  });
 
+  it("does not double-prefix /plan", () => {
+    expect(applyGrokPlanModeToPromptText({ text: "/plan already", interactionMode: "plan" })).toBe(
+      "/plan already",
+    );
+  });
+
+  it("accepts case-insensitive existing /Plan prefix", () => {
+    expect(applyGrokPlanModeToPromptText({ text: "/Plan design", interactionMode: "plan" })).toBe(
+      "/Plan design",
+    );
+  });
+
+  it("leaves default mode text unchanged", () => {
+    expect(applyGrokPlanModeToPromptText({ text: "hello", interactionMode: "default" })).toBe(
+      "hello",
+    );
+  });
+
+  it("returns undefined/empty for blank plan prompts", () => {
+    expect(applyGrokPlanModeToPromptText({ text: undefined, interactionMode: "plan" })).toBe(
+      undefined,
+    );
+    expect(applyGrokPlanModeToPromptText({ text: "   ", interactionMode: "plan" })).toBe("");
+  });
+});

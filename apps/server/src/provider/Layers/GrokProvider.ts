@@ -35,8 +35,9 @@ import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSup
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
-  // Live 0.2.x: plan toggle lands in later stack layer; set_model is in-session.
-  showInteractionModeToggle: false,
+  // Plan/Build maps to Grok's `/plan` command on send (no ACP session modes).
+  // Live 0.2.x: session/set_model works in-session; no forced new thread.
+  showInteractionModeToggle: true,
   requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({

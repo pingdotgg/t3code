@@ -61,6 +61,7 @@ import {
   currentGrokModelIdFromSessionSetup,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  applyGrokPlanModeToPromptText,
   resolveGrokReasoningEffortSelection,
   type GrokAcpSpawnOptions,
 } from "../acp/GrokAcpSupport.ts";
@@ -1440,7 +1441,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   ),
               });
 
-              const text = input.input?.trim();
+              const text = applyGrokPlanModeToPromptText({
+                text: input.input?.trim(),
+                interactionMode: input.interactionMode,
+              });
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
