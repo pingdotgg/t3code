@@ -126,7 +126,7 @@ describe("git action result toast timing", () => {
 });
 
 describe("when: ref is clean and has an open PR", () => {
-  it("resolveQuickAction opens the existing PR", () => {
+  it("resolveQuickAction rests in the disabled up-to-date state", () => {
     const quick = resolveQuickAction(
       status({
         pr: {
@@ -140,10 +140,15 @@ describe("when: ref is clean and has an open PR", () => {
       }),
       false,
     );
-    assert.deepInclude(quick, { kind: "open_pr", label: "View PR", disabled: false });
+    assert.deepInclude(quick, {
+      kind: "show_hint",
+      label: "Commit",
+      disabled: true,
+      hint: "Branch is up to date. No action needed.",
+    });
   });
 
-  it("buildMenuItems disables commit/push and enables open PR", () => {
+  it("buildMenuItems disables commit/push and omits the PR entry", () => {
     const items = buildMenuItems(
       status({
         pr: {
@@ -173,13 +178,6 @@ describe("when: ref is clean and has an open PR", () => {
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",
-      },
-      {
-        id: "pr",
-        label: "View PR",
-        disabled: false,
-        icon: "pr",
-        kind: "open_pr",
       },
     ]);
   });
@@ -263,7 +261,7 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
     assert.deepInclude(quick, { kind: "run_action", action: "push", label: "Push" });
   });
 
-  it("buildMenuItems enables push and keeps open PR available", () => {
+  it("buildMenuItems enables push and omits the PR entry", () => {
     const items = buildMenuItems(
       status({
         aheadCount: 2,
@@ -294,13 +292,6 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",
-      },
-      {
-        id: "pr",
-        label: "View PR",
-        disabled: false,
-        icon: "pr",
-        kind: "open_pr",
       },
     ]);
   });
@@ -730,7 +721,7 @@ describe("when: ref has no upstream configured", () => {
     });
   });
 
-  it("resolveQuickAction opens PR when clean, no upstream, no local commits are ahead, and PR exists", () => {
+  it("resolveQuickAction rests disabled when clean, no upstream, no local commits are ahead, and PR exists", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -747,9 +738,10 @@ describe("when: ref has no upstream configured", () => {
       false,
     );
     assert.deepInclude(quick, {
-      kind: "open_pr",
-      label: "View PR",
-      disabled: false,
+      kind: "show_hint",
+      label: "Commit",
+      disabled: true,
+      hint: "Branch is up to date. No action needed.",
     });
   });
 
