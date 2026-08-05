@@ -7,7 +7,10 @@ import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
@@ -69,6 +72,17 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
+const pathAwareToolUpdate = {
+  requiresCommandPath: true,
+  resolve: (options?: { readonly realCommandPath?: string | null }) =>
+    makeProviderMaintenanceCapabilities({
+      provider: driver("pathAwareTool"),
+      packageName: null,
+      updateExecutable: "path-aware-tool",
+      updateArgs: ["update"],
+      updateLockKey: options?.realCommandPath ? "resolved-path" : "unresolved-path",
+    }),
+};
 const installedPackageToolProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("packageTool"),
   driver: driver("packageTool"),
@@ -218,6 +232,108 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       yield* source.refresh;
       expect(source.get().update?.lockKey).toBe("bun-global");
       expect((yield* source.resolve).update?.lockKey).toBe("bun-global");
+    }),
+  );
+
+  it.effect("retries maintenance capability discovery after its first lookup is interrupted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDir = yield* makeTempDir("t3-interrupted-provider-capabilities");
+      const executable = NodePath.join(tempDir, "path-aware-tool");
+      NodeFS.mkdirSync(tempDir, { recursive: true });
+      NodeFS.writeFileSync(executable, "#!/bin/sh\n");
+      NodeFS.chmodSync(executable, 0o755);
+
+      const firstLookupStarted = yield* Deferred.make<void>();
+      let lookupCount = 0;
+      const instrumentedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        realPath: (path) => {
+          if (path !== executable) return fileSystem.realPath(path);
+          lookupCount += 1;
+          return lookupCount === 1
+            ? Deferred.succeed(firstLookupStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : fileSystem.realPath(path);
+        },
+      });
+      const source = yield* makeProviderMaintenanceCapabilitiesSource(pathAwareToolUpdate, {
+        binaryPath: executable,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, instrumentedFileSystem));
+
+      const firstLookup = yield* source.refresh.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstLookupStarted);
+      yield* Fiber.interrupt(firstLookup);
+
+      expect(source.get().update?.lockKey).toBe("unresolved-path");
+      expect((yield* source.resolve).update?.lockKey).toBe("resolved-path");
+      expect(source.get().update?.lockKey).toBe("resolved-path");
+      expect(lookupCount).toBe(2);
+    }),
+  );
+
+  it.effect("shares concurrent successful maintenance capability discovery", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDir = yield* makeTempDir("t3-shared-provider-capabilities");
+      const executable = NodePath.join(tempDir, "path-aware-tool");
+      NodeFS.mkdirSync(tempDir, { recursive: true });
+      NodeFS.writeFileSync(executable, "#!/bin/sh\n");
+      NodeFS.chmodSync(executable, 0o755);
+
+      const lookupStarted = yield* Deferred.make<void>();
+      const releaseLookup = yield* Deferred.make<void>();
+      let lookupCount = 0;
+      const instrumentedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        realPath: (path) => {
+          if (path !== executable) return fileSystem.realPath(path);
+          lookupCount += 1;
+          return Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLookup)),
+            Effect.andThen(fileSystem.realPath(path)),
+          );
+        },
+      });
+      const source = yield* makeProviderMaintenanceCapabilitiesSource(pathAwareToolUpdate, {
+        binaryPath: executable,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, instrumentedFileSystem));
+
+      const first = yield* source.resolve.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(lookupStarted);
+      const second = yield* source.resolve.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseLookup, undefined);
+
+      expect((yield* Fiber.join(first)).update?.lockKey).toBe("resolved-path");
+      expect((yield* Fiber.join(second)).update?.lockKey).toBe("resolved-path");
+      expect(lookupCount).toBe(1);
+    }),
+  );
+
+  it.effect("memoizes successful maintenance capability discovery", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDir = yield* makeTempDir("t3-memoized-provider-capabilities");
+      const executable = NodePath.join(tempDir, "path-aware-tool");
+      NodeFS.mkdirSync(tempDir, { recursive: true });
+      NodeFS.writeFileSync(executable, "#!/bin/sh\n");
+      NodeFS.chmodSync(executable, 0o755);
+
+      let lookupCount = 0;
+      const instrumentedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        realPath: (path) => {
+          if (path !== executable) return fileSystem.realPath(path);
+          lookupCount += 1;
+          return fileSystem.realPath(path);
+        },
+      });
+      const source = yield* makeProviderMaintenanceCapabilitiesSource(pathAwareToolUpdate, {
+        binaryPath: executable,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, instrumentedFileSystem));
+
+      expect((yield* source.resolve).update?.lockKey).toBe("resolved-path");
+      expect((yield* source.resolve).update?.lockKey).toBe("resolved-path");
+      expect(lookupCount).toBe(1);
     }),
   );
 

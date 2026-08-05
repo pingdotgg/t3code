@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -397,17 +398,20 @@ export const makeProviderMaintenanceCapabilitiesSource = Effect.fn(
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let current = resolver.resolve(options);
-  const resolve = yield* Effect.cached(
-    resolveProviderMaintenanceCapabilitiesEffect(resolver, options).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.tap((capabilities) =>
-        Effect.sync(() => {
-          current = capabilities;
-        }),
+  const cache = yield* Cache.make({
+    capacity: 1,
+    lookup: () =>
+      resolveProviderMaintenanceCapabilitiesEffect(resolver, options).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.tap((capabilities) =>
+          Effect.sync(() => {
+            current = capabilities;
+          }),
+        ),
       ),
-    ),
-  );
+  });
+  const resolve = Cache.get(cache, "capabilities");
 
   return {
     get: () => current,
