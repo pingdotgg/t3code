@@ -263,16 +263,20 @@ export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitP
   };
 }
 
-/** True when a path is Grok's session plan file (…/plan.md). */
+/**
+ * True when a path is Grok's session plan file under `~/.grok/sessions/.../plan.md`.
+ * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md).
+ */
 export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean {
   if (typeof path !== "string") {
     return false;
   }
   const normalized = path.trim().replace(/\\/g, "/");
-  if (normalized.length === 0) {
+  if (normalized.length === 0 || !normalized.endsWith("/plan.md")) {
     return false;
   }
-  return normalized === "plan.md" || normalized.endsWith("/plan.md");
+  // Session layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
+  return normalized.includes("/.grok/sessions/");
 }
 
 /**

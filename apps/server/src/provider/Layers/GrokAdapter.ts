@@ -403,6 +403,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           options?.completedStopReason !== undefined && canEmitTurnCompletion;
         const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
         liveCtx.activeTurnId = undefined;
+        // Drop turn-scoped plan fallback so a later empty exit_plan cannot
+        // resurrect this turn's markdown as a fresh proposal.
+        liveCtx.lastKnownProposedPlanMarkdown = undefined;
         liveCtx.session = {
           ...readySession,
           status: "ready",
@@ -1030,6 +1033,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // Bind the turn id before cooperative yields so interruptTurn can
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
+            // New turn: do not fall back to a previous turn's plan.md body when
+            // exit_plan_mode omits planContent.
+            if (steeringTurnId === undefined) {
+              ctx.lastKnownProposedPlanMarkdown = undefined;
+            }
             ctx.session = {
               ...ctx.session,
               status: steeringTurnId === undefined ? "connecting" : "running",

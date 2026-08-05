@@ -367,13 +367,20 @@ describe("XAiAcpExtension", () => {
 
   it("identifies Grok plan.md paths and extracts markdown from tool call data", () => {
     expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/abc/plan.md")).toBe(true);
-    expect(isGrokPlanMarkdownPath("plan.md")).toBe(true);
+    expect(
+      isGrokPlanMarkdownPath(
+        "/home/ahmed/.grok/sessions/%2Fhome%2Fahmed%2FProjects/019fd20e-c563-70a0-b801-a6bc51815a9b/plan.md",
+      ),
+    ).toBe(true);
+    // Workspace plan.md must not be treated as the session plan file.
+    expect(isGrokPlanMarkdownPath("plan.md")).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/tmp/other.md")).toBe(false);
 
     expect(
       extractGrokPlanMarkdownFromToolCallData({
         rawInput: {
-          file_path: "/tmp/session/plan.md",
+          file_path: "/home/x/.grok/sessions/sess/plan.md",
           content: "# From rawInput\n\n- a\n",
         },
       }),
@@ -384,7 +391,7 @@ describe("XAiAcpExtension", () => {
         content: [
           {
             type: "diff",
-            path: "/tmp/session/plan.md",
+            path: "/home/x/.grok/sessions/sess/plan.md",
             oldText: "",
             newText: "# From diff\n\n- b\n",
           },
@@ -395,6 +402,12 @@ describe("XAiAcpExtension", () => {
     expect(
       extractGrokPlanMarkdownFromToolCallData({
         rawInput: { file_path: "/tmp/readme.md", content: "nope" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        rawInput: { file_path: "/repo/docs/plan.md", content: "# Project plan\n" },
       }),
     ).toBeUndefined();
   });
