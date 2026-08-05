@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("036_037_OrchestrationV2", (it) => {
+layer("037_038_OrchestrationV2", (it) => {
   it.effect("keeps released and private migration ids contiguous", () =>
     Effect.sync(() => {
       assert.deepStrictEqual(
@@ -22,7 +22,7 @@ layer("036_037_OrchestrationV2", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 37 });
+      yield* runMigrations({ toMigrationInclusive: 38 });
 
       const migrations = yield* sql<{
         readonly migration_id: number;
@@ -67,7 +67,7 @@ layer("036_037_OrchestrationV2", (it) => {
   it.effect("backfills provider-session thread bindings in migration 038", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 39 });
       yield* sql`
         INSERT INTO orchestration_v2_projection_provider_sessions (
           provider_session_id,
@@ -92,7 +92,7 @@ layer("036_037_OrchestrationV2", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 40 });
 
       const bindings = yield* sql<{
         readonly provider_session_id: string;
@@ -113,7 +113,7 @@ layer("036_037_OrchestrationV2", (it) => {
   it.effect("preserves turn items with colliding ordinals in migration 037", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 37 });
+      yield* runMigrations({ toMigrationInclusive: 38 });
       yield* sql`
         INSERT INTO orchestration_v2_projection_runs (
           run_id,
@@ -150,7 +150,7 @@ layer("036_037_OrchestrationV2", (it) => {
           ('turn-item:d', 'thread:two', NULL, 42, 'assistant_message', 'completed', '2026-01-01T00:00:00.000Z', '{}')
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 39 });
 
       const positions = yield* sql<{
         readonly thread_id: string;
@@ -175,14 +175,14 @@ it.effect("upgrades a database already at released main migration 034", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    yield* runMigrations({ toMigrationInclusive: 35 });
+    yield* runMigrations({ toMigrationInclusive: 36 });
     const snoozeColumns = yield* sql<{ readonly name: string }>`
       PRAGMA table_info(projection_threads)
     `;
     assert.ok(snoozeColumns.some((column) => column.name === "snoozed_until"));
     assert.ok(snoozeColumns.some((column) => column.name === "snoozed_at"));
 
-    yield* runMigrations({ toMigrationInclusive: 44 });
+    yield* runMigrations({ toMigrationInclusive: 45 });
 
     const migrations = yield* sql<{
       readonly migration_id: number;
