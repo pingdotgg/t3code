@@ -60,6 +60,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -1155,9 +1156,178 @@ describe("composerDraftStore project draft thread mapping", () => {
 describe("composerDraftStore modelSelection", () => {
   const threadId = ThreadId.make("thread-model-options");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const GROK_INSTANCE = ProviderInstanceId.make("grok");
+  const GROK_DRIVER = ProviderDriverKind.make("grok");
 
   beforeEach(() => {
     resetComposerDraftStore();
+  });
+
+  it("prefers sticky effort options over stale thread modelSelection", () => {
+    const derived = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {},
+        activeProvider: null,
+      },
+      providers: [
+        {
+          instanceId: GROK_INSTANCE,
+          driver: GROK_DRIVER,
+          enabled: true,
+          isAvailable: true,
+          models: [
+            {
+              slug: "grok-4.5",
+              name: "Grok 4.5",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        } as never,
+      ],
+      selectedProvider: GROK_DRIVER,
+      selectedInstanceId: GROK_INSTANCE,
+      threadModelSelection: modelSelection(GROK_DRIVER, "grok-4.5", {
+        reasoningEffort: "high",
+      }),
+      projectModelSelection: null,
+      stickyModelSelectionByProvider: {
+        [GROK_INSTANCE]: modelSelection(GROK_DRIVER, "grok-4.5", {
+          reasoningEffort: "low",
+        }),
+      },
+      settings: {
+        providers: {
+          grok: { customModels: [] },
+        },
+        providerInstances: {},
+        models: {},
+      } as never,
+    });
+    expect(derived.modelOptions?.[String(GROK_INSTANCE)]).toEqual(
+      toSelections({ reasoningEffort: "low" }),
+    );
+  });
+
+  it("uses sticky options only and keeps thread model when draft is empty", () => {
+    const derived = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {},
+        activeProvider: null,
+      },
+      providers: [
+        {
+          instanceId: GROK_INSTANCE,
+          driver: GROK_DRIVER,
+          enabled: true,
+          isAvailable: true,
+          models: [
+            {
+              slug: "grok-4.5",
+              name: "Grok 4.5",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+            {
+              slug: "grok-4",
+              name: "Grok 4",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        } as never,
+      ],
+      selectedProvider: GROK_DRIVER,
+      selectedInstanceId: GROK_INSTANCE,
+      threadModelSelection: modelSelection(GROK_DRIVER, "grok-4.5", {
+        reasoningEffort: "high",
+      }),
+      projectModelSelection: null,
+      stickyModelSelectionByProvider: {
+        [GROK_INSTANCE]: modelSelection(GROK_DRIVER, "grok-4", {
+          reasoningEffort: "low",
+        }),
+      },
+      settings: {
+        providers: {
+          grok: { customModels: [] },
+        },
+        providerInstances: {},
+        models: {},
+      } as never,
+    });
+    expect(derived.selectedModel).toBe("grok-4.5");
+    expect(derived.modelOptions?.[String(GROK_INSTANCE)]).toEqual(
+      toSelections({ reasoningEffort: "low" }),
+    );
+  });
+
+  it("re-keys sticky options under selected custom instance", () => {
+    const derived = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {},
+        activeProvider: null,
+      },
+      providers: [
+        {
+          instanceId: CODEX_SECONDARY_INSTANCE,
+          driver: CODEX_DRIVER,
+          enabled: true,
+          isAvailable: true,
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "GPT-5.4",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        } as never,
+      ],
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: CODEX_SECONDARY_INSTANCE,
+      threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4", {
+        reasoningEffort: "high",
+      }),
+      projectModelSelection: null,
+      stickyModelSelectionByProvider: {
+        [CODEX_INSTANCE]: modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
+          reasoningEffort: "low",
+        }),
+      },
+      settings: {
+        providers: {
+          codex: { customModels: [] },
+        },
+        providerInstances: {},
+        models: {},
+      } as never,
+    });
+    expect(derived.selectedModel).toBe("gpt-5.4");
+    expect(derived.modelOptions?.[String(CODEX_SECONDARY_INSTANCE)]).toEqual(
+      toSelections({ reasoningEffort: "low" }),
+    );
+    expect(derived.modelOptions?.[String(CODEX_INSTANCE)]).toBeUndefined();
+  });
+
+  it("persists grok option selections on the draft and sticky map", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProviderModelOptions(
+      threadRef,
+      GROK_DRIVER,
+      toSelections({ reasoningEffort: "low" }),
+      {
+        instanceId: GROK_INSTANCE,
+        model: "grok-4.5",
+        persistSticky: true,
+      },
+    );
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[GROK_INSTANCE],
+    ).toEqual(modelSelection(GROK_DRIVER, "grok-4.5", { reasoningEffort: "low" }));
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[GROK_INSTANCE]).toEqual(
+      modelSelection(GROK_DRIVER, "grok-4.5", { reasoningEffort: "low" }),
+    );
   });
 
   it("stores a model selection in the draft", () => {
