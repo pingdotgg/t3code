@@ -75,6 +75,7 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import {
+  hasSubagentPromptText,
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -1547,40 +1548,42 @@ export function makeCursorAdapterV2(
                 creationSource: "provider",
               }),
             });
-            const promptNativeId = `${nativeItemId}:prompt`;
-            const promptArtifacts = makeSubagentConversationArtifacts({
-              messageId: idAllocator.derive.messageFromProviderItem({
+            if (hasSubagentPromptText(args.prompt)) {
+              const promptNativeId = `${nativeItemId}:prompt`;
+              const promptArtifacts = makeSubagentConversationArtifacts({
+                messageId: idAllocator.derive.messageFromProviderItem({
+                  driver: CURSOR_PROVIDER,
+                  nativeItemId: promptNativeId,
+                }),
+                turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CURSOR_PROVIDER,
+                  nativeItemId: promptNativeId,
+                }),
+                threadId: childThreadId,
+                rootNodeId: childRootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: {
+                  driver: CURSOR_PROVIDER,
+                  nativeId: promptNativeId,
+                  strength: "weak",
+                },
+                role: "user",
+                text: args.prompt,
+                ordinal: 100,
+                now,
+              });
+              yield* emitProviderEvent({
+                type: "message.updated",
                 driver: CURSOR_PROVIDER,
-                nativeItemId: promptNativeId,
-              }),
-              turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                message: promptArtifacts.message,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
                 driver: CURSOR_PROVIDER,
-                nativeItemId: promptNativeId,
-              }),
-              threadId: childThreadId,
-              rootNodeId: childRootNodeId,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: {
-                driver: CURSOR_PROVIDER,
-                nativeId: promptNativeId,
-                strength: "weak",
-              },
-              role: "user",
-              text: args.prompt,
-              ordinal: 100,
-              now,
-            });
-            yield* emitProviderEvent({
-              type: "message.updated",
-              driver: CURSOR_PROVIDER,
-              message: promptArtifacts.message,
-            });
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CURSOR_PROVIDER,
-              turnItem: promptArtifacts.turnItem,
-            });
+                turnItem: promptArtifacts.turnItem,
+              });
+            }
           }
 
           yield* emitProviderEvent({

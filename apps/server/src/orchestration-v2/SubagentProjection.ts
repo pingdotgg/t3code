@@ -23,6 +23,15 @@ function trimmed(value: string | null | undefined): string | undefined {
   return result && result.length > 0 ? result : undefined;
 }
 
+/**
+ * Guards the child thread's opening user message. A provider can register a
+ * subagent before it knows the prompt, and an agent can launch one with a blank
+ * prompt; either way an empty bubble under "Sent by another agent" is noise.
+ */
+export function hasSubagentPromptText(prompt: string | null | undefined): boolean {
+  return trimmed(prompt) !== undefined;
+}
+
 export function subagentThreadTitle(input: {
   readonly parentTitle: string;
   readonly title?: string | null;

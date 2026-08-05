@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { makeSubagentChildThread } from "./SubagentProjection.ts";
+import { hasSubagentPromptText, makeSubagentChildThread } from "./SubagentProjection.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -99,4 +99,14 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
     type: "node",
     nodeId: parentNodeId,
   });
+});
+
+it("only opens a subagent child thread for a prompt that has text", () => {
+  assert.isTrue(hasSubagentPromptText("Read tsconfig.json"));
+  assert.isTrue(hasSubagentPromptText(" leading and trailing "));
+  assert.isFalse(hasSubagentPromptText(""));
+  assert.isFalse(hasSubagentPromptText(" "));
+  assert.isFalse(hasSubagentPromptText("\n\t  "));
+  assert.isFalse(hasSubagentPromptText(null));
+  assert.isFalse(hasSubagentPromptText(undefined));
 });
