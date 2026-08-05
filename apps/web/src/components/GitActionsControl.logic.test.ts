@@ -3,6 +3,7 @@ import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  canCreatePrFromPushedWork,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -871,6 +872,80 @@ describe("when: ref has no upstream configured", () => {
         dialogAction: "create_pr",
       },
     ]);
+  });
+});
+
+describe("canCreatePrFromPushedWork", () => {
+  it("arms once the ref is clean, in sync, and has no open PR", () => {
+    assert.isTrue(canCreatePrFromPushedWork(status({ aheadOfDefaultCount: 2 }), false));
+  });
+
+  it("stays inert while an action is running or status is unknown", () => {
+    assert.isFalse(canCreatePrFromPushedWork(status({ aheadOfDefaultCount: 2 }), true));
+    assert.isFalse(canCreatePrFromPushedWork(null, false));
+  });
+
+  it("stays inert outside a repo with a primary remote", () => {
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ isRepo: false, aheadOfDefaultCount: 2 }), false),
+    );
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ hasPrimaryRemote: false, aheadOfDefaultCount: 2 }), false),
+    );
+  });
+
+  it("stays inert on a detached HEAD", () => {
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ refName: null, aheadOfDefaultCount: 2 }), false),
+    );
+  });
+
+  it("stays inert while any work is unpushed", () => {
+    assert.isFalse(
+      canCreatePrFromPushedWork(
+        status({ hasWorkingTreeChanges: true, aheadOfDefaultCount: 2 }),
+        false,
+      ),
+    );
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ hasUpstream: false, aheadOfDefaultCount: 2 }), false),
+    );
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ aheadCount: 1, aheadOfDefaultCount: 2 }), false),
+    );
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ behindCount: 1, aheadOfDefaultCount: 2 }), false),
+    );
+  });
+
+  it("stays inert when a PR is already open", () => {
+    assert.isFalse(
+      canCreatePrFromPushedWork(
+        status({
+          aheadOfDefaultCount: 2,
+          pr: {
+            number: 12,
+            title: "Open PR",
+            url: "https://example.com/pr/12",
+            baseRef: "main",
+            headRef: "feature/test",
+            state: "open",
+          },
+        }),
+        false,
+      ),
+    );
+  });
+
+  it("stays inert when the ref has nothing to propose against the default ref", () => {
+    assert.isFalse(canCreatePrFromPushedWork(status({ aheadOfDefaultCount: 0 }), false));
+  });
+
+  it("falls back to the default-ref check when the count is missing", () => {
+    assert.isTrue(canCreatePrFromPushedWork(status(), false));
+    assert.isFalse(
+      canCreatePrFromPushedWork(status({ isDefaultRef: true, refName: "main" }), false),
+    );
   });
 });
 
