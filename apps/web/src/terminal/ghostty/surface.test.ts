@@ -11,13 +11,18 @@ import {
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
+  shouldShowTerminalLinkHover,
+  terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
   terminalLinkAtColumn,
   terminalLinkAtPosition,
+  terminalLinkAtPositionWithRange,
   terminalContentOriginY,
   terminalFontFamily,
+  fittedTerminalFontSize,
   terminalFontSize,
   terminalWheelArrowData,
   terminalWheelDeltaRows,
@@ -54,6 +59,55 @@ describe("isTerminalAltGraphText", () => {
   });
 });
 
+describe("terminalGridCellAt", () => {
+  const options = {
+    bounds: { left: 100, top: 200 },
+    cols: 3,
+    rows: 2,
+    metrics: { width: 10, height: 20 },
+    padding: 4,
+    originY: 24,
+  };
+
+  it("maps points inside the rendered grid without clamping its padding", () => {
+    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 224 })).toEqual({
+      x: 0,
+      y: 0,
+    });
+    expect(terminalGridCellAt({ ...options, clientX: 133, clientY: 263 })).toEqual({
+      x: 2,
+      y: 1,
+    });
+    expect(terminalGridCellAt({ ...options, clientX: 103, clientY: 224 })).toBeNull();
+    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 223 })).toBeNull();
+    expect(terminalGridCellAt({ ...options, clientX: 134, clientY: 224 })).toBeNull();
+    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 264 })).toBeNull();
+  });
+});
+
+describe("shouldBlinkTerminalCursor", () => {
+  const blinking = {
+    focused: true,
+    cursorBlinking: true,
+    cursorVisible: true,
+    reducedMotion: false,
+  };
+
+  it("blinks a focused visible cursor the terminal asked to blink", () => {
+    expect(shouldBlinkTerminalCursor(blinking)).toBe(true);
+  });
+
+  it("holds the cursor steady when blinking would be unwanted", () => {
+    // Unfocused surfaces draw a steady hollow cursor, DECSCUSR steady styles and
+    // DEC mode 12 turn blinking off, a hidden cursor has nothing to toggle, and
+    // reduced-motion readers get no permanently animating element.
+    expect(shouldBlinkTerminalCursor({ ...blinking, focused: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, cursorBlinking: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, cursorVisible: false })).toBe(false);
+    expect(shouldBlinkTerminalCursor({ ...blinking, reducedMotion: true })).toBe(false);
+  });
+});
+
 describe("terminalLinkAtColumn", () => {
   it("maps terminal cells to UTF-16 offsets after a wide emoji", () => {
     const cells = [
@@ -74,6 +128,10 @@ describe("terminalLinkAtColumn", () => {
     expect(terminalLinkAtColumn(row, 2)).toBe("https://t3.codes");
     expect(terminalLinkAtColumn(row, cells.length - 1)).toBe("https://t3.codes");
     expect(terminalLinkAtColumn(row, 0)).toBeNull();
+    expect(terminalLinkAtPositionWithRange([row], 0, 8)?.range).toEqual({
+      start: { x: 2, y: 0 },
+      end: { x: cells.length - 1, y: 0 },
+    });
   });
 
   it("uses shared path matching and reconstructs soft-wrapped links", () => {
@@ -94,6 +152,13 @@ describe("terminalLinkAtColumn", () => {
     expect(terminalLinkAtPosition(rows, 1, 4)).toBe("https://example.com/reference");
     expect(terminalLinkAtPosition(rows, 2, 2)).toBe("~/project/file");
     expect(terminalLinkAtPosition(rows, 3, 4)).toBe("C:\\repo\\file.ts");
+    expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
+      text: "https://example.com/reference",
+      range: {
+        start: { x: 0, y: 0 },
+        end: { x: 12, y: 1 },
+      },
+    });
   });
 
   it("refuses links truncated at the viewport edges instead of mis-resolving", () => {
@@ -220,6 +285,13 @@ describe("application mouse reporting", () => {
   it("maps browser buttons to Ghostty's button enum", () => {
     expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
   });
+
+  it("only shows link hover during mouse tracking when the link modifier is held", () => {
+    expect(shouldShowTerminalLinkHover(false, false)).toBe(true);
+    expect(shouldShowTerminalLinkHover(false, true)).toBe(true);
+    expect(shouldShowTerminalLinkHover(true, false)).toBe(false);
+    expect(shouldShowTerminalLinkHover(true, true)).toBe(true);
+  });
 });
 
 describe("terminal font resolution", () => {
@@ -230,6 +302,41 @@ describe("terminal font resolution", () => {
     expect(custom.startsWith('"Fira Code", ')).toBe(true);
     expect(custom).toContain('"Symbols Nerd Font Mono"');
     expect(custom.endsWith("monospace")).toBe(true);
+  });
+
+  it("ignores proportional families the cell grid cannot lay out", () => {
+    // jsdom has no canvas metrics, so the probe answers "monospace" and the
+    // family is kept; the guard is exercised in the browser instead. Assert the
+    // shape stays intact so a rejected face still yields a usable stack.
+    const stack = terminalFontFamily("Helvetica Neue");
+    expect(stack.endsWith("monospace")).toBe(true);
+  });
+
+  it("quotes families the canvas font shorthand would otherwise reject", () => {
+    expect(terminalFontFamily("3270 Nerd Font").startsWith('"3270 Nerd Font", ')).toBe(true);
+    expect(terminalFontFamily("M+ 1m").startsWith('"M+ 1m", ')).toBe(true);
+    expect(terminalFontFamily("Cascadia Code, Menlo").startsWith('"Cascadia Code", Menlo, ')).toBe(
+      true,
+    );
+    expect(terminalFontFamily(" , ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+  });
+
+  it("slides the rendered size down until a full-width grid fits the canvas", () => {
+    // SF Mono-like advance: 0.6em per cell.
+    const cellWidthAt = (size: number) => size * 0.6;
+    // A wide drawer keeps the preference untouched.
+    expect(fittedTerminalFontSize(cellWidthAt, 20, 1140)).toBe(20);
+    // A split pane at the same preference shrinks until 80 columns fit.
+    const fitted = fittedTerminalFontSize(cellWidthAt, 20, 570);
+    expect(fitted).toBeLessThan(20);
+    expect(Math.floor((570 - 8) / cellWidthAt(fitted))).toBeGreaterThanOrEqual(80);
+    // A tiny pane stops at the legibility floor instead of vanishing.
+    expect(fittedTerminalFontSize(cellWidthAt, 20, 220)).toBe(8);
+    // A preference below the floor is honored as-is.
+    expect(fittedTerminalFontSize(cellWidthAt, 6, 220)).toBe(6);
+    // Unmeasured layouts leave the preference alone.
+    expect(fittedTerminalFontSize(cellWidthAt, 14, 0)).toBe(14);
+    expect(fittedTerminalFontSize(() => 0, 14, 600)).toBe(14);
   });
 
   it("clamps requested font sizes to the supported range", () => {
