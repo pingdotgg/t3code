@@ -342,6 +342,10 @@ describe("ManagedEndpointProvider", () => {
       });
 
       expect(result.runtime.connectorToken).toBe("connector-token");
+      expect(result.runtime.origin).toEqual({
+        localHttpHost: "127.0.0.1",
+        localHttpPort: 3773,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -370,6 +374,7 @@ describe("ManagedEndpointProvider", () => {
           connectorToken: "connector-token",
           tunnelId: "tunnel-id",
           tunnelName: expectedManagedTunnelName("env_ABC"),
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
         },
       });
       expect(dnsCalls).toEqual([

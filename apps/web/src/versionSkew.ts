@@ -1,4 +1,5 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -8,6 +9,16 @@ export interface VersionMismatch {
   readonly clientVersion: string;
   readonly serverVersion: string;
   readonly hint: string;
+}
+
+export type CompatibilityChannel = "Stable" | "Nightly";
+
+export interface CompatibilityChannelMismatch {
+  readonly clientVersion: string;
+  readonly clientChannel: CompatibilityChannel;
+  readonly serverVersion: string;
+  readonly serverChannel: CompatibilityChannel;
+  readonly newerSide: "client" | "server" | null;
 }
 
 export const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismissals:v1";
@@ -21,6 +32,62 @@ type VersionMismatchDismissals = typeof VersionMismatchDismissalsSchema.Type;
 function normalizeVersion(version: string | null | undefined): string | null {
   const trimmed = version?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function compatibilityChannel(
+  version: string,
+  stageLabel?: string | null,
+): CompatibilityChannel | null {
+  const normalizedStage = stageLabel?.trim().toLowerCase();
+  if (normalizedStage === "dev" || version === "0.0.0" || /-(?:dev|test)(?:\.|$)/i.test(version)) {
+    return null;
+  }
+  if (normalizedStage === "nightly" || /-nightly(?:\.|$)/i.test(version)) {
+    return "Nightly";
+  }
+  return "Stable";
+}
+
+function newerCompatibilitySide(
+  clientVersion: string,
+  serverVersion: string,
+): CompatibilityChannelMismatch["newerSide"] {
+  if (!parseSemver(clientVersion) || !parseSemver(serverVersion)) {
+    return null;
+  }
+
+  const comparison = compareSemverVersions(clientVersion, serverVersion);
+  return comparison === 0 ? null : comparison > 0 ? "client" : "server";
+}
+
+export function resolveCompatibilityChannelMismatch({
+  clientVersion,
+  clientStageLabel,
+  serverVersion,
+}: {
+  readonly clientVersion: string | null | undefined;
+  readonly clientStageLabel: string | null | undefined;
+  readonly serverVersion: string | null | undefined;
+}): CompatibilityChannelMismatch | null {
+  const normalizedClientVersion = normalizeVersion(clientVersion);
+  const normalizedServerVersion = normalizeVersion(serverVersion);
+  if (!normalizedClientVersion || !normalizedServerVersion) {
+    return null;
+  }
+
+  const clientChannel = compatibilityChannel(normalizedClientVersion, clientStageLabel);
+  const serverChannel = compatibilityChannel(normalizedServerVersion);
+  if (!clientChannel || !serverChannel || clientChannel === serverChannel) {
+    return null;
+  }
+
+  return {
+    clientVersion: normalizedClientVersion,
+    clientChannel,
+    serverVersion: normalizedServerVersion,
+    serverChannel,
+    newerSide: newerCompatibilitySide(normalizedClientVersion, normalizedServerVersion),
+  };
 }
 
 export function resolveVersionMismatch(

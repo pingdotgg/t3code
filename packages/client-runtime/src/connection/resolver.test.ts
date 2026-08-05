@@ -210,6 +210,7 @@ describe("ConnectionResolver", () => {
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
         wsBaseUrl: "ws://127.0.0.1:3777",
+        serverVersion: "0.0.32-nightly.20260803.4",
       });
 
       expect(yield* broker.prepare(catalogEntry(target))).toEqual({
@@ -218,6 +219,7 @@ describe("ConnectionResolver", () => {
         httpBaseUrl: "http://127.0.0.1:3777",
         socketUrl: "ws://127.0.0.1:3777/ws",
         httpAuthorization: null,
+        serverVersion: "0.0.32-nightly.20260803.4",
         target,
       });
     }),

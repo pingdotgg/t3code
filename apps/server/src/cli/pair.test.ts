@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { TailscaleCommandExitError } from "@t3tools/tailscale";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +23,7 @@ import {
   DevServerNotProxiableError,
   resolveDirectPairingBaseUrl,
   resolveTailscaleLocalTarget,
+  tailscaleServeFailedError,
 } from "./pair.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
@@ -50,6 +52,45 @@ describe("pair base URL selection", () => {
 });
 
 describe("pair tailscale local target", () => {
+  it("surfaces the operator fix from safe structural error fields", () => {
+    const cause = new TailscaleCommandExitError({
+      executable: "tailscale",
+      subcommand: "serve",
+      argumentCount: 4,
+      exitCode: 1,
+      stderrLength: 24,
+      stderrDiagnostic: "permission-denied",
+    });
+
+    const failure = tailscaleServeFailedError(443, cause);
+
+    expect(failure).toMatchObject({
+      exitCode: 1,
+      stderrDiagnostic: "permission-denied",
+      cause,
+    });
+    expect(failure.message).toBe(
+      "tailscale serve failed with code 1 for HTTPS port 443: access denied. Run `sudo tailscale set --operator=$USER`, then retry.",
+    );
+  });
+
+  it("keeps Windows permission guidance free of Unix-only commands", () => {
+    const cause = new TailscaleCommandExitError({
+      executable: "tailscale.exe",
+      subcommand: "serve",
+      argumentCount: 4,
+      exitCode: 1,
+      stderrLength: 24,
+      stderrDiagnostic: "permission-denied",
+    });
+
+    const failure = tailscaleServeFailedError(443, cause);
+
+    expect(failure).toMatchObject({ executable: "tailscale.exe", cause });
+    expect(failure.message).toContain("Grant this Windows user permission");
+    expect(failure.message).not.toContain("sudo");
+  });
+
   it("proxies the dev web port for dev servers", () => {
     expect(resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://localhost:5733/" })).toEqual(
       { localPort: 5_733 },
@@ -205,7 +246,8 @@ describe("t3 pair", () => {
       const rendered = String(
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
-      assert.include(rendered, "No running T3 Code server found.");
+      assert.include(rendered, "No usable T3 Code server runtime state found.");
+      assert.include(rendered, "--base-dir");
       assert.include(rendered, "npx t3 serve");
       assert.include(rendered, "npx t3 connect");
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -236,7 +278,7 @@ describe("t3 pair", () => {
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
-        assert.include(rendered, "No running T3 Code server found.");
+        assert.include(rendered, "No usable T3 Code server runtime state found.");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -262,7 +304,7 @@ describe("t3 pair", () => {
       const rendered = String(
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
-      assert.include(rendered, "No running T3 Code server found.");
+      assert.include(rendered, "No usable T3 Code server runtime state found.");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

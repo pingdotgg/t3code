@@ -23,6 +23,21 @@ Update or repair it:
 npx t3@latest service update
 ```
 
+The command installs the same T3 Code version as the CLI you ran. This makes nightly and pinned
+installations predictable:
+
+```sh
+npx t3@nightly service update
+npx t3@1.2.3 service update
+```
+
+An older CLI will not replace a newer installed service by accident. If you intentionally need to
+downgrade, run the exact older version and pass `--allow-downgrade`:
+
+```sh
+npx t3@1.2.3 service update --allow-downgrade
+```
+
 Stop it and remove it from startup:
 
 ```sh

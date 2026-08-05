@@ -17,6 +17,7 @@ import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as RelayDb from "../db.ts";
 import * as EnvironmentLinker from "./EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
@@ -110,6 +111,7 @@ function testLayer(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+  readonly withEnvironmentLock?: RelayDb.RelayTransactions["Service"]["withEnvironmentLock"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
@@ -149,14 +151,19 @@ function testLayer(input?: {
               runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
             }),
         }),
+        Layer.succeed(RelayDb.RelayTransactions, {
+          withTransaction: (effect) => effect,
+          withEnvironmentLock: input?.withEnvironmentLock ?? ((_input, effect) => effect),
+        }),
       ),
     ),
   );
 }
 
 describe("EnvironmentLinker", () => {
-  it.effect("uses verified JWT claims when linking an environment", () => {
+  it.effect("persists verified JWT claims while holding the environment lock", () => {
     let persistedEnvironmentId: string | null = null;
+    let lockHeld = false;
     return Effect.gen(function* () {
       const { request, payload } = yield* makeRequest;
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
@@ -164,13 +171,26 @@ describe("EnvironmentLinker", () => {
       expect(result.environmentId).toBe(payload.environmentId);
       expect(result.environmentCredential).toBe("t3env_credential_secret");
       expect(persistedEnvironmentId).toBe(payload.environmentId);
+      expect(lockHeld).toBe(false);
     }).pipe(
       Effect.provide(
         testLayer({
           upsert: (input) =>
             Effect.sync(() => {
+              expect(lockHeld).toBe(true);
               persistedEnvironmentId = input.proof.environmentId;
             }),
+          withEnvironmentLock: (_input, effect) =>
+            Effect.sync(() => {
+              lockHeld = true;
+            }).pipe(
+              Effect.andThen(effect),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  lockHeld = false;
+                }),
+              ),
+            ),
         }),
       ),
     );

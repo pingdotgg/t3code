@@ -7,6 +7,7 @@ import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
   isVersionMismatchDismissed,
+  resolveCompatibilityChannelMismatch,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -24,6 +25,86 @@ describe("versionSkew", () => {
       serverVersion: "9.9.9",
       hint: "Version mismatch. Try syncing the client and server to the same T3 Code version.",
     });
+  });
+
+  it("calls out a stable client connected to a nightly server", () => {
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "0.0.32",
+        clientStageLabel: "Latest",
+        serverVersion: "0.0.33-nightly.20260803.4",
+      }),
+    ).toEqual({
+      clientVersion: "0.0.32",
+      clientChannel: "Stable",
+      serverVersion: "0.0.33-nightly.20260803.4",
+      serverChannel: "Nightly",
+      newerSide: "server",
+    });
+  });
+
+  it("calls out a nightly client connected to a stable server", () => {
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "0.0.33-nightly.20260803.4",
+        clientStageLabel: "Nightly",
+        serverVersion: "0.0.32",
+      }),
+    ).toEqual({
+      clientVersion: "0.0.33-nightly.20260803.4",
+      clientChannel: "Nightly",
+      serverVersion: "0.0.32",
+      serverChannel: "Stable",
+      newerSide: "client",
+    });
+  });
+
+  it("uses semver precedence when the channels differ at the same release", () => {
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "0.0.32",
+        clientStageLabel: "Latest",
+        serverVersion: "0.0.32-nightly.20260803.4",
+      }),
+    ).toMatchObject({
+      newerSide: "client",
+    });
+  });
+
+  it("does not guess which side is newer when a version cannot be compared", () => {
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "not-semver",
+        clientStageLabel: "Latest",
+        serverVersion: "0.0.33-nightly.20260803.4",
+      }),
+    ).toMatchObject({
+      newerSide: null,
+    });
+  });
+
+  it("keeps same-channel and development incompatibilities generic", () => {
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "0.0.32",
+        clientStageLabel: "Latest",
+        serverVersion: "0.0.31",
+      }),
+    ).toBeNull();
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "0.0.32",
+        clientStageLabel: "Dev",
+        serverVersion: "0.0.33-nightly.20260803.4",
+      }),
+    ).toBeNull();
+    expect(
+      resolveCompatibilityChannelMismatch({
+        clientVersion: "0.0.32",
+        clientStageLabel: "Latest",
+        serverVersion: "0.0.0",
+      }),
+    ).toBeNull();
   });
 
   it("reads the server version from config descriptors", () => {

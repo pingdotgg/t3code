@@ -12,6 +12,7 @@ export class PrimaryConnectionTarget extends Schema.TaggedClass<PrimaryConnectio
     ...ConnectionTargetBase,
     httpBaseUrl: Schema.String,
     wsBaseUrl: Schema.String,
+    serverVersion: Schema.optionalKey(Schema.String),
   },
 ) {}
 
@@ -94,6 +95,7 @@ export class ConnectionBlockedError extends Schema.TaggedErrorClass<ConnectionBl
     reason: ConnectionBlockedReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    serverVersion: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
@@ -119,6 +121,7 @@ export interface PreparedConnection {
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization | null;
+  readonly serverVersion?: string;
   readonly target: ConnectionTarget;
 }
 

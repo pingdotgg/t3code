@@ -22,6 +22,7 @@ import {
   RelayEnvironmentConfigRequest,
   RelayEnvironmentLinkChallengeResponse,
   RelayEnvironmentLinkResponse,
+  RelayManagedEndpointReconcileResponse,
   RelayEnvironmentMintResponseProofPayload,
   type RelayEnvironmentMintResponse as RelayEnvironmentMintResponseShape,
   RelayEnvironmentLinkProof,
@@ -62,6 +63,7 @@ import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
+  decodeRuntimeConfig,
   encodeEndpointRuntimeConfigJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -627,6 +629,115 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
   },
 );
 
+function managedEndpointOriginFromLocalUrl(localUrl: URL): RelayManagedEndpointOrigin {
+  return {
+    localHttpHost: localUrl.hostname,
+    localHttpPort: endpointRequestPort(localUrl),
+  };
+}
+
+export function managedEndpointOriginsEqual(
+  left: RelayManagedEndpointOrigin | undefined,
+  right: RelayManagedEndpointOrigin,
+): boolean {
+  return (
+    left !== undefined &&
+    normalizeHostname(left.localHttpHost) === normalizeHostname(right.localHttpHost) &&
+    left.localHttpPort === right.localHttpPort
+  );
+}
+
+const reconcileManagedEndpointOriginWith = Effect.fn(
+  "environment.cloud.reconcileManagedEndpointOriginWith",
+)(function* (dependencies: CloudHttpDependencies, localOrigin: string) {
+  const localUrl = yield* Effect.try({
+    try: () => new URL(localOrigin),
+    catch: () =>
+      new EnvironmentHttpBadRequestError({
+        message: "Could not resolve local environment origin.",
+      }),
+  });
+  if (localUrl.origin !== localOrigin) {
+    return yield* new EnvironmentHttpBadRequestError({
+      message: "Could not resolve local environment origin.",
+    });
+  }
+  const desiredOrigin = managedEndpointOriginFromLocalUrl(localUrl);
+  const storedConfigBytes = yield* dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+  const storedConfig = Option.isSome(storedConfigBytes)
+    ? decodeRuntimeConfig(bytesToString(storedConfigBytes.value))
+    : Option.none();
+  if (Option.isSome(storedConfigBytes) && Option.isNone(storedConfig)) {
+    return yield* new EnvironmentHttpInternalServerError({
+      message: "Stored managed endpoint runtime configuration is invalid.",
+    });
+  }
+  const config = Option.getOrNull(storedConfig);
+  const desiredManagedLink =
+    (yield* readCliDesiredCloudLink) && (yield* readCliDesiredLinkMode) === "managed";
+  if (config?.providerKind !== "cloudflare_tunnel" && !desiredManagedLink) {
+    return false;
+  }
+  if (managedEndpointOriginsEqual(config?.origin, desiredOrigin)) {
+    return false;
+  }
+
+  const relayUrl = yield* dependencies.secrets.get(RELAY_URL_SECRET);
+  const environmentCredential = yield* dependencies.secrets.get(
+    RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  );
+  const cloudUserId = yield* dependencies.secrets.get(CLOUD_LINKED_USER_ID);
+  if (
+    Option.isNone(relayUrl) ||
+    Option.isNone(environmentCredential) ||
+    Option.isNone(cloudUserId)
+  ) {
+    return yield* new EnvironmentHttpUnauthorizedError({
+      message: "This managed environment is missing its T3 Connect credentials. Link it again.",
+    });
+  }
+
+  const environmentId = yield* dependencies.environment.getEnvironmentId;
+  const response = yield* relayClientRequest(dependencies, {
+    url: `${bytesToString(relayUrl.value)}/v1/environments/${encodeURIComponent(environmentId)}/managed-endpoint/reconcile`,
+    token: bytesToString(environmentCredential.value),
+    payload: {
+      cloudUserId: bytesToString(cloudUserId.value),
+      origin: desiredOrigin,
+    },
+    schema: RelayManagedEndpointReconcileResponse,
+  });
+  const status = yield* dependencies.endpointRuntime.applyConfig(response.endpointRuntime);
+  if (status.status !== "running") {
+    return yield* new EnvironmentCloudEndpointUnavailableError({
+      message: "Managed endpoint runtime could not be started after origin reconciliation.",
+      endpointRuntimeStatus: status,
+    });
+  }
+  const encoded = yield* encodeEndpointRuntimeConfigJson(response.endpointRuntime);
+  yield* dependencies.secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(encoded));
+  return true;
+});
+
+export const reconcileManagedEndpointOrigin = Effect.fn(
+  "environment.cloud.reconcileManagedEndpointOrigin",
+)(function* (localOrigin: string) {
+  return yield* reconcileManagedEndpointOriginWith(yield* cloudHttpDependencies, localOrigin);
+});
+
+/** Restores CLI-desired links first, then repairs origin drift for links that
+    are owned by web or mobile and therefore have no CLI desired-link marker. */
+export const reconcileCloudLinkOnStartup = Effect.fn(
+  "environment.cloud.reconcileCloudLinkOnStartup",
+)(function* (localOrigin: string) {
+  const dependencies = yield* cloudHttpDependencies;
+  if (yield* readCliDesiredCloudLink) {
+    yield* reconcileDesiredCloudLinkWith(dependencies, localOrigin);
+    return true;
+  }
+  return yield* reconcileManagedEndpointOriginWith(dependencies, localOrigin);
+});
+
 // Cloudflare bills per provisioned tunnel, so an environment that goes offline
 // must not leave its tunnel behind. Releasing deletes only the tunnel — the
 // relay keeps the link and its hostname reservation, and the next startup's
@@ -641,11 +752,11 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   if (Option.isNone(runtimeConfig)) {
     return false;
   }
-  // Only CLI-desired managed links release on shutdown, because the startup
-  // reconcile that provisions the replacement tunnel only runs for them. A
-  // link installed by a web/mobile client comes back after a restart by
-  // reapplying the stored connector token — it has no boot-time re-provision
-  // path — so its tunnel must survive the restart. (Unlink still deletes it.)
+  // Only CLI-desired managed links release on shutdown. Their desired-link
+  // marker lets startup re-provision after this function removes the dead
+  // runtime config. Web/mobile links have no equivalent marker, so they keep
+  // the tunnel and stored connector token across restarts. (Unlink still
+  // deletes it.)
   if (!(yield* readCliDesiredCloudLink) || (yield* readCliDesiredLinkMode) !== "managed") {
     return false;
   }

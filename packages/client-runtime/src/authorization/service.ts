@@ -33,6 +33,7 @@ export interface RelayEnvironmentAuthorization {
 export interface AuthorizedRemoteEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly serverVersion?: string;
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization;
@@ -138,6 +139,7 @@ export const make = Effect.gen(function* () {
       return {
         environmentId: descriptor.environmentId,
         label: descriptor.label,
+        serverVersion: descriptor.serverVersion,
         httpBaseUrl: input.httpBaseUrl,
         socketUrl,
         httpAuthorization: {
@@ -212,6 +214,33 @@ export const make = Effect.gen(function* () {
           CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
         ).pipe(Effect.result);
         if (Result.isSuccess(cachedSocket)) {
+          const cachedDescriptor = yield* fetchDescriptor(cached.value.endpoint.httpBaseUrl).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.result,
+          );
+          if (Result.isSuccess(cachedDescriptor)) {
+            const descriptor = cachedDescriptor.success;
+            if (descriptor.environmentId !== input.expectedEnvironmentId) {
+              return yield* environmentMismatchError({
+                expected: input.expectedEnvironmentId,
+                actual: descriptor.environmentId,
+              });
+            }
+            return {
+              environmentId: descriptor.environmentId,
+              label: descriptor.label,
+              serverVersion: descriptor.serverVersion,
+              httpBaseUrl: cached.value.endpoint.httpBaseUrl,
+              socketUrl: cachedSocket.success,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: cached.value.accessToken,
+              },
+            };
+          }
+          if (cachedDescriptor.failure._tag === "ConnectionBlockedError") {
+            return yield* cachedDescriptor.failure;
+          }
           return {
             environmentId: cached.value.environmentId,
             label: cached.value.label,
@@ -222,8 +251,7 @@ export const make = Effect.gen(function* () {
               accessToken: cached.value.accessToken,
             },
           };
-        }
-        if (cachedSocket.failure._tag === "ConnectionBlockedError") {
+        } else if (cachedSocket.failure._tag === "ConnectionBlockedError") {
           return yield* mapDpopSocketError(cachedSocket.failure);
         }
         yield* tokenStore
@@ -286,6 +314,7 @@ export const make = Effect.gen(function* () {
       return {
         environmentId: descriptor.environmentId,
         label: descriptor.label,
+        serverVersion: descriptor.serverVersion,
         httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
         socketUrl,
         httpAuthorization: {

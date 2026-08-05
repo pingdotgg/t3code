@@ -851,6 +851,7 @@ export const make = Effect.gen(function* () {
           connectorToken,
           tunnelId: tunnel.id,
           tunnelName: tunnel.name,
+          origin: input.origin,
         },
       } satisfies ManagedEndpointProvisioningResult;
     }),

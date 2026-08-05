@@ -1,9 +1,12 @@
 import { type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
@@ -44,6 +47,15 @@ type InitialConfigError = Effect.Error<
 >;
 type ProbeError = Effect.Error<ReturnType<WsRpcProtocolClient[typeof WS_METHODS.serverProbe]>>;
 
+function unsupportedProtocolError(serverVersion: string | undefined): ConnectionBlockedError {
+  return new ConnectionBlockedError({
+    reason: "unsupported",
+    detail:
+      "The client and server could not agree on the RPC protocol. Update the older side, then reconnect.",
+    ...(serverVersion === undefined ? {} : { serverVersion }),
+  });
+}
+
 function mapSessionRpcError(error: InitialConfigError | ProbeError): ConnectionAttemptError {
   switch (error._tag) {
     case "EnvironmentAuthorizationError":
@@ -63,6 +75,21 @@ function mapSessionRpcError(error: InitialConfigError | ProbeError): ConnectionA
         detail: error.message,
       });
   }
+}
+
+function mapRpcSchemaDefect<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  serverVersion: string | undefined,
+): Effect.Effect<A, E | ConnectionBlockedError, R> {
+  return effect.pipe(
+    Effect.catchCause((cause): Effect.Effect<never, E | ConnectionBlockedError> => {
+      const defect = Cause.findDefect(cause);
+      if (Result.isSuccess(defect) && Schema.isSchemaError(defect.success)) {
+        return Effect.fail(unsupportedProtocolError(serverVersion));
+      }
+      return Effect.failCause(cause);
+    }),
+  );
 }
 
 export const make = Effect.gen(function* () {
@@ -117,16 +144,23 @@ export const make = Effect.gen(function* () {
     const initialConfig = yield* Effect.cached(
       client[WS_METHODS.serverGetConfig]({}).pipe(
         Effect.mapError(mapSessionRpcError),
+        (effect) => mapRpcSchemaDefect(effect, connection.serverVersion),
         Effect.withSpan("environment.initialSync"),
       ),
     );
     const probe = initialConfig.pipe(
-      Effect.flatMap((config) =>
-        (config.environment.capabilities.connectionProbe === true
-          ? client[WS_METHODS.serverProbe]({})
-          : client[WS_METHODS.serverGetConfig]({})
-        ).pipe(Effect.mapError(mapSessionRpcError)),
-      ),
+      Effect.flatMap((config) => {
+        if (config.environment.capabilities.connectionProbe === true) {
+          return client[WS_METHODS.serverProbe]({}).pipe(
+            Effect.mapError(mapSessionRpcError),
+            (effect) => mapRpcSchemaDefect(effect, connection.serverVersion),
+          );
+        }
+        return client[WS_METHODS.serverGetConfig]({}).pipe(
+          Effect.mapError(mapSessionRpcError),
+          (effect) => mapRpcSchemaDefect(effect, connection.serverVersion),
+        );
+      }),
       Effect.asVoid,
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),
     );

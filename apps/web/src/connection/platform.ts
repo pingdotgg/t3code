@@ -295,6 +295,7 @@ const loadPrimaryConnectionRegistration = Effect.fn(
       label: descriptor.label,
       httpBaseUrl: resolved.target.httpBaseUrl,
       wsBaseUrl: resolved.target.wsBaseUrl,
+      serverVersion: descriptor.serverVersion,
     }),
   });
 });
@@ -358,10 +359,16 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 });
 
 // Poll cadence for the desktop bootstrap topology. There is no change event on
-// the bridge, so the renderer polls; successful registrations are cached by a
-// signature of their endpoint + token until bearer credentials approach expiry.
+// the bridge, so the renderer polls. Primary descriptor metadata refreshes
+// periodically; secondary registrations refresh before bearer credentials
+// expire.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
+const PRIMARY_REGISTRATION_REFRESH_INTERVAL_MS = 30_000;
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
+
+export function primaryRegistrationRefreshAtEpochMs(discoveredAtEpochMs: number): number {
+  return discoveredAtEpochMs + PRIMARY_REGISTRATION_REFRESH_INTERVAL_MS;
+}
 
 export function secondaryBearerExpiresAtEpochMs(
   issuedAtEpochMs: number,
@@ -505,9 +512,18 @@ const platformConnectionSourceLayer = Layer.effect(
             Effect.option,
           );
           if (Option.isSome(built)) {
-            const cacheEntry = { signature, registration: built.value };
+            const cacheEntry = {
+              signature,
+              registration: built.value,
+              refreshAtEpochMs: primaryRegistrationRefreshAtEpochMs(nowEpochMs),
+            };
             next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cacheEntry);
             registrations.push(built.value);
+          } else if (cached?.signature === signature) {
+            // A descriptor refresh should not remove a live primary. Keep the
+            // old registration and retry on the next topology poll.
+            next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cached);
+            registrations.push(cached.registration);
           }
         }
       }

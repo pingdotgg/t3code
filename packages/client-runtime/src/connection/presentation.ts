@@ -2,7 +2,7 @@ import type { ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import type { NetworkStatus, SupervisorConnectionState } from "./model.ts";
+import type { ConnectionBlockedReason, NetworkStatus, SupervisorConnectionState } from "./model.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -16,6 +16,8 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  readonly blockedReason?: ConnectionBlockedReason;
+  readonly serverVersion?: string;
 }
 
 export interface EnvironmentPresentation {
@@ -46,12 +48,22 @@ export function presentConnectionState(
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
       };
-    case "blocked":
+    case "blocked": {
+      const failure = state.lastFailure;
       return {
         phase: "error",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
+        error: failure?.message ?? null,
+        traceId: failure?.traceId ?? null,
+        ...(failure?._tag === "ConnectionBlockedError"
+          ? {
+              blockedReason: failure.reason,
+              ...(failure.serverVersion === undefined
+                ? {}
+                : { serverVersion: failure.serverVersion }),
+            }
+          : {}),
       };
+    }
   }
 }
 

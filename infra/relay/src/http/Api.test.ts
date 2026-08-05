@@ -23,6 +23,7 @@ import {
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
   relayNotFoundRoute,
+  reconcileManagedEndpointRecord,
   revokeEnvironmentLinkRecord,
   traceRelayHttpRequestWith,
   unlinkEnvironmentRecord,
@@ -163,17 +164,20 @@ describe("relay environment authentication", () => {
 
 function relayUnlinkTestLayer(input?: {
   readonly withTransaction?: RelayDb.RelayTransactions["Service"]["withTransaction"];
+  readonly withEnvironmentLock?: RelayDb.RelayTransactions["Service"]["withEnvironmentLock"];
   readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
   readonly revokeForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["revokeForUser"];
   readonly revokeCredential?: EnvironmentCredentials.EnvironmentCredentials["Service"]["revokeForEnvironmentPublicKey"];
   readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+  readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
 }) {
   return Layer.mergeAll(
     Layer.succeed(
       RelayDb.RelayTransactions,
       RelayDb.RelayTransactions.of({
         withTransaction: input?.withTransaction ?? ((effect) => effect),
+        withEnvironmentLock: input?.withEnvironmentLock ?? ((_input, effect) => effect),
       }),
     ),
     Layer.succeed(
@@ -199,7 +203,7 @@ function relayUnlinkTestLayer(input?: {
     Layer.succeed(
       ManagedEndpointProvider.ManagedEndpointProvider,
       ManagedEndpointProvider.ManagedEndpointProvider.of({
-        provision: () => Effect.die("unused provision"),
+        provision: input?.provision ?? (() => Effect.die("unused provision")),
         prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
         deprovision: input?.deprovision ?? (() => Effect.void),
         release: () => Effect.die("unused release"),
@@ -275,16 +279,29 @@ describe("relay environment unlink", () => {
         }),
       ).toBe(true);
       expect(calls).toEqual([
+        "lock",
         "prepare",
         "lookup",
         "transaction",
         "link",
         "credential",
+        "unlock",
         "deprovision",
       ]);
     }).pipe(
       Effect.provide(
         relayUnlinkTestLayer({
+          withEnvironmentLock: (_input, effect) =>
+            Effect.sync(() => {
+              calls.push("lock");
+            }).pipe(
+              Effect.andThen(effect),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  calls.push("unlock");
+                }),
+              ),
+            ),
           withTransaction: (effect) => {
             calls.push("transaction");
             return effect;
@@ -388,6 +405,58 @@ describe("relay environment unlink", () => {
           deprovision: () =>
             Effect.sync(() => {
               calls.push("deprovision");
+            }),
+        }),
+      ),
+    );
+  });
+});
+
+describe("managed endpoint reconciliation", () => {
+  it.effect("holds the environment lock across authorization and provisioning", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const result = yield* reconcileManagedEndpointRecord({
+        userId: "user-1",
+        environmentId: "environment-1",
+        environmentPublicKey: "public-key",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      expect(result.runtime.connectorToken).toBe("connector-token");
+      expect(calls).toEqual(["lock", "lookup", "provision", "unlock"]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          withEnvironmentLock: (_input, effect) =>
+            Effect.sync(() => {
+              calls.push("lock");
+            }).pipe(
+              Effect.andThen(effect),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  calls.push("unlock");
+                }),
+              ),
+            ),
+          getForUser: () =>
+            Effect.sync(() => {
+              calls.push("lookup");
+              return linkedEnvironmentRecord;
+            }),
+          provision: ({ origin }) =>
+            Effect.sync(() => {
+              calls.push("provision");
+              return {
+                endpoint: linkedEnvironmentRecord.endpoint,
+                runtime: {
+                  providerKind: "cloudflare_tunnel" as const,
+                  connectorToken: "connector-token",
+                  tunnelId: "tunnel-1",
+                  tunnelName: "environment-1-tunnel",
+                  origin,
+                },
+              };
             }),
         }),
       ),

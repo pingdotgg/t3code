@@ -130,14 +130,26 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     "",
   ].join("\n");
 
-export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
+export const formatManagedHeadlessServeOutput = (connectionString: string): string =>
+  [
+    "T3 Code server is ready.",
+    `Connection string: ${connectionString}`,
+    "Run `npx t3 pair` to create a pairing URL.",
+    "",
+  ].join("\n");
+
+export const resolveHeadlessServeConnectionString = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const connectionString = resolveHeadlessConnectionString(
+  return resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+});
+
+export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const connectionString = yield* resolveHeadlessServeConnectionString;
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {

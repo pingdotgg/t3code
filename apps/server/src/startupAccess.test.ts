@@ -3,6 +3,7 @@ import { assert, expect, it } from "@effect/vitest";
 import {
   buildPairingUrl,
   formatHeadlessServeOutput,
+  formatManagedHeadlessServeOutput,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
@@ -76,4 +77,15 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Token: PAIRCODE");
   expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+it("formats managed service output without mintable pairing material", () => {
+  const output = formatManagedHeadlessServeOutput("http://127.0.0.1:3773");
+
+  expect(output).toContain("Connection string: http://127.0.0.1:3773");
+  expect(output).toContain("Run `npx t3 pair` to create a pairing URL.");
+  expect(output).not.toContain("Token:");
+  expect(output).not.toContain("Pairing URL:");
+  expect(output).not.toContain("#token=");
+  assert.isFalse(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });

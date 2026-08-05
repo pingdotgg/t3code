@@ -12,6 +12,7 @@ import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
   primaryRegistrationToRetainAfterTopologyRead,
+  primaryRegistrationRefreshAtEpochMs,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
   secondaryRegistrationsToRetainAfterTopologyRead,
@@ -221,5 +222,15 @@ describe("primary topology cache", () => {
         target: null,
       }),
     ).toBeUndefined();
+  });
+
+  it("periodically refreshes primary descriptor metadata", () => {
+    const discoveredAtEpochMs = 10_000;
+    const refreshAtEpochMs = primaryRegistrationRefreshAtEpochMs(discoveredAtEpochMs);
+    const refreshable = { ...cached, refreshAtEpochMs };
+
+    expect(refreshAtEpochMs).toBe(40_000);
+    expect(canReuseCachedPlatformRegistration(refreshable, cached.signature, 39_999)).toBe(true);
+    expect(canReuseCachedPlatformRegistration(refreshable, cached.signature, 40_000)).toBe(false);
   });
 });

@@ -47,6 +47,7 @@ import {
   RelayEnvironmentPrincipal,
   type RelayEnvironmentConnectRequest,
   type RelayDpopAccessTokenScope,
+  type RelayManagedEndpointOrigin,
   RelayInternalError,
 } from "@t3tools/contracts/relay";
 import { normalizeRelayIssuer } from "@t3tools/shared/relayJwt";
@@ -432,37 +433,62 @@ export const revokeEnvironmentLinkRecord = Effect.fn(
 
 export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnvironmentRecord")(
   function* (input: { readonly userId: string; readonly environmentId: string }) {
+    const transactions = yield* RelayDb.RelayTransactions;
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-    const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
-    const link = yield* links.getForUser({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
-    const unlinked =
-      link === null
-        ? false
-        : yield* revokeEnvironmentLinkRecord({
-            userId: input.userId,
-            environmentId: link.environmentId,
-            environmentPublicKey: link.environmentPublicKey,
-          });
-
-    // External teardown cannot share the SQL transaction. Run it only after
-    // revocation commits so a database failure leaves a fully usable active
-    // link. Still run teardown when the link is already revoked, allowing a
-    // retry to finish cleanup after an earlier Cloudflare failure.
+    const { deprovisionTarget, unlinked } = yield* transactions.withEnvironmentLock(
+      input,
+      Effect.gen(function* () {
+        const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision(input);
+        const link = yield* links.getForUser(input);
+        const unlinked =
+          link === null
+            ? false
+            : yield* revokeEnvironmentLinkRecord({
+                userId: input.userId,
+                environmentId: link.environmentId,
+                environmentPublicKey: link.environmentPublicKey,
+              });
+        return { deprovisionTarget, unlinked };
+      }),
+    );
+    // External teardown runs after revocation commits and releases the lock.
+    // Its captured allocation generation keeps a concurrent relink safe while
+    // still allowing a retry to finish an earlier incomplete cleanup.
     yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
+      ...input,
       target: deprovisionTarget,
     });
     return unlinked;
   },
 );
+
+export const reconcileManagedEndpointRecord = Effect.fn(
+  "relay.api.server.reconcileManagedEndpointRecord",
+)(function* (input: {
+  readonly userId: string;
+  readonly environmentId: string;
+  readonly environmentPublicKey: string;
+  readonly origin: RelayManagedEndpointOrigin;
+}) {
+  const transactions = yield* RelayDb.RelayTransactions;
+  const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+  return yield* transactions.withEnvironmentLock(
+    input,
+    Effect.gen(function* () {
+      const link = yield* links.getForUser(input);
+      if (
+        link === null ||
+        link.environmentPublicKey !== input.environmentPublicKey ||
+        link.endpoint.providerKind !== "cloudflare_tunnel"
+      ) {
+        return yield* new HttpApiError.Unauthorized({});
+      }
+      return yield* managedEndpointProvider.provision(input);
+    }),
+  );
+});
 
 export const mobileApi = HttpApiBuilder.group(
   RelayApi,
@@ -856,7 +882,7 @@ export const serverApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
-    return handlers.handle(
+    const publishHandlers = handlers.handle(
       "publishAgentActivity",
       Effect.fn("relay.api.server.publishAgentActivity")(
         function* (args) {
@@ -984,6 +1010,51 @@ export const serverApi = HttpApiBuilder.group(
         mapRelayCommonApiErrors("not_authorized"),
       ),
     );
+    return publishHandlers.handle(
+      "reconcileManagedEndpoint",
+      Effect.fn("relay.api.server.reconcileManagedEndpoint")(
+        function* ({ params, payload }) {
+          const principal = yield* RelayEnvironmentPrincipal;
+          if (principal.environmentId !== params.environmentId) {
+            return yield* new HttpApiError.Unauthorized({});
+          }
+          const result = yield* reconcileManagedEndpointRecord({
+            userId: payload.cloudUserId,
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            origin: payload.origin,
+          });
+          return { endpointRuntime: result.runtime };
+        },
+        mapErrorTags({
+          ManagedEndpointProvisioningNotConfigured: (_error, traceId) =>
+            new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "managed_endpoint_not_configured",
+              traceId,
+            }),
+          ManagedEndpointProvisioningFailed: (_error, traceId) =>
+            new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "managed_endpoint_provisioning_failed",
+              traceId,
+            }),
+          ManagedEndpointOriginNotAllowed: (_error, traceId) =>
+            new RelayEnvironmentLinkProofInvalidError({
+              code: "environment_link_proof_invalid",
+              reason: "origin_not_allowed",
+              traceId,
+            }),
+          ManagedTunnelLimitExceeded: (limitError, traceId) =>
+            new RelayEnvironmentLinkLimitExceededError({
+              code: "environment_link_limit_exceeded",
+              maxTunnels: limitError.maxTunnels,
+              traceId,
+            }),
+        }),
+        mapRelayCommonApiErrors("not_authorized"),
+      ),
+    );
   }),
 );
 
@@ -1025,6 +1096,7 @@ const RelayCommonPersistenceError = Schema.Union([
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
+  RelayDb.EnvironmentLifecycleLeasePersistenceError,
 ]);
 type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
 const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);

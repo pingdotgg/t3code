@@ -19,12 +19,19 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./config.ts";
+import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
+  decodeRuntimeConfig,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_URL_SECRET,
+} from "./config.ts";
 import {
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
-  reconcileDesiredCloudLink,
+  managedEndpointOriginsEqual,
+  reconcileCloudLinkOnStartup,
   releaseManagedTunnelOnShutdown,
 } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
@@ -77,6 +84,18 @@ it("preserves messages surfaced by cloud 500 responses", () => {
     "Failed to sign cloud health JWT.",
     "Failed to sign cloud mint JWT.",
   ]);
+});
+
+it("compares managed endpoint origins without hostname formatting drift", () => {
+  const desired = { localHttpHost: "127.0.0.1", localHttpPort: 7331 } as const;
+
+  expect(managedEndpointOriginsEqual(undefined, desired)).toBe(false);
+  expect(
+    managedEndpointOriginsEqual({ localHttpHost: "[127.0.0.1]", localHttpPort: 7331 }, desired),
+  ).toBe(true);
+  expect(
+    managedEndpointOriginsEqual({ localHttpHost: "127.0.0.1", localHttpPort: 7332 }, desired),
+  ).toBe(false);
 });
 
 describe("consumeCloudReplayGuards", () => {
@@ -172,20 +191,25 @@ describe("relay request tracing", () => {
   );
 });
 
-describe("reconcileDesiredCloudLink", () => {
-  it.effect("requires stored CLI authorization without exposing an HTTP endpoint", () =>
+describe("reconcileCloudLinkOnStartup", () => {
+  it.effect("restores a desired CLI link before attempting origin repair", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(reconcileDesiredCloudLink("http://127.0.0.1:3774"));
+      const error = yield* Effect.flip(reconcileCloudLinkOnStartup("http://127.0.0.1:3774"));
 
       expect(error).toMatchObject({
         _tag: "EnvironmentHttpUnauthorizedError",
         message: "Run `t3 connect link` to authorize this environment.",
       });
     }).pipe(
-      Effect.provideService(
-        ServerSecretStore.ServerSecretStore,
-        makeSecretStore(unusedSecretStoreOperation),
-      ),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, {
+        ...makeSecretStore(unusedSecretStoreOperation),
+        get: (name) =>
+          Effect.succeed(
+            name === CLOUD_CLI_DESIRED_LINK_SECRET
+              ? Option.some(new TextEncoder().encode("managed"))
+              : Option.none(),
+          ),
+      }),
       Effect.provideService(
         ServerEnvironment.ServerEnvironment,
         ServerEnvironment.ServerEnvironment.of({
@@ -220,6 +244,122 @@ describe("reconcileDesiredCloudLink", () => {
       Effect.provide(NodeServices.layer),
     ),
   );
+});
+
+describe("reconcileManagedEndpointOrigin", () => {
+  it.effect("uses the environment credential and persists the reconciled origin", () => {
+    const initialSecrets: ReadonlyArray<readonly [string, string]> = [
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        JSON.stringify({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "old-connector-token",
+        }),
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      [CLOUD_LINKED_USER_ID, "user_123"],
+    ];
+    const values = new Map<string, Uint8Array>(
+      initialSecrets.map(([name, value]) => [name, new TextEncoder().encode(value)] as const),
+    );
+    const store: ServerSecretStore.ServerSecretStore["Service"] = {
+      get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, value);
+        }),
+      create: unusedSecretStoreOperation,
+      getOrCreateRandom: unusedSecretStoreOperation,
+      remove: unusedSecretStoreOperation,
+    };
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const applied: Array<unknown> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* reconcileCloudLinkOnStartup("http://127.0.0.1:4555")).toBe(true);
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe(
+        "https://relay.example.test/v1/environments/env_123/managed-endpoint/reconcile",
+      );
+      expect(requests[0]?.headers.authorization).toBe("Bearer environment-credential");
+      expect(applied).toEqual([
+        {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "fresh-connector-token",
+          tunnelId: "tunnel-123",
+          tunnelName: "tunnel-name",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 4555 },
+        },
+      ]);
+      const persisted = decodeRuntimeConfig(
+        new TextDecoder().decode(values.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)),
+      );
+      expect(Option.getOrNull(persisted)?.origin).toEqual({
+        localHttpHost: "127.0.0.1",
+        localHttpPort: 4555,
+      });
+    }).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, store),
+      Effect.provideService(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
+          getDescriptor: unusedSecretStoreOperation(),
+        }),
+      ),
+      Effect.provideService(
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+          applyConfig: (config) =>
+            Effect.sync(() => {
+              applied.push(config);
+              return {
+                status: "running",
+                providerKind: "cloudflare_tunnel",
+                pid: 123,
+              } as const;
+            }),
+        }),
+      ),
+      Effect.provideService(
+        EnvironmentAuth.EnvironmentAuth,
+        EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuth["Service"]),
+      ),
+      Effect.provideService(
+        CliTokenManager.CloudCliTokenManager,
+        CliTokenManager.CloudCliTokenManager.of({
+          get: unusedSecretStoreOperation(),
+          getExisting: unusedSecretStoreOperation(),
+          hasCredential: unusedSecretStoreOperation(),
+          store: unusedSecretStoreOperation,
+          clear: unusedSecretStoreOperation(),
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                endpointRuntime: {
+                  providerKind: "cloudflare_tunnel",
+                  connectorToken: "fresh-connector-token",
+                  tunnelId: "tunnel-123",
+                  tunnelName: "tunnel-name",
+                  origin: { localHttpHost: "127.0.0.1", localHttpPort: 4555 },
+                },
+              }),
+            );
+          }),
+        ),
+      ),
+      Effect.provide(NodeServices.layer),
+    );
+  });
 });
 
 describe("releaseManagedTunnelOnShutdown", () => {

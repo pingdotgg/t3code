@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -36,11 +37,14 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { BOOT_SERVICE_UNIT_ENV, BOOT_SERVICE_UNIT_FILE } from "./cloud/bootService.ts";
 import {
   formatHeadlessServeOutput,
+  formatManagedHeadlessServeOutput,
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
+  resolveHeadlessServeConnectionString,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedErrorClass<ServerRuntimeStartupError>()(
@@ -307,6 +311,9 @@ export const make = (options?: StartupOptions) =>
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const managedServiceStartup =
+      launcher.managed || hostEnvironment[BOOT_SERVICE_UNIT_ENV] === BOOT_SERVICE_UNIT_FILE;
 
     const commandGate = yield* makeCommandGate;
     const httpListening = yield* Deferred.make<void>();
@@ -406,11 +413,10 @@ export const make = (options?: StartupOptions) =>
             Effect.ignoreCause({ log: true }),
           );
           if (serverConfig.startupPresentation === "headless") {
-            const accessInfo = yield* issueHeadlessServeAccessInfo();
-            yield* runStartupPhase(
-              "headless.output",
-              Console.log(formatHeadlessServeOutput(accessInfo)),
-            );
+            const output = managedServiceStartup
+              ? formatManagedHeadlessServeOutput(yield* resolveHeadlessServeConnectionString)
+              : formatHeadlessServeOutput(yield* issueHeadlessServeAccessInfo());
+            yield* runStartupPhase("headless.output", Console.log(output));
           } else {
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
             if (serverConfig.mode !== "desktop") {

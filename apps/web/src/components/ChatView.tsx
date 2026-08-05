@@ -299,10 +299,12 @@ import {
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ServerUpdateAction, ServerUpdateProgress } from "./ServerUpdateAction";
+import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
   isVersionMismatchDismissed,
+  resolveCompatibilityChannelMismatch,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   serverUpdateGuidance,
@@ -1908,6 +1910,14 @@ function ChatViewContent(props: ChatViewProps) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const compatibilityChannelMismatch =
+      unavailableConnection?.blockedReason === "unsupported"
+        ? resolveCompatibilityChannelMismatch({
+            clientVersion: APP_VERSION,
+            clientStageLabel: APP_STAGE_LABEL,
+            serverVersion: unavailableConnection.serverVersion,
+          })
+        : null;
     // Reconnecting to a version-skewed server with no update in flight
     // usually means the server is restarting mid-update and a refresh wiped
     // the in-memory update state. Fold the reconnect and version banners
@@ -1933,6 +1943,59 @@ function ChatViewContent(props: ChatViewProps) {
           ),
           title: `${unavailableConnection.phase === "connecting" ? "Connecting" : "Reconnecting"} to ${activeEnvironmentUnavailableState.label}`,
           description: "It may be finishing an update. One moment.",
+        });
+      } else if (compatibilityChannelMismatch) {
+        items.push({
+          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
+          variant: "error",
+          icon: <TriangleAlertIcon />,
+          title: "Client and server channels differ",
+          description: (
+            <div className="mt-1 min-w-0 space-y-2">
+              <p>
+                {compatibilityChannelMismatch.newerSide === "server"
+                  ? `This client is older. Update it to match the ${compatibilityChannelMismatch.serverChannel} server.`
+                  : compatibilityChannelMismatch.newerSide === "client"
+                    ? `The server is older. Update it to match this ${compatibilityChannelMismatch.clientChannel} client.`
+                    : "Pick Stable or Nightly for both installations."}
+              </p>
+              <div className="grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-x-3 gap-y-1.5 border-y border-current/15 py-2 text-xs">
+                <span className="text-muted-foreground">Client</span>
+                <code className="truncate text-foreground">
+                  {compatibilityChannelMismatch.clientVersion}
+                </code>
+                <span className="font-medium text-foreground">
+                  {compatibilityChannelMismatch.clientChannel}
+                </span>
+                <span className="text-muted-foreground">Server</span>
+                <code className="truncate text-foreground">
+                  {compatibilityChannelMismatch.serverVersion}
+                </code>
+                <span className="font-medium text-foreground">
+                  {compatibilityChannelMismatch.serverChannel}
+                </span>
+              </div>
+            </div>
+          ),
+          actions: (
+            <>
+              {compatibilityChannelMismatch.newerSide === "client" ? (
+                <ServerUpdateAction
+                  environmentId={activeEnvironmentUnavailableState.environmentId}
+                  serverLabel={`${activeEnvironmentUnavailableState.label} server`}
+                  selfUpdate={null}
+                  targetVersion={compatibilityChannelMismatch.clientVersion}
+                />
+              ) : null}
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => void navigate({ to: "/settings/connections" })}
+              >
+                Connections
+              </Button>
+            </>
+          ),
         });
       } else {
         items.push({
@@ -1972,7 +2035,10 @@ function ChatViewContent(props: ChatViewProps) {
       serverUpdateEnvironmentId &&
       !reconnectingThroughVersionSkew &&
       (serverUpdateState.status !== "idle" ||
-        (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
+        (compatibilityChannelMismatch === null &&
+          showVersionMismatchBanner &&
+          versionMismatch &&
+          versionMismatchDismissKey))
     ) {
       const updateInProgress = serverUpdateState.status === "running";
       const updateFailed = serverUpdateState.status === "failed";

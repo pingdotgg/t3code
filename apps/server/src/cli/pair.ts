@@ -20,6 +20,8 @@ import {
   DEFAULT_TAILSCALE_SERVE_PORT,
   ensureTailscaleServe,
   readTailscaleStatus,
+  TailscaleCommandExitError,
+  TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -76,9 +78,10 @@ export class NoRunningServerError extends Schema.TaggedErrorClass<NoRunningServe
 ) {
   override get message(): string {
     return [
-      "No running T3 Code server found.",
+      "No usable T3 Code server runtime state found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      "If a server is running, pass its T3 home with `--base-dir`; its runtime state may be missing or stale.",
+      "Otherwise start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
     ].join("\n");
   }
 }
@@ -114,11 +117,42 @@ export class ServesOtherEnvironmentError extends Schema.TaggedErrorClass<ServesO
 
 export class TailscaleServeFailedError extends Schema.TaggedErrorClass<TailscaleServeFailedError>()(
   "TailscaleServeFailedError",
-  { servePort: Schema.Number, cause: Schema.Defect() },
+  {
+    servePort: Schema.Number,
+    executable: Schema.optional(Schema.Literals(["tailscale", "tailscale.exe"])),
+    exitCode: Schema.optional(Schema.Number),
+    stderrDiagnostic: Schema.optional(TailscaleStderrDiagnostic),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
+    if (this.stderrDiagnostic === "permission-denied") {
+      const exitDetail = this.exitCode === undefined ? "" : ` with code ${String(this.exitCode)}`;
+      if (this.executable === "tailscale.exe") {
+        return `tailscale serve failed${exitDetail} for HTTPS port ${String(this.servePort)}: access denied. Grant this Windows user permission to manage Tailscale, then retry.`;
+      }
+      return `tailscale serve failed${exitDetail} for HTTPS port ${String(this.servePort)}: access denied. Run \`sudo tailscale set --operator=$USER\`, then retry.`;
+    }
     return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve --https=${String(this.servePort)} --bg <local-url>\` by hand to see why.`;
   }
+}
+
+const isTailscaleCommandExitError = Schema.is(TailscaleCommandExitError);
+
+export function tailscaleServeFailedError(
+  servePort: number,
+  cause: unknown,
+): TailscaleServeFailedError {
+  const exitDetails = isTailscaleCommandExitError(cause)
+    ? {
+        executable: cause.executable,
+        exitCode: cause.exitCode,
+        ...(cause.stderrDiagnostic === undefined
+          ? {}
+          : { stderrDiagnostic: cause.stderrDiagnostic }),
+      }
+    : {};
+  return new TailscaleServeFailedError({ servePort, cause, ...exitDetails });
 }
 
 export class ServePortOccupiedError extends Schema.TaggedErrorClass<ServePortOccupiedError>()(
@@ -409,11 +443,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       localPort: localTarget.localPort,
       servePort: input.servePort,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
-    }).pipe(
-      Effect.mapError(
-        (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
-      ),
-    );
+    }).pipe(Effect.mapError((cause) => tailscaleServeFailedError(input.servePort, cause)));
     notes.push(
       `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} off\`.`,
     );

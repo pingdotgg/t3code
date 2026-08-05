@@ -314,8 +314,24 @@ describe("tailscale", () => {
       // The diagnostic classifies the failure without quoting stderr, so the
       // key cannot reach a log through it either.
       assert.equal(error.stderrDiagnostic, "permission-denied");
+      assert.include(error.message, "exited with code 1");
+      assert.include(error.message, "sudo tailscale set --operator=$USER");
       assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
     });
+  });
+
+  it("does not suggest a Unix permission command on Windows", () => {
+    const error = new TailscaleCommandExitError({
+      executable: "tailscale.exe",
+      subcommand: "serve",
+      argumentCount: 4,
+      exitCode: 1,
+      stderrLength: 24,
+      stderrDiagnostic: "permission-denied",
+    });
+
+    assert.include(error.message, "Grant this Windows user permission");
+    assert.notInclude(error.message, "sudo");
   });
 
   it.effect("disables tailscale serve through the process spawner service", () => {

@@ -105,7 +105,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.launcherPath)).toBe("export {};\n");
-      expect((yield* service.status).current).toBe(true);
+      expect(yield* service.status).toMatchObject({
+        current: true,
+        installedVersion: "1.2.3",
+      });
       // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned test document.
       const pendingState = JSON.stringify({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -134,6 +137,22 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(plan.launcherPath)).toBe(
         "export const source = 'pinned runtime';\n",
       );
+    }),
+  );
+
+  it.effect("reports the installed version across launcher protocol revisions", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath } = yield* makeHarness();
+      yield* service.install;
+      yield* fs.writeFileString(
+        statePath,
+        `{"protocol":${String(SERVICE_LAUNCHER_PROTOCOL + 1)},"activeVersion":"9.9.9"}`,
+      );
+
+      expect(yield* service.status).toMatchObject({
+        current: false,
+        installedVersion: "9.9.9",
+      });
     }),
   );
 

@@ -180,6 +180,20 @@ export function serviceStateHasPendingUpdate(value: string): boolean {
   }
 }
 
+/** Reads the active version across launcher protocol revisions for downgrade protection. */
+export function serviceStateActiveVersion(value: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) &&
+      typeof parsed.activeVersion === "string" &&
+      isExactServiceVersion(parsed.activeVersion)
+      ? parsed.activeVersion
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function decodeServiceLauncherContext(value: string): ServiceLauncherContext | undefined {
   let parsed: unknown;
   try {

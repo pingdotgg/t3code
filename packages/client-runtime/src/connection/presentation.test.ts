@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   type SupervisorConnectionState,
 } from "./model.ts";
@@ -116,6 +117,28 @@ describe("connection presentation", () => {
       phase: "reconnecting",
       error: "Relay connection timed out.",
       traceId: "trace-retry",
+    });
+  });
+
+  it("preserves compatibility metadata for blocked connections", () => {
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "blocked",
+          stage: null,
+          lastFailure: new ConnectionBlockedError({
+            reason: "unsupported",
+            detail: "The client and server could not agree on the RPC protocol.",
+            serverVersion: "0.0.32-nightly.20260803.4",
+          }),
+        }),
+      ),
+    ).toEqual({
+      phase: "error",
+      error: "The client and server could not agree on the RPC protocol.",
+      traceId: null,
+      blockedReason: "unsupported",
+      serverVersion: "0.0.32-nightly.20260803.4",
     });
   });
 

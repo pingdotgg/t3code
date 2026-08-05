@@ -94,6 +94,12 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
   },
 ) {
   override get message(): string {
+    if (this.stderrDiagnostic === "permission-denied" && this.subcommand === "serve") {
+      if (this.executable === "tailscale.exe") {
+        return `tailscale serve exited with code ${this.exitCode}: access denied. Grant this Windows user permission to manage Tailscale, then retry.`;
+      }
+      return `tailscale serve exited with code ${this.exitCode}: access denied. Run \`sudo tailscale set --operator=$USER\`, then retry.`;
+    }
     return `tailscale ${this.subcommand} exited with code ${this.exitCode}.`;
   }
 }

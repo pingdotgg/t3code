@@ -156,8 +156,22 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
   connectorToken: TrimmedNonEmptyString,
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
+  // Optional for compatibility with runtime configs persisted by older servers.
+  origin: Schema.optional(RelayManagedEndpointOrigin),
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
+
+export const RelayManagedEndpointReconcileRequest = Schema.Struct({
+  cloudUserId: TrimmedNonEmptyString,
+  origin: RelayManagedEndpointOrigin,
+});
+export type RelayManagedEndpointReconcileRequest = typeof RelayManagedEndpointReconcileRequest.Type;
+
+export const RelayManagedEndpointReconcileResponse = Schema.Struct({
+  endpointRuntime: RelayManagedEndpointRuntimeConfig,
+});
+export type RelayManagedEndpointReconcileResponse =
+  typeof RelayManagedEndpointReconcileResponse.Type;
 
 export const RelayLinkProofRequest = Schema.Struct({
   challenge: Schema.String,
@@ -1066,8 +1080,20 @@ export const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAgentActivityPublishErrors,
       },
     ).annotate(OpenApi.Summary, "Publish agent activity"),
+    HttpApiEndpoint.post(
+      "reconcileManagedEndpoint",
+      "/v1/environments/:environmentId/managed-endpoint/reconcile",
+      {
+        params: Schema.Struct({
+          environmentId: EnvironmentId,
+        }),
+        payload: RelayManagedEndpointReconcileRequest,
+        success: RelayManagedEndpointReconcileResponse,
+        error: RelayEnvironmentLinkErrors,
+      },
+    ).annotate(OpenApi.Summary, "Reconcile a managed endpoint origin"),
   )
-  .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
+  .annotate(OpenApi.Description, "Environment-authenticated relay operations.")
   .middleware(RelayEnvironmentAuth);
 
 export const RelayApi = HttpApi.make("RelayApi")
