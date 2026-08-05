@@ -989,14 +989,21 @@ export const makeCodexSessionRuntime = (
           if (!spawn) {
             return false;
           }
-          const spawnTurnId = (yield* Ref.get(sessionRef)).activeTurnId ?? undefined;
+          // Merge with any subAgentActivity registration that got here
+          // first: its spawnTurnId was captured during the live parent turn
+          // and must not be clobbered with the (possibly settled → undefined)
+          // current activeTurnId (review finding).
+          const existingChild = (yield* Ref.get(collabChildAgentsRef)).get(thread.id);
+          const spawnTurnId =
+            existingChild?.spawnTurnId ?? (yield* Ref.get(sessionRef)).activeTurnId ?? undefined;
           const state: CollabChildAgentState = {
             agentThreadId: thread.id,
-            nickname: spawn.nickname ?? thread.agentNickname ?? undefined,
-            role: spawn.role ?? thread.agentRole ?? undefined,
-            agentPath: spawn.agentPath,
-            depth: spawn.depth,
-            parentThreadId: spawn.parentThreadId ?? thread.parentThreadId ?? undefined,
+            nickname: spawn.nickname ?? thread.agentNickname ?? existingChild?.nickname,
+            role: spawn.role ?? thread.agentRole ?? existingChild?.role,
+            agentPath: spawn.agentPath ?? existingChild?.agentPath,
+            depth: spawn.depth ?? existingChild?.depth,
+            parentThreadId:
+              spawn.parentThreadId ?? thread.parentThreadId ?? existingChild?.parentThreadId,
             spawnTurnId,
           };
           yield* Ref.update(collabChildAgentsRef, (current) => {
@@ -1044,18 +1051,22 @@ export const makeCodexSessionRuntime = (
           }
           const activitySpawnTurnId = (yield* Ref.get(sessionRef)).activeTurnId ?? undefined;
           yield* Ref.update(collabChildAgentsRef, (current) => {
-            if (current.has(item.agentThreadId)) {
-              return current;
-            }
+            const existing = current.get(item.agentThreadId);
             const next = new Map(current);
+            // Merge-late semantics: when thread/started registered first, a
+            // later subAgentActivity still carries the real agentPath (and a
+            // derived nickname) — fill missing fields, never clobber known
+            // ones or the original spawnTurnId (review finding).
             next.set(item.agentThreadId, {
               agentThreadId: item.agentThreadId,
-              nickname: item.agentPath.split("/").findLast((segment) => segment.length > 0),
-              role: undefined,
-              agentPath: item.agentPath,
-              depth: undefined,
-              parentThreadId: undefined,
-              spawnTurnId: activitySpawnTurnId,
+              nickname:
+                existing?.nickname ??
+                item.agentPath.split("/").findLast((segment) => segment.length > 0),
+              role: existing?.role,
+              agentPath: existing?.agentPath ?? item.agentPath,
+              depth: existing?.depth,
+              parentThreadId: existing?.parentThreadId,
+              spawnTurnId: existing?.spawnTurnId ?? activitySpawnTurnId,
             });
             return next;
           });
@@ -1174,6 +1185,14 @@ export const makeCodexSessionRuntime = (
             });
             return true;
           case "thread/closed":
+            // The child is gone: drop its live-turn entry so a later Stop
+            // doesn't waste a turn/interrupt RPC on a closed thread before
+            // reaching the parent (review finding).
+            yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+              const next = new Map(current);
+              next.delete(child.agentThreadId);
+              return next;
+            });
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,
@@ -1186,6 +1205,13 @@ export const makeCodexSessionRuntime = (
             // A child error must surface as a failed agent, not vanish into
             // the default swallow (review finding: the child stayed
             // "running" forever). Reuses the statusChanged systemError path.
+            // Same live-turn cleanup as thread/closed: an errored child has
+            // no turn left to interrupt.
+            yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+              const next = new Map(current);
+              next.delete(child.agentThreadId);
+              return next;
+            });
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,

@@ -2940,23 +2940,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
     const coordinatorId = message.task_id;
-    const coordinatorLinkage = taskLinkageFor(context.taskAgents, coordinatorId);
-    if (progress.phases.length > 0) {
-      // Phases ride on a coordinator-addressed progress row.
-      const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
-        ...base,
-        eventId: stamp.eventId,
-        createdAt: stamp.createdAt,
-        type: "task.progress",
-        payload: {
-          taskId: RuntimeTaskId.make(coordinatorId),
-          description: message.description,
-          phases: progress.phases,
-          ...coordinatorLinkage,
-        },
-      });
-    }
     for (const entry of progress.agents) {
       const memberTaskId = `${coordinatorId}:wf:${entry.index}`;
       const status = workflowAgentStatus(entry);
@@ -3177,6 +3160,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         const linkage = taskLinkageFor(context.taskAgents, message.task_id);
         const typedUsage = normalizeTaskUsage(message.usage);
+        // Phases ride on the coordinator's ONE progress row per tick. A
+        // separate phases-only row shared the stable ingestion activity id
+        // with this full row, and the thinner upsert overwrote usage and
+        // progress text (review finding).
+        const workflowPhases = parseWorkflowProgress(
+          (message as unknown as Record<string, unknown>).workflow_progress,
+        )?.phases;
         yield* offerRuntimeEvent({
           ...base,
           type: "task.progress",
@@ -3187,6 +3177,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.usage ? { usage: message.usage } : {}),
             ...(typedUsage ? { typedUsage } : {}),
             ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
+            ...(workflowPhases && workflowPhases.length > 0 ? { phases: workflowPhases } : {}),
             ...linkage,
             ...(message.subagent_type ? { role: message.subagent_type } : {}),
           },

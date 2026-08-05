@@ -4,18 +4,20 @@
 // replays a scripted multi-agent notification sequence read from the
 // T3_CODEX_COLLAB_SCRIPT env var (a JSON file path) when the first turn
 // starts. Runs as a plain Node process — stdlib only.
-import * as fs from "node:fs";
-import * as readline from "node:readline";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeReadline from "node:readline";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const fixture = JSON.parse(fs.readFileSync(path.join(here, "codexMultiAgentWire.json"), "utf8"));
-const script = JSON.parse(fs.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT, "utf8"));
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const fixture = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(here, "codexMultiAgentWire.json"), "utf8"),
+);
+const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT, "utf8"));
 
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 
-const rl = readline.createInterface({ input: process.stdin });
+const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let message;
   try {
