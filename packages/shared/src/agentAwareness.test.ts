@@ -20,7 +20,9 @@ const project = {
 describe("projectThreadAwarenessV2", () => {
   const updatedAt = DateTime.makeUnsafe(NOW);
   const v2Thread = (
-    overrides: Partial<Pick<OrchestrationV2ThreadShell, "status" | "pendingRuntimeRequest">> = {},
+    overrides: Partial<
+      Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status" | "pendingRuntimeRequest">
+    > = {},
   ) => ({
     id: "thread-2" as ThreadId,
     title: "Integrate orchestration",
@@ -37,6 +39,16 @@ describe("projectThreadAwarenessV2", () => {
         environmentId: "env-1" as EnvironmentId,
         project,
         thread: v2Thread(),
+      }),
+    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
+  it("keeps an older activity run visible over a newer cancelled run", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ status: "cancelled", activityRunStatus: "running" }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
