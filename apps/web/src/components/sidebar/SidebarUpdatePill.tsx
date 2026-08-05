@@ -19,6 +19,9 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+export const NIGHTLY_RELEASE_NOTES_TOOLTIP_CLASS_NAME =
+  "pointer-events-auto max-w-none text-balance";
+
 function SidebarUpdateReleaseNotesTooltip({
   state,
   tooltip,
@@ -35,7 +38,7 @@ function SidebarUpdateReleaseNotesTooltip({
       <div className="px-1">
         <div className="text-sm leading-5 font-medium">{tooltip}</div>
       </div>
-      <div className="pointer-events-auto max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
             {index > 0 && <Separator className="my-3 bg-border/60" />}
@@ -194,7 +197,7 @@ export function SidebarUpdatePill() {
               align="start"
               className={
                 state?.channel === "nightly" && state.releaseNotes.length > 0
-                  ? "max-w-none text-balance"
+                  ? NIGHTLY_RELEASE_NOTES_TOOLTIP_CLASS_NAME
                   : undefined
               }
               side="top"
