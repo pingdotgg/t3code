@@ -205,6 +205,17 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func plaintextCodeBlocksWrapByDefault() {
+        for language in ["text", "TEXT", "txt", "plaintext", "plain", "md", "markdown"] {
+            #expect(MarkdownCodeBlockWrapping.wrapsByDefault(language: language))
+        }
+
+        for language in [nil, "swift", "typescript", "console"] {
+            #expect(!MarkdownCodeBlockWrapping.wrapsByDefault(language: language))
+        }
+    }
+
+    @Test
     func parsesSetextHeadingsAndNormalizesWindowsNewlines() {
         let document = MarkdownDocument(parsing: "Heading\r\n=======\r\n\r\nBody")
 

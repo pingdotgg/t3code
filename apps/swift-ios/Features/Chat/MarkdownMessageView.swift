@@ -308,6 +308,11 @@ private struct MarkdownListView: View {
 private struct MarkdownCodeBlockView: View {
     let language: String?
     let code: String
+    @State private var wrapOverride: Bool?
+
+    private var wrapsLines: Bool {
+        wrapOverride ?? MarkdownCodeBlockWrapping.wrapsByDefault(language: language)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -322,6 +327,17 @@ private struct MarkdownCodeBlockView: View {
                         .foregroundStyle(T3Colors.textTertiary)
                 }
                 Spacer(minLength: 8)
+                Button {
+                    wrapOverride = !wrapsLines
+                } label: {
+                    Label("Wrap", systemImage: "arrow.turn.down.left")
+                        .font(T3Typography.control)
+                        .foregroundStyle(wrapsLines ? T3Colors.accent : T3Colors.textSecondary)
+                        .frame(minHeight: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(wrapsLines ? "On" : "Off")
+                .accessibilityHint("Toggles line wrapping for this code block")
                 Button {
                     UIPasteboard.general.string = code
                 } label: {
@@ -340,15 +356,25 @@ private struct MarkdownCodeBlockView: View {
                 .fill(T3Colors.separator)
                 .frame(height: 1)
 
-            ScrollView(.horizontal) {
+            if wrapsLines {
                 Text(verbatim: code)
                     .font(T3Typography.code)
                     .foregroundStyle(T3Colors.textPrimary.opacity(0.94))
                     .lineSpacing(3)
-                    .fixedSize(horizontal: true, vertical: true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(13)
+            } else {
+                ScrollView(.horizontal) {
+                    Text(verbatim: code)
+                        .font(T3Typography.code)
+                        .foregroundStyle(T3Colors.textPrimary.opacity(0.94))
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(13)
+                }
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         }
         .background(T3Colors.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -356,6 +382,23 @@ private struct MarkdownCodeBlockView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(T3Colors.border, lineWidth: 1)
         }
+    }
+}
+
+enum MarkdownCodeBlockWrapping {
+    private static let proseLanguages: Set<String> = [
+        "markdown",
+        "md",
+        "plain",
+        "plaintext",
+        "text",
+        "text/plain",
+        "txt",
+    ]
+
+    static func wrapsByDefault(language: String?) -> Bool {
+        guard let language else { return false }
+        return proseLanguages.contains(language.lowercased())
     }
 }
 
