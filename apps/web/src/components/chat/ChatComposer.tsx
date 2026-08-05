@@ -2474,11 +2474,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         unresolvedFiles.push(file);
       }
     }
+    let insertedMentions = false;
     if (mentionPaths.length > 0) {
-      const inserted = insertComposerTextAtEnd(buildDroppedFileMentions(mentionPaths, gitCwd), {
-        ensureLeadingBoundary: true,
-      });
-      if (!inserted) {
+      // Trailing space: the mention token grammar requires trailing
+      // whitespace, same as every other mention insert site.
+      insertedMentions = insertComposerTextAtEnd(
+        `${buildDroppedFileMentions(mentionPaths, gitCwd)} `,
+        { ensureLeadingBoundary: true },
+      );
+      if (!insertedMentions) {
         toastManager.add({
           type: "error",
           title: "Unable to add to chat",
@@ -2491,7 +2495,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (imagesToAttach.length > 0) {
       void addComposerImages(imagesToAttach);
     }
-    focusComposer();
+    // Focusing synchronously after a prompt insert would push the editor's
+    // stale snapshot back over the inserted mention (see the note on
+    // ComposerMentionDropHost); the insert path already focuses next frame.
+    if (!insertedMentions) {
+      focusComposer();
+    }
   };
 
   // File-tree drags land as mentions. Handled in the capture phase so the
