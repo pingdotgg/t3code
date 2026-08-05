@@ -85,6 +85,47 @@ describe("thread workflows", () => {
     expect(state.canPromoteToSteer).toBe(true);
   });
 
+  it("hides automatic completion delivery from the visible queue", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [
+        {
+          id: "automatic",
+          status: "queued",
+          userMessageId: "message-automatic",
+          ordinal: 2,
+          queuePosition: 1,
+        },
+        {
+          id: "visible",
+          status: "queued",
+          userMessageId: "message-visible",
+          ordinal: 3,
+          queuePosition: 2,
+        },
+      ],
+      messages: [
+        {
+          id: "message-automatic",
+          text: "A delegated task reached a terminal state.",
+          delegatedCompletion: {
+            generation: 1,
+            parentRunId: "run:parent",
+            taskIds: ["task:child"],
+          },
+        },
+        { id: "message-visible", text: "Visible queued message" },
+      ],
+      providerTurns: [],
+      providerThreads: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
+      ["visible", "Visible queued message"],
+    ]);
+  });
+
   it("removes only the promoted head from the visible queue", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },

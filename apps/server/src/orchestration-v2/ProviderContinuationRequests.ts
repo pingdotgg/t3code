@@ -1,4 +1,10 @@
-import { ProviderDriverKind, ProviderThreadId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ProviderDriverKind,
+  ProviderThreadId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,6 +16,16 @@ export interface ProviderContinuationRequest {
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  /**
+   * Durable ownership for an app-owned delegated-task completion delivery.
+   * The continuation worker re-reads the cohort before dispatching so a later
+   * task can join a queued wake and a stopped or acknowledged cohort is dropped.
+   */
+  readonly delegatedCompletion?: {
+    readonly parentRunId: RunId;
+    readonly generation: number;
+    readonly messageId: MessageId;
+  };
   /**
    * How the continuation turn gets its content.
    *
