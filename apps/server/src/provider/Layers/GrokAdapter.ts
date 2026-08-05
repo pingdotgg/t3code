@@ -424,10 +424,17 @@ function resolveProcessReasoningEffort(input: {
   return input.spawnEffort ?? reasoningEffortFromMeta(preferredModelMeta(input));
 }
 
+/**
+ * Drop turn-scoped plan.md fallback content only.
+ *
+ * Do not clear `planModeActive` here — that flag is session-scoped and must
+ * survive turn settlement / the start of the next sendTurn so Build can emit
+ * `/default` after a Plan turn. Plan mode is cleared only on exit_plan_mode,
+ * an explicit Build send, or session recreate.
+ */
 function clearProposedPlanFallback(ctx: GrokSessionContext): void {
   ctx.lastKnownProposedPlanMarkdown = undefined;
   ctx.lastKnownProposedPlanTurnId = undefined;
-  ctx.planModeActive = false;
 }
 
 /** Detect Grok's enter_plan_mode tool call from ACP tool state. */
