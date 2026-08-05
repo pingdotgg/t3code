@@ -9,16 +9,7 @@ export class ServerActivation extends Context.Reference<Effect.Effect<void> | un
   { defaultValue: () => undefined },
 ) {}
 
-/**
- * Drop any ambient `Tracer.ParentSpan` before running long-lived roots.
- *
- * Startup phases (and other short-lived `Effect.withSpan` scopes) often call
- * `forkParked` while a parent span is still current. Forked fibers inherit
- * that `ParentSpan` for their entire lifetime, so every nested span
- * (`ServerSecretStore.get`, RPC handlers, …) keeps parenting under an
- * immortal startup span and pins the `LocalFileSpan` object graph — steady
- * private-memory growth while "idle".
- */
+// Clear inherited ParentSpan so long-lived forks don't pin short-lived startup spans (#5410).
 export const withoutAmbientParentSpan = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
