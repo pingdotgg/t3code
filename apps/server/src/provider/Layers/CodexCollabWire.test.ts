@@ -140,6 +140,34 @@ describe("routeCodexChildNotification", () => {
     }
   });
 
+  it("never routes child-owned thread lifecycle to the parent", () => {
+    // These mutate PARENT thread state in CodexAdapter (archived/compacted),
+    // so a child emitting them must never reach the parent path. This list
+    // mirrors shouldSuppressChildConversationNotification (the v1 collab
+    // suppressor) — the two must not drift (review finding: the router
+    // initially omitted them and they leaked).
+    for (const method of [
+      "thread/started",
+      "thread/status/changed",
+      "thread/archived",
+      "thread/unarchived",
+      "thread/closed",
+      "thread/compacted",
+      "thread/name/updated",
+      "thread/tokenUsage/updated",
+      "turn/started",
+      "turn/completed",
+      "turn/plan/updated",
+      "item/plan/delta",
+    ]) {
+      assert.notEqual(
+        routeCodexChildNotification(method),
+        "parent",
+        `${method} is child-owned and must not reach the parent path`,
+      );
+    }
+  });
+
   it("sends parent-owned and UNKNOWN methods to the parent path", () => {
     // serverRequest/resolved clears the parent's approval correlation:
     // swallowing it left approvals stuck (shipped bug). Unknown methods take

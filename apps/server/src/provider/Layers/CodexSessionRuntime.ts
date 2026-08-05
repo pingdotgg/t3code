@@ -749,6 +749,16 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "thread/name/updated",
   "thread/settings/updated",
   "rawResponseItem/completed",
+  // Child-owned thread lifecycle: the parent adapter maps these onto the
+  // PARENT thread (archived/compacted state), so a child compacting would
+  // rewrite the parent. Mirrors the v1 suppressor list — dropping them is
+  // the pre-existing behavior for collab children (review finding).
+  "thread/archived",
+  "thread/unarchived",
+  "thread/compacted",
+  // Registration path 1 handles a child's first thread/started; a repeat
+  // must not reach the parent (it would restart the parent's thread state).
+  "thread/started",
 ]);
 
 export function routeCodexChildNotification(method: string): CodexChildNotificationRoute {
