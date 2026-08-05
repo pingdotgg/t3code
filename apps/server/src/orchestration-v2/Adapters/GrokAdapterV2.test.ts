@@ -13,6 +13,7 @@ import {
   acpRootTurnIsIdle,
   acpRootTurnSettleDebounceMs,
   acpRootTurnShouldRearmRecoveryTimers,
+  acpSubagentStatusBlocksTurnSettlement,
   acpSupportsImagePrompts,
 } from "./AcpAdapterV2.ts";
 import {
@@ -159,6 +160,20 @@ describe("acpRootTurn recovery timer re-arm", () => {
   });
 });
 
+describe("acpSubagentStatusBlocksTurnSettlement", () => {
+  it("blocks settlement for pending and running subagents", () => {
+    assert.isTrue(acpSubagentStatusBlocksTurnSettlement("pending"));
+    assert.isTrue(acpSubagentStatusBlocksTurnSettlement("running"));
+  });
+
+  it("does not block settlement for terminal subagents", () => {
+    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("cancelled"));
+    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("completed"));
+    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("failed"));
+    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("interrupted"));
+  });
+});
+
 describe("acpRootTurnIsIdle", () => {
   const quiet = {
     finalized: false,
@@ -168,7 +183,7 @@ describe("acpRootTurnIsIdle", () => {
     hasRunningTool: false,
     hasPendingRuntimeRequest: false,
     hasToolHistory: false,
-    hasRunningSubagent: false,
+    hasActiveSubagent: false,
     hasOutput: true,
   } as const;
 
@@ -185,7 +200,7 @@ describe("acpRootTurnIsIdle", () => {
   });
 
   it("is false while a native subagent task is still running", () => {
-    assert.isFalse(acpRootTurnIsIdle({ ...quiet, hasRunningSubagent: true }));
+    assert.isFalse(acpRootTurnIsIdle({ ...quiet, hasActiveSubagent: true }));
   });
 
   it("is false when only reasoning or tools have streamed", () => {

@@ -162,6 +162,31 @@ export type OrchestratorFixtureInputStep =
       readonly type: "queue_message";
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
+      readonly createdBy?: Extract<
+        OrchestrationV2Command,
+        { readonly type: "message.dispatch" }
+      >["createdBy"];
+      readonly creationSource?: Extract<
+        OrchestrationV2Command,
+        { readonly type: "message.dispatch" }
+      >["creationSource"];
+    }
+  | {
+      readonly type: "cancel_queued_run";
+      readonly targetRunIndex: number;
+    }
+  | {
+      readonly type: "await_run_status";
+      readonly targetRunIndex: number;
+      readonly status: OrchestrationV2RunStatus;
+    }
+  | {
+      readonly type: "capture_shell_snapshot";
+      readonly key: string;
+    }
+  | {
+      readonly type: "release_replay_gate";
+      readonly label: string;
     }
   | {
       readonly type: "steer";
@@ -179,6 +204,11 @@ export type OrchestratorFixtureInputStep =
       readonly type: "interrupt";
       readonly targetRunIndex: number;
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
+    }
+  | {
+      readonly type: "release_replay_gate_after_waiting";
+      readonly label: string;
+      readonly targetRunIndex: number;
     }
   | {
       readonly type: "approve_next_runtime_request";
@@ -213,6 +243,8 @@ export interface OrchestratorFixtureInput {
 export interface ProviderOrchestratorReplayVariant {
   readonly driver: ProviderDriverKind;
   readonly transcriptFile: URL;
+  readonly recordedScenario?: string;
+  readonly transcriptEntriesThroughLabel?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicyOverride?: RuntimePolicyV2Override;
   readonly assertOutput: (
@@ -348,6 +380,14 @@ export function dispatchMessageCommand(input: {
   readonly messageId: MessageId;
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
+  readonly createdBy?: Extract<
+    OrchestrationV2Command,
+    { readonly type: "message.dispatch" }
+  >["createdBy"];
+  readonly creationSource?: Extract<
+    OrchestrationV2Command,
+    { readonly type: "message.dispatch" }
+  >["creationSource"];
   readonly dispatchMode?: Extract<
     OrchestrationV2Command,
     { readonly type: "message.dispatch" }
@@ -355,8 +395,8 @@ export function dispatchMessageCommand(input: {
 }): OrchestrationV2Command {
   return {
     type: "message.dispatch",
-    createdBy: "user",
-    creationSource: "web",
+    createdBy: input.createdBy ?? "user",
+    creationSource: input.creationSource ?? "web",
     commandId: input.commandId,
     threadId: input.ids.threadId,
     messageId: input.messageId,
@@ -436,7 +476,9 @@ export function materializeFixtureInput(input: {
               (nextStep !== undefined &&
                 ((nextStep.type === "interrupt" && nextStep.targetRunIndex === runIndex) ||
                   nextStep.type === "queue_message" ||
-                  (nextStep.type === "restart" && nextStep.targetRunIndex === runIndex))) ||
+                  (nextStep.type === "restart" && nextStep.targetRunIndex === runIndex) ||
+                  (nextStep.type === "release_replay_gate_after_waiting" &&
+                    nextStep.targetRunIndex === runIndex))) ||
               nextStep?.type === "approve_next_runtime_request" ||
               nextStep?.type === "answer_next_user_input_request";
             const key = `run:${runIndex}`;
@@ -470,9 +512,10 @@ export function materializeFixtureInput(input: {
             }
           }
           break;
-        case "queue_message":
+        case "queue_message": {
           messageIndex += 1;
           runIndex += 1;
+          const nextStep = input.fixtureInput.steps[stepIndex + 1];
           pushDispatch(
             dispatchMessageCommand({
               commandId: yield* idAllocator.allocate.command({
@@ -486,12 +529,48 @@ export function materializeFixtureInput(input: {
                 ordinal: messageIndex,
               }),
               text: step.text,
+              ...(step.createdBy === undefined ? {} : { createdBy: step.createdBy }),
+              ...(step.creationSource === undefined ? {} : { creationSource: step.creationSource }),
               ...(step.attachments === undefined ? {} : { attachments: step.attachments }),
               dispatchMode: { type: "queue_after_active" },
             }),
           );
-          steps.push({ type: "await", key: `run:${runIndex - 1}` });
-          steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+          const shouldSkipQueueBarrier =
+            nextStep?.type === "queue_message" ||
+            (nextStep?.type === "cancel_queued_run" && nextStep.targetRunIndex === runIndex);
+          if (!shouldSkipQueueBarrier) {
+            const queueBarrierKey =
+              Array.from(activeRunDispatchKeys).at(-1) ?? `run:${runIndex - 1}`;
+            activeRunDispatchKeys.delete(queueBarrierKey);
+            steps.push({ type: "await", key: queueBarrierKey });
+            steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+          }
+          break;
+        }
+        case "cancel_queued_run":
+          pushDispatch({
+            type: "queued-run.cancel",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: `cancel-queued-run-${step.targetRunIndex}`,
+            }),
+            threadId: ids.threadId,
+            runId: runIdFor(step.targetRunIndex),
+          });
+          break;
+        case "await_run_status":
+          steps.push({
+            type: "await_run_status",
+            threadId: ids.threadId,
+            runId: runIdFor(step.targetRunIndex),
+            status: step.status,
+          });
+          break;
+        case "capture_shell_snapshot":
+          steps.push({ type: "capture_shell_snapshot", key: step.key });
+          break;
+        case "release_replay_gate":
+          steps.push({ type: "release_replay_gate", label: step.label });
           break;
         case "answer_next_user_input_request":
           pushDispatch(
@@ -572,11 +651,17 @@ export function materializeFixtureInput(input: {
               },
             }),
           );
-          if (input.fixtureInput.steps[stepIndex + 1]?.type !== "approve_next_runtime_request") {
-            if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
-              steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+          {
+            const nextStepType = input.fixtureInput.steps[stepIndex + 1]?.type;
+            if (
+              nextStepType !== "approve_next_runtime_request" &&
+              nextStepType !== "answer_next_user_input_request"
+            ) {
+              if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
+                steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+              }
+              steps.push({ type: "await_thread_idle", threadId: ids.threadId });
             }
-            steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           }
           break;
         case "restart":
@@ -606,11 +691,17 @@ export function materializeFixtureInput(input: {
               },
             }),
           );
-          if (input.fixtureInput.steps[stepIndex + 1]?.type !== "approve_next_runtime_request") {
-            if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
-              steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+          {
+            const nextStepType = input.fixtureInput.steps[stepIndex + 1]?.type;
+            if (
+              nextStepType !== "approve_next_runtime_request" &&
+              nextStepType !== "answer_next_user_input_request"
+            ) {
+              if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
+                steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+              }
+              steps.push({ type: "await_thread_idle", threadId: ids.threadId });
             }
-            steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           }
           break;
         case "interrupt":
@@ -644,6 +735,14 @@ export function materializeFixtureInput(input: {
           }
           steps.push({ type: "advance_clock", duration: "1 millis" });
           steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+          break;
+        case "release_replay_gate_after_waiting":
+          steps.push({
+            type: "release_replay_gate_after_waiting",
+            label: step.label,
+            threadId: ids.threadId,
+            runId: runIdFor(step.targetRunIndex),
+          });
           break;
         case "advance_clock":
           steps.push({ type: "advance_clock", duration: step.duration });

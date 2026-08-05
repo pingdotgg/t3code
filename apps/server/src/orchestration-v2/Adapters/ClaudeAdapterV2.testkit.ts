@@ -14,8 +14,10 @@ import {
   type ProviderApprovalDecision,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -44,6 +46,7 @@ import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
+import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
 
@@ -333,11 +336,11 @@ function makeClaudePermissionResponseFrame(
 
 function permissionRequestOptionsFromFrame(
   frame: ClaudePermissionRequestFrame,
+  signal: AbortSignal,
 ): Parameters<CanUseTool>[2] {
-  const abortController = new AbortController();
   const options = frame.options;
   return {
-    signal: abortController.signal,
+    signal,
     ...(options.suggestions === undefined ? {} : { suggestions: options.suggestions }),
     ...(options.blockedPath === undefined ? {} : { blockedPath: options.blockedPath }),
     ...(options.decisionReason === undefined ? {} : { decisionReason: options.decisionReason }),
@@ -361,6 +364,35 @@ function makeCursorSignal(): {
     resolve = onResolve;
   });
   return { promise, resolve };
+}
+
+function waitForCursorAdvance(promise: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    let waiting = true;
+    const finish = () => {
+      if (!waiting) {
+        return;
+      }
+      waiting = false;
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    void promise.then(finish);
+    if (signal.aborted) {
+      finish();
+    }
+  });
+}
+
+async function waitForReplayDelay(afterMs: number, signal: AbortSignal): Promise<void> {
+  const exit = await Effect.runPromiseExit(Effect.sleep(Duration.millis(afterMs)), { signal });
+  if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+    throw Cause.squash(exit.cause);
+  }
 }
 
 function stableClaudeQueryOptions(options: ClaudeAgentSdkQueryOptions): ClaudeAgentSdkQueryOptions {
@@ -417,15 +449,31 @@ function makeClaudeSessionForkFrame(
 
 export function makeReplayQueryRunner(
   transcript: ClaudeAgentSdkReplayTranscript,
+  replayOptions: { readonly replayGate?: ProviderReplayGate } = {},
 ): ClaudeQueryRunner {
   let cursor = 0;
   let failure: ClaudeAgentSdkReplayError | null = null;
   let cursorAdvanced = makeCursorSignal();
+  const iteratorAbortControllers = new Set<AbortController>();
+
+  const abortReplayIterators = () => {
+    for (const abortController of iteratorAbortControllers) {
+      abortController.abort();
+    }
+  };
 
   const fail = (error: ClaudeAgentSdkReplayError): never => {
     failure = error;
+    abortReplayIterators();
+    replayOptions.replayGate?.releaseAll();
     cursorAdvanced.resolve();
     throw error;
+  };
+
+  const throwIfFailed = () => {
+    if (failure !== null) {
+      throw failure;
+    }
   };
 
   const advance = () => {
@@ -437,11 +485,10 @@ export function makeReplayQueryRunner(
 
   async function* replayMessages(
     options: ClaudeAgentSdkQueryOptions,
+    signal: AbortSignal,
   ): AsyncGenerator<SDKMessage, void> {
     while (true) {
-      if (failure !== null) {
-        throw failure;
-      }
+      throwIfFailed();
 
       const entry = transcript.entries[cursor];
       if (entry === undefined) {
@@ -449,6 +496,20 @@ export function makeReplayQueryRunner(
       }
 
       if (entry.type === "emit_inbound") {
+        if (replayOptions.replayGate !== undefined) {
+          await replayOptions.replayGate.beforeEmit(entry.label, signal);
+          throwIfFailed();
+          if (signal.aborted) {
+            return;
+          }
+        }
+        if (entry.afterMs !== undefined && entry.afterMs > 0) {
+          await waitForReplayDelay(entry.afterMs, signal);
+          throwIfFailed();
+          if (signal.aborted) {
+            return;
+          }
+        }
         if (isClaudePermissionRequestFrame(entry.frame)) {
           const request = entry.frame;
           const invokeCanUseTool = options.canUseTool;
@@ -459,15 +520,27 @@ export function makeReplayQueryRunner(
               expectedType: "permission.request",
               actual: request,
             });
-            failure = error;
-            throw error;
+            return fail(error);
           }
           advance();
-          const result = await invokeCanUseTool(
-            request.toolName,
-            request.input,
-            permissionRequestOptionsFromFrame(request),
-          );
+          let result: PermissionResult | null;
+          try {
+            result = await invokeCanUseTool(
+              request.toolName,
+              request.input,
+              permissionRequestOptionsFromFrame(request, signal),
+            );
+          } catch (cause) {
+            throwIfFailed();
+            if (signal.aborted) {
+              return;
+            }
+            throw cause;
+          }
+          throwIfFailed();
+          if (signal.aborted) {
+            return;
+          }
           if (result === null) {
             const error = new ClaudeReplayUnexpectedOutboundError({
               scenario: transcript.scenario,
@@ -475,8 +548,7 @@ export function makeReplayQueryRunner(
               expectedType: "permission.response",
               actual: null,
             });
-            failure = error;
-            throw error;
+            return fail(error);
           }
           assertNextOutboundFrame(makeClaudePermissionResponseFrame(result));
           continue;
@@ -502,12 +574,48 @@ export function makeReplayQueryRunner(
       }
 
       if (entry.type === "expect_outbound") {
-        const signal = cursorAdvanced;
-        await signal.promise;
+        await waitForCursorAdvance(cursorAdvanced.promise, signal);
+        throwIfFailed();
+        if (signal.aborted) {
+          return;
+        }
         continue;
       }
     }
   }
+
+  const replayMessagesWithGateCleanup = (
+    options: ClaudeAgentSdkQueryOptions,
+  ): AsyncIterable<SDKMessage> => ({
+    [Symbol.asyncIterator]: () => {
+      const abortController = new AbortController();
+      iteratorAbortControllers.add(abortController);
+      const iterator = replayMessages(options, abortController.signal);
+      return {
+        next: async () => {
+          try {
+            const result = await iterator.next();
+            if (result.done) {
+              iteratorAbortControllers.delete(abortController);
+            }
+            return result;
+          } catch (cause) {
+            iteratorAbortControllers.delete(abortController);
+            throw cause;
+          }
+        },
+        return: async () => {
+          abortController.abort();
+          replayOptions.replayGate?.releaseAll();
+          try {
+            return await iterator.return();
+          } finally {
+            iteratorAbortControllers.delete(abortController);
+          }
+        },
+      };
+    },
+  });
 
   const assertNextOutboundFrame = (actual: ClaudeOutboundFrame) => {
     if (failure !== null) {
@@ -602,7 +710,7 @@ export function makeReplayQueryRunner(
     open: (input) => {
       assertNextOutboundFrame(makeClaudeQueryOpenFrame(input));
       return {
-        messages: Stream.fromAsyncIterable(replayMessages(input.options), (cause) =>
+        messages: Stream.fromAsyncIterable(replayMessagesWithGateCleanup(input.options), (cause) =>
           replayQueryRunnerError(transcript, cause),
         ),
         offer: (message) =>
@@ -631,6 +739,7 @@ export function makeReplayQueryRunner(
         throw failure;
       }
       if (cursor !== transcript.entries.length) {
+        replayOptions.replayGate?.releaseAll();
         throw new ClaudeReplayIncompleteError({
           scenario: transcript.scenario,
           cursor,
@@ -680,8 +789,11 @@ function replayQueryRunnerError(
 }
 
 const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQueryRunner.layer")(
-  function* (transcript: ClaudeAgentSdkReplayTranscript) {
-    const queryRunner = makeReplayQueryRunner(transcript);
+  function* (
+    transcript: ClaudeAgentSdkReplayTranscript,
+    options: { readonly replayGate?: ProviderReplayGate } = {},
+  ) {
+    const queryRunner = makeReplayQueryRunner(transcript, options);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         queryRunner.assertComplete();
@@ -710,14 +822,19 @@ const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQuery
 
 export function makeClaudeAgentSdkReplayQueryRunnerLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
+  options: { readonly replayGate?: ProviderReplayGate } = {},
 ): Layer.Layer<ClaudeAgentSdkQueryRunner> {
-  return Layer.effect(ClaudeAgentSdkQueryRunner, makeClaudeAgentSdkReplayQueryRunner(transcript));
+  return Layer.effect(
+    ClaudeAgentSdkQueryRunner,
+    makeClaudeAgentSdkReplayQueryRunner(transcript, options),
+  );
 }
 
 export function makeClaudeAgentSdkReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
+  options: { readonly replayGate?: ProviderReplayGate } = {},
 ): Layer.Layer<ClaudeAgentSdkQueryRunner> {
-  const queryRunner = makeReplayQueryRunner(transcript);
+  const queryRunner = makeReplayQueryRunner(transcript, options);
   return Layer.effect(
     ClaudeAgentSdkQueryRunner,
     Effect.gen(function* () {
@@ -750,6 +867,7 @@ export function makeClaudeAgentSdkReplayLayer(
 
 export function makeClaudeProviderAdapterRegistryReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
+  options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
@@ -765,7 +883,7 @@ export function makeClaudeProviderAdapterRegistryReplayLayer(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeClaudeAgentSdkReplayLayer(transcript),
+        makeClaudeAgentSdkReplayLayer(transcript, options),
         idAllocatorLayer,
         NodeServices.layer,
         serverConfigLayer,
@@ -2432,6 +2550,6 @@ export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: (transcript) =>
-    makeClaudeProviderAdapterRegistryReplayLayer(transcript),
+  makeProviderAdapterRegistryLayer: (transcript, options) =>
+    makeClaudeProviderAdapterRegistryReplayLayer(transcript, options),
 };

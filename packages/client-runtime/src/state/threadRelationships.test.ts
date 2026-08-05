@@ -12,6 +12,32 @@ import {
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
+  it("keeps an older activity run visible over a newer cancelled run", () => {
+    const parent = ThreadId.make("thread-parent");
+    const child = ThreadId.make("thread-child");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: child,
+          title: "Active child",
+          activityRunStatus: "running",
+          status: "cancelled",
+          forkedFrom: { type: "run", threadId: parent, runId: "run-parent" },
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: parent,
+            relationshipToParent: "subagent",
+          },
+        },
+      ] as never,
+      projection: null,
+    });
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ targetThreadId: child, status: "running" }),
+    ]);
+  });
+
   it("keeps missing parents and cycles navigable without recursive traversal", () => {
     const root = ThreadId.make("thread-root");
     const child = ThreadId.make("thread-child");

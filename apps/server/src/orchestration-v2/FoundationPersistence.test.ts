@@ -867,6 +867,229 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("guards post-terminal provider-thread writes by attempt and run ordinal", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:foundation-provider-thread-owner");
+      const runId = RunId.make("run:foundation-provider-thread-owner");
+      const attemptId = RunAttemptId.make("attempt:foundation-provider-thread-owner");
+      const replacementAttemptId = RunAttemptId.make(
+        "attempt:foundation-provider-thread-owner:replacement",
+      );
+      const rootNodeId = NodeId.make("node:foundation-provider-thread-owner");
+      const providerThreadId = ProviderThreadId.make(
+        "provider-thread:foundation-provider-thread-owner",
+      );
+      const thread = makeThread(threadId, now);
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:foundation-provider-thread-owner"),
+        rootNodeId,
+        activeAttemptId: attemptId,
+        status: "completed",
+        queuePosition: null,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const baseProviderThread = {
+        id: providerThreadId,
+        driver: providerDriver,
+        providerInstanceId,
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle" as const,
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [] as const,
+        forkedFrom: null,
+        pendingBackgroundTasks: [
+          { taskId: "bg-owner", description: "sleep 20", taskType: "local_bash" },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-provider-thread-owner:thread",
+            thread,
+            now,
+          }),
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:run"),
+            type: "run.created",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: run,
+          },
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:provider-thread"),
+            type: "provider-thread.updated",
+            threadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: baseProviderThread,
+          },
+        ],
+      });
+
+      const ownedClear = yield* eventSink.writeIfProviderThreadOwner({
+        providerThreadId,
+        runId,
+        activeAttemptId: attemptId,
+        expectedLastRunOrdinal: 1,
+        events: [
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:clear"),
+            type: "provider-thread.updated",
+            threadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...baseProviderThread,
+              pendingBackgroundTasks: [],
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      assert.isTrue(ownedClear.committed);
+      assert.equal(ownedClear.storedEvents.length, 1);
+
+      const afterReplacement = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:replacement-attempt"),
+            type: "run.updated",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerInstanceId,
+            occurredAt: afterReplacement,
+            payload: {
+              ...run,
+              activeAttemptId: replacementAttemptId,
+              status: "running",
+            },
+          },
+        ],
+      });
+
+      const supersededAttemptWrite = yield* eventSink.writeIfProviderThreadOwner({
+        providerThreadId,
+        runId,
+        activeAttemptId: attemptId,
+        expectedLastRunOrdinal: 1,
+        events: [
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:superseded-attempt"),
+            type: "provider-thread.updated",
+            threadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: afterReplacement,
+            payload: {
+              ...baseProviderThread,
+              status: "active",
+              pendingBackgroundTasks: [
+                {
+                  taskId: "bg-superseded",
+                  description: "should not land",
+                  taskType: "local_bash",
+                },
+              ],
+              updatedAt: afterReplacement,
+            },
+          },
+        ],
+      });
+      assert.isFalse(supersededAttemptWrite.committed);
+      assert.deepEqual(supersededAttemptWrite.storedEvents, []);
+
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:replacement-completed"),
+            type: "run.updated",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerInstanceId,
+            occurredAt: afterReplacement,
+            payload: {
+              ...run,
+              activeAttemptId: replacementAttemptId,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:newer-run"),
+            type: "provider-thread.updated",
+            threadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: afterReplacement,
+            payload: {
+              ...baseProviderThread,
+              lastRunOrdinal: 2,
+              status: "active",
+              pendingBackgroundTasks: [],
+              updatedAt: afterReplacement,
+            },
+          },
+        ],
+      });
+
+      const staleOrdinalWrite = yield* eventSink.writeIfProviderThreadOwner({
+        providerThreadId,
+        runId,
+        activeAttemptId: replacementAttemptId,
+        expectedLastRunOrdinal: 1,
+        events: [
+          {
+            id: EventId.make("event:foundation-provider-thread-owner:stale-ordinal"),
+            type: "provider-thread.updated",
+            threadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: afterReplacement,
+            payload: baseProviderThread,
+          },
+        ],
+      });
+      assert.isFalse(staleOrdinalWrite.committed);
+      assert.deepEqual(staleOrdinalWrite.storedEvents, []);
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const providerThread = projection.providerThreads.find(
+        (candidate) => candidate.id === providerThreadId,
+      );
+      assert.isDefined(providerThread);
+      assert.equal(providerThread?.lastRunOrdinal, 2);
+      assert.equal(providerThread?.status, "active");
+      assert.deepEqual(providerThread?.pendingBackgroundTasks ?? [], []);
+    }),
+  );
+
   it.effect("interrupts a running process-bound effect when it is cancelled", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutboxV2;

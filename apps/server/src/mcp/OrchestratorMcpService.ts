@@ -43,7 +43,6 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
-  ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type RuntimeMode,
@@ -512,7 +511,7 @@ function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpTh
     title: shell.title,
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
-    status: shell.status,
+    status: shell.activityRunStatus ?? shell.status,
     latestRunId: shell.latestRunId,
     providerInstanceId: shell.modelSelection.instanceId,
     model: shell.modelSelection.model,
@@ -535,7 +534,7 @@ function threadDetail(projection: OrchestrationV2ThreadProjection): Orchestrator
     title: projection.thread.title,
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
-    status: latest?.status ?? "idle",
+    status: active?.status ?? latest?.status ?? "idle",
     latestRunId: latest?.id ?? null,
     activeRunId: active?.id ?? null,
     providerInstanceId: projection.thread.modelSelection.instanceId,
@@ -876,7 +875,7 @@ const make = Effect.gen(function* () {
         childRunId: childRun?.id ?? null,
         childNodeId: task.id,
         status,
-        providerInstanceId: ProviderInstanceId.make(task.driver),
+        providerInstanceId: task.providerInstanceId,
         model: task.model,
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
@@ -1488,7 +1487,10 @@ const make = Effect.gen(function* () {
         const statuses = input.statuses === undefined ? null : new Set(input.statuses);
         const titleContains = input.titleContains?.toLocaleLowerCase();
         const filtered = projectThreads
-          .filter((thread) => statuses === null || statuses.has(thread.status))
+          .filter(
+            (thread) =>
+              statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
+          )
           .filter(
             (thread) =>
               titleContains === undefined ||

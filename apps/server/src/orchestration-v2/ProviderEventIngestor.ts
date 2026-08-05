@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Run,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   RawEventId,
   RunAttemptId,
   RunId,
@@ -80,6 +81,16 @@ export interface ProviderEventIngestorV2Shape {
         readonly runId: RunId;
         readonly activeAttemptId: RunAttemptId;
         readonly expectedStatus: OrchestrationV2Run["status"];
+      };
+      /**
+       * Atomically reject provider-thread snapshots from an attempt that no
+       * longer owns the run or from a run that no longer owns the thread.
+       */
+      readonly writeIfProviderThreadOwner?: {
+        readonly providerThreadId: ProviderThreadId;
+        readonly runId: RunId;
+        readonly activeAttemptId: RunAttemptId;
+        readonly expectedLastRunOrdinal: number;
       };
     },
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, ProviderEventIngestorV2Error>;
@@ -283,6 +294,16 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
                 eventCount: events.length,
                 cause,
               });
+            if (input.writeIfProviderThreadOwner !== undefined) {
+              const ownerResult = yield* eventSink
+                .writeIfProviderThreadOwner({
+                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                  ...input.writeIfProviderThreadOwner,
+                  events,
+                })
+                .pipe(Effect.mapError(mapWriteError));
+              return ownerResult.storedEvents;
+            }
             if (input.writeIfRunCurrent === undefined) {
               return yield* eventSink
                 .write({
