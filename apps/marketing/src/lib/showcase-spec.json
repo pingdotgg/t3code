@@ -1,0 +1,77 @@
+{
+  "render": {
+    "width": 1080,
+    "height": 620,
+    "deviceScaleFactor": 2
+  },
+  "sections": [
+    {
+      "id": "inbox",
+      "eyebrow": "Inbox",
+      "title": "Every agent, one inbox.",
+      "description": "See every agent and clear finished work.",
+      "link": {
+        "label": "How threads work",
+        "href": "https://github.com/pingdotgg/t3code/blob/main/docs/reference/encyclopedia.md#thread-timeline"
+      },
+      "images": [
+        {
+          "src": "/demo-states/inbox-overview-crop.png?v=2",
+          "alt": "A cropped T3 Code workspace showing running, approval, and finished agent threads",
+          "label": "Agent inbox"
+        }
+      ]
+    },
+    {
+      "id": "git",
+      "eyebrow": "Ship",
+      "title": "Ship from the thread.",
+      "description": "Review files, commit changes, and open a pull request.",
+      "link": {
+        "label": "Set up source control",
+        "href": "https://github.com/pingdotgg/t3code/blob/main/docs/integrations/source-control-providers.md"
+      },
+      "images": [
+        {
+          "src": "/demo-states/ship-commit-editor-crop.png?v=2",
+          "alt": "A cropped T3 Code commit editor with changed files and a commit message",
+          "label": "Commit editor"
+        }
+      ]
+    },
+    {
+      "id": "browser",
+      "eyebrow": "Browser",
+      "title": "Test in the same workspace.",
+      "description": "Open localhost, test the UI, and send failures back.",
+      "link": {
+        "label": "View browser shortcuts",
+        "href": "https://github.com/pingdotgg/t3code/blob/main/docs/user/keybindings.md#defaults"
+      },
+      "images": [
+        {
+          "src": "/demo-states/browser-test-crop.png?v=2",
+          "alt": "A cropped T3 Code browser preview showing a local website under test",
+          "label": "In-app browser"
+        }
+      ]
+    },
+    {
+      "id": "diffs",
+      "eyebrow": "Review",
+      "title": "Review code in context.",
+      "description": "Open focused diffs beside the conversation.",
+      "link": {
+        "label": "How turn diffs work",
+        "href": "https://github.com/pingdotgg/t3code/blob/main/docs/reference/encyclopedia.md#checkpointing"
+      },
+      "images": [
+        {
+          "src": "/demo-states/review-diff-crop.png?v=2",
+          "alt": "A cropped T3 Code workspace showing a conversation beside its code diff",
+          "label": "Code review"
+        }
+      ]
+    }
+  ]
+}

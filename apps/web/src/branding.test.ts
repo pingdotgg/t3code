@@ -83,6 +83,15 @@ describe("branding logic", () => {
     ).toBe("Nightly");
   });
 
+  it("resolves the Dev stage label for dev primary server versions", () => {
+    expect(
+      resolveServerBackedAppStageLabel({
+        primaryServerVersion: "0.0.28-dev.1",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Dev");
+  });
+
   it("updates the display name for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({

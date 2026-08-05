@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="robots" content="noindex" />
+    <script>
+      // The marketing demo always renders in dark mode to match the site hero.
+      document.documentElement.classList.add("dark");
+      document.documentElement.style.backgroundColor = "#161616";
+      try {
+        window.localStorage.setItem("t3code:theme", "dark");
+      } catch {}
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #161616;
+        color: #f5f5f5;
+        font-family:
+          "DM Sans Variable",
+          "DM Sans",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+    </style>
+    <title>T3 Code demo</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/demo/main.tsx"></script>
+  </body>
+</html>

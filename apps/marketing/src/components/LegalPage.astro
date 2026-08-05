@@ -9,13 +9,27 @@ interface Props {
   readonly effectiveDate: string;
   readonly lastUpdated: string;
   readonly sections: ReadonlyArray<readonly [id: string, label: string]>;
+  readonly simple?: boolean;
 }
 
-const { title, description, heading, lede, effectiveDate, lastUpdated, sections } = Astro.props;
+const {
+  title,
+  description,
+  heading,
+  lede,
+  effectiveDate,
+  lastUpdated,
+  sections,
+  simple = false,
+} = Astro.props;
 ---
 
-<Layout title={title} description={description} pageClass="legal-document-page">
-  <div class="legal-page">
+<Layout
+  title={title}
+  description={description}
+  pageClass={simple ? "legal-simple-page" : "legal-document-page"}
+>
+  <div class:list={["legal-page", { "legal-page--simple": simple }]}>
     <a class="legal-index-link" href="/legal"><span aria-hidden="true">&#8592;</span> All legal documents</a>
     <header class="legal-hero">
       <p class="eyebrow">T3 Tools, Inc. / Legal</p>
@@ -36,19 +50,23 @@ const { title, description, heading, lede, effectiveDate, lastUpdated, sections 
     <div class="legal-rule" aria-hidden="true"></div>
 
     <div class="legal-layout">
-      <aside class="legal-nav" aria-label="On this page">
-        <p class="legal-nav-label">On this page</p>
-        <ol>
-          {sections.map(([id, label], index) => (
-            <li>
-              <a href={`#${id}`} data-legal-nav-link={id}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                {label}
-              </a>
-            </li>
-          ))}
-        </ol>
-      </aside>
+      {
+        !simple && (
+          <aside class="legal-nav" aria-label="On this page">
+            <p class="legal-nav-label">On this page</p>
+            <ol>
+              {sections.map(([id, label], index) => (
+                <li>
+                  <a href={`#${id}`} data-legal-nav-link={id}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </aside>
+        )
+      }
 
       <article class="legal-copy">
         <slot />
@@ -103,9 +121,11 @@ const { title, description, heading, lede, effectiveDate, lastUpdated, sections 
     frame = window.requestAnimationFrame(updateActiveSection);
   };
 
-  updateActiveSection();
-  window.addEventListener("scroll", scheduleUpdate, { passive: true });
-  window.addEventListener("resize", scheduleUpdate);
+  if (sections.length > 0) {
+    updateActiveSection();
+    window.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+  }
 </script>
 
 <style is:global>
@@ -409,6 +429,183 @@ const { title, description, heading, lede, effectiveDate, lastUpdated, sections 
     .legal-copy li,
     .legal-copy address {
       font-size: 0.94rem;
+    }
+  }
+
+  .legal-page--simple {
+    width: min(760px, calc(100% - 48px));
+    padding: clamp(112px, 14vw, 156px) 0 104px;
+  }
+
+  .legal-page--simple .legal-index-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 52px;
+    color: var(--fg-dim);
+    font-family: var(--font-sans);
+    font-size: 0.78rem;
+    letter-spacing: 0;
+    text-transform: none;
+    transition: color 0.18s ease;
+  }
+
+  .legal-page--simple .legal-index-link:hover {
+    color: var(--fg);
+  }
+
+  .legal-page--simple .legal-hero {
+    max-width: 760px;
+    animation-duration: 0.55s;
+  }
+
+  .legal-page--simple .eyebrow,
+  .legal-page--simple .section-number {
+    display: none;
+  }
+
+  .legal-page--simple .legal-hero h1 {
+    max-width: 720px;
+    margin: 0;
+    font-size: clamp(2.8rem, 7vw, 4.8rem);
+    font-weight: 500;
+    letter-spacing: -0.055em;
+    line-height: 0.98;
+  }
+
+  .legal-page--simple .legal-lede {
+    max-width: 700px;
+    margin-top: 24px;
+    color: var(--fg-muted);
+    font-size: 1.05rem;
+    line-height: 1.65;
+    letter-spacing: -0.008em;
+  }
+
+  .legal-page--simple .legal-dates {
+    gap: 28px;
+    margin-top: 30px;
+  }
+
+  .legal-page--simple .legal-dates div {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .legal-page--simple .legal-dates dt {
+    color: var(--fg-dim);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .legal-page--simple .legal-dates dd {
+    color: var(--fg-muted);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+  }
+
+  .legal-page--simple .legal-rule {
+    margin: 48px 0 56px;
+    background: var(--border);
+  }
+
+  .legal-page--simple .legal-layout {
+    display: block;
+  }
+
+  .legal-page--simple .legal-copy {
+    width: 100%;
+  }
+
+  .legal-page--simple .legal-copy section {
+    scroll-margin-top: 84px;
+  }
+
+  .legal-page--simple .legal-copy section + section {
+    margin-top: 56px;
+    padding-top: 56px;
+    border-top-color: var(--border);
+  }
+
+  .legal-page--simple .legal-copy h2 {
+    max-width: 680px;
+    margin: 0 0 22px;
+    font-size: clamp(1.45rem, 3vw, 1.8rem);
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    line-height: 1.18;
+  }
+
+  .legal-page--simple .legal-copy h3 {
+    margin: 30px 0 9px;
+    font-size: 0.98rem;
+  }
+
+  .legal-page--simple .legal-copy h4 {
+    margin-top: 24px;
+    font-size: 0.9rem;
+  }
+
+  .legal-page--simple .legal-copy p,
+  .legal-page--simple .legal-copy li,
+  .legal-page--simple .legal-copy address {
+    color: var(--fg-muted);
+    font-size: 0.96rem;
+    line-height: 1.75;
+  }
+
+  .legal-page--simple .legal-copy p + p {
+    margin-top: 16px;
+  }
+
+  .legal-page--simple .legal-copy ul,
+  .legal-page--simple .legal-copy ol {
+    gap: 9px;
+    margin: 16px 0 18px;
+  }
+
+  .legal-page--simple .legal-copy li {
+    padding-left: 4px;
+  }
+
+  .legal-page--simple .legal-copy li::marker {
+    color: var(--fg);
+  }
+
+  @media (max-width: 640px) {
+    .legal-page--simple {
+      width: calc(100% - 40px);
+      padding: 96px 0 80px;
+    }
+
+    .legal-page--simple .legal-index-link {
+      margin-bottom: 38px;
+    }
+
+    .legal-page--simple .legal-hero h1 {
+      font-size: clamp(2.6rem, 13vw, 4rem);
+    }
+
+    .legal-page--simple .legal-lede {
+      font-size: 1rem;
+    }
+
+    .legal-page--simple .legal-dates {
+      display: grid;
+      gap: 6px;
+    }
+
+    .legal-page--simple .legal-rule {
+      margin: 40px 0 48px;
+    }
+
+    .legal-page--simple .legal-copy section + section {
+      margin-top: 48px;
+      padding-top: 48px;
     }
   }
 </style>
