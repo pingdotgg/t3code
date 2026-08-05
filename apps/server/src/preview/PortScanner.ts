@@ -548,9 +548,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     );
   };
 
-  const pollTick = Effect.fn("PortDiscovery.pollTick")(
+  const pollTickActive = Effect.fn("PortDiscovery.pollTick")(
     function* () {
-      if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
       const configuredUrls = [
         ...new Set(
           [...(yield* Ref.get(stateRef)).listeners.values()].flatMap(
@@ -579,14 +578,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
-  // Idle ticks are no-ops; keep them untraced and detached from ambient ParentSpan (#5410).
+  // Idle early-return stays outside Effect.fn so no-op ticks create no span; detach ParentSpan (#5410).
+  const pollTick = Effect.gen(function* () {
+    if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
+    yield* pollTickActive();
+  });
+
   yield* Effect.forkScoped(
-    withoutAmbientParentSpan(
-      pollTick().pipe(
-        Effect.repeat(Schedule.spaced(POLL_INTERVAL)),
-        Effect.withTracerEnabled(false),
-      ),
-    ),
+    withoutAmbientParentSpan(pollTick.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL)))),
   );
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = yield* Ref.modify(stateRef, (state) => [
@@ -596,7 +595,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     if (wasIdle) {
       // Run an immediate scan + broadcast so the new retainer doesn't have
       // to wait up to POLL_INTERVAL for the first emission.
-      yield* pollTick();
+      yield* pollTick;
     }
   });
 

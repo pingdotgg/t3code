@@ -48,6 +48,6 @@ it.effect("withoutAmbientParentSpan drops inherited ParentSpan for long-lived ro
     expect(stillHasParent).toBe(true);
 
     const stripped = Context.omit(Tracer.ParentSpan)(Context.make(Tracer.ParentSpan, ambient));
-    expect(Context.getOption(stripped, Tracer.ParentSpan)._tag).toBe("None");
+    expect(Option.isNone(Context.getOption(stripped, Tracer.ParentSpan))).toBe(true);
   }),
 );
