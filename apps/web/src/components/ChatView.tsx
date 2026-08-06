@@ -2000,7 +2000,13 @@ function ChatViewContent(props: ChatViewProps) {
             `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
           ) : versionMismatch ? (
             <Tooltip>
-              <TooltipTrigger render={<span>Server update available</span>} />
+              <TooltipTrigger
+                render={
+                  <button type="button" className="cursor-help rounded-sm text-left">
+                    Server update available
+                  </button>
+                }
+              />
               <TooltipPopup side="top">
                 {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
                 <span aria-hidden="true">→</span> {versionMismatch.clientVersion}

@@ -1431,7 +1431,12 @@ function SavedBackendListRow({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <p className="w-fit text-muted-foreground text-xs">Server update available</p>
+                  <button
+                    type="button"
+                    className="w-fit cursor-help rounded-sm text-left text-muted-foreground text-xs"
+                  >
+                    Server update available
+                  </button>
                 }
               />
               <TooltipPopup side="top">
@@ -3008,7 +3013,11 @@ export function ConnectionsSettings() {
                   ) : primaryVersionMismatch ? (
                     <Tooltip>
                       <TooltipTrigger
-                        render={<span className="w-fit">Update to match this client.</span>}
+                        render={
+                          <button type="button" className="w-fit cursor-help rounded-sm text-left">
+                            Update to match this client.
+                          </button>
+                        }
                       />
                       <TooltipPopup side="top">
                         {primaryVersionMismatch.serverVersion} <span aria-hidden="true">→</span>{" "}
