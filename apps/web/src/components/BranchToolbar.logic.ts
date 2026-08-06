@@ -190,14 +190,17 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
-export function resolveLocalCheckoutBranchMismatch(input: {
+export function resolveCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
 }): { threadBranch: string; currentBranch: string } | null {
   const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (effectiveEnvMode !== "local" || activeWorktreePath !== null) {
+  // A new-worktree draft compares its selected base branch with the current
+  // project checkout before the worktree exists. Those are intentionally
+  // different and do not represent checkout drift.
+  if (effectiveEnvMode === "worktree" && activeWorktreePath === null) {
     return null;
   }
   if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {

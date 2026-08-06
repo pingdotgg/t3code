@@ -5,7 +5,13 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CircleAlertIcon,
+  GitBranchIcon,
+  RefreshCwIcon,
+  SearchIcon,
+} from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -40,6 +46,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  resolveCheckoutBranchMismatch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
@@ -235,6 +242,12 @@ export function BranchToolbarBranchSelector({
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
+  const branchMismatch = resolveCheckoutBranchMismatch({
+    effectiveEnvMode,
+    activeWorktreePath,
+    activeThreadBranch,
+    currentGitBranch,
+  });
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(branchStatusQuery.data?.sourceControlProvider),
     [branchStatusQuery.data?.sourceControlProvider],
@@ -745,7 +758,20 @@ export function BranchToolbarBranchSelector({
         >
           <ComboboxTrigger
             render={<Button variant="ghost" size="xs" />}
-            className="min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80"
+            aria-label={
+              branchMismatch
+                ? `Branch changed from ${branchMismatch.threadBranch} to ${branchMismatch.currentBranch}`
+                : undefined
+            }
+            title={
+              branchMismatch
+                ? `This thread last ran on ${branchMismatch.threadBranch}. The checkout is now on ${branchMismatch.currentBranch}.`
+                : undefined
+            }
+            className={cn(
+              "min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80",
+              branchMismatch && "text-warning hover:text-warning",
+            )}
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />
@@ -755,6 +781,7 @@ export function BranchToolbarBranchSelector({
             >
               {triggerLabel}
             </span>
+            {branchMismatch ? <CircleAlertIcon className="size-3 shrink-0" /> : null}
             <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
           </ComboboxTrigger>
         </span>

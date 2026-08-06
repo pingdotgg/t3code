@@ -241,7 +241,7 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
-import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+import { resolveEffectiveEnvMode, resolveCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
   ProviderStatusBanner,
@@ -3973,10 +3973,10 @@ function ChatViewContent(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-  const localCheckoutBranchMismatch = useMemo(
+  const checkoutBranchMismatch = useMemo(
     () =>
       isServerThread
-        ? resolveLocalCheckoutBranchMismatch({
+        ? resolveCheckoutBranchMismatch({
             effectiveEnvMode: envMode,
             activeWorktreePath,
             activeThreadBranch,
@@ -4108,10 +4108,10 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
   );
   const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
-    hasMismatch: localCheckoutBranchMismatch !== null,
+    hasMismatch: checkoutBranchMismatch !== null,
     isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
     composerHasContent: composerHasDraftContent,
     wasShownForCurrentMismatch:
@@ -4129,9 +4129,10 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeBranchMismatchKey, showBranchMismatchBanner]);
   const handleSwitchCheckoutToThread = useCallback(async () => {
     if (
+      activeWorktreePath !== null ||
       !activeProjectCwd ||
       !activeThread ||
-      !localCheckoutBranchMismatch ||
+      !checkoutBranchMismatch ||
       isRestoringThreadBranch
     ) {
       return;
@@ -4141,7 +4142,7 @@ function ChatViewContent(props: ChatViewProps) {
       environmentId,
       input: {
         cwd: activeProjectCwd,
-        refName: localCheckoutBranchMismatch.threadBranch,
+        refName: checkoutBranchMismatch.threadBranch,
       },
     });
     if (checkoutResult._tag === "Failure") {
@@ -4158,7 +4159,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
-    const nextBranch = checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
+    const nextBranch = checkoutResult.value.refName ?? checkoutBranchMismatch.threadBranch;
     if (nextBranch !== activeThread.branch) {
       const updateResult = await updateThreadMetadata({
         environmentId,
@@ -4185,10 +4186,11 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeProjectCwd,
     activeThread,
+    activeWorktreePath,
     environmentId,
     gitStatusQuery,
     isRestoringThreadBranch,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
     scheduleComposerFocus,
     switchGitRef,
     updateThreadMetadata,
@@ -4327,7 +4329,7 @@ function ChatViewContent(props: ChatViewProps) {
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
-    if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
+    if (!checkoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [...systemComposerBannerItems, ...backgroundLivenessItems, ...parkedThreadItems];
     }
     return [
@@ -4344,28 +4346,29 @@ function ChatViewContent(props: ChatViewProps) {
               <TooltipTrigger
                 render={
                   <code className="min-w-0 truncate font-medium text-foreground">
-                    {localCheckoutBranchMismatch.threadBranch}
+                    {checkoutBranchMismatch.threadBranch}
                   </code>
                 }
               />
               <TooltipPopup side="top" className="max-w-80">
-                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
-                continue on {localCheckoutBranchMismatch.currentBranch}.
+                This thread last ran on {checkoutBranchMismatch.threadBranch}. Sending will continue
+                on {checkoutBranchMismatch.currentBranch}.
               </TooltipPopup>
             </Tooltip>
           </span>
         ),
         className: "dark:shadow-none",
-        actions: (
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={isRestoringThreadBranch}
-            onClick={handleRestoreThreadBranch}
-          >
-            {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
-          </Button>
-        ),
+        actions:
+          activeWorktreePath === null ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={isRestoringThreadBranch}
+              onClick={handleRestoreThreadBranch}
+            >
+              {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+            </Button>
+          ) : null,
         dismissLabel: "Dismiss branch change notice",
         onDismiss: () => {
           dismissBranchMismatchForSession(activeBranchMismatchKey);
@@ -4376,10 +4379,11 @@ function ChatViewContent(props: ChatViewProps) {
     ];
   }, [
     activeBranchMismatchKey,
+    activeWorktreePath,
     backgroundLivenessBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
     parkedThreadBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
@@ -4983,9 +4987,7 @@ function ChatViewContent(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
+        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode,
       });
@@ -5367,9 +5369,7 @@ function ChatViewContent(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         modelSelection: ctxSelectedModelSelection,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
+        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: nextInteractionMode,
       });
@@ -5446,7 +5446,7 @@ function ChatViewContent(props: ChatViewProps) {
       isConnecting,
       isSendBusy,
       isServerThread,
-      localCheckoutBranchMismatch,
+      checkoutBranchMismatch,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
@@ -6228,7 +6228,7 @@ function ChatViewContent(props: ChatViewProps) {
                   <AlertDialogTitle>
                     Switch to{" "}
                     <code className="font-medium">
-                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
+                      {checkoutBranchMismatch?.threadBranch ?? ""}
                     </code>
                     ?
                   </AlertDialogTitle>
