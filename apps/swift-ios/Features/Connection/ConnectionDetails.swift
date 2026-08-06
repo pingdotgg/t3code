@@ -118,7 +118,7 @@ enum ConnectionDetailsParser {
         let allItems = queryItems + fragmentItems
         let token = firstValue(named: tokenNames, in: allItems)
 
-        if ["t3", "t3code", "t3code-swiftui"].contains(scheme) {
+        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
             if let wrappedPairingURL = firstValue(named: wrappedPairingURLNames, in: allItems) {
                 var wrapped = try parse(wrappedPairingURL)
                 if wrapped.pairingCode == nil {
@@ -159,7 +159,7 @@ enum ConnectionDetailsParser {
 
     private static func firstURL(in input: String) -> String? {
         guard let expression = try? NSRegularExpression(
-            pattern: #"(?i)(?:(?:https?|wss?|t3)://|t3code(?:-swiftui)?:(?://)?)[^\s<>"']+"#
+            pattern: #"(?i)(?:(?:https?|wss?|t3)://|t3code(?:-swiftui(?:-dev)?)?:(?://)?)[^\s<>"']+"#
         ) else {
             return nil
         }

@@ -7,9 +7,6 @@ APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEVICE_ID="${T3_SWIFT_DEVICE_ID:-${1:-}}"
 DEVELOPMENT_TEAM="${T3_SWIFT_DEVELOPMENT_TEAM:-${2:-}}"
 CONFIGURATION="${T3_SWIFT_CONFIGURATION:-Debug}"
-BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui"
-WIDGET_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.widgets"
-SHARE_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.sharing"
 DERIVED_DATA_PATH="${T3_SWIFT_DERIVED_DATA_PATH:-${APP_DIR}/.derivedData/device}"
 
 die() {
@@ -27,8 +24,19 @@ require_cmd plutil
 require_cmd xcodebuild
 require_cmd xcrun
 
+[[ "${CONFIGURATION}" == "Debug" || "${CONFIGURATION}" == "Release" ]] || die \
+  "T3_SWIFT_CONFIGURATION must be Debug or Release"
+
+if [[ "${CONFIGURATION}" == "Debug" ]]; then
+  BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui.dev"
+else
+  BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui"
+fi
+WIDGET_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.widgets"
+SHARE_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.sharing"
+
 [[ -z "${T3_SWIFT_BUNDLE_IDENTIFIER:-}" || "${T3_SWIFT_BUNDLE_IDENTIFIER}" == "${BUNDLE_IDENTIFIER}" ]] || die \
-  "custom bundle identifiers are unsupported because this app and its extensions share a fixed App Group"
+  "custom bundle identifiers are unsupported; select the Debug or Release identity with T3_SWIFT_CONFIGURATION"
 
 bundle_identifier_for_target() {
   local target="$1"
@@ -63,8 +71,6 @@ fi
   "set T3_SWIFT_DEVICE_ID to a CoreDevice identifier or UDID from 'xcrun devicectl list devices --columns UDID'"
 [[ -n "${DEVELOPMENT_TEAM}" ]] || die \
   "set T3_SWIFT_DEVELOPMENT_TEAM to your Apple Developer team ID"
-[[ "${CONFIGURATION}" == "Debug" || "${CONFIGURATION}" == "Release" ]] || die \
-  "T3_SWIFT_CONFIGURATION must be Debug or Release"
 
 build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"

@@ -607,7 +607,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "T3 Code (SwiftUI)";
+				INFOPLIST_KEY_CFBundleDisplayName = "T3 Code (SwiftUI Dev)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
@@ -627,13 +627,15 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-dev;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -677,6 +679,8 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_URL_SCHEME = t3code-swiftui;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
@@ -733,7 +737,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -741,6 +745,8 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_WIDGET_DISPLAY_NAME = "T3 Code Dev Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -771,6 +777,8 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_WIDGET_DISPLAY_NAME = "T3 Code Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
@@ -793,7 +801,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.sharing;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev.sharing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -801,6 +809,8 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_SHARE_DISPLAY_NAME = "T3 Code (SwiftUI Dev)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -831,6 +841,8 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_SHARE_DISPLAY_NAME = "T3 Code (SwiftUI)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};

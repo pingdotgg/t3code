@@ -15,7 +15,7 @@
             <string>T3 Code SwiftUI Routes</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>t3code-swiftui</string>
+                <string>$(T3CODE_URL_SCHEME)</string>
             </array>
         </dict>
     </array>

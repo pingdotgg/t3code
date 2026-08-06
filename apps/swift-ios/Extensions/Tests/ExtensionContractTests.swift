@@ -16,7 +16,7 @@ final class ExtensionContractTests: XCTestCase {
         XCTAssertEqual(aggregate.attentionFirstActivities.first?.threadId, "thread-approval")
         XCTAssertEqual(
             aggregate.attentionFirstActivities.first?.nativeDeepLinkURL?.absoluteString,
-            "t3code-swiftui://threads?environment=env-2&thread=thread-approval"
+            "\(T3SharedContainer.urlScheme)://threads?environment=env-2&thread=thread-approval"
         )
     }
 

@@ -71,7 +71,6 @@ Info.plist:
 | `T3CODE_CLERK_JWT_TEMPLATE`    | No              | Relay JWT template; defaults to `t3-relay`.     |
 | `T3CODE_RELAY_URL`             | T3 Connect only | Relay base URL using HTTPS.                     |
 | `DEVELOPMENT_TEAM`             | Device/archive  | Apple Developer team used by automatic signing. |
-| `PRODUCT_BUNDLE_IDENTIFIER`    | No              | Defaults to `com.t3tools.t3code.swiftui`.       |
 | `MARKETING_VERSION`            | Release         | User-facing version.                            |
 | `CURRENT_PROJECT_VERSION`      | Release         | Monotonically increasing build number.          |
 
@@ -79,8 +78,17 @@ Unset T3 Connect values disable that connection method without affecting direct
 pairing. Supply settings on the `xcodebuild` command line or through a local
 `.xcconfig`; do not commit private release configuration.
 
-This app registers only the `t3code-swiftui` URL scheme so its routes do not
-collide with another installed T3 Code client.
+Debug and Release use separate identities so a local build can remain installed
+beside TestFlight:
+
+| Configuration | Display name          | Bundle identifier                | URL scheme           |
+| ------------- | --------------------- | -------------------------------- | -------------------- |
+| Debug         | T3 Code (SwiftUI Dev) | `com.t3tools.t3code.swiftui.dev` | `t3code-swiftui-dev` |
+| Release       | T3 Code (SwiftUI)     | `com.t3tools.t3code.swiftui`     | `t3code-swiftui`     |
+
+Each identity also has matching widget and share-extension bundle identifiers
+and a separate App Group. Debug data and credentials therefore do not alter the
+TestFlight installation.
 
 ## Verify
 
@@ -108,13 +116,13 @@ T3_SWIFT_DEVELOPMENT_TEAM="TEAMID1234" \
 ./Scripts/install-device.sh
 ```
 
-The script builds, provisions, installs, and launches the app. It accepts the T3
-Connect build settings above as environment variables. Optional overrides are
-`T3_SWIFT_CONFIGURATION`, `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`, and
-`T3_SWIFT_BUILD_NUMBER`. The app and extension bundle identifiers stay fixed so
-automatic signing provisions their shared App Group consistently. Run with
-`T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify those settings without a
-device build.
+The script builds, provisions, installs, and launches the Debug identity by
+default. Set `T3_SWIFT_CONFIGURATION=Release` for the TestFlight identity. It
+accepts the T3 Connect build settings above as environment variables. Optional
+overrides are `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`, and
+`T3_SWIFT_BUILD_NUMBER`. Run with
+`T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
+and extension bundle identifiers without a device build.
 
 ## Release checklist
 

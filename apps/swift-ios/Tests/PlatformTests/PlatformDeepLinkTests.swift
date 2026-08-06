@@ -76,12 +76,21 @@ struct PlatformDeepLinkTests {
         for route in routes {
             let url = try #require(route.url)
             #expect(url.scheme == PlatformRoute.nativeScheme)
-            #expect(try PlatformDeepLinkParser.parse(url) == route)
+            let parsed = try PlatformDeepLinkParser.parse(url)
+            #expect(parsed == route, "Failed to round-trip \(route) through \(url.absoluteString)")
         }
     }
 
     @Test
-    func acceptsLegacyRoutesWithoutClaimingTheirSharedSchemes() throws {
+    func acceptsLinksFromBothSwiftUIIdentitiesAndLegacyRoutes() throws {
+        #expect(
+            try PlatformDeepLinkParser.parse("t3code-swiftui://threads/environment/thread")
+                == .thread(environmentID: "environment", threadID: "thread")
+        )
+        #expect(
+            try PlatformDeepLinkParser.parse("t3code-swiftui-dev://threads/environment/thread")
+                == .thread(environmentID: "environment", threadID: "thread")
+        )
         #expect(
             try PlatformDeepLinkParser.parse("t3code://threads/environment/thread")
                 == .thread(environmentID: "environment", threadID: "thread")

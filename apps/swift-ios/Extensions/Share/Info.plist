@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>T3 Code (SwiftUI)</string>
+	<string>$(T3CODE_SHARE_DISPLAY_NAME)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

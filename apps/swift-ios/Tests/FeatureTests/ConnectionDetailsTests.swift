@@ -26,6 +26,8 @@ struct ConnectionDetailsTests {
     @Test(arguments: [
         "t3code://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
         "t3code:?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
+        "t3code-swiftui://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
+        "t3code-swiftui-dev://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
     ])
     func unwrapsMobileQRCode(_ payload: String) throws {
         let details = try ConnectionDetailsParser.parse(payload)

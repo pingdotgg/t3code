@@ -6,7 +6,7 @@
 	<string>$(APS_ENVIRONMENT)</string>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.t3tools.t3code.swiftui</string>
+		<string>$(T3CODE_APP_GROUP_IDENTIFIER)</string>
 	</array>
 </dict>
 </plist>
