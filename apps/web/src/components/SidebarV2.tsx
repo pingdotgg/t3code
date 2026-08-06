@@ -1586,10 +1586,16 @@ export default function SidebarV2() {
     [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
   );
 
+  // On macOS, Ctrl+click fires contextmenu and Safari then also fires click on
+  // the same element, which would activate the radio item and change the scope
+  // underneath the settings dialog. stopPropagation on contextmenu cannot block
+  // that separate click, so scope changes are suppressed briefly instead.
+  const projectActionsInvokedAtRef = useRef(0);
   const handleProjectActions = useCallback(
     (event: ReactMouseEvent<HTMLElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
+      projectActionsInvokedAtRef.current = Date.now();
       setProjectScopeMenuOpen(false);
       window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
     },
@@ -2809,9 +2815,10 @@ export default function SidebarV2() {
                   <MenuPopup align="start" className="w-(--anchor-width)">
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
-                      onValueChange={(value) =>
-                        setProjectScopeKey(value === "all" ? null : (value as string))
-                      }
+                      onValueChange={(value) => {
+                        if (Date.now() - projectActionsInvokedAtRef.current < 500) return;
+                        setProjectScopeKey(value === "all" ? null : (value as string));
+                      }}
                     >
                       <MenuRadioItem
                         value="all"
