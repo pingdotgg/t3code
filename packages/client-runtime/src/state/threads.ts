@@ -8,6 +8,7 @@ import {
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -59,11 +60,50 @@ function pageStateFromSnapshot(
       });
 }
 
-// Channel from UI actions to the live per-thread state machines: machines are
-// scoped inside anonymous atoms, so `requestOlderThreadTurns` reaches them
-// through this registry instead of a service the apps would each have to wire.
-// Entries live exactly as long as their machine's scope.
-const olderTurnRequestHandlers = new Map<string, () => void>();
+interface ThreadOlderTurnRequestRegistry {
+  /**
+   * Registers the live state machine for a thread. Returns the deregistration
+   * cleanup; registration lives exactly as long as the machine's scope, and a
+   * successor machine for the same thread simply replaces the entry.
+   */
+  readonly register: (key: string, handler: () => void) => () => void;
+  readonly request: (key: string) => boolean;
+}
+
+function makeThreadOlderTurnRequestRegistry(): ThreadOlderTurnRequestRegistry {
+  const handlers = new Map<string, () => void>();
+  return {
+    register: (key, handler) => {
+      handlers.set(key, handler);
+      return () => {
+        if (handlers.get(key) === handler) {
+          handlers.delete(key);
+        }
+      };
+    },
+    request: (key) => {
+      const handler = handlers.get(key);
+      if (handler === undefined) {
+        return false;
+      }
+      handler();
+      return true;
+    },
+  };
+}
+
+const defaultOlderTurnRequestRegistry = makeThreadOlderTurnRequestRegistry();
+
+/**
+ * Channel from UI actions to the live per-thread state machines. The machines
+ * resolve it from the Effect environment (overridable in tests); the default
+ * instance is shared with the sync `requestOlderThreadTurns` entry point so
+ * the apps get working wiring without providing anything.
+ */
+export class ThreadOlderTurnRequests extends Context.Reference<ThreadOlderTurnRequestRegistry>(
+  "@t3tools/client-runtime/state/threads/ThreadOlderTurnRequests",
+  { defaultValue: () => defaultOlderTurnRequestRegistry },
+) {}
 
 /**
  * Asks the live state machine for `threadId` to fetch the next older page.
@@ -75,12 +115,7 @@ export function requestOlderThreadTurns(
   environmentId: EnvironmentIdType,
   threadId: ThreadIdType,
 ): boolean {
-  const handler = olderTurnRequestHandlers.get(threadKey({ environmentId, threadId }));
-  if (handler === undefined) {
-    return false;
-  }
-  handler();
-  return true;
+  return defaultOlderTurnRequestRegistry.request(threadKey({ environmentId, threadId }));
 }
 
 function formatThreadError(cause: Cause.Cause<unknown>): string {
@@ -494,28 +529,23 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     ).pipe(Stream.runForEach(applyItem)),
   );
 
-  // Expose loadOlderTurns to UI actions through the handler registry. Requests
-  // funnel through a sliding queue drained serially, so mashing "load earlier"
-  // coalesces (loadOlderTurns itself no-ops while a fetch is in flight).
+  // Expose loadOlderTurns to UI actions through the request registry.
+  // Requests funnel through a sliding queue drained serially, so mashing
+  // "load earlier" coalesces (loadOlderTurns itself no-ops while a fetch is
+  // in flight).
+  const olderTurnRequestRegistry = yield* ThreadOlderTurnRequests;
   const olderTurnRequests = yield* Queue.sliding<void>(1);
   yield* Stream.fromQueue(olderTurnRequests).pipe(
     Stream.runForEach(() => loadOlderTurns()),
     Effect.forkScoped,
   );
-  const handlerKey = threadKey({ environmentId, threadId });
-  const handler = () => {
-    Queue.offerUnsafe(olderTurnRequests, undefined);
-  };
-  olderTurnRequestHandlers.set(handlerKey, handler);
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      // Guard against a successor machine for the same thread having already
-      // replaced the handler before this one's scope closes.
-      if (olderTurnRequestHandlers.get(handlerKey) === handler) {
-        olderTurnRequestHandlers.delete(handlerKey);
-      }
-    }),
+  const deregister = olderTurnRequestRegistry.register(
+    threadKey({ environmentId, threadId }),
+    () => {
+      Queue.offerUnsafe(olderTurnRequests, undefined);
+    },
   );
+  yield* Effect.addFinalizer(() => Effect.sync(deregister));
 
   yield* Effect.addFinalizer(() =>
     Effect.all([SubscriptionRef.get(state), SubscriptionRef.get(lastSequence)]).pipe(
