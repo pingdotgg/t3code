@@ -130,7 +130,11 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
     const start: ProviderSessionReaperShape["start"] = () =>
       Effect.gen(function* () {
-        const inactivityThresholdMs = yield* resolveInactivityThresholdMs;
+        // Informational only — the sweep re-reads the threshold, so a failed
+        // settings read here must not abort the startup phase.
+        const inactivityThresholdMs = yield* resolveInactivityThresholdMs.pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
         const sweepIntervalMs = yield* resolveSweepIntervalMs;
         yield* forkParked(
           sweep.pipe(
