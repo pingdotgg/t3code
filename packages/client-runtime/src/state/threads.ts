@@ -225,6 +225,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const setDisconnected = Effect.gen(function* () {
     yield* Ref.set(awaitingCompletion, false);
+    // The capability belongs to the session that advertised it. During a
+    // reconnect, a new prepared connection can exist before the new session's
+    // config arrives; leaving the old value would let loadOlderTurns send
+    // window parameters to a server that may not accept them (review
+    // finding). makeSubscribeInput re-sets it from the next session's config.
+    yield* Ref.set(paginationSupported, false);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
@@ -303,69 +309,78 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  // Body of applyItem, running under applyLock. Split out so
+  // refreshWindowedSnapshot can perform its staleness check and the snapshot
+  // application inside ONE lock acquisition (the check is worthless if an
+  // event can slip in between it and the apply).
+  const applyItemLocked = Effect.fn("EnvironmentThreadState.applyItemLocked")(function* (
+    item: OrchestrationThreadStreamItem,
+  ) {
+    if (item.kind === "synchronized") {
+      yield* Ref.set(awaitingCompletion, false);
+      yield* SubscriptionRef.update(state, (current) =>
+        Option.isSome(current.data) && current.status !== "deleted"
+          ? { ...current, status: "live" as const, error: Option.none() }
+          : current,
+      );
+      return;
+    }
+
+    if (item.kind === "snapshot") {
+      // A fresh snapshot replaces all loaded history, including older
+      // pages: a turn reverted while disconnected would otherwise survive
+      // in the preserved history with no event left to remove it. The
+      // epoch bump discards any older-page fetch racing this snapshot.
+      yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
+      yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
+      yield* setThread(item.snapshot.thread, pageStateFromSnapshot(item.snapshot.page));
+      return;
+    }
+
+    const sequence = yield* SubscriptionRef.get(lastSequence);
+    if (item.event.sequence <= sequence) {
+      return;
+    }
+    yield* SubscriptionRef.set(lastSequence, item.event.sequence);
+
+    const current = yield* SubscriptionRef.get(state);
+    if (Option.isNone(current.data)) {
+      if (item.event.type === "thread.deleted") {
+        yield* setDeleted();
+      }
+      return;
+    }
+    if (item.event.type === "thread.reverted") {
+      // A revert rewrites loaded history (whole turns disappear), so an
+      // older-page fetch in flight may straddle the removed range; the epoch
+      // bump discards it. Server-side, the revert also rewrites
+      // projection_turns row ids, which invalidates the stored page cursor:
+      // on a windowed thread with more to load, request a fresh cursor. Runs
+      // on a separate fiber (the drain loop below) because the refresh needs
+      // this lock. Skipped when hasMore is false — there is no cursor to
+      // re-mint, and the refresh would discard already-merged older pages
+      // for nothing (review finding).
+      yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
+      const needsCursorRefresh = Option.match(current.page, {
+        onNone: () => false,
+        onSome: (page) => page.hasMore,
+      });
+      if (needsCursorRefresh) {
+        Queue.offerUnsafe(windowRefreshRequests, undefined);
+      }
+    }
+    const result = applyThreadDetailEvent(current.data.value, item.event);
+    if (result.kind === "updated") {
+      yield* setThread(result.thread, "keep");
+    } else if (result.kind === "deleted") {
+      yield* setDeleted();
+    }
+  });
+
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
   ) {
-    yield* applyLock.withPermits(1)(
-      Effect.gen(function* () {
-        if (item.kind === "synchronized") {
-          yield* Ref.set(awaitingCompletion, false);
-          yield* SubscriptionRef.update(state, (current) =>
-            Option.isSome(current.data) && current.status !== "deleted"
-              ? { ...current, status: "live" as const, error: Option.none() }
-              : current,
-          );
-          return;
-        }
-
-        if (item.kind === "snapshot") {
-          // A fresh snapshot replaces all loaded history, including older
-          // pages: a turn reverted while disconnected would otherwise survive
-          // in the preserved history with no event left to remove it. The
-          // epoch bump discards any older-page fetch racing this snapshot.
-          yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
-          yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
-          yield* setThread(item.snapshot.thread, pageStateFromSnapshot(item.snapshot.page));
-          return;
-        }
-
-        const sequence = yield* SubscriptionRef.get(lastSequence);
-        if (item.event.sequence <= sequence) {
-          return;
-        }
-        yield* SubscriptionRef.set(lastSequence, item.event.sequence);
-
-        const current = yield* SubscriptionRef.get(state);
-        if (Option.isNone(current.data)) {
-          if (item.event.type === "thread.deleted") {
-            yield* setDeleted();
-          }
-          return;
-        }
-        // A revert rewrites loaded history (whole turns disappear), so an
-        // older-page fetch in flight may straddle the removed range; discard
-        // it. It also rewrites projection_turns row ids server-side, which
-        // invalidates the stored page cursor: on a windowed thread, schedule a
-        // fresh windowed snapshot so paging continues from a valid boundary.
-        if (item.event.type === "thread.reverted") {
-          yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
-          // Server-side, the revert rewrites projection_turns row ids, which
-          // invalidates the stored page cursor: on a windowed thread, request
-          // a fresh windowed snapshot so paging continues from a valid
-          // boundary. Runs on a separate fiber (the drain loop below); the
-          // refresh re-enters applyItem, which needs this lock.
-          if (Option.isSome(current.page)) {
-            Queue.offerUnsafe(windowRefreshRequests, undefined);
-          }
-        }
-        const result = applyThreadDetailEvent(current.data.value, item.event);
-        if (result.kind === "updated") {
-          yield* setThread(result.thread, "keep");
-        } else if (result.kind === "deleted") {
-          yield* setDeleted();
-        }
-      }),
-    );
+    yield* applyLock.withPermits(1)(applyItemLocked(item));
   });
 
   // Replaces the loaded window with a fresh one from the server, minting a
@@ -386,14 +401,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       if (Option.isNone(snapshot)) {
         return;
       }
-      // A snapshot read from a projection behind the loaded state would
-      // resurrect the just-reverted turns with no event left to remove them;
-      // drop it and leave the stale cursor to the next full reload instead.
-      const loadedSequence = yield* SubscriptionRef.get(lastSequence);
-      if (snapshot.value.snapshotSequence < loadedSequence) {
-        return;
-      }
-      yield* applyItem({ kind: "snapshot", snapshot: snapshot.value });
+      // Staleness check and snapshot application share one lock acquisition:
+      // checked outside it, a live event could advance lastSequence between
+      // check and apply, and the refresh would regress the watermark and
+      // swallow that event (review finding). Inside the lock, a snapshot
+      // read from a projection behind the loaded state is dropped — it would
+      // resurrect the just-reverted turns with no event left to remove them.
+      yield* applyLock.withPermits(1)(
+        Effect.gen(function* () {
+          const loadedSequence = yield* SubscriptionRef.get(lastSequence);
+          if (snapshot.value.snapshotSequence < loadedSequence) {
+            return;
+          }
+          yield* applyItemLocked({ kind: "snapshot", snapshot: snapshot.value });
+        }),
+      );
     },
   );
 

@@ -462,6 +462,34 @@ describe("thread pagination state", () => {
     }),
   );
 
+  it.effect("does not refresh after a revert when the window is fully loaded", () =>
+    Effect.gen(function* () {
+      // With hasMore=false there is no cursor to re-mint, and a refresh would
+      // throw away already-merged older pages to fix nothing: the revert
+      // reducer's own filtering is sufficient.
+      const fullyLoaded: OrchestrationThreadDetailSnapshot = {
+        snapshotSequence: 10,
+        thread: {
+          ...BASE_THREAD,
+          messages: [OLDER_MESSAGE, RECENT_MESSAGE],
+          checkpoints: [checkpoint("turn-1", 1), checkpoint("turn-2", 2)],
+        },
+        page: { beforeCursor: null, hasMore: false, snapshotSequence: 10 },
+      };
+      const harness = yield* makeHarness({ initialResponse: Option.some(fullyLoaded) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+
+      yield* Queue.offer(harness.inputs, revertEvent(11));
+      const state = yield* harness.awaitState((value) => !hasMessage(value, "message-recent"));
+
+      // The revert reducer kept turn-1's history; no refresh replaced it.
+      expect(hasMessage(state, "message-old")).toBe(true);
+      const windows = yield* Ref.get(harness.loaderWindows);
+      // Only the initial load hit the loader — no post-revert refresh fetch.
+      expect(windows.length).toBe(1);
+    }),
+  );
+
   it.effect("a revert refresh read from a stale projection is dropped", () =>
     Effect.gen(function* () {
       // The refresh snapshot must not resurrect the just-reverted turns: a
