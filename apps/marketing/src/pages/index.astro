@@ -42,10 +42,8 @@ const mobileShowcaseScenes = [
 ] as const;
 
 const connectDevices = [
-  { name: "Web", icon: "M3 5.5h18v11H3zM3 9h18M9 20.5h6M12 16.5v4" },
   { name: "Theo’s iPhone", icon: "M7.5 2.5h9A1.5 1.5 0 0 1 18 4v16a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V4a1.5 1.5 0 0 1 1.5-1.5Z" },
   { name: "iPad", icon: "M5 3.5h14A1.5 1.5 0 0 1 20.5 5v14a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V5A1.5 1.5 0 0 1 5 3.5Z" },
-  { name: "Pixel 9", icon: "M7.5 2.5h9A1.5 1.5 0 0 1 18 4v16a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V4a1.5 1.5 0 0 1 1.5-1.5Z" },
 ] as const;
 
 const faqs = [
@@ -223,20 +221,6 @@ const faqs = [
               <span>Google Play</span>
             </a>
           </div>
-          <div class="subscription-flow" aria-label="Your coding agent subscription connects to T3 Code">
-            <div class="subscription-flow__providers" aria-label="Claude, Cursor, Codex, and Grok">
-              {heroRotatorProviders.map((provider) => (
-                <img src={provider.icon} alt={provider.name} width="22" height="22" />
-              ))}
-            </div>
-            <span class="subscription-flow__rail" aria-hidden="true"></span>
-            <code>npx t3</code>
-            <span class="subscription-flow__rail" aria-hidden="true"></span>
-            <span class="subscription-flow__app" aria-label="T3 Code ready">
-              <img src={stableAppIcon} alt="" width="28" height="28" />
-              <i aria-hidden="true"></i>
-            </span>
-          </div>
         </div>
       </div>
 
@@ -313,7 +297,11 @@ const faqs = [
             </svg>
             <span>Connect</span>
           </h2>
-          <p><code>npx t3</code></p>
+          <p class="connect-command"><code>npx t3</code></p>
+          <p class="connect-description">
+            Enable T3 Connect. Use <code>npx t3 pair</code> to connect any device
+            and use T3 Code from anywhere.
+          </p>
         </div>
       </div>
 
@@ -328,10 +316,8 @@ const faqs = [
             <span class="connect-toggle" aria-hidden="true"><i></i></span>
           </div>
           <svg class="connect-lines" viewBox="0 0 520 90" preserveAspectRatio="none" aria-hidden="true">
-            <path d="M260 0 C260 46 48 34 48 90" />
-            <path d="M260 0 C260 54 192 44 192 90" />
-            <path d="M260 0 C260 54 332 44 332 90" />
-            <path d="M260 0 C260 46 457 34 457 90" />
+            <path d="M260 0 C260 54 176 44 176 90" />
+            <path d="M260 0 C260 54 344 44 344 90" />
           </svg>
           <ul class="connect-devices" aria-label="Screens paired through T3 Connect">
             {connectDevices.map((device) => (
@@ -1361,7 +1347,7 @@ const faqs = [
   .hero-title .hero-rotator-item {
     grid-area: 1 / 1;
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.18em;
     white-space: nowrap;
     color: var(--rotator-accent, currentColor);
@@ -1383,7 +1369,7 @@ const faqs = [
     background: currentColor;
     mask: var(--rotator-icon) center / contain no-repeat;
     -webkit-mask: var(--rotator-icon) center / contain no-repeat;
-    transform: translateY(-0.05em);
+    transform: translateY(0.04em);
   }
 
   @keyframes hero-rotator-cycle {
@@ -1524,68 +1510,6 @@ const faqs = [
   .mobile-download-links a:focus-visible img {
     filter: saturate(0.9) brightness(0.96);
     opacity: 0.92;
-  }
-
-  .subscription-flow {
-    display: flex;
-    width: fit-content;
-    align-items: center;
-    gap: 10px;
-    margin-top: 20px;
-  }
-
-  .subscription-flow__providers {
-    display: flex;
-    align-items: center;
-  }
-
-  .subscription-flow__providers img {
-    width: 24px;
-    height: 24px;
-    padding: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 7px;
-    background: #0b0b0d;
-  }
-
-  .subscription-flow__providers img + img {
-    margin-left: -5px;
-  }
-
-  .subscription-flow__rail {
-    position: relative;
-    width: 28px;
-    height: 1px;
-    background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.4));
-  }
-
-  .subscription-flow code {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 11px;
-  }
-
-  .subscription-flow__app {
-    position: relative;
-    display: grid;
-    place-items: center;
-  }
-
-  .subscription-flow__app img {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-  }
-
-  .subscription-flow__app i {
-    position: absolute;
-    right: -2px;
-    bottom: -2px;
-    width: 7px;
-    height: 7px;
-    border: 2px solid #070708;
-    border-radius: 50%;
-    background: #4ade80;
   }
 
   /* Download channel picker. */
@@ -1797,15 +1721,30 @@ const faqs = [
     font-weight: 500;
   }
 
-  #connect .showcase-copy .section-head p {
+  #connect .showcase-copy .section-head .connect-command {
     font-size: clamp(22px, 2vw, 28px);
     line-height: 1.25;
   }
 
-  #connect .showcase-copy .section-head p code {
+  #connect .showcase-copy .section-head .connect-command code {
     color: var(--fg);
     font-family: var(--font-mono);
     font-size: 0.76em;
+  }
+
+  #connect .showcase-copy .section-head .connect-description {
+    max-width: 520px;
+    margin-top: 22px;
+    color: var(--fg-muted);
+    font-size: clamp(16px, 1.35vw, 19px);
+    line-height: 1.5;
+    white-space: normal;
+  }
+
+  #connect .connect-description code {
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 0.88em;
   }
 
   .connect-visual {
@@ -1898,8 +1837,8 @@ const faqs = [
     display: flex;
     width: 100%;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: center;
+    gap: clamp(56px, 12vw, 112px);
     margin: 0;
     padding: 0;
     list-style: none;
