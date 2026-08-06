@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { ClerkProvider } from "@clerk/react";
-import { passkeys } from "@clerk/electron/passkeys";
+import { createPasskeys } from "@clerk/electron/passkeys";
 import { ClerkProvider as ElectronClerkProvider } from "@clerk/electron/react";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
@@ -23,11 +23,18 @@ const history = isElectron ? createHashHistory() : createBrowserHistory();
 const router = getRouter(history);
 
 if (isElectron) {
+  if (globalThis.PublicKeyCredential) {
+    Object.defineProperty(PublicKeyCredential, "isConditionalMediationAvailable", {
+      configurable: true,
+      value: () => Promise.resolve(false),
+    });
+  }
   syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
 }
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+const desktopPasskeys = createPasskeys({ mode: "native" });
 
 const app = <AppRoot router={router} />;
 
@@ -35,7 +42,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {clerkPublishableKey && hasCloudPublicConfig() ? (
       isElectron ? (
-        <ElectronClerkProvider publishableKey={clerkPublishableKey} passkeys={passkeys}>
+        <ElectronClerkProvider publishableKey={clerkPublishableKey} passkeys={desktopPasskeys}>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ElectronClerkProvider>
       ) : (
