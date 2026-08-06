@@ -34,13 +34,16 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  summarizeToolTextOutput,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
+  type LiveWorkStatus,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import {
+  buildFileDiffRenderKey,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
@@ -59,6 +62,7 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
+  SparklesIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -171,6 +175,7 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
+  liveWorkStatus?: LiveWorkStatus | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   latestTurn: TimelineLatestTurn | null;
@@ -206,6 +211,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
+  liveWorkStatus = null,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
@@ -235,7 +241,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
-  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
+  const [collapsedWorkGroupIds, setCollapsedWorkGroupIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
 
   const onToggleTurnFold = useCallback((turnId: TurnId) => {
@@ -254,7 +262,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const anchorBottomBeforeToggle = anchorElement?.getBoundingClientRect().bottom ?? null;
 
       flushSync(() => {
-        setExpandedWorkGroupIds((existing) => {
+        setCollapsedWorkGroupIds((existing) => {
           const next = new Set(existing);
           if (next.has(groupId)) {
             next.delete(groupId);
@@ -319,9 +327,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         latestTurn,
         runningTurnId,
         expandedTurnIds,
-        expandedWorkGroupIds,
+        collapsedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
+        liveWorkStatus,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
@@ -330,9 +339,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       latestTurn,
       runningTurnId,
       expandedTurnIds,
-      expandedWorkGroupIds,
+      collapsedWorkGroupIds,
       isWorking,
       activeTurnStartedAt,
+      liveWorkStatus,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
@@ -1109,25 +1119,134 @@ function ProposedPlanTimelineRow({
   );
 }
 
+function formatApproxThinkingTokens(chars: number): string | null {
+  const tokens = Math.round(chars / 4);
+  if (tokens < 50) {
+    return null;
+  }
+  if (tokens < 1000) {
+    return `~${tokens} tokens`;
+  }
+  return `~${(tokens / 1000).toFixed(1)}k tokens`;
+}
+
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const status = row.status;
+  const label = status?.label ?? "Working";
+  const since = status?.since ?? row.createdAt;
+  const thinkingText =
+    status?.kind === "thinking" && status.thinkingText ? status.thinkingText.trim() : "";
+  const canExpandThinking = thinkingText.length > 0;
+  // Live reasoning streams in expanded by default; user can collapse.
+  const [thinkingExpanded, setThinkingExpanded] = useState(true);
+  const approxTokens =
+    status?.kind === "thinking" && status.thinkingChars !== undefined
+      ? formatApproxThinkingTokens(status.thinkingChars)
+      : null;
+  // The phase timer replaces the turn timer when a phase is active; keep the
+  // total visible so long turns still read as one continuous run.
+  const showTotalTimer =
+    status?.since !== undefined &&
+    status?.since !== null &&
+    row.createdAt !== null &&
+    status.since !== row.createdAt;
+
   return (
     <div className="py-0.5 pl-1.5">
-      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
+      <div
+        className={cn(
+          "flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums",
+          canExpandThinking &&
+            "cursor-pointer rounded-md hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        )}
+        {...(canExpandThinking
+          ? {
+              role: "button" as const,
+              tabIndex: 0 as const,
+              "aria-expanded": thinkingExpanded,
+              "aria-label": `${label} reasoning`,
+              onClick: () => setThinkingExpanded((value) => !value),
+              onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setThinkingExpanded((value) => !value);
+                }
+              },
+            }
+          : {})}
+      >
         <span className="inline-flex items-center gap-[3px]">
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
         </span>
-        <span>
-          {row.createdAt ? (
+        <span className="min-w-0 flex-1 truncate">
+          {since ? (
             <>
-              Working for <WorkingTimer createdAt={row.createdAt} />
+              {label} for <WorkingTimer createdAt={since} />
             </>
           ) : (
-            "Working..."
+            `${label}...`
           )}
+          {approxTokens ? <span> · {approxTokens}</span> : null}
+          {showTotalTimer && row.createdAt ? (
+            <span className="text-muted-foreground/50">
+              {" · "}
+              <WorkingTimer createdAt={row.createdAt} /> total
+            </span>
+          ) : null}
         </span>
+        {canExpandThinking ? (
+          <span
+            className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/55"
+            aria-hidden
+          >
+            <ChevronDownIcon
+              className={cn(
+                "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                thinkingExpanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </span>
+        ) : null}
       </div>
+      {thinkingExpanded && canExpandThinking ? <LiveThinkingStream text={thinkingText} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Full streamed reasoning text under the live "Thinking" indicator.
+ * Auto-scrolls to the bottom as new text arrives while the user is at the end.
+ */
+function LiveThinkingStream({ text }: { text: string }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const stickToBottomRef = useRef(true);
+
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [text]);
+
+  return (
+    <div
+      className="mt-1 ms-[19px] max-w-[720px] border-s border-border/45 ps-3 pt-0.5"
+      onClick={stopRowToggle}
+      onPointerDown={stopRowToggle}
+    >
+      <pre
+        ref={preRef}
+        className="max-h-[min(60vh,28rem)] cursor-text overflow-auto whitespace-pre-wrap break-words text-[11px] italic leading-relaxed text-muted-foreground/70 select-text"
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+          stickToBottomRef.current = distanceFromBottom < 48;
+        }}
+      >
+        {text}
+      </pre>
     </div>
   );
 }
@@ -1880,6 +1999,9 @@ function buildToolCallExpandedBody(
   if (workEntry.detail?.trim()) {
     blocks.push(workEntry.detail.trim());
   }
+  if (workEntry.toolResultText && workEntry.toolResultText !== workEntry.detail?.trim()) {
+    blocks.push(workEntry.toolResultText);
+  }
   const changedFiles = workEntry.changedFiles ?? [];
   if (changedFiles.length > 0) {
     blocks.push(
@@ -1941,6 +2063,536 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
+}
+
+const TOOL_ARG_MAX_LENGTH = 96;
+
+function compactToolArg(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= TOOL_ARG_MAX_LENGTH) {
+    return normalized;
+  }
+  return `${normalized.slice(0, TOOL_ARG_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+/**
+ * Claude Code-style display names for tool headers. Raw names are kept for
+ * anything unmapped so MCP/dynamic tools stay recognizable.
+ */
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  edit: "Update",
+  multiedit: "Update",
+  notebookedit: "Update",
+  edit_file: "Update",
+  update_file: "Update",
+  apply_patch: "Update",
+  applypatch: "Update",
+  write: "Write",
+  write_file: "Write",
+  create_file: "Write",
+  websearch: "Web Search",
+  web_search: "Web Search",
+  webfetch: "Fetch",
+  todowrite: "Todos",
+  update_plan: "Todos",
+  glob: "Glob",
+  grep: "Search",
+  spawnagent: "Spawn Agent",
+  sendinput: "Message Agent",
+  resumeagent: "Resume Agent",
+  closeagent: "Close Agent",
+  wait: "Wait for Agents",
+};
+
+/**
+ * Prettify raw snake_case tool names from non-Claude harnesses
+ * (`read_file` → "Read File"). MCP names keep their raw form — the
+ * `mcp__server__tool` shape is more recognizable than a mangled title.
+ */
+function prettifySnakeCaseToolName(toolName: string): string {
+  if (!/^[a-z0-9_]+$/.test(toolName) || toolName.startsWith("mcp")) {
+    return toolName;
+  }
+  return toolName
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function toolDisplayName(toolName: string): string {
+  return TOOL_DISPLAY_NAMES[toolName.toLowerCase()] ?? prettifySnakeCaseToolName(toolName);
+}
+
+/** The single most descriptive argument, mirroring Claude Code's `Tool(arg)` header. */
+function toolPrimaryArg(
+  workEntry: TimelineWorkEntry,
+  workspaceRoot: string | undefined,
+): string | null {
+  const input = workEntry.toolInput;
+  if (input) {
+    if (typeof input.command === "string" && input.command.trim()) {
+      return compactToolArg(input.command);
+    }
+    const pathValue = [
+      input.file_path,
+      input.notebook_path,
+      input.path,
+      input.target_file,
+      input.target_directory,
+    ].find(
+      (candidate): candidate is string =>
+        typeof candidate === "string" && candidate.trim().length > 0,
+    );
+    if (pathValue) {
+      return compactToolArg(formatWorkspaceRelativePath(pathValue, workspaceRoot));
+    }
+    for (const key of ["pattern", "query", "url", "skill", "description", "server"] as const) {
+      const value = input[key];
+      if (typeof value === "string" && value.trim()) {
+        return key === "query" ? compactToolArg(`"${value.trim()}"`) : compactToolArg(value);
+      }
+    }
+    const prompt = input.prompt;
+    if (typeof prompt === "string" && prompt.trim()) {
+      return compactToolArg(prompt);
+    }
+  }
+  if (workEntry.command) {
+    return compactToolArg(workEntry.command);
+  }
+  const [firstChanged] = workEntry.changedFiles ?? [];
+  if (firstChanged) {
+    return compactToolArg(formatWorkspaceRelativePath(firstChanged, workspaceRoot));
+  }
+  return null;
+}
+
+interface ToolCallHeader {
+  name: string;
+  arg: string | null;
+}
+
+function toolCallHeader(
+  workEntry: TimelineWorkEntry,
+  workspaceRoot: string | undefined,
+): ToolCallHeader | null {
+  if (!workEntry.toolName) {
+    return null;
+  }
+  return {
+    name: toolDisplayName(workEntry.toolName),
+    arg: toolPrimaryArg(workEntry, workspaceRoot),
+  };
+}
+
+/** The compact `⎿ …` line under a tool header. */
+function toolResultLine(
+  workEntry: TimelineWorkEntry,
+  header: ToolCallHeader | null,
+  workspaceRoot: string | undefined,
+): string | null {
+  if (workEntry.toolDiff) {
+    const added = countDiffLines(workEntry.toolDiff, "+");
+    const removed = countDiffLines(workEntry.toolDiff, "-");
+    if (added > 0 || removed > 0) {
+      const parts: string[] = [];
+      if (added > 0) parts.push(`Added ${added} line${added === 1 ? "" : "s"}`);
+      if (removed > 0) parts.push(`removed ${removed} line${removed === 1 ? "" : "s"}`);
+      return parts.join(", ");
+    }
+  }
+  if (workEntry.toolResultText) {
+    const summary = summarizeToolTextOutput(workEntry.toolResultText);
+    if (summary) {
+      return summary;
+    }
+  }
+  const preview = workEntryPreview(workEntry, workspaceRoot);
+  if (!preview) {
+    return null;
+  }
+  // Drop previews that just repeat the header (e.g. detail "Bash: git status"
+  // under a `Bash(git status)` header).
+  const normalizedPreview = preview.replace(/\s+/g, " ").trim().toLowerCase();
+  const headerArg = header?.arg?.toLowerCase() ?? "";
+  if (headerArg && normalizedPreview === headerArg) {
+    return null;
+  }
+  if (
+    workEntry.toolName &&
+    normalizedPreview === `${workEntry.toolName.toLowerCase()}: ${headerArg}`
+  ) {
+    return null;
+  }
+  return preview;
+}
+
+function countDiffLines(diff: NonNullable<TimelineWorkEntry["toolDiff"]>, sign: "+" | "-") {
+  let count = 0;
+  for (const hunk of diff.hunks) {
+    for (const line of hunk.lines) {
+      if (line.startsWith(sign)) count += 1;
+    }
+  }
+  return count;
+}
+
+const INLINE_DIFF_COLLAPSED_LINES = 16;
+
+interface InlineDiffRow {
+  key: string;
+  sign: "+" | "-" | " ";
+  lineNumber: number | null;
+  text: string;
+}
+
+function buildInlineDiffRows(diff: NonNullable<TimelineWorkEntry["toolDiff"]>): InlineDiffRow[] {
+  const rows: InlineDiffRow[] = [];
+  diff.hunks.forEach((hunk, hunkIndex) => {
+    let oldLine = hunk.oldStart;
+    let newLine = hunk.newStart;
+    hunk.lines.forEach((line, lineIndex) => {
+      const sign = line.startsWith("+") ? "+" : line.startsWith("-") ? "-" : " ";
+      const text = sign === " " ? line.replace(/^ /, "") : line.slice(1);
+      let lineNumber: number | null = null;
+      if (sign === "-") {
+        lineNumber = oldLine;
+        if (oldLine !== null) oldLine += 1;
+      } else if (sign === "+") {
+        lineNumber = newLine;
+        if (newLine !== null) newLine += 1;
+      } else {
+        lineNumber = newLine ?? oldLine;
+        if (oldLine !== null) oldLine += 1;
+        if (newLine !== null) newLine += 1;
+      }
+      rows.push({ key: `${hunkIndex}:${lineIndex}`, sign, lineNumber, text });
+    });
+  });
+  return rows;
+}
+
+/**
+ * Serializes the tool diff into a unified patch so it can flow through the
+ * same parse + syntax-highlight pipeline as the diff panel. Hunks without
+ * known positions (reconstructed while the edit streams) anchor at line 1;
+ * the completed tool result replaces them with real numbers.
+ */
+function buildToolDiffPatch(
+  diff: NonNullable<TimelineWorkEntry["toolDiff"]>,
+  maxLines: number,
+): { patch: string; hiddenLines: number } {
+  const path = diff.filePath ?? "file";
+  const parts = [`--- a/${path}`, `+++ b/${path}`];
+  let remaining = maxLines;
+  let hiddenLines = 0;
+  for (const hunk of diff.hunks) {
+    if (remaining <= 0) {
+      hiddenLines += hunk.lines.length;
+      continue;
+    }
+    const lines = hunk.lines.slice(0, remaining);
+    hiddenLines += hunk.lines.length - lines.length;
+    remaining -= lines.length;
+    const oldCount = lines.filter((line) => !line.startsWith("+")).length;
+    const newCount = lines.filter((line) => !line.startsWith("-")).length;
+    parts.push(
+      `@@ -${hunk.oldStart ?? 1},${oldCount} +${hunk.newStart ?? 1},${newCount} @@`,
+      ...lines,
+    );
+  }
+  return { patch: `${parts.join("\n")}\n`, hiddenLines };
+}
+
+/**
+ * The diff shadow root defaults `--diffs-bg` to pure white/black, so without
+ * this bridge dark mode renders an opaque black slab behind every inline
+ * diff. Custom properties inherit across the shadow boundary, so pointing the
+ * background variables at the app tokens makes the diff sit flush on the chat
+ * surface. The `[data-separator]` rule restyles the hunk gap: the default
+ * "line-info" separator is a 32px "N unmodified lines" band with expand
+ * buttons that cannot work here (there is no source file to expand into), so
+ * hunks use `hunkSeparators: "simple"` plus a hairline divider instead.
+ */
+const INLINE_TOOL_DIFF_UNSAFE_CSS = `
+[data-diffs-header],
+[data-diff],
+[data-file],
+[data-error-wrapper],
+[data-virtualizer-buffer] {
+  --diffs-font-family: var(--font-mono) !important;
+  --diffs-bg: var(--background) !important;
+  --diffs-light-bg: var(--background) !important;
+  --diffs-dark-bg: var(--background) !important;
+  --diffs-token-light-bg: transparent;
+  --diffs-token-dark-bg: transparent;
+
+  --diffs-bg-context-override: color-mix(in srgb, var(--background) 97%, var(--foreground));
+  --diffs-bg-hover-override: color-mix(in srgb, var(--background) 94%, var(--foreground));
+  --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
+  --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
+
+  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
+  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
+  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
+  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
+
+  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
+  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--destructive));
+  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
+  --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--destructive));
+}
+
+[data-separator="simple"] {
+  min-height: 5px;
+  background:
+    linear-gradient(
+        color-mix(in srgb, var(--border) 60%, transparent),
+        color-mix(in srgb, var(--border) 60%, transparent)
+      )
+      center / 100% 1px no-repeat !important;
+}
+`;
+
+function InlineToolDiff({ diff }: { diff: NonNullable<TimelineWorkEntry["toolDiff"]> }) {
+  const ctx = use(TimelineRowCtx);
+  const [showAll, setShowAll] = useState(false);
+  const totalLines = diff.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
+  const maxLines = showAll ? Number.POSITIVE_INFINITY : INLINE_DIFF_COLLAPSED_LINES;
+  const renderable = useMemo(() => {
+    const { patch, hiddenLines } = buildToolDiffPatch(diff, maxLines);
+    return {
+      hiddenLines,
+      parsed: getRenderablePatch(patch, `tool-diff:${diff.filePath ?? "file"}:${totalLines}`),
+    };
+  }, [diff, maxLines, totalLines]);
+
+  if (renderable.parsed?.kind === "files") {
+    return (
+      <div
+        className="mt-1 ms-[18px] cursor-text select-text overflow-hidden rounded-md border border-border/40 text-[11px]"
+        onClick={stopRowToggle}
+        onPointerDown={stopRowToggle}
+      >
+        {renderable.parsed.files.map((fileDiff) => (
+          <FileDiff
+            key={buildFileDiffRenderKey(fileDiff)}
+            fileDiff={fileDiff}
+            options={{
+              collapsed: false,
+              diffStyle: "unified",
+              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              // The tool row header already names the file.
+              disableFileHeader: true,
+              disableBackground: true,
+              hunkSeparators: "simple",
+              unsafeCSS: INLINE_TOOL_DIFF_UNSAFE_CSS,
+            }}
+          />
+        ))}
+        {renderable.hiddenLines > 0 || diff.truncated ? (
+          <button
+            type="button"
+            className="w-full cursor-pointer px-2 py-0.5 text-start font-mono text-muted-foreground/70 transition-colors hover:bg-accent/20 hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              setShowAll((value) => !value);
+            }}
+          >
+            {renderable.hiddenLines > 0
+              ? `… +${renderable.hiddenLines} more line${renderable.hiddenLines === 1 ? "" : "s"}`
+              : showAll && diff.truncated
+                ? "Diff truncated"
+                : "Collapse"}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return <InlineToolDiffPlain diff={diff} />;
+}
+
+function InlineToolDiffPlain({ diff }: { diff: NonNullable<TimelineWorkEntry["toolDiff"]> }) {
+  const [showAll, setShowAll] = useState(false);
+  const rows = useMemo(() => buildInlineDiffRows(diff), [diff]);
+  const hasLineNumbers = rows.some((row) => row.lineNumber !== null);
+  const visibleRows = showAll ? rows : rows.slice(0, INLINE_DIFF_COLLAPSED_LINES);
+  const hiddenCount = rows.length - visibleRows.length;
+  const gutterWidth = hasLineNumbers
+    ? `${Math.max(2, String(rows.reduce((max, row) => Math.max(max, row.lineNumber ?? 0), 0)).length)}ch`
+    : "0ch";
+
+  return (
+    <div
+      className="mt-1 ms-[18px] cursor-text select-text overflow-hidden rounded-md border border-border/40 font-mono text-[11px] leading-[1.6]"
+      onClick={stopRowToggle}
+      onPointerDown={stopRowToggle}
+    >
+      {visibleRows.map((row) => (
+        <div
+          key={row.key}
+          className={cn(
+            "flex min-w-0",
+            row.sign === "+" && "bg-success/12",
+            row.sign === "-" && "bg-destructive/12",
+          )}
+        >
+          {hasLineNumbers ? (
+            <span
+              className="shrink-0 select-none px-1.5 text-end text-muted-foreground/45"
+              style={{ minWidth: `calc(${gutterWidth} + 0.75rem)` }}
+            >
+              {row.lineNumber ?? ""}
+            </span>
+          ) : null}
+          <span
+            className={cn(
+              "w-4 shrink-0 select-none text-center",
+              row.sign === "+" && "text-success-foreground",
+              row.sign === "-" && "text-destructive",
+              row.sign === " " && "text-transparent",
+            )}
+          >
+            {row.sign}
+          </span>
+          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words pe-2">
+            {row.text || " "}
+          </span>
+        </div>
+      ))}
+      {hiddenCount > 0 || diff.truncated ? (
+        <button
+          type="button"
+          className="w-full cursor-pointer px-2 py-0.5 text-start text-muted-foreground/70 transition-colors hover:bg-accent/20 hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            setShowAll((value) => !value);
+          }}
+        >
+          {hiddenCount > 0
+            ? `… +${hiddenCount} more line${hiddenCount === 1 ? "" : "s"}`
+            : showAll && diff.truncated
+              ? "Diff truncated"
+              : "Collapse"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+type ToolDotState = "running" | "success" | "failed" | "neutral";
+
+function ToolStatusDot({ state }: { state: ToolDotState }) {
+  return (
+    <span className="flex size-5 shrink-0 items-center justify-center">
+      <span
+        className={cn(
+          "size-[7px] rounded-full",
+          state === "running" && "animate-pulse bg-primary",
+          state === "success" && "bg-success",
+          state === "failed" && "bg-destructive",
+          state === "neutral" && "bg-muted-foreground/40",
+        )}
+        aria-hidden
+      />
+    </span>
+  );
+}
+
+/** Divider-style transcript row for context compaction boundaries. */
+function ContextCompactionRow({ inProgress }: { inProgress: boolean }) {
+  return (
+    <div className="flex select-none items-center gap-2.5 px-0.5 py-2" role="status">
+      <span className="h-px flex-1 bg-gradient-to-r from-transparent to-primary/30" aria-hidden />
+      <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium">
+        <SparklesIcon
+          className={cn("size-3.5 text-primary/70", inProgress && "animate-status-pulse")}
+          aria-hidden
+        />
+        <span className="animate-compaction-shimmer bg-[linear-gradient(90deg,var(--color-muted-foreground),var(--color-foreground),var(--color-muted-foreground))] bg-[length:200%_100%] bg-clip-text text-transparent">
+          {inProgress ? "Compacting context…" : "Context compacted"}
+        </span>
+      </span>
+      <span className="h-px flex-1 bg-gradient-to-l from-transparent to-primary/30" aria-hidden />
+    </div>
+  );
+}
+
+/** Completed reasoning burst — "Thought for Xs", expandable to the full thinking text (default open). */
+function ThinkingWorkEntryRow({
+  workEntry,
+  expanded,
+  onToggle,
+}: {
+  workEntry: TimelineWorkEntry;
+  expanded: boolean;
+  onToggle: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  const thinkingText = workEntry.detail?.trim() ?? "";
+  const canExpand = thinkingText.length > 0;
+  return (
+    <div
+      className={cn(
+        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+        canExpand &&
+          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+      )}
+      {...(canExpand
+        ? {
+            role: "button" as const,
+            tabIndex: 0 as const,
+            "aria-expanded": expanded,
+            "aria-label": workEntry.label,
+            onClick: () => onToggle((value) => !value),
+            onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onToggle((value) => !value);
+              }
+            },
+          }
+        : {})}
+    >
+      <div className="flex select-none items-center gap-0.5">
+        <span
+          className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/65"
+          aria-hidden
+        >
+          ✻
+        </span>
+        <p className="min-w-0 flex-1 truncate text-[12px] italic leading-5 text-muted-foreground/80">
+          {workEntry.label}
+        </p>
+        <span
+          className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/55"
+          aria-hidden={!canExpand}
+        >
+          {canExpand ? (
+            <ChevronDownIcon
+              className={cn(
+                "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                expanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          ) : null}
+        </span>
+      </div>
+      {expanded && canExpand ? (
+        <div
+          className="mt-1 ms-[18px] cursor-default border-s border-border/45 ps-3 pt-0.5"
+          onClick={stopRowToggle}
+          onPointerDown={stopRowToggle}
+        >
+          <pre className="max-h-[min(60vh,28rem)] cursor-text overflow-auto whitespace-pre-wrap break-words text-[11px] italic leading-relaxed text-muted-foreground select-text">
+            {thinkingText}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
@@ -2057,11 +2709,30 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
-  const [expanded, setExpanded] = useState(false);
+  // Reasoning rows default expanded so the full thought is visible; other work rows stay collapsed.
+  const [expanded, setExpanded] = useState(
+    () => workEntry.sourceActivityKind === "thinking.completed",
+  );
   const iconConfig = workToneIcon(workEntry.tone);
+  if (
+    workEntry.sourceActivityKind === "context-compaction" ||
+    workEntry.sourceActivityKind === "context-compaction.started"
+  ) {
+    return (
+      <ContextCompactionRow
+        inProgress={workEntry.sourceActivityKind === "context-compaction.started"}
+      />
+    );
+  }
+  if (workEntry.sourceActivityKind === "thinking.completed") {
+    return (
+      <ThinkingWorkEntryRow workEntry={workEntry} expanded={expanded} onToggle={setExpanded} />
+    );
+  }
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
+  const header = showWarningIndicator ? null : toolCallHeader(workEntry, workspaceRoot);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
     rawPreview &&
@@ -2110,6 +2781,81 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         },
       }
     : {};
+
+  if (header) {
+    const dotState: ToolDotState = showFailedIndicator
+      ? "failed"
+      : !turnSettled && workEntry.toolLifecycleStatus === "inProgress"
+        ? "running"
+        : showSuccessIndicator
+          ? "success"
+          : "neutral";
+    const resultLine = toolResultLine(workEntry, header, workspaceRoot);
+
+    return (
+      <div
+        className={cn(
+          "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+          canExpand &&
+            "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        )}
+        {...rowToggleProps}
+      >
+        <div className="flex select-none items-center gap-0.5">
+          <ToolStatusDot state={dotState} />
+          <p className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5">
+            <span
+              className={cn(
+                "font-semibold",
+                showFailedIndicator ? "text-destructive" : "text-foreground/90",
+              )}
+            >
+              {header.name}
+            </span>
+            {header.arg ? (
+              <span className="text-muted-foreground/80">
+                (<span className="text-foreground/65">{header.arg}</span>)
+              </span>
+            ) : null}
+          </p>
+          <span
+            className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/55"
+            aria-hidden={!canExpand}
+          >
+            {canExpand ? (
+              <ChevronDownIcon
+                className={cn(
+                  "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                  expanded && "rotate-180",
+                )}
+                aria-hidden
+              />
+            ) : null}
+          </span>
+        </div>
+        {resultLine ? (
+          <div className="flex select-none items-start gap-1 ps-[7px] font-mono text-[11px] leading-5 text-muted-foreground/75">
+            <span className="shrink-0 text-muted-foreground/45" aria-hidden>
+              ⎿
+            </span>
+            <span className="min-w-0 flex-1 truncate">{resultLine}</span>
+          </div>
+        ) : null}
+        {workEntry.toolDiff ? <InlineToolDiff diff={workEntry.toolDiff} /> : null}
+        {expanded && canExpand && expandedBody ? (
+          <div
+            className="mt-1 ms-[18px] cursor-default border-s border-border/45 ps-3 pt-0.5"
+            onClick={stopRowToggle}
+            onPointerDown={stopRowToggle}
+          >
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+              {expandedBody}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div

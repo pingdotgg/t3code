@@ -73,6 +73,14 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
+  /** Raw provider tool name (e.g. `Bash`, `Read`) when the adapter carries it in `payload.data`. */
+  toolName?: string;
+  /** Raw provider tool input when the adapter carries it in `payload.data`. */
+  toolInput?: Record<string, unknown>;
+  /** Line-level diff for file-edit tools, from the provider result or reconstructed from input. */
+  toolDiff?: WorkLogToolDiff;
+  /** Text content of the tool result block when the adapter carries it in `payload.data`. */
+  toolResultText?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
@@ -94,6 +102,20 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+}
+
+export interface WorkLogToolDiffHunk {
+  /** 1-based line numbers in the old/new file; null when reconstructed from streaming input. */
+  oldStart: number | null;
+  newStart: number | null;
+  /** Unified-diff lines including their leading `+` / `-` / ` ` marker. */
+  lines: ReadonlyArray<string>;
+}
+
+export interface WorkLogToolDiff {
+  filePath: string | null;
+  hunks: ReadonlyArray<WorkLogToolDiffHunk>;
+  truncated: boolean;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -273,6 +295,11 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
   if (entry.agentSpawn !== undefined) {
+    return false;
+  }
+  // Completed thinking bursts are informational rows, not stuck tools — they
+  // must survive the neutral-status filter that hides incomplete tool rows.
+  if (entry.sourceActivityKind === "thinking.completed") {
     return false;
   }
   if (!workLogEntryIsToolLike(entry)) {
@@ -725,15 +752,261 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    // In-flight thinking feeds the live working indicator; only the completed
+    // burst earns a durable "Thought for Xs" row.
+    if (activity.kind === "thinking.started") continue;
+    if (activity.kind === "thinking.progress") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
-  return collapseDerivedWorkLogEntries(entries).map((entry) => {
-    const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
-    return Object.assign(rest, { sourceActivityKind: activityKind });
-  });
+  const collapsed = collapseDerivedWorkLogEntries(entries);
+  // A "compacting" marker is only meaningful until its compaction boundary
+  // arrives; after that the completed row alone marks the spot.
+  const lastCompactionBoundary = collapsed.findLastIndex(
+    (entry) => entry.activityKind === "context-compaction",
+  );
+  return collapsed
+    .filter(
+      (entry, index) =>
+        !(entry.activityKind === "context-compaction.started" && index < lastCompactionBoundary),
+    )
+    .map((entry) => {
+      const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
+      return Object.assign(rest, { sourceActivityKind: activityKind });
+    });
+}
+
+export interface LiveWorkStatus {
+  kind: "thinking" | "tool" | "responding";
+  /** e.g. "Thinking", "Running pnpm test", "Writing" */
+  label: string;
+  /** Start of the current phase, for a live elapsed timer. */
+  since: string | null;
+  /** Streamed reasoning size so far (characters), when the provider reports it. */
+  thinkingChars?: number;
+  /** Full accumulated streamed reasoning text for the open thinking burst. */
+  thinkingText?: string;
+}
+
+function truncateLiveStatusLabel(value: string, maxLength = 56): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function liveToolStatusLabel(entry: DerivedWorkLogEntry): string {
+  if (entry.command) {
+    // A tool.started can land before its input streamed in ("Bash: {}").
+    const command = entry.command.replace(/:?\s*\{\}\s*$/, "");
+    if (command.length > 0) {
+      return `Running ${truncateLiveStatusLabel(command)}`;
+    }
+  }
+  if (entry.itemType === "web_search") {
+    return "Searching the web";
+  }
+  const changedFile = entry.toolDiff?.filePath ?? entry.changedFiles?.[0];
+  if (entry.itemType === "file_change" || changedFile) {
+    if (changedFile) {
+      const basename = changedFile.replace(/\\/g, "/").split("/").at(-1);
+      if (basename) {
+        return `Editing ${truncateLiveStatusLabel(basename)}`;
+      }
+    }
+    return "Editing files";
+  }
+  const heading = normalizeCompactToolLabel(entry.toolTitle ?? entry.label)
+    .replace(/\s+started\s*$/i, "")
+    .trim();
+  return heading.length > 0 ? truncateLiveStatusLabel(heading) : "Running a tool";
+}
+
+/**
+ * What the provider is doing right now, derived from the newest live signal:
+ * an open thinking burst, an in-flight tool call, or a streaming assistant
+ * message. Returns null when there is no signal (callers fall back to a
+ * generic "Working" indicator).
+ */
+export function deriveLiveWorkStatus(input: {
+  activities: ReadonlyArray<OrchestrationThreadActivity>;
+  runningTurnId: TurnId | null;
+  streamingMessage: { createdAt: string; updatedAt: string } | null;
+  /**
+   * Current Claude models never stream thinking text (blocks arrive encrypted
+   * with only a signature), so no thinking-burst activities exist to report.
+   * For those providers a silent stretch of a running turn — no tool open, no
+   * text streaming — is the model thinking, so label it that way instead of
+   * falling back to the generic "Working".
+   */
+  assumeThinkingWhenSilent?: boolean;
+}): LiveWorkStatus | null {
+  if (input.runningTurnId === null) {
+    return null;
+  }
+  const ordered = [...input.activities].toSorted(compareActivitiesByOrder);
+  let lastTurnSignalAt: string | null = null;
+
+  interface OpenThinkingBurst {
+    burstId: string;
+    startedAt: string;
+    chars: number;
+    text: string | null;
+    lastAt: string;
+  }
+  let openThinking: OpenThinkingBurst | null = null;
+  const openToolsByKey = new Map<
+    string,
+    { entry: DerivedWorkLogEntry; since: string; lastAt: string }
+  >();
+
+  for (const activity of ordered) {
+    if (activity.turnId !== null && activity.turnId !== input.runningTurnId) {
+      continue;
+    }
+    if (
+      activity.turnId === input.runningTurnId &&
+      (lastTurnSignalAt === null || activity.createdAt.localeCompare(lastTurnSignalAt) > 0)
+    ) {
+      lastTurnSignalAt = activity.createdAt;
+    }
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+
+    if (activity.kind === "thinking.started") {
+      openThinking = {
+        burstId: typeof payload?.burstId === "string" ? payload.burstId : activity.id,
+        startedAt: typeof payload?.startedAt === "string" ? payload.startedAt : activity.createdAt,
+        chars: 0,
+        text: null,
+        lastAt: activity.createdAt,
+      };
+      continue;
+    }
+    if (activity.kind === "thinking.progress") {
+      // Some providers keep one thinking burst open across interleaved tool
+      // calls, so a progress event may arrive after a tool activity cleared
+      // the open burst — re-open it from the progress payload.
+      // Prefer full `text` (current servers); fall back to legacy `textTail`.
+      const payloadText = typeof payload?.text === "string" ? payload.text : null;
+      const payloadTextTail = typeof payload?.textTail === "string" ? payload.textTail : null;
+      const nextText: string | null = payloadText ?? payloadTextTail ?? openThinking?.text ?? null;
+      openThinking = {
+        burstId:
+          typeof payload?.burstId === "string"
+            ? payload.burstId
+            : (openThinking?.burstId ?? activity.id),
+        startedAt:
+          typeof payload?.startedAt === "string"
+            ? payload.startedAt
+            : (openThinking?.startedAt ?? activity.createdAt),
+        chars: typeof payload?.chars === "number" ? payload.chars : (openThinking?.chars ?? 0),
+        text: nextText,
+        lastAt: activity.createdAt,
+      };
+      continue;
+    }
+    if (activity.kind === "thinking.completed") {
+      openThinking = null;
+      continue;
+    }
+
+    if (
+      activity.kind === "tool.started" ||
+      activity.kind === "tool.updated" ||
+      activity.kind === "tool.completed"
+    ) {
+      // A tool call means the model moved past any open thinking burst even if
+      // the burst-completion activity was lost.
+      openThinking = null;
+      const entry = toDerivedWorkLogEntry(activity);
+      const key = entry.toolCallId ?? entry.collapseKey ?? entry.id;
+      if (
+        activity.kind === "tool.completed" ||
+        (entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress")
+      ) {
+        openToolsByKey.delete(key);
+        continue;
+      }
+      const existing = openToolsByKey.get(key);
+      openToolsByKey.set(key, {
+        entry: existing ? { ...existing.entry, ...entry } : entry,
+        since: existing?.since ?? activity.createdAt,
+        lastAt: activity.createdAt,
+      });
+    }
+  }
+
+  const latestOpenTool = [...openToolsByKey.values()].reduce<{
+    entry: DerivedWorkLogEntry;
+    since: string;
+    lastAt: string;
+  } | null>((latest, candidate) => {
+    if (!latest || candidate.lastAt.localeCompare(latest.lastAt) > 0) {
+      return candidate;
+    }
+    return latest;
+  }, null);
+
+  const candidates: Array<{ status: LiveWorkStatus; lastAt: string }> = [];
+  if (openThinking) {
+    candidates.push({
+      status: {
+        kind: "thinking",
+        label: "Thinking",
+        since: openThinking.startedAt,
+        ...(openThinking.chars > 0 ? { thinkingChars: openThinking.chars } : {}),
+        ...(openThinking.text !== null && openThinking.text.trim().length > 0
+          ? { thinkingText: openThinking.text }
+          : {}),
+      },
+      lastAt: openThinking.lastAt,
+    });
+  }
+  if (latestOpenTool) {
+    candidates.push({
+      status: {
+        kind: "tool",
+        label: liveToolStatusLabel(latestOpenTool.entry),
+        since: latestOpenTool.since,
+      },
+      lastAt: latestOpenTool.lastAt,
+    });
+  }
+  if (input.streamingMessage) {
+    candidates.push({
+      status: {
+        kind: "responding",
+        label: "Writing",
+        since: input.streamingMessage.createdAt,
+      },
+      lastAt: input.streamingMessage.updatedAt,
+    });
+  }
+
+  const winner = candidates.reduce<{ status: LiveWorkStatus; lastAt: string } | null>(
+    (latest, candidate) => {
+      if (!latest || candidate.lastAt.localeCompare(latest.lastAt) > 0) {
+        return candidate;
+      }
+      return latest;
+    },
+    null,
+  );
+  if (winner) {
+    return winner.status;
+  }
+  if (input.assumeThinkingWhenSilent) {
+    // Silence started at the newest signal the turn produced; with none yet
+    // the row falls back to its own turn-start timestamp.
+    return { kind: "thinking", label: "Thinking", since: lastTurnSignalAt };
+  }
+  return null;
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -772,6 +1045,20 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
+  if (activity.kind === "thinking.completed") {
+    const thinkingText = typeof payload?.text === "string" ? payload.text.trim() : "";
+    return {
+      id: activity.id,
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      label: activity.summary,
+      tone: "thinking",
+      activityKind: activity.kind,
+      ...(thinkingText.length > 0
+        ? { detail: payload?.textTruncated === true ? `${thinkingText}…` : thinkingText }
+        : {}),
+    };
+  }
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
@@ -838,6 +1125,26 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType) {
     entry.itemType = itemType;
+  }
+  if (!isTaskActivity) {
+    const normalizedItem = normalizeCodexToolItem(payload) ?? normalizeAcpToolCall(payload);
+    const toolName = extractToolName(payload) ?? normalizedItem?.toolName ?? null;
+    const toolInput = extractToolInput(payload) ?? normalizedItem?.toolInput ?? null;
+    if (toolName) {
+      entry.toolName = toolName;
+    }
+    if (toolInput) {
+      entry.toolInput = toolInput;
+    }
+    const toolDiff =
+      extractToolDiff(payload, toolName, toolInput) ?? normalizedItem?.toolDiff ?? null;
+    if (toolDiff) {
+      entry.toolDiff = toolDiff;
+    }
+    const toolResultText = extractToolResultText(payload) ?? normalizedItem?.toolResultText ?? null;
+    if (toolResultText) {
+      entry.toolResultText = toolResultText;
+    }
   }
   if (requestKind) {
     entry.requestKind = requestKind;
@@ -1011,6 +1318,16 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const toolName = next.toolName ?? previous.toolName;
+  const toolInput = next.toolInput ?? previous.toolInput;
+  // Prefer a diff with real line numbers (from the tool result) over a
+  // reconstructed streaming diff, regardless of arrival order.
+  const toolDiff =
+    next.toolDiff && next.toolDiff.hunks.some((hunk) => hunk.oldStart !== null)
+      ? next.toolDiff
+      : previous.toolDiff && previous.toolDiff.hunks.some((hunk) => hunk.oldStart !== null)
+        ? previous.toolDiff
+        : (next.toolDiff ?? previous.toolDiff);
   return {
     ...previous,
     ...next,
@@ -1025,6 +1342,12 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(toolInput ? { toolInput } : {}),
+    ...(toolDiff ? { toolDiff } : {}),
+    ...((next.toolResultText ?? previous.toolResultText)
+      ? { toolResultText: next.toolResultText ?? previous.toolResultText }
+      : {}),
   };
 }
 
@@ -1282,9 +1605,544 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
   return asTrimmedString(payload?.title);
 }
 
+function extractToolName(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const direct = asTrimmedString(data?.toolName);
+  if (direct) {
+    return direct;
+  }
+  // ACP harnesses surface dynamic tools with the tool name as `rawInput.variant`.
+  return asTrimmedString(asRecord(data?.rawInput)?.variant);
+}
+
+function extractToolInput(payload: Record<string, unknown> | null): Record<string, unknown> | null {
+  const data = asRecord(payload?.data);
+  return asRecord(data?.input) ?? asRecord(data?.rawInput) ?? asRecord(asRecord(data?.item)?.input);
+}
+
+const MAX_TOOL_DIFF_LINES = 400;
+const MAX_TOOL_RESULT_TEXT = 4000;
+
+function truncateToolResultText(text: string | null | undefined): string | null {
+  const trimmed = text?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.length > MAX_TOOL_RESULT_TEXT
+    ? `${trimmed.slice(0, MAX_TOOL_RESULT_TEXT)}…`
+    : trimmed;
+}
+
+function textFromContentBlocks(content: unknown): string | null {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const parts = content.flatMap((block) => {
+    const record = asRecord(block);
+    return typeof record?.text === "string" ? [record.text] : [];
+  });
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+function extractToolResultText(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const result = asRecord(data?.result);
+  if (!result) {
+    return null;
+  }
+  return truncateToolResultText(textFromContentBlocks(result.content));
+}
+
+function splitDiffContent(value: string): string[] {
+  const lines = value.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+function parseStructuredPatch(value: unknown): WorkLogToolDiffHunk[] | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const hunks: WorkLogToolDiffHunk[] = [];
+  for (const rawHunk of value) {
+    const hunk = asRecord(rawHunk);
+    if (!hunk || !Array.isArray(hunk.lines)) {
+      return null;
+    }
+    const lines = hunk.lines.filter((line): line is string => typeof line === "string");
+    if (lines.length === 0) {
+      continue;
+    }
+    hunks.push({
+      oldStart: asNumber(hunk.oldStart),
+      newStart: asNumber(hunk.newStart),
+      lines,
+    });
+  }
+  return hunks.length > 0 ? hunks : null;
+}
+
+function capToolDiff(filePath: string | null, hunks: WorkLogToolDiffHunk[]): WorkLogToolDiff {
+  let remaining = MAX_TOOL_DIFF_LINES;
+  let truncated = false;
+  const capped: WorkLogToolDiffHunk[] = [];
+  for (const hunk of hunks) {
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    if (hunk.lines.length <= remaining) {
+      capped.push(hunk);
+      remaining -= hunk.lines.length;
+      continue;
+    }
+    capped.push({ ...hunk, lines: hunk.lines.slice(0, remaining) });
+    remaining = 0;
+    truncated = true;
+  }
+  return { filePath, hunks: capped, truncated };
+}
+
+function reconstructedEditHunk(oldText: string, newText: string): WorkLogToolDiffHunk | null {
+  const lines = [
+    ...splitDiffContent(oldText).map((line) => `-${line}`),
+    ...splitDiffContent(newText).map((line) => `+${line}`),
+  ];
+  if (lines.length === 0) {
+    return null;
+  }
+  return { oldStart: null, newStart: null, lines };
+}
+
+const FILE_EDIT_TOOL_NAME =
+  /^(edit|multiedit|write|notebookedit|str_replace.*|create_file|apply_?patch|edit_file|write_file|update_file)$/i;
+
+/**
+ * Parse a unified-diff string (as emitted by Codex `fileChange` items and
+ * patch-style edit tools) into displayable hunks with real line numbers.
+ */
+function parseUnifiedDiffHunks(diff: string): WorkLogToolDiffHunk[] {
+  interface MutableHunk {
+    oldStart: number | null;
+    newStart: number | null;
+    lines: string[];
+  }
+  const hunks: MutableHunk[] = [];
+  let current: MutableHunk | null = null;
+  const rawLines = diff.split("\n");
+  if (rawLines.at(-1) === "") {
+    rawLines.pop();
+  }
+  for (const line of rawLines) {
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (header) {
+      current = { oldStart: Number(header[1]), newStart: Number(header[2]), lines: [] };
+      hunks.push(current);
+      continue;
+    }
+    if (!current || line.startsWith("\\")) {
+      continue;
+    }
+    if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line === "") {
+      current.lines.push(line);
+    }
+  }
+  return hunks.filter((hunk) => hunk.lines.length > 0);
+}
+
+/**
+ * Diff for file-edit tools: prefer the provider's structured patch (real line
+ * numbers, present once the tool result lands); otherwise reconstruct a
+ * numberless old/new block from the streaming tool input so edits are visible
+ * live while the tool call is still in flight.
+ */
+function extractToolDiff(
+  payload: Record<string, unknown> | null,
+  toolName: string | null,
+  toolInput: Record<string, unknown> | null,
+): WorkLogToolDiff | null {
+  const data = asRecord(payload?.data);
+  const toolUseResult = asRecord(data?.toolUseResult);
+  const filePath =
+    asTrimmedString(toolUseResult?.filePath) ?? asTrimmedString(toolInput?.file_path);
+
+  const structured = parseStructuredPatch(toolUseResult?.structuredPatch);
+  if (structured) {
+    return capToolDiff(filePath, structured);
+  }
+
+  if (!toolName || !FILE_EDIT_TOOL_NAME.test(toolName) || !toolInput) {
+    return null;
+  }
+
+  const edits = Array.isArray(toolInput.edits) ? toolInput.edits : null;
+  if (edits) {
+    const hunks: WorkLogToolDiffHunk[] = [];
+    for (const rawEdit of edits) {
+      const edit = asRecord(rawEdit);
+      const oldText = typeof edit?.old_string === "string" ? edit.old_string : null;
+      const newText = typeof edit?.new_string === "string" ? edit.new_string : null;
+      if (oldText === null || newText === null) {
+        continue;
+      }
+      const hunk = reconstructedEditHunk(oldText, newText);
+      if (hunk) {
+        hunks.push(hunk);
+      }
+    }
+    return hunks.length > 0 ? capToolDiff(filePath, hunks) : null;
+  }
+
+  const oldText = typeof toolInput.old_string === "string" ? toolInput.old_string : null;
+  const newText = typeof toolInput.new_string === "string" ? toolInput.new_string : null;
+  if (oldText !== null && newText !== null) {
+    const hunk = reconstructedEditHunk(oldText, newText);
+    return hunk ? capToolDiff(filePath, [hunk]) : null;
+  }
+
+  const content = typeof toolInput.content === "string" ? toolInput.content : null;
+  if (content !== null) {
+    const lines = splitDiffContent(content).map((line) => `+${line}`);
+    if (lines.length === 0) {
+      return null;
+    }
+    return capToolDiff(filePath, [{ oldStart: null, newStart: 1, lines }]);
+  }
+
+  // Patch-style edit tools (apply_patch and friends) pass a unified diff.
+  const patchText = [toolInput.diff, toolInput.patch].find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && candidate.trim().length > 0,
+  );
+  if (patchText !== undefined) {
+    const hunks = parseUnifiedDiffHunks(patchText);
+    if (hunks.length > 0) {
+      return capToolDiff(filePath, hunks);
+    }
+  }
+
+  return null;
+}
+
+interface NormalizedProviderToolCall {
+  toolName: string;
+  toolInput: Record<string, unknown> | null;
+  toolResultText: string | null;
+  toolDiff: WorkLogToolDiff | null;
+}
+
+/**
+ * Codex forwards its native thread item verbatim in `data.item` without the
+ * `toolName`/`input` envelope Claude uses. Synthesize the same normalized
+ * fields from the item so Codex tool calls render with the styled
+ * `Tool(arg)` headers, inline diffs, and result lines.
+ */
+function normalizeCodexToolItem(
+  payload: Record<string, unknown> | null,
+): NormalizedProviderToolCall | null {
+  const item = asRecord(asRecord(payload?.data)?.item);
+  const type = asTrimmedString(item?.type);
+  if (!item || !type) {
+    return null;
+  }
+  switch (type) {
+    case "commandExecution": {
+      const command = asTrimmedString(item.command);
+      return {
+        toolName: "Shell",
+        toolInput: command ? { command } : null,
+        toolResultText: truncateToolResultText(
+          typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : null,
+        ),
+        toolDiff: null,
+      };
+    }
+    case "fileChange": {
+      const changes = (Array.isArray(item.changes) ? item.changes : []).flatMap((change) => {
+        const record = asRecord(change);
+        return record ? [record] : [];
+      });
+      const kinds = changes.map((change) => asTrimmedString(change.kind));
+      const firstPath = changes.length > 0 ? asTrimmedString(changes[0]?.path) : null;
+      const hunks = changes.flatMap((change) =>
+        typeof change.diff === "string" ? parseUnifiedDiffHunks(change.diff) : [],
+      );
+      return {
+        toolName: kinds.length > 0 && kinds.every((kind) => kind === "add") ? "Write" : "Edit",
+        toolInput: firstPath
+          ? {
+              file_path:
+                changes.length > 1 ? `${firstPath} (+${changes.length - 1} more)` : firstPath,
+            }
+          : null,
+        toolResultText: null,
+        toolDiff: hunks.length > 0 ? capToolDiff(firstPath, hunks) : null,
+      };
+    }
+    case "mcpToolCall": {
+      const tool = asTrimmedString(item.tool);
+      const server = asTrimmedString(item.server);
+      const result = asRecord(item.result);
+      return {
+        toolName: tool ?? "MCP tool",
+        toolInput: asRecord(item.arguments) ?? (server ? { server } : null),
+        toolResultText: truncateToolResultText(textFromContentBlocks(result?.content)),
+        toolDiff: null,
+      };
+    }
+    case "dynamicToolCall": {
+      const tool = asTrimmedString(item.tool);
+      return {
+        toolName: tool ?? "Tool",
+        toolInput: asRecord(item.arguments),
+        toolResultText: truncateToolResultText(textFromContentBlocks(item.contentItems)),
+        toolDiff: null,
+      };
+    }
+    case "webSearch": {
+      const query = asTrimmedString(item.query);
+      return {
+        toolName: "WebSearch",
+        toolInput: query ? { query } : null,
+        toolResultText: null,
+        toolDiff: null,
+      };
+    }
+    case "imageView": {
+      const path = asTrimmedString(item.path);
+      return {
+        toolName: "Read",
+        toolInput: path ? { file_path: path } : null,
+        toolResultText: null,
+        toolDiff: null,
+      };
+    }
+    case "collabAgentToolCall": {
+      const tool = asTrimmedString(item.tool);
+      const prompt = asTrimmedString(item.prompt);
+      return {
+        toolName: tool ?? "Agent",
+        toolInput: prompt ? { prompt } : null,
+        toolResultText: null,
+        toolDiff: null,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function acpToolResultText(data: Record<string, unknown>): string | null {
+  const chunks: string[] = [];
+  if (Array.isArray(data.content)) {
+    for (const entry of data.content) {
+      const record = asRecord(entry);
+      if (record?.type !== "content") {
+        continue;
+      }
+      const nested = asRecord(record.content);
+      if (typeof nested?.text === "string" && nested.text.trim().length > 0) {
+        chunks.push(nested.text);
+      }
+    }
+  }
+  if (chunks.length === 0) {
+    if (typeof data.rawOutput === "string") {
+      chunks.push(data.rawOutput);
+    } else {
+      const rawOutput = asRecord(data.rawOutput);
+      const text =
+        textFromContentBlocks(rawOutput?.content) ??
+        asTrimmedString(rawOutput?.output) ??
+        asTrimmedString(rawOutput?.stdout);
+      if (text) {
+        chunks.push(text);
+      }
+    }
+  }
+  return truncateToolResultText(chunks.join("\n"));
+}
+
+const ACP_DIFF_CONTEXT_LINES = 3;
+
+/**
+ * ACP diff content carries whole old/new text blobs (often the full file).
+ * Reduce them to a contextual hunk by trimming the common line prefix/suffix
+ * so edits render like Claude's structured patches instead of a full-file
+ * remove/add wall.
+ */
+function contextualDiffHunk(oldText: string, newText: string): WorkLogToolDiffHunk | null {
+  const oldLines = splitDiffContent(oldText);
+  const newLines = splitDiffContent(newText);
+  if (oldLines.length === 0) {
+    return reconstructedEditHunk(oldText, newText);
+  }
+  let prefix = 0;
+  while (
+    prefix < oldLines.length &&
+    prefix < newLines.length &&
+    oldLines[prefix] === newLines[prefix]
+  ) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const removed = oldLines.slice(prefix, oldLines.length - suffix);
+  const added = newLines.slice(prefix, newLines.length - suffix);
+  if (removed.length === 0 && added.length === 0) {
+    return null;
+  }
+  const contextStart = Math.max(0, prefix - ACP_DIFF_CONTEXT_LINES);
+  const leadingContext = oldLines.slice(contextStart, prefix).map((line) => ` ${line}`);
+  const trailingContext = oldLines
+    .slice(oldLines.length - suffix, oldLines.length - suffix + ACP_DIFF_CONTEXT_LINES)
+    .map((line) => ` ${line}`);
+  return {
+    oldStart: contextStart + 1,
+    newStart: contextStart + 1,
+    lines: [
+      ...leadingContext,
+      ...removed.map((line) => `-${line}`),
+      ...added.map((line) => `+${line}`),
+      ...trailingContext,
+    ],
+  };
+}
+
+function acpContentDiff(data: Record<string, unknown>): WorkLogToolDiff | null {
+  if (!Array.isArray(data.content)) {
+    return null;
+  }
+  const hunks: WorkLogToolDiffHunk[] = [];
+  let filePath: string | null = null;
+  for (const entry of data.content) {
+    const record = asRecord(entry);
+    if (record?.type !== "diff") {
+      continue;
+    }
+    filePath ??= asTrimmedString(record.path);
+    const hunk = contextualDiffHunk(
+      typeof record.oldText === "string" ? record.oldText : "",
+      typeof record.newText === "string" ? record.newText : "",
+    );
+    if (hunk) {
+      hunks.push(hunk);
+    }
+  }
+  return hunks.length > 0 ? capToolDiff(filePath, hunks) : null;
+}
+
+function acpFirstLocationPath(data: Record<string, unknown>): string | null {
+  if (!Array.isArray(data.locations)) {
+    return null;
+  }
+  for (const entry of data.locations) {
+    const path = asTrimmedString(asRecord(entry)?.path);
+    if (path) {
+      return path;
+    }
+  }
+  return null;
+}
+
+/**
+ * ACP providers (cursor/grok/opencode/slave) surface tool calls as
+ * `{toolCallId, kind, command, rawInput, rawOutput, content, locations}`
+ * without a tool-name envelope. Some stamp the tool name in
+ * `rawInput.variant` (handled by extractToolName); the rest are classified
+ * here from the ACP tool kind and raw-input shape so they still render as
+ * styled `Tool(arg)` rows with result lines and diffs.
+ */
+function normalizeAcpToolCall(
+  payload: Record<string, unknown> | null,
+): NormalizedProviderToolCall | null {
+  const data = asRecord(payload?.data);
+  if (
+    !data ||
+    !asTrimmedString(data.toolCallId) ||
+    data.toolName !== undefined ||
+    data.item !== undefined
+  ) {
+    return null;
+  }
+  const rawInput = asRecord(data.rawInput);
+  const kind = asTrimmedString(data.kind);
+  const itemType = asTrimmedString(payload?.itemType);
+  const toolResultText = acpToolResultText(data);
+  const toolDiff = acpContentDiff(data);
+
+  const command = asTrimmedString(data.command) ?? asTrimmedString(rawInput?.command);
+  if (command && kind !== "edit" && itemType !== "file_change") {
+    return { toolName: "Shell", toolInput: { command }, toolResultText, toolDiff: null };
+  }
+
+  const filePath =
+    asTrimmedString(rawInput?.file_path) ??
+    asTrimmedString(rawInput?.path) ??
+    asTrimmedString(rawInput?.target_file) ??
+    asTrimmedString(toolDiff?.filePath) ??
+    acpFirstLocationPath(data);
+  const fileInput = filePath ? { file_path: filePath } : null;
+
+  if (kind === "edit" || kind === "move" || kind === "delete" || itemType === "file_change") {
+    const isCreate =
+      toolDiff === null &&
+      typeof rawInput?.content === "string" &&
+      rawInput.old_string === undefined;
+    return {
+      toolName: isCreate ? "Write" : "Edit",
+      toolInput: fileInput,
+      toolResultText,
+      toolDiff,
+    };
+  }
+  if (toolDiff) {
+    return { toolName: "Edit", toolInput: fileInput, toolResultText, toolDiff };
+  }
+  if (kind === "read") {
+    return { toolName: "Read", toolInput: fileInput, toolResultText, toolDiff: null };
+  }
+  if (kind === "search" || itemType === "web_search") {
+    const pattern = asTrimmedString(rawInput?.pattern);
+    if (pattern) {
+      return { toolName: "Grep", toolInput: { pattern }, toolResultText, toolDiff: null };
+    }
+    const query = asTrimmedString(rawInput?.query) ?? asTrimmedString(rawInput?.url);
+    return {
+      toolName: "WebSearch",
+      toolInput: query ? { query } : null,
+      toolResultText,
+      toolDiff: null,
+    };
+  }
+  if (kind === "fetch") {
+    const url = asTrimmedString(rawInput?.url) ?? asTrimmedString(rawInput?.query);
+    return {
+      toolName: "WebFetch",
+      toolInput: url ? { url } : null,
+      toolResultText,
+      toolDiff: null,
+    };
+  }
+  return null;
+}
+
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
-  return asTrimmedString(data?.toolCallId);
+  // Claude ingestion stamps toolCallId on the payload root; other providers
+  // nest it in the passthrough data record.
+  return asTrimmedString(data?.toolCallId) ?? asTrimmedString(payload?.toolCallId);
 }
 
 function normalizeInlinePreview(value: string): string {
@@ -1306,7 +2164,7 @@ function normalizePreviewForComparison(value: string | null | undefined): string
   return normalizeCompactToolLabel(normalizeInlinePreview(normalized)).toLowerCase();
 }
 
-function summarizeToolTextOutput(value: string): string | null {
+export function summarizeToolTextOutput(value: string): string | null {
   const lines: Array<string> = [];
   for (const rawLine of value.split(/\r?\n/u)) {
     const line = normalizeInlinePreview(rawLine);

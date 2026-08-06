@@ -765,6 +765,51 @@ function readClaudeToolUseResult(message: SDKMessage): Record<string, unknown> |
     : undefined;
 }
 
+const FILE_EDIT_TOOL_PATTERN = /^(edit|multiedit|write|notebookedit)$/i;
+const MAX_STRUCTURED_PATCH_LINES = 400;
+
+/**
+ * File-edit tool results carry a `structuredPatch` (real line numbers) that
+ * the web transcript renders as an inline diff. Forward just that slice —
+ * the full tool_use_result also embeds the original file contents, which
+ * would bloat persisted activities.
+ */
+function summarizeToolUseResultForData(
+  toolName: string,
+  result: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!result || !FILE_EDIT_TOOL_PATTERN.test(toolName)) {
+    return undefined;
+  }
+  const structuredPatch = Array.isArray(result.structuredPatch)
+    ? result.structuredPatch
+    : undefined;
+  const filePath = readString(result.filePath);
+  if (!structuredPatch && !filePath) {
+    return undefined;
+  }
+  let remaining = MAX_STRUCTURED_PATCH_LINES;
+  const cappedPatch = structuredPatch?.flatMap((rawHunk) => {
+    if (remaining <= 0 || rawHunk === null || typeof rawHunk !== "object") {
+      return [];
+    }
+    const hunk = rawHunk as Record<string, unknown>;
+    const lines = Array.isArray(hunk.lines)
+      ? hunk.lines.filter((line): line is string => typeof line === "string")
+      : [];
+    if (lines.length === 0) {
+      return [];
+    }
+    const kept = lines.slice(0, remaining);
+    remaining -= kept.length;
+    return [{ oldStart: hunk.oldStart, newStart: hunk.newStart, lines: kept }];
+  });
+  return {
+    ...(filePath ? { filePath } : {}),
+    ...(cappedPatch && cappedPatch.length > 0 ? { structuredPatch: cappedPatch } : {}),
+  };
+}
+
 function readClaudeTaskFromResult(
   result: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
@@ -2662,10 +2707,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
       const toolUseResult = readClaudeToolUseResult(message);
+      const toolUseResultSummary = summarizeToolUseResultForData(tool.toolName, toolUseResult);
       const toolData = {
         toolName: tool.toolName,
         input: tool.input,
         result: toolResult.block,
+        ...(toolUseResultSummary ? { toolUseResult: toolUseResultSummary } : {}),
       };
 
       const updatedStamp = yield* makeEventStamp();

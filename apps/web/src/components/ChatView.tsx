@@ -83,6 +83,7 @@ import {
   deriveActivePlanState,
   findSidebarProposedPlan,
   findLatestProposedPlan,
+  deriveLiveWorkStatus,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
@@ -2415,6 +2416,25 @@ function ChatViewContent(props: ChatViewProps) {
     attachDraftHeroComposerAnchorRef,
     captureDraftHeroComposerRect,
   ] = useDraftHeroLayoutTransition(isDraftHeroState);
+  const runningTurnId =
+    activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null;
+  const sessionProviderName = activeThread?.session?.providerName ?? null;
+  const liveWorkStatus = useMemo(() => {
+    const streamingMessage = timelineMessages.findLast(
+      (message) => message.role === "assistant" && message.streaming,
+    );
+    return deriveLiveWorkStatus({
+      activities: threadActivities,
+      runningTurnId,
+      streamingMessage: streamingMessage
+        ? { createdAt: streamingMessage.createdAt, updatedAt: streamingMessage.updatedAt }
+        : null,
+      // Claude never streams thinking text (blocks arrive encrypted with only
+      // a signature), so a silent stretch of a running turn is the model
+      // thinking rather than idle time.
+      assumeThinkingWhenSilent: sessionProviderName === "claudeAgent",
+    });
+  }, [runningTurnId, sessionProviderName, threadActivities, timelineMessages]);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
@@ -5975,14 +5995,11 @@ function ChatViewContent(props: ChatViewProps) {
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
                 activeTurnStartedAt={activeWorkStartedAt}
+                liveWorkStatus={liveWorkStatus}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}
-                runningTurnId={
-                  activeThread.session?.status === "running"
-                    ? activeThread.session.activeTurnId
-                    : null
-                }
+                runningTurnId={runningTurnId}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}

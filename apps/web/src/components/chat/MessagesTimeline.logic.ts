@@ -3,6 +3,7 @@ import {
   formatDuration,
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
+  type LiveWorkStatus,
   type TimelineEntry,
   type WorkLogEntry,
 } from "../../session-logic";
@@ -175,7 +176,7 @@ export type MessagesTimelineRow =
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
-  | { kind: "working"; id: string; createdAt: string | null };
+  | { kind: "working"; id: string; createdAt: string | null; status: LiveWorkStatus | null };
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -414,9 +415,10 @@ export function deriveMessagesTimelineRows(input: {
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
   expandedTurnIds?: ReadonlySet<TurnId>;
-  expandedWorkGroupIds?: ReadonlySet<string>;
+  collapsedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
+  liveWorkStatus?: LiveWorkStatus | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -495,7 +497,9 @@ export function deriveMessagesTimelineRows(input: {
           });
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          // Groups render fully by default; the set tracks groups the user
+          // explicitly collapsed via "Show fewer".
+          const expanded = !(input.collapsedWorkGroupIds?.has(groupId) ?? false);
           // Agent-spawn CTA rows are always visible: a running fleet must
           // never hide behind a "+N tool calls" toggle. Selection is by
           // membership (spawn OR recent-tail), preserving the group's
@@ -591,6 +595,7 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
+      status: input.liveWorkStatus ?? null,
     });
   }
 
@@ -622,8 +627,17 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
-    case "working":
-      return a.createdAt === (b as typeof a).createdAt;
+    case "working": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.status?.kind === bw.status?.kind &&
+        a.status?.label === bw.status?.label &&
+        a.status?.since === bw.status?.since &&
+        a.status?.thinkingChars === bw.status?.thinkingChars &&
+        a.status?.thinkingText === bw.status?.thinkingText
+      );
+    }
 
     case "turn-fold": {
       const bf = b as typeof a;

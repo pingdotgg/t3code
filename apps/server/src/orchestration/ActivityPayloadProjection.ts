@@ -151,6 +151,54 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+// Tool-detail fields the transcript's rich tool rows read when re-hydrating a
+// thread from a snapshot: tool identity + input for the `Tool(arg)` header,
+// result/output for the `⎿ result` line, and diff payloads (Claude
+// structuredPatch summaries, Codex native items, ACP content/rawInput) for
+// inline edit diffs. Clamped rather than summarized so the historical
+// transcript renders the same as the live stream did.
+const RETAINED_TOOL_DETAIL_KEYS = [
+  "toolName",
+  "input",
+  "result",
+  "toolUseResult",
+  "item",
+  "content",
+  "rawInput",
+] as const;
+
+const TOOL_DETAIL_MAX_STRING = 4_000;
+const TOOL_DETAIL_MAX_ARRAY = 100;
+const TOOL_DETAIL_MAX_DEPTH = 6;
+
+/**
+ * Bounds a retained tool-detail value: long strings truncate, arrays cap, and
+ * deeply nested structures cut off. Keeps snapshot rows a predictable size
+ * without flattening them into one-line summaries.
+ */
+function clampToolDetail(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") {
+    return value.length > TOOL_DETAIL_MAX_STRING
+      ? `${value.slice(0, TOOL_DETAIL_MAX_STRING)}…`
+      : value;
+  }
+  if (value === null || typeof value !== "object" || depth >= TOOL_DETAIL_MAX_DEPTH) {
+    return typeof value === "object" && value !== null ? undefined : value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, TOOL_DETAIL_MAX_ARRAY).map((entry) => clampToolDetail(entry, depth + 1));
+  }
+  const record = value as Record<string, unknown>;
+  const clamped: Record<string, unknown> = {};
+  for (const key of Object.keys(record)) {
+    const entry = clampToolDetail(record[key], depth + 1);
+    if (entry !== undefined) {
+      clamped[key] = entry;
+    }
+  }
+  return clamped;
+}
+
 /**
  * Removes activity payload fields that no current client reads while retaining
  * the full payload in persistence and the event store.
@@ -172,6 +220,15 @@ export function projectActivityPayload(
   if ("command" in data) {
     projectedData.command = data.command;
   }
+  for (const key of RETAINED_TOOL_DETAIL_KEYS) {
+    if (!(key in data)) {
+      continue;
+    }
+    const clamped = clampToolDetail(data[key]);
+    if (clamped !== undefined) {
+      projectedData[key] = clamped;
+    }
+  }
 
   const changedFiles: string[] = [];
   collectChangedFiles(data, changedFiles, new Set<string>(), 0);
@@ -187,8 +244,11 @@ export function projectActivityPayload(
     projectedData.kind = data.kind;
   }
 
-  const rawOutput = projectRawOutput(data.rawOutput);
-  if (rawOutput) {
+  // Prefer the clamped full output (ACP tool rows read result text from it);
+  // fall back to the one-line summary for shapes the clamp drops entirely.
+  const clampedRawOutput = "rawOutput" in data ? clampToolDetail(data.rawOutput) : undefined;
+  const rawOutput = clampedRawOutput ?? projectRawOutput(data.rawOutput);
+  if (rawOutput !== undefined && rawOutput !== null) {
     projectedData.rawOutput = rawOutput;
   }
 

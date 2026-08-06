@@ -988,10 +988,10 @@ describe("deriveMessagesTimelineRows", () => {
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     };
-    const collapsedRows = deriveMessagesTimelineRows(baseInput);
-    const expandedRows = deriveMessagesTimelineRows({
+    const expandedRows = deriveMessagesTimelineRows(baseInput);
+    const collapsedRows = deriveMessagesTimelineRows({
       ...baseInput,
-      expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
+      collapsedWorkGroupIds: new Set(["work-group:work-entry-1"]),
     });
 
     expect(collapsedRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:work-entry-1"]);
@@ -1169,5 +1169,44 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+});
+
+describe("working row live status", () => {
+  it("threads the live work status into the working row", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      liveWorkStatus: {
+        kind: "thinking",
+        label: "Thinking",
+        since: "2026-01-01T00:00:10Z",
+        thinkingChars: 800,
+      },
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const workingRow = rows.find((row) => row.kind === "working");
+    expect(workingRow?.kind === "working" ? workingRow.status : null).toEqual({
+      kind: "thinking",
+      label: "Thinking",
+      since: "2026-01-01T00:00:10Z",
+      thinkingChars: 800,
+    });
+  });
+
+  it("defaults the working row status to null", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const workingRow = rows.find((row) => row.kind === "working");
+    expect(workingRow?.kind === "working" ? workingRow.status : undefined).toBeNull();
   });
 });
