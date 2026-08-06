@@ -422,7 +422,15 @@ describe("AcpRuntimeModel", () => {
         ],
       },
     } satisfies EffectAcpSchema.SessionNotification);
-    expect(config.events[0]?._tag).toBe("ConfigOptionsUpdated");
+    expect(config.events[0]).toMatchObject({
+      _tag: "ConfigOptionsUpdated",
+      configOptions: [
+        {
+          id: "effort",
+          currentValue: "high",
+        },
+      ],
+    });
 
     const info = parseSessionUpdateEvent({
       sessionId: "session-1",

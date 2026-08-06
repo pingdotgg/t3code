@@ -137,20 +137,19 @@ describe("AcpCoreRuntimeEvents", () => {
       },
     });
 
-    expect(
-      makeAcpTokenUsageEvent({
-        stamp,
-        provider: ProviderDriverKind.make("cursor"),
-        threadId: "thread-1" as never,
-        turnId,
-        usedTokens: 1200,
-        maxTokens: 256_000,
-        rawPayload: {
-          sessionId: "session-1",
-          update: { sessionUpdate: "usage_update", used: 1200, size: 256_000 },
-        },
-      }),
-    ).toMatchObject({
+    const usageWithoutCompact = makeAcpTokenUsageEvent({
+      stamp,
+      provider: ProviderDriverKind.make("cursor"),
+      threadId: "thread-1" as never,
+      turnId,
+      usedTokens: 1200,
+      maxTokens: 256_000,
+      rawPayload: {
+        sessionId: "session-1",
+        update: { sessionUpdate: "usage_update", used: 1200, size: 256_000 },
+      },
+    });
+    expect(usageWithoutCompact).toMatchObject({
       type: "thread.token-usage.updated",
       payload: {
         usage: {
@@ -160,6 +159,29 @@ describe("AcpCoreRuntimeEvents", () => {
         },
       },
     });
+    // Generic ACP must not hardcode auto-compact; omit when unknown.
+    expect(
+      (usageWithoutCompact as { payload: { usage: Record<string, unknown> } }).payload.usage
+        .compactsAutomatically,
+    ).toBeUndefined();
+
+    const usageWithCompact = makeAcpTokenUsageEvent({
+      stamp,
+      provider: ProviderDriverKind.make("cursor"),
+      threadId: "thread-1" as never,
+      turnId,
+      usedTokens: 1200,
+      maxTokens: 256_000,
+      compactsAutomatically: true,
+      rawPayload: {
+        sessionId: "session-1",
+        update: { sessionUpdate: "usage_update", used: 1200, size: 256_000 },
+      },
+    });
+    expect(
+      (usageWithCompact as { payload: { usage: Record<string, unknown> } }).payload.usage
+        .compactsAutomatically,
+    ).toBe(true);
 
     expect(
       makeAcpAssistantItemEvent({

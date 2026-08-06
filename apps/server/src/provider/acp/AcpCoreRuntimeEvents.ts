@@ -253,6 +253,11 @@ export function makeAcpTokenUsageEvent(input: {
   readonly outputTokens?: number;
   readonly cachedInputTokens?: number;
   readonly reasoningOutputTokens?: number;
+  /**
+   * Only set when the agent/provider is known to auto-compact.
+   * Generic ACP (e.g. Cursor) often does not; omit when unknown so UI defaults to false.
+   */
+  readonly compactsAutomatically?: boolean;
   readonly rawPayload: unknown;
   readonly source?: AcpAdapterRawSource;
   readonly method?: string;
@@ -286,7 +291,9 @@ export function makeAcpTokenUsageEvent(input: {
         ...(input.reasoningOutputTokens !== undefined
           ? { lastReasoningOutputTokens: input.reasoningOutputTokens }
           : {}),
-        compactsAutomatically: true,
+        ...(input.compactsAutomatically !== undefined
+          ? { compactsAutomatically: input.compactsAutomatically }
+          : {}),
       },
     },
     raw: {
