@@ -104,6 +104,89 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
 }
 
+/**
+ * Fields of an MCP tool call item worth shipping: everything that describes
+ * the call itself. `result` is handled separately because it carries the
+ * unbounded tool output.
+ */
+const MCP_ITEM_DESCRIPTOR_FIELDS = [
+  "type",
+  "id",
+  "tool",
+  "server",
+  "status",
+  "arguments",
+  "appContext",
+  "error",
+  "durationMs",
+] as const;
+
+/** Cap on the text handed to the summarizer — results reach megabytes. */
+const MCP_RESULT_TEXT_LIMIT = 4_096;
+
+/**
+ * MCP results carry their payload in `result.content`, either as a plain
+ * string or as the MCP content-block array (`[{ type: "text", text }, …]`).
+ * Flattens the leading text so the shared tool-output summarizer can bound it.
+ */
+function extractMcpResultText(content: unknown): string | null {
+  if (typeof content === "string") {
+    return asTrimmedString(content.slice(0, MCP_RESULT_TEXT_LIMIT));
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  let joined = "";
+  for (const block of content) {
+    const text = asTrimmedString(asRecord(block)?.text);
+    if (!text) {
+      continue;
+    }
+    joined = joined.length > 0 ? `${joined}\n${text}` : text;
+    if (joined.length >= MCP_RESULT_TEXT_LIMIT) {
+      break;
+    }
+  }
+  return asTrimmedString(joined.slice(0, MCP_RESULT_TEXT_LIMIT));
+}
+
+/**
+ * Bounds an MCP tool call item for the wire. Both clients render `data.item`
+ * as JSON in the expanded work-log row, so the call descriptor stays intact
+ * while `result` — which carries the whole tool result, routinely a megabyte
+ * for connector fetches — collapses to the same one-line preview regular tool
+ * output gets. An item record always projects to a record so the clients'
+ * `data.item !== undefined` check keeps holding.
+ */
+function projectMcpToolCallData(
+  data: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const item = asRecord(data.item);
+  if (!item) {
+    return undefined;
+  }
+
+  const projectedItem: Record<string, unknown> = {};
+  for (const field of MCP_ITEM_DESCRIPTOR_FIELDS) {
+    if (field in item) {
+      projectedItem[field] = item[field];
+    }
+  }
+
+  const result = asRecord(item.result);
+  if (result) {
+    const text = extractMcpResultText(result.content);
+    const summary = text ? summarizeToolTextOutput(text) : null;
+    projectedItem.result = {
+      ...(summary ? { content: summary } : {}),
+      // MCP signals tool-level failure on the result, not on `item.error`.
+      ...(result.isError === true ? { isError: true } : {}),
+    };
+  }
+
+  return projectedItem;
+}
+
 function summarizeToolTextOutput(value: string): string | null {
   const lines: string[] = [];
   for (const rawLine of value.split(/\r?\n/u)) {
@@ -160,12 +243,13 @@ export function projectActivityPayload(
 ): OrchestrationThreadActivity {
   const payload = asRecord(activity.payload);
   const data = asRecord(payload?.data);
-  if (!payload || !data || payload.itemType === "mcp_tool_call") {
+  if (!payload || !data) {
     return activity;
   }
 
   const projectedData: Record<string, unknown> = {};
-  const item = projectCommandData(data);
+  const item =
+    payload.itemType === "mcp_tool_call" ? projectMcpToolCallData(data) : projectCommandData(data);
   if (item) {
     projectedData.item = item;
   }

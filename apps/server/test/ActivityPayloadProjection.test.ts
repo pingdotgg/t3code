@@ -114,12 +114,19 @@ const fixtures = [
   }),
   makeActivity("mcp", "mcp_tool_call", {
     item: {
+      type: "mcpToolCall",
+      id: "mcp_1",
       server: "repository",
       tool: "search",
       arguments: { query: "activity projection" },
-      aggregatedOutput: "mcp payload remains available",
+      status: "completed",
+      durationMs: 12,
+      error: null,
+      result: { content: [{ type: "text", text: "first result line\nsecond result line" }] },
+      aggregatedOutput: "bulk that no client reads",
     },
-    ignored: "MCP data is rendered verbatim",
+    toolCallId: "tool-mcp",
+    ignored: "top-level bulk",
   }),
   makeActivity("search", "web_search", {
     rawOutput: {
@@ -184,12 +191,111 @@ describe("projectActivityPayload", () => {
     });
   });
 
-  it("passes MCP tool data through unchanged", () => {
-    expect(projectActivityPayload(fixtures[4]!)).toBe(fixtures[4]);
+  it("keeps the MCP call descriptor and bounds its result", () => {
+    const projected = projectActivityPayload(fixtures[4]!);
+
+    expect(projected.payload).toEqual({
+      itemType: "mcp_tool_call",
+      title: "mcp_tool_call",
+      detail: "mcp_tool_call detail",
+      status: "completed",
+      requestKind: "command",
+      data: {
+        item: {
+          type: "mcpToolCall",
+          id: "mcp_1",
+          tool: "search",
+          server: "repository",
+          status: "completed",
+          arguments: { query: "activity projection" },
+          error: null,
+          durationMs: 12,
+          result: { content: "first result line" },
+        },
+        toolCallId: "tool-mcp",
+      },
+    });
   });
 
-  it("keeps current web and mobile derived output identical for every tool item type", () => {
-    for (const activity of fixtures) {
+  it("bounds a megabyte-scale MCP result", () => {
+    const huge = makeActivity("mcp-huge", "mcp_tool_call", {
+      item: {
+        server: "github",
+        tool: "fetch_pr",
+        arguments: { number: 5219 },
+        status: "completed",
+        result: {
+          content: [
+            { type: "text", text: `pull request body\n${"diff line\n".repeat(120_000)}` },
+            { type: "text", text: "x".repeat(200_000) },
+          ],
+        },
+      },
+    });
+
+    const projected = projectActivityPayload(huge);
+    const projectedSize = JSON.stringify(projected.payload).length;
+
+    expect(JSON.stringify(huge.payload).length).toBeGreaterThan(1_000_000);
+    expect(projectedSize).toBeLessThan(500);
+    expect(projected.payload).toMatchObject({
+      data: {
+        item: {
+          server: "github",
+          tool: "fetch_pr",
+          arguments: { number: 5219 },
+          status: "completed",
+          result: { content: "pull request body" },
+        },
+      },
+    });
+  });
+
+  it("keeps a failing MCP call's error and isError flag", () => {
+    const failed = makeActivity("mcp-error", "mcp_tool_call", {
+      item: {
+        server: "github",
+        tool: "fetch_pr",
+        status: "failed",
+        error: { message: "not found", code: 404 },
+        result: { isError: true, content: [{ type: "text", text: "HTTP 404" }] },
+      },
+    });
+
+    expect(projectActivityPayload(failed).payload).toMatchObject({
+      data: {
+        item: {
+          error: { message: "not found", code: 404 },
+          result: { content: "HTTP 404", isError: true },
+        },
+      },
+    });
+  });
+
+  it("keeps in-flight MCP calls renderable without a result", () => {
+    const started: OrchestrationThreadActivity = {
+      ...makeActivity("mcp-started", "mcp_tool_call", {
+        item: { server: "github", tool: "fetch_pr", arguments: {}, status: "inProgress" },
+      }),
+      kind: "tool.started",
+    };
+
+    const projected = projectActivityPayload(started);
+    const data = (projected.payload as { data: Record<string, unknown> }).data;
+
+    // The clients gate the expanded body on `data.item !== undefined`.
+    expect(data.item).toEqual({
+      server: "github",
+      tool: "fetch_pr",
+      arguments: {},
+      status: "inProgress",
+    });
+  });
+
+  it("keeps current web and mobile derived output identical for every non-MCP tool item type", () => {
+    for (const activity of fixtures.filter(
+      (fixture) => (fixture.payload as { itemType: string }).itemType !== "mcp_tool_call",
+    )) {
       const projected = projectActivityPayload(activity);
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
       expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
@@ -333,7 +439,7 @@ describe("context-window snapshot dedup", () => {
       snapshotSequence: 7,
       thread: makeThread([fixtures[4]!]),
     });
-    expect(projected.thread.activities).toEqual([fixtures[4]]);
+    expect(projected.thread.activities).toEqual([projectActivityPayload(fixtures[4]!)]);
   });
 
   it("does not filter live activity-appended events", () => {
