@@ -1,0 +1,445 @@
+{
+  "capturedWith": {
+    "cli": "codex-cli 0.145.0",
+    "model": "gpt-5.6-luna",
+    "effort": "low"
+  },
+  "rootThreadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+  "childThreadIds": [
+    "019fcfd6-2883-77e0-9013-4410ede70371",
+    "019fcfd6-2ef7-7932-9ff5-dea6ad6f4daf"
+  ],
+  "notifications": [
+    {
+      "method": "thread/started",
+      "params": {
+        "thread": {
+          "id": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+          "extra": null,
+          "sessionId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "preview": "",
+          "ephemeral": false,
+          "historyMode": "legacy",
+          "modelProvider": "openai",
+          "createdAt": 1785898342,
+          "updatedAt": 1785898342,
+          "recencyAt": 1785898342,
+          "status": {
+            "type": "idle"
+          },
+          "path": "/fixtures/codex/rollout.jsonl",
+          "cwd": "/workspace/repo",
+          "cliVersion": "0.145.0",
+          "source": "vscode",
+          "canAcceptDirectInput": true,
+          "threadSource": null,
+          "agentNickname": null,
+          "agentRole": null,
+          "gitInfo": null,
+          "name": null,
+          "turns": []
+        }
+      }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "status": {
+          "type": "active",
+          "activeFlags": []
+        }
+      }
+    },
+    {
+      "method": "turn/started",
+      "params": {
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turn": {
+          "id": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+          "items": [],
+          "itemsView": "notLoaded",
+          "status": "inProgress",
+          "error": null,
+          "startedAt": 1785898342,
+          "completedAt": null,
+          "durationMs": null
+        }
+      }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "type": "subAgentActivity",
+          "id": "call_S2JPiq0sMnJYS7kswVdvzEjB",
+          "kind": "started",
+          "agentThreadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+          "agentPath": "/root/alpha"
+        },
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "completedAtMs": 1785898346687
+      }
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 18261,
+            "inputTokens": 18228,
+            "cachedInputTokens": 11008,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 33,
+            "reasoningOutputTokens": 0
+          },
+          "last": {
+            "totalTokens": 18261,
+            "inputTokens": 18228,
+            "cachedInputTokens": 11008,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 33,
+            "reasoningOutputTokens": 0
+          },
+          "modelContextWindow": 258400
+        }
+      }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "status": {
+          "type": "active",
+          "activeFlags": []
+        }
+      }
+    },
+    {
+      "method": "turn/started",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "turn": {
+          "id": "019fcfd6-28bf-7e00-a873-4554526dc845",
+          "items": [],
+          "itemsView": "notLoaded",
+          "status": "inProgress",
+          "error": null,
+          "startedAt": 1785898346,
+          "completedAt": null,
+          "durationMs": null
+        }
+      }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "019fcfd6-2ef7-7932-9ff5-dea6ad6f4daf",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "type": "subAgentActivity",
+          "id": "call_A2U7sfjmdGlUn5bn6gUNI0rl",
+          "kind": "started",
+          "agentThreadId": "019fcfd6-2ef7-7932-9ff5-dea6ad6f4daf",
+          "agentPath": "/root/beta"
+        },
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "completedAtMs": 1785898348329
+      }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "019fcfd6-2ef7-7932-9ff5-dea6ad6f4daf",
+        "status": {
+          "type": "active",
+          "activeFlags": []
+        }
+      }
+    },
+    {
+      "method": "turn/started",
+      "params": {
+        "threadId": "019fcfd6-2ef7-7932-9ff5-dea6ad6f4daf",
+        "turn": {
+          "id": "019fcfd6-2f29-79e3-aa6a-c5836a519d3f",
+          "items": [],
+          "itemsView": "notLoaded",
+          "status": "inProgress",
+          "error": null,
+          "startedAt": 1785898348,
+          "completedAt": null,
+          "durationMs": null
+        }
+      }
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 36576,
+            "inputTokens": 36510,
+            "cachedInputTokens": 28160,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 66,
+            "reasoningOutputTokens": 0
+          },
+          "last": {
+            "totalTokens": 18315,
+            "inputTokens": 18282,
+            "cachedInputTokens": 17152,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 33,
+            "reasoningOutputTokens": 0
+          },
+          "modelContextWindow": 258400
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "type": "subAgentActivity",
+          "id": "call_2W1NboHClVo0VqAf1y3ZFinO",
+          "kind": "interacted",
+          "agentThreadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+          "agentPath": "/root"
+        },
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "turnId": "019fcfd6-28bf-7e00-a873-4554526dc845",
+        "completedAtMs": 1785898349265
+      }
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "turnId": "019fcfd6-28bf-7e00-a873-4554526dc845",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 20756,
+            "inputTokens": 20713,
+            "cachedInputTokens": 5888,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 43,
+            "reasoningOutputTokens": 11
+          },
+          "last": {
+            "totalTokens": 20756,
+            "inputTokens": 20713,
+            "cachedInputTokens": 5888,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 43,
+            "reasoningOutputTokens": 11
+          },
+          "modelContextWindow": 258400
+        }
+      }
+    },
+    {
+      "method": "item/started",
+      "params": {
+        "item": {
+          "type": "collabAgentToolCall",
+          "id": "call_XGMDYMm4O8ne7vg3Y6p4eSqz",
+          "tool": "wait",
+          "status": "inProgress",
+          "senderThreadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+          "receiverThreadIds": [],
+          "prompt": null,
+          "model": null,
+          "reasoningEffort": null,
+          "agentsStates": {}
+        },
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "startedAtMs": 1785898349931
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "type": "collabAgentToolCall",
+          "id": "call_XGMDYMm4O8ne7vg3Y6p4eSqz",
+          "tool": "wait",
+          "status": "completed",
+          "senderThreadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+          "receiverThreadIds": [],
+          "prompt": null,
+          "model": null,
+          "reasoningEffort": null,
+          "agentsStates": {}
+        },
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "completedAtMs": 1785898349931
+      }
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 54933,
+            "inputTokens": 54846,
+            "cachedInputTokens": 45312,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 87,
+            "reasoningOutputTokens": 0
+          },
+          "last": {
+            "totalTokens": 18357,
+            "inputTokens": 18336,
+            "cachedInputTokens": 17152,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 21,
+            "reasoningOutputTokens": 0
+          },
+          "modelContextWindow": 258400
+        }
+      }
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "turnId": "019fcfd6-28bf-7e00-a873-4554526dc845",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 41529,
+            "inputTokens": 41481,
+            "cachedInputTokens": 26112,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 48,
+            "reasoningOutputTokens": 11
+          },
+          "last": {
+            "totalTokens": 20773,
+            "inputTokens": 20768,
+            "cachedInputTokens": 20224,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 5,
+            "reasoningOutputTokens": 0
+          },
+          "modelContextWindow": 258400
+        }
+      }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "method": "turn/completed",
+      "params": {
+        "threadId": "019fcfd6-2883-77e0-9013-4410ede70371",
+        "turn": {
+          "id": "019fcfd6-28bf-7e00-a873-4554526dc845",
+          "items": [],
+          "itemsView": "notLoaded",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1785898346,
+          "completedAt": 1785898350,
+          "durationMs": 3792
+        }
+      }
+    }
+  ],
+  "responses": {
+    "threadStart": {
+      "thread": {
+        "id": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "extra": null,
+        "sessionId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "",
+        "ephemeral": false,
+        "historyMode": "legacy",
+        "modelProvider": "openai",
+        "createdAt": 1785898342,
+        "updatedAt": 1785898342,
+        "recencyAt": 1785898342,
+        "status": {
+          "type": "idle"
+        },
+        "path": "/fixtures/codex/rollout.jsonl",
+        "cwd": "/workspace/repo",
+        "cliVersion": "0.145.0",
+        "source": "vscode",
+        "canAcceptDirectInput": true,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": null,
+        "turns": []
+      },
+      "model": "gpt-5.6-sol",
+      "modelProvider": "openai",
+      "serviceTier": "default",
+      "cwd": "/workspace/repo",
+      "runtimeWorkspaceRoots": ["/workspace/repo"],
+      "instructionSources": ["/fixtures/scrubbed", "/workspace/repo/AGENTS.md"],
+      "approvalPolicy": "on-request",
+      "approvalsReviewer": "auto_review",
+      "sandbox": {
+        "type": "workspaceWrite",
+        "writableRoots": [],
+        "networkAccess": false,
+        "excludeTmpdirEnvVar": false,
+        "excludeSlashTmp": false
+      },
+      "activePermissionProfile": null,
+      "reasoningEffort": "high",
+      "multiAgentMode": "explicitRequestOnly"
+    },
+    "turnStart": {
+      "turn": {
+        "id": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+        "items": [],
+        "itemsView": "notLoaded",
+        "status": "inProgress",
+        "error": null,
+        "startedAt": null,
+        "completedAt": null,
+        "durationMs": null
+      }
+    }
+  }
+}

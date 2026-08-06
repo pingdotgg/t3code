@@ -482,7 +482,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
   // working threads aren't your problem yet) — only the colored status label
   // stands out.
-  const isInFlight = status === "working" || status === "approval" || status === "input";
+  const isInFlight =
+    status === "working" || status === "monitoring" || status === "approval" || status === "input";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
@@ -496,37 +497,45 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           className:
             "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
         }
-      : status === "approval"
+      : status === "monitoring"
         ? {
-            label: "Approval",
+            // Steady label, no duty-cycled shimmer: monitoring is calm
+            // background presence, not active progress (monitoring-pill D6).
+            label: "Monitoring",
             icon: null,
-            className: "text-amber-700 dark:text-amber-300",
+            className: "text-sky-600 dark:text-sky-400",
           }
-        : status === "input"
+        : status === "approval"
           ? {
-              label: "Input",
+              label: "Approval",
               icon: null,
-              className: "text-indigo-600 dark:text-indigo-300",
+              className: "text-amber-700 dark:text-amber-300",
             }
-          : status === "failed"
+          : status === "input"
             ? {
-                label: "Failed",
+                label: "Input",
                 icon: null,
-                className: "text-red-700 dark:text-red-300",
+                className: "text-indigo-600 dark:text-indigo-300",
               }
-            : isWoke
+            : status === "failed"
               ? {
-                  label: "Woke",
-                  icon: "woke" as const,
-                  className: "text-amber-700 dark:text-amber-300",
+                  label: "Failed",
+                  icon: null,
+                  className: "text-red-700 dark:text-red-300",
                 }
-              : isUnread
+              : isWoke
                 ? {
-                    label: "Done",
-                    icon: "done" as const,
-                    className: "text-emerald-700 dark:text-emerald-300",
+                    label: "Woke",
+                    icon: "woke" as const,
+                    className: "text-amber-700 dark:text-amber-300",
                   }
-                : null;
+                : isUnread
+                  ? {
+                      label: "Done",
+                      icon: "done" as const,
+                      className: "text-emerald-700 dark:text-emerald-300",
+                    }
+                  : null;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
