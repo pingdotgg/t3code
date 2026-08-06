@@ -26,6 +26,7 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -550,8 +551,20 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+// Authenticated route discovery: a connected client (often relay-tunneled) asks
+// the environment which direct endpoints (loopback, LAN, Tailscale) also reach
+// this same server, so it can promote to a local connection when possible.
+export class EnvironmentRemoteAccessHttpApi extends HttpApiGroup.make("remoteAccess").add(
+  HttpApiEndpoint.get("advertisedEndpoints", "/api/remote-access/endpoints", {
+    headers: OptionalBearerHeaders,
+    success: Schema.Array(AdvertisedEndpoint),
+    error: EnvironmentScopedOperationErrors,
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentRemoteAccessHttpApi) {}

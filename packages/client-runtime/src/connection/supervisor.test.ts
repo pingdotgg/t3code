@@ -15,6 +15,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as ConnectionPromotion from "./promotion.ts";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -115,6 +116,9 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   readonly ready?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
   readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
+  readonly discover?: (
+    prepared: PreparedConnection,
+  ) => Effect.Effect<Option.Option<ConnectionPromotion.PromotedRoute>>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -175,6 +179,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     return { prepared, session } satisfies ConnectionDriver.EnvironmentConnectionLease;
   });
 
+  const discover = options?.discover;
   const dependencies = Layer.mergeAll(
     Layer.succeed(Connectivity.Connectivity, connectivity),
     Layer.succeed(
@@ -190,6 +195,18 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
       ConnectionDriver.ConnectionDriver,
       ConnectionDriver.ConnectionDriver.of({ connect }),
     ),
+    ...(discover === undefined
+      ? []
+      : [
+          Layer.succeed(
+            ConnectionPromotion.ConnectionPromotion,
+            ConnectionPromotion.ConnectionPromotion.of({
+              overrideFor: () => Effect.succeed(Option.none()),
+              reportOverrideFailed: () => Effect.void,
+              discover,
+            }),
+          ),
+        ]),
   );
 
   return {
@@ -846,6 +863,72 @@ describe("EnvironmentSupervisor", () => {
         (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
       );
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a relay session when a direct route is discovered", () =>
+    Effect.gen(function* () {
+      const relayPrepared: PreparedConnection = {
+        environmentId: RELAY_TARGET.environmentId,
+        label: RELAY_TARGET.label,
+        httpBaseUrl: "https://tunnel.example.test",
+        socketUrl: "wss://tunnel.example.test/ws?wsTicket=dpop",
+        httpAuthorization: { _tag: "Dpop", accessToken: "dpop-access-token" },
+        target: RELAY_TARGET,
+      };
+      const directPrepared: PreparedConnection = {
+        ...relayPrepared,
+        httpBaseUrl: "http://192.168.1.20:3773/",
+        socketUrl: "ws://192.168.1.20:3773/ws?wsTicket=direct",
+      };
+      const discoveries = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        // First attempt connects through the relay; after discovery the
+        // replacement attempt connects through the direct route.
+        prepare: (attempt) => Effect.succeed(attempt === 1 ? relayPrepared : directPrepared),
+        discover: () =>
+          Ref.updateAndGet(discoveries, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              count === 1
+                ? Option.some({
+                    endpointId: "server-lan:http://192.168.1.20:3773",
+                    httpBaseUrl: "http://192.168.1.20:3773/",
+                    wsBaseUrl: "ws://192.168.1.20:3773/",
+                  })
+                : Option.none(),
+            ),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      // The promotion replaces the lease without backoff, like a deliberate
+      // reconnect: generation advances, attempt restarts at 1.
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+      expect(Option.getOrThrow(prepared).httpBaseUrl).toBe("http://192.168.1.20:3773/");
+    }),
+  );
+
+  it.effect("does not run direct-route discovery for non-relay targets", () =>
+    Effect.gen(function* () {
+      const discoveries = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        discover: () =>
+          Ref.update(discoveries, (count) => count + 1).pipe(Effect.as(Option.none())),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(discoveries)).toBe(0);
+    }),
   );
 
   it.effect("probes the active session without reconnecting on application activation", () =>

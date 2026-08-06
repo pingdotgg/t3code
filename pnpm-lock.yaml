@@ -865,6 +865,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(bufferutil@4.1.0)(effect@4.0.0-beta.103(patch_hash=a18f963109656ddbeb2a99ca45f942ecf54830986259eb01ce6a970421c9c6a9))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared

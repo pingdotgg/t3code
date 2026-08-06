@@ -7,7 +7,11 @@ import {
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
-import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+  type ConnectionAttemptError,
+} from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -38,6 +42,16 @@ export interface AuthorizedRemoteEnvironment {
   readonly httpAuthorization: PreparedHttpAuthorization;
 }
 
+/** An alternative direct route to the same environment, tried before the
+ * stored relay endpoint when a cached DPoP access token is available. The
+ * access token is not bound to a host, so it works against any origin of the
+ * same server; only the per-request DPoP proof is URL-bound and is minted
+ * fresh for whichever endpoint is used. */
+export interface AuthorizedEndpointOverride {
+  readonly httpBaseUrl: string;
+  readonly wsBaseUrl: string;
+}
+
 export class RemoteEnvironmentAuthorization extends Context.Service<
   RemoteEnvironmentAuthorization,
   {
@@ -53,6 +67,10 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
         RelayEnvironmentAuthorization,
         ConnectionAttemptError
       >;
+    }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
+    readonly authorizeDpopDirect: (input: {
+      readonly expectedEnvironmentId: EnvironmentId;
+      readonly endpoint: AuthorizedEndpointOverride;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
@@ -149,11 +167,20 @@ export const make = Effect.gen(function* () {
   );
 
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
-    function* (token: TokenStore.RemoteDpopAccessToken, timeoutMs?: number) {
+    function* (
+      token: TokenStore.RemoteDpopAccessToken,
+      timeoutMs?: number,
+      // The cached token works against any origin of the same server, so a
+      // direct (LAN/Tailscale) endpoint can be substituted for the stored
+      // relay endpoint when minting the websocket ticket.
+      endpoint?: AuthorizedEndpointOverride,
+    ) {
+      const httpBaseUrl = endpoint?.httpBaseUrl ?? token.endpoint.httpBaseUrl;
+      const wsBaseUrl = endpoint?.wsBaseUrl ?? token.endpoint.wsBaseUrl;
       const ticketProof = yield* signer
         .createProof({
           method: "POST",
-          url: environmentEndpointUrl(token.endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
+          url: environmentEndpointUrl(httpBaseUrl, "/api/auth/websocket-ticket"),
           accessToken: token.accessToken,
         })
         .pipe(
@@ -166,8 +193,8 @@ export const make = Effect.gen(function* () {
           ),
         );
       return yield* resolveRemoteDpopWebSocketConnectionUrl({
-        wsBaseUrl: token.endpoint.wsBaseUrl,
-        httpBaseUrl: token.endpoint.httpBaseUrl,
+        wsBaseUrl,
+        httpBaseUrl,
         accessToken: token.accessToken,
         dpopProof: ticketProof,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -296,10 +323,71 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Connects through a direct route using the cached DPoP access token. There
+  // is deliberately no bootstrap fallback here: bootstrap credentials are
+  // single-use relay grants, so when no valid cached token exists the caller
+  // must connect through the relay path instead.
+  const authorizeDpopDirect = Effect.fn("clientRuntime.connection.remote.authorizeDpopDirect")(
+    function* (input: {
+      readonly expectedEnvironmentId: EnvironmentId;
+      readonly endpoint: AuthorizedEndpointOverride;
+    }) {
+      const thumbprint = yield* signer.thumbprint.pipe(
+        Effect.mapError(
+          () =>
+            new ConnectionBlockedError({
+              reason: "configuration",
+              detail: "Could not load the environment authorization key.",
+            }),
+        ),
+      );
+      const now = yield* Clock.currentTimeMillis;
+      const cached = yield* tokenStore.get(input.expectedEnvironmentId);
+      if (
+        Option.isNone(cached) ||
+        cached.value.dpopThumbprint !== thumbprint ||
+        cached.value.expiresAtEpochMs <= now + TOKEN_EXPIRY_SAFETY_MARGIN_MS
+      ) {
+        return yield* new ConnectionTransientError({
+          reason: "endpoint-unavailable",
+          detail: "No cached environment credential is available for the direct route.",
+        });
+      }
+      // The descriptor check keeps us from talking to an unrelated server that
+      // answers on the direct address.
+      const descriptor = yield* fetchDescriptor(input.endpoint.httpBaseUrl).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      if (descriptor.environmentId !== input.expectedEnvironmentId) {
+        return yield* environmentMismatchError({
+          expected: input.expectedEnvironmentId,
+          actual: descriptor.environmentId,
+        });
+      }
+      const socketUrl = yield* createDpopSocketUrl(
+        cached.value,
+        CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+        input.endpoint,
+      ).pipe(Effect.mapError(mapDpopSocketError));
+      return {
+        environmentId: descriptor.environmentId,
+        label: descriptor.label,
+        httpBaseUrl: input.endpoint.httpBaseUrl,
+        socketUrl,
+        httpAuthorization: {
+          _tag: "Dpop" as const,
+          accessToken: cached.value.accessToken,
+        },
+      };
+    },
+  );
+
   return RemoteEnvironmentAuthorization.of({
     authorizeBearer,
     authorizeDpop: (input) =>
       authorizeDpop(input).pipe(Effect.withSpan("environment.authorization")),
+    authorizeDpopDirect: (input) =>
+      authorizeDpopDirect(input).pipe(Effect.withSpan("environment.authorization.direct")),
   });
 });
 

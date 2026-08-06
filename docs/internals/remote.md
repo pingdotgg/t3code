@@ -149,6 +149,27 @@ relay Worker only brokers credentials and a managed endpoint; application traffi
 the provisioned Cloudflare tunnel hostname for the life of the connection, not through the relay
 Worker itself. See [t3-connect.md](./t3-connect.md).
 
+#### Local promotion
+
+A relay connection promotes itself to a direct route when one exists. The server exposes its own
+advertised endpoints on the authenticated `GET /api/remote-access/endpoints` surface
+(`apps/server/src/remoteAccess/`, `relay:read` scope). While a relay lease is connected, the
+supervisor runs a discovery pass ([`connection/promotion.ts`][promotion]): it fetches the
+environment's advertised endpoints through the tunnel, filters to direct candidates (`lan` and
+`private-network` reachability), probes them with the descriptor endpoint to confirm the same
+`environmentId`, and records the best one as a per-environment route override. The supervisor then
+replaces the lease without backoff, and the relay broker connects through the override using the
+cached DPoP access token. The token is not host-bound; only the per-request DPoP proof is, and
+proofs are minted fresh for the direct origin. No relay round-trip or re-bootstrap is involved.
+
+The relay stays authoritative as the fallback: a failed direct attempt clears the override, starts
+a cooldown for that endpoint so a flaky LAN cannot ping-pong the connection, and falls back to the
+relay path within the same prepare call. Discovery re-runs on an interval while relay-connected, so
+moving onto the environment's network is noticed even though Wi-Fi-to-Wi-Fi moves produce no
+connectivity signal. `RelayConnectionTarget` persistence is unchanged; the override is in-memory
+per client session. Promotion requires a DPoP credential and never applies to cookie-authenticated
+primary connections.
+
 ### Tailscale access
 
 A T3-managed `tailscale serve` mapping exposes the server on the tailnet over HTTPS, and the
@@ -229,6 +250,7 @@ These remain unbuilt and are listed to keep the model honest:
 - richer multi-environment UI beyond the current connections list.
 
 [model]: ../../packages/client-runtime/src/connection/model.ts
+[promotion]: ../../packages/client-runtime/src/connection/promotion.ts
 [onboarding]: ../../packages/client-runtime/src/connection/onboarding.ts
 [authremote]: ../../packages/client-runtime/src/authorization/remote.ts
 [sshenv]: ../../apps/desktop/src/ssh/DesktopSshEnvironment.ts

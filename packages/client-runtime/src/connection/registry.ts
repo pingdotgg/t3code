@@ -33,6 +33,7 @@ import type {
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as ConnectionPromotion from "./promotion.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
@@ -135,6 +136,10 @@ export const make = Effect.gen(function* () {
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  // Optional: without the promotion service, relay connections never promote
+  // to direct routes. Captured here so supervisors see it regardless of the
+  // caller's fiber context.
+  const promotion = yield* Effect.serviceOption(ConnectionPromotion.ConnectionPromotion);
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
@@ -250,9 +255,14 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
           const scope = yield* Scope.make();
-          const supervisor = yield* EnvironmentSupervisor.make(entry, {
-            initiallyDesired: false,
-          }).pipe(
+          const makeSupervisor = Option.match(promotion, {
+            onNone: () => EnvironmentSupervisor.make(entry, { initiallyDesired: false }),
+            onSome: (service) =>
+              EnvironmentSupervisor.make(entry, { initiallyDesired: false }).pipe(
+                Effect.provideService(ConnectionPromotion.ConnectionPromotion, service),
+              ),
+          });
+          const supervisor = yield* makeSupervisor.pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),

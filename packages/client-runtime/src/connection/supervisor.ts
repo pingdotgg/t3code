@@ -17,6 +17,7 @@ import * as Tracer from "effect/Tracer";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as ConnectionPromotion from "./promotion.ts";
 import {
   type ConnectionAttemptError,
   type ConnectionTarget,
@@ -34,6 +35,10 @@ const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// While connected through the relay, direct-route discovery re-runs on this
+// interval so moving onto the environment's network (which produces no
+// connectivity signal) is eventually noticed.
+const PROMOTION_REDISCOVERY_INTERVAL = "3 minutes";
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -45,7 +50,10 @@ type SupervisorSignal =
   | { readonly _tag: "DisconnectRequested" }
   | { readonly _tag: "RetryRequested" }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
-  | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup };
+  | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
+  // A direct route was discovered for the connected relay environment;
+  // replace the lease without backoff so the next attempt uses it.
+  | { readonly _tag: "PromoteRequested" };
 
 interface PendingRetryTrace {
   readonly previousAttempt: Tracer.Span;
@@ -225,6 +233,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  // Promotion is optional: without the service (some tests, platforms that do
+  // not wire it) relay connections simply never promote to direct routes.
+  const promotion = yield* Effect.serviceOption(ConnectionPromotion.ConnectionPromotion);
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
     network: yield* connectivity.status,
@@ -362,6 +373,41 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
+  // Runs for the life of a connected relay lease: discovers a direct route to
+  // the same environment and asks the supervisor to reconnect through it. The
+  // fiber is forked into the attempt scope, so it is interrupted when the
+  // lease ends for any reason.
+  const forkPromotionDiscovery = Effect.fnUntraced(function* (
+    activeConnection: PreparedConnection,
+  ) {
+    if (Option.isNone(promotion)) {
+      return;
+    }
+    if (target._tag !== "RelayConnectionTarget") {
+      return;
+    }
+    if (activeConnection.httpAuthorization?._tag !== "Dpop") {
+      return;
+    }
+    const service = promotion.value;
+    const override = yield* service.overrideFor(target.environmentId);
+    if (Option.isSome(override) && override.value.httpBaseUrl === activeConnection.httpBaseUrl) {
+      // Already connected through the promoted direct route; nothing to do
+      // until it fails and the broker falls back to the relay.
+      return;
+    }
+    yield* Effect.gen(function* () {
+      for (;;) {
+        const discovered = yield* service.discover(activeConnection);
+        if (Option.isSome(discovered)) {
+          yield* signal({ _tag: "PromoteRequested" });
+          return;
+        }
+        yield* Effect.sleep(PROMOTION_REDISCOVERY_INTERVAL);
+      }
+    }).pipe(Effect.forkScoped);
+  });
+
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
     for (;;) {
       const next = yield* Queue.take(signals);
@@ -375,6 +421,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }
           break;
         case "ConnectRequested":
+        case "PromoteRequested":
           break;
         case "Wakeup":
           if (next.reason === "application-active-reconnect") {
@@ -398,6 +445,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "DisconnectRequested":
         case "RetryRequested":
           return false;
+        case "PromoteRequested":
+          // A direct route is ready; deliberately replace the lease without
+          // backoff so the next attempt connects through it.
+          return true;
         case "NetworkChanged":
           if (next.network === "offline") {
             return false;
@@ -449,6 +500,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                 case "RetryRequested":
                   yield* Fiber.interrupt(probe);
                   return false;
+                case "PromoteRequested":
+                  yield* Fiber.interrupt(probe);
+                  return true;
                 case "NetworkChanged":
                   if (probeEvent.signal.network === "offline") {
                     yield* Fiber.interrupt(probe);
@@ -576,6 +630,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       lastFailure: null,
       retryAt: null,
     });
+    yield* forkPromotionDiscovery(active.lease.prepared);
 
     const connectedExit = yield* Effect.raceFirst(
       active.lease.session.closed.pipe(
@@ -620,6 +675,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             case "DisconnectRequested":
             case "RetryRequested":
             case "NetworkChanged":
+            case "PromoteRequested":
               return false;
           }
         }

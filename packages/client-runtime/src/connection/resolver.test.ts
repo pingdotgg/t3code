@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import * as ConnectionPromotion from "./promotion.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -95,8 +96,11 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly connectEnvironment?: ManagedRelay.ManagedRelayClient["Service"]["connectEnvironment"];
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
+  readonly authorizeDpopDirect?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpopDirect"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
+  readonly promotionOverride?: ConnectionPromotion.PromotedRoute;
+  readonly promotionFailures?: Ref.Ref<ReadonlyArray<string>>;
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -143,6 +147,27 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
             },
           }),
         )),
+    authorizeDpopDirect:
+      options?.authorizeDpopDirect ??
+      (() =>
+        Effect.fail(
+          new ConnectionTransientError({
+            reason: "endpoint-unavailable",
+            detail: "No cached environment credential is available for the direct route.",
+          }),
+        )),
+  });
+  const promotionOverride = options?.promotionOverride;
+  const promotion = ConnectionPromotion.ConnectionPromotion.of({
+    overrideFor: () =>
+      Effect.succeed(
+        promotionOverride === undefined ? Option.none() : Option.some(promotionOverride),
+      ),
+    reportOverrideFailed: (environmentId) =>
+      options?.promotionFailures === undefined
+        ? Effect.void
+        : Ref.update(options.promotionFailures, (current) => [...current, environmentId]),
+    discover: () => Effect.succeed(Option.none()),
   });
   const ssh = ClientCapabilities.SshEnvironmentGateway.of({
     provision: () => Effect.die("unused"),
@@ -181,6 +206,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
       }),
     ),
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
+    Layer.succeed(ConnectionPromotion.ConnectionPromotion, promotion),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
     Layer.succeed(
       ManagedRelay.ManagedRelayClient,
@@ -358,6 +384,73 @@ describe("ConnectionResolver", () => {
         },
       ]);
       expect(yield* Ref.get(bootstrapCredentials)).toEqual(["relay-bootstrap"]);
+    }),
+  );
+
+  it.effect("prepares a relay environment through a promoted direct route", () =>
+    Effect.gen(function* () {
+      const directInputs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const target = new RelayConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Cloud",
+      });
+      const brokerLayer = yield* makeDependencies({
+        promotionOverride: {
+          endpointId: "server-lan:http://192.168.1.20:3773",
+          httpBaseUrl: "http://192.168.1.20:3773/",
+          wsBaseUrl: "ws://192.168.1.20:3773/",
+        },
+        authorizeDpopDirect: (input) =>
+          Ref.update(directInputs, (values) => [...values, input.endpoint.httpBaseUrl]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Cloud",
+              httpBaseUrl: input.endpoint.httpBaseUrl,
+              socketUrl: "ws://192.168.1.20:3773/ws?wsTicket=direct",
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "dpop-access-token",
+              },
+            }),
+          ),
+        connectEnvironment: () => Effect.die("relay must not be contacted for a direct route"),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const preparedConnection = yield* broker.prepare(catalogEntry(target));
+      expect(preparedConnection.httpBaseUrl).toBe("http://192.168.1.20:3773/");
+      expect(preparedConnection.socketUrl).toContain("wsTicket=direct");
+      expect(yield* Ref.get(directInputs)).toEqual(["http://192.168.1.20:3773/"]);
+    }),
+  );
+
+  it.effect("falls back to the relay and reports the failed direct route", () =>
+    Effect.gen(function* () {
+      const promotionFailures = yield* Ref.make<ReadonlyArray<string>>([]);
+      const target = new RelayConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Cloud",
+      });
+      const brokerLayer = yield* makeDependencies({
+        promotionOverride: {
+          endpointId: "server-lan:http://192.168.1.20:3773",
+          httpBaseUrl: "http://192.168.1.20:3773/",
+          wsBaseUrl: "ws://192.168.1.20:3773/",
+        },
+        promotionFailures,
+        authorizeDpopDirect: () =>
+          Effect.fail(
+            new ConnectionTransientError({
+              reason: "timeout",
+              detail: "The direct endpoint did not respond.",
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const preparedConnection = yield* broker.prepare(catalogEntry(target));
+      expect(preparedConnection.socketUrl).toContain("wsTicket=dpop");
+      expect(yield* Ref.get(promotionFailures)).toEqual([ENVIRONMENT_ID]);
     }),
   );
 

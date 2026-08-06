@@ -23,6 +23,7 @@ export {
 } from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
+export { ConnectionPromotion, type PromotedRoute, selectPromotionCandidates } from "./promotion.ts";
 export {
   EnvironmentNotRegisteredError,
   EnvironmentRegistry,
