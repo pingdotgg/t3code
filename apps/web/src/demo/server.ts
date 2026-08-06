@@ -1058,6 +1058,8 @@ function makeHandlersLayer(backend: DemoBackend) {
           ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           dispatchDemoCommand(store, command),
+        [ORCHESTRATION_WS_METHODS.getWorkflowScript]: ({ scriptPath }) =>
+          Effect.succeed({ scriptPath, contents: "", truncated: false }),
         [ORCHESTRATION_WS_METHODS.searchThreads]: () => Effect.succeed({ matches: [] }),
         [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: () =>
           Effect.sync(() => store.archivedSnapshot()),
