@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useCallback, useMemo, useState } from "react";
 
+import { type DetectedProjectScript } from "~/hooks/usePackageManagerScripts";
 import {
   keybindingValueForCommand,
   decodeProjectScriptKeybindingRule,
@@ -95,6 +96,17 @@ function ScriptIcon({
   return <PlayIcon className={className} />;
 }
 
+/** Best-effort icon guess for a detected package.json/composer.json script, editable afterwards. */
+function guessDetectedScriptIcon(name: string): ProjectScriptIcon {
+  const lower = name.toLowerCase();
+  if (lower.includes("test")) return "test";
+  if (lower.includes("lint")) return "lint";
+  if (lower.includes("build")) return "build";
+  if (lower.includes("debug")) return "debug";
+  if (lower.includes("config") || lower.includes("setup")) return "configure";
+  return "play";
+}
+
 export interface NewProjectScriptInput {
   name: string;
   command: string;
@@ -110,11 +122,14 @@ export interface NewProjectScriptInput {
 export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+const NO_PACKAGE_SCRIPTS: ReadonlyArray<DetectedProjectScript> = [];
 
 interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
+  /** Scripts detected in package.json/composer.json, offered for import. */
+  packageScripts?: ReadonlyArray<DetectedProjectScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
@@ -129,6 +144,7 @@ interface ProjectScriptsControlProps {
 export default function ProjectScriptsControl({
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
+  packageScripts = NO_PACKAGE_SCRIPTS,
   keybindings,
   preferredScriptId = null,
   onRunScript,
@@ -173,6 +189,27 @@ export default function ProjectScriptsControl({
       ),
     [fileScripts, scripts],
   );
+  const importablePackageScripts = useMemo(
+    () =>
+      packageScripts.filter(
+        (detected) =>
+          !scripts.some(
+            (script) =>
+              script.command === detected.command ||
+              script.name.toLowerCase() === detected.name.toLowerCase(),
+          ),
+      ),
+    [packageScripts, scripts],
+  );
+  const npmScripts = useMemo(
+    () => importablePackageScripts.filter((script) => script.source === "npm"),
+    [importablePackageScripts],
+  );
+  const composerScripts = useMemo(
+    () => importablePackageScripts.filter((script) => script.source === "composer"),
+    [importablePackageScripts],
+  );
+  const hasDetectedScripts = npmScripts.length > 0 || composerScripts.length > 0;
   const isEditing = editingScriptId !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
@@ -309,6 +346,21 @@ export default function ProjectScriptsControl({
     }
   };
 
+  const openAddDialogForDetectedScript = (detected: DetectedProjectScript) => {
+    setActionsMenuOpen({ scripts: false, imports: false });
+    setEditingScriptId(null);
+    setName(detected.name);
+    setCommand(detected.command);
+    setIcon(guessDetectedScriptIcon(detected.name));
+    setIconPickerOpen(false);
+    setRunOnWorktreeCreate(false);
+    setKeybinding("");
+    setPreviewUrl("");
+    setAutoOpenPreview(false);
+    setValidationError(null);
+    setDialogOpen(true);
+  };
+
   const importMenuItems = importableScripts.length > 0 && (
     <>
       {primaryScript && <MenuSeparator />}
@@ -330,6 +382,42 @@ export default function ProjectScriptsControl({
       </MenuGroup>
     </>
   );
+
+  function detectedScriptMenuItems(
+    label: string,
+    detectedScripts: ReadonlyArray<DetectedProjectScript>,
+  ) {
+    if (detectedScripts.length === 0) return null;
+    return (
+      <MenuGroup>
+        <MenuGroupLabel>{label}</MenuGroupLabel>
+        {detectedScripts.map((detected) => (
+          <MenuItem
+            key={`${detected.source}:${detected.name}`}
+            className={dropdownItemClassName}
+            onClick={() => openAddDialogForDetectedScript(detected)}
+          >
+            <ScriptIcon icon={guessDetectedScriptIcon(detected.name)} className="size-4" />
+            <span className="truncate">{detected.name}</span>
+            <MenuShortcut className="ms-auto">
+              <PlusIcon className="size-3.5" aria-label="Add" />
+            </MenuShortcut>
+          </MenuItem>
+        ))}
+      </MenuGroup>
+    );
+  }
+
+  function renderDetectedScriptGroups(precedingContent: boolean) {
+    if (!hasDetectedScripts) return null;
+    return (
+      <>
+        {precedingContent && <MenuSeparator />}
+        {detectedScriptMenuItems("From package.json", npmScripts)}
+        {detectedScriptMenuItems("From composer.json", composerScripts)}
+      </>
+    );
+  }
 
   return (
     <>
@@ -413,6 +501,7 @@ export default function ProjectScriptsControl({
                 );
               })}
               {importMenuItems}
+              {renderDetectedScriptGroups(true)}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
                 Add action
@@ -420,7 +509,7 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </Group>
-      ) : importableScripts.length > 0 ? (
+      ) : importableScripts.length > 0 || hasDetectedScripts ? (
         <Menu
           highlightItemOnHover={false}
           open={actionsMenuOpen.imports}
@@ -435,6 +524,7 @@ export default function ProjectScriptsControl({
           </MenuTrigger>
           <MenuPopup align="end">
             {importMenuItems}
+            {renderDetectedScriptGroups(importableScripts.length > 0)}
             <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
               <PlusIcon className="size-4" />
               Add action
