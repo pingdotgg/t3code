@@ -4444,6 +4444,10 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           }
         });
 
+        // next-16916+ prompt body is flat `{ text, files?, delivery? }`. The
+        // pinned beta SDK still types/maps a nested `prompt` field, which the
+        // server rejects with `Missing key at ["text"]`. Post through the raw
+        // hey-api client so the wire matches the running binary.
         const promptPayload = (message: ProviderAdapterV2TurnInput["message"]) => {
           const text = message.text.trim();
           const files = toOpenCode2FileAttachments({
@@ -4455,11 +4459,37 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             throw protocolError("OpenCode 2 turns require text or file attachments");
           }
           return {
-            prompt: {
-              text: text.length === 0 ? " " : text,
-              ...(files.length === 0 ? {} : { files }),
-            },
+            text: text.length === 0 ? " " : text,
+            ...(files.length === 0 ? {} : { files }),
           };
+        };
+
+        const postSessionPrompt = (input: {
+          readonly sessionID: string;
+          readonly text: string;
+          readonly files?: ReturnType<typeof toOpenCode2FileAttachments>;
+          readonly delivery?: "steer" | "queue";
+        }) => {
+          const rawClient = (
+            client as unknown as {
+              client: {
+                post: (options: Record<string, unknown>) => Promise<unknown>;
+              };
+            }
+          ).client;
+          return rawClient.post({
+            url: "/api/session/{sessionID}/prompt",
+            path: { sessionID: input.sessionID },
+            body: {
+              text: input.text,
+              ...(input.files === undefined || input.files.length === 0
+                ? {}
+                : { files: input.files }),
+              ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+            },
+            headers: { "Content-Type": "application/json" },
+            throwOnError: true,
+          });
         };
 
         const readSnapshot = Effect.fnUntraced(function* (
@@ -4910,7 +4940,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 turnInput.runtimePolicy.interactionMode,
               );
               const prompted = yield* sdkCall("session.prompt", { sessionID, ...payload }, () =>
-                client.v2.session.prompt({ sessionID, ...payload }),
+                postSessionPrompt({ sessionID, ...payload }),
               ).pipe(
                 Effect.tapError((cause) =>
                   finalizeTurn(state, turn, "failed", {
@@ -4924,8 +4954,23 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               lastEventAtMs = yield* Clock.currentTimeMillis;
               // The admitted input id is the closest native turn correlation
               // point 2.x offers, and it arrives on the prompt response before
-              // `session.input.admitted` reaches the event stream.
-              const admittedId = recordString(prompted.data?.data, "id");
+              // `session.input.admitted` reaches the event stream. next-16916
+              // returns a single-wrapped body (`data.id`); older beta SDKs used
+              // the double envelope (`data.data.id`).
+              const promptedBody =
+                prompted !== null && typeof prompted === "object" && "data" in prompted
+                  ? (prompted as { data?: unknown }).data
+                  : undefined;
+              const admittedId =
+                recordString(promptedBody, "id") ??
+                recordString(
+                  promptedBody !== null &&
+                    typeof promptedBody === "object" &&
+                    "data" in promptedBody
+                    ? (promptedBody as { data?: unknown }).data
+                    : undefined,
+                  "id",
+                );
               if (admittedId !== undefined && turn.nativeInputId === null) {
                 turn.nativeInputId = admittedId;
                 yield* emitProviderTurn(state, turn, "running", null);
@@ -4959,7 +5004,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               }
               const payload = promptPayload(steerInput.message);
               yield* sdkCall("session.prompt", { sessionID, ...payload, delivery: "steer" }, () =>
-                client.v2.session.prompt({ sessionID, ...payload, delivery: "steer" }),
+                postSessionPrompt({ sessionID, ...payload, delivery: "steer" }),
               );
             }).pipe(
               Effect.mapError(

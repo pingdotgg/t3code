@@ -322,11 +322,22 @@ export const makeOpenCode2TextGeneration = Effect.fn("makeOpenCode2TextGeneratio
 
       return yield* Effect.gen(function* () {
         // Session3 prompt admits input and schedules the agent loop; it does
-        // not return generation text.
+        // not return generation text. next-16916 takes a flat body (`text`),
+        // not the nested `prompt` field the beta SDK still maps.
+        const rawClient = (
+          input.client as unknown as {
+            client: {
+              post: (options: Record<string, unknown>) => Promise<unknown>;
+            };
+          }
+        ).client;
         yield* sdkCall(input.operation, "session.prompt", () =>
-          input.client.v2.session.prompt({
-            sessionID,
-            prompt: { text: promptText },
+          rawClient.post({
+            url: "/api/session/{sessionID}/prompt",
+            path: { sessionID },
+            body: { text: promptText },
+            headers: { "Content-Type": "application/json" },
+            throwOnError: true,
           }),
         );
         yield* sdkCall(input.operation, "session.wait", () =>

@@ -136,33 +136,43 @@ const OpenCode2RuntimeTestDouble: OpenCode2Runtime.OpenCode2Runtime["Service"] =
     }),
   createOpenCode2SdkClient: ({ baseUrl, directory, serverPassword }) => {
     runtimeMock.state.clientConnections.push({ baseUrl, directory, serverPassword });
+    const runPrompt = async (parameters: Record<string, unknown>) => {
+      runtimeMock.state.sessionPromptRequests.push(parameters);
+      if (runtimeMock.state.sessionPromptError !== undefined) {
+        throw runtimeMock.state.sessionPromptError;
+      }
+      const error = runtimeMock.state.promptErrors.shift();
+      if (error !== undefined) throw error;
+      return {
+        data: {
+          id: "input-1",
+          sessionID: "temporary-session",
+          admittedSeq: 1,
+          delivery: "queue",
+          timeCreated: 1,
+          text: parameters.text ?? parameters.prompt,
+        },
+      };
+    };
     return {
+      // next-16916 prompt uses the raw hey-api client (flat `{ text }` body).
+      client: {
+        post: async (options: {
+          readonly path?: { readonly sessionID?: string };
+          readonly body?: Record<string, unknown>;
+        }) =>
+          runPrompt({
+            sessionID: options.path?.sessionID,
+            ...options.body,
+          }),
+      },
       v2: {
         session: {
           create: async (parameters: Record<string, unknown>) => {
             runtimeMock.state.sessionCreateRequests.push(parameters);
             return { data: { data: { id: "temporary-session" } } };
           },
-          prompt: async (parameters: Record<string, unknown>) => {
-            runtimeMock.state.sessionPromptRequests.push(parameters);
-            if (runtimeMock.state.sessionPromptError !== undefined) {
-              throw runtimeMock.state.sessionPromptError;
-            }
-            const error = runtimeMock.state.promptErrors.shift();
-            if (error !== undefined) throw error;
-            return {
-              data: {
-                data: {
-                  id: "input-1",
-                  sessionID: "temporary-session",
-                  admittedSeq: 1,
-                  delivery: "queue",
-                  timeCreated: 1,
-                  prompt: parameters.prompt,
-                },
-              },
-            };
-          },
+          prompt: async (parameters: Record<string, unknown>) => runPrompt(parameters),
           wait: async (parameters: Record<string, unknown>) => {
             runtimeMock.state.sessionWaitRequests.push(parameters);
             return { data: undefined };
@@ -273,7 +283,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
           model: { providerID: "opencode", id: "big-pickle" },
         });
         expect(runtimeMock.state.sessionPromptRequests).toHaveLength(2);
-        const firstPrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+        const firstPrompt = runtimeMock.state.sessionPromptRequests[0] as
           | { text?: string }
           | undefined;
         expect(firstPrompt?.text).toContain("Use concise release-note wording.");
@@ -409,7 +419,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
           title: "Add OpenCode 2 text generation",
           body: "## Summary\n\n- Add generation",
         });
-        const prPrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+        const prPrompt = runtimeMock.state.sessionPromptRequests[0] as
           | { text?: string }
           | undefined;
         expect(prPrompt?.text).toContain("Call out the rollout plan.");
@@ -432,7 +442,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
         });
 
         expect(result).toEqual({ title: "Repair OpenCode 2 status handling" });
-        const titlePrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+        const titlePrompt = runtimeMock.state.sessionPromptRequests[0] as
           | { text?: string }
           | undefined;
         expect(titlePrompt?.text).toContain(
@@ -516,7 +526,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
           expect(runtimeMock.state.sessionPromptRequests[0]).toMatchObject({
             sessionID: "temporary-session",
           });
-          const agentPrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+          const agentPrompt = runtimeMock.state.sessionPromptRequests[0] as
             | { text?: string }
             | undefined;
           expect(agentPrompt?.text).toContain("Attachment metadata:");
