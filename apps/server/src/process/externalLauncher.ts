@@ -234,6 +234,27 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
   }
 }
 
+function posixParentDirectory(target: string): string {
+  const parent = target.replace(/\/+[^/]*\/?$/, "");
+  return parent === "" ? "/" : parent;
+}
+
+function resolveFileManagerRevealLaunch(
+  target: string,
+  platform: NodeJS.Platform,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  switch (platform) {
+    case "darwin":
+      return { command: "open", args: ["-R", target] };
+    case "win32":
+      // Explorer only selects the entry when the path is fully backslashed.
+      return { command: "explorer", args: [`/select,${target.replaceAll("/", "\\")}`] };
+    default:
+      // Linux has no portable "select" flag; open the containing directory.
+      return { command: "xdg-open", args: [posixParentDirectory(target)] };
+  }
+}
+
 function buildBrowserLaunch(
   target: string,
   platform: NodeJS.Platform,
@@ -374,6 +395,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.id !== "file-manager") {
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+  }
+
+  if (input.reveal === true) {
+    return {
+      editor: editorDef.id,
+      target: input.cwd,
+      ...resolveFileManagerRevealLaunch(input.cwd, platform),
+    };
   }
 
   return {
