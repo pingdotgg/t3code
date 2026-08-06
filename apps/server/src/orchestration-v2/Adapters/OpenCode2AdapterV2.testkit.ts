@@ -161,6 +161,28 @@ export class OpenCode2ReplayController {
     this.transcript = transcript;
   }
 
+  /** Non-consuming look at the next transcript entry. */
+  peek(): OpenCode2SdkReplayTranscript["entries"][number] | undefined {
+    return this.transcript.entries[this.cursor];
+  }
+
+  /**
+   * True when the next entry is an outbound expect for this operation. Used so
+   * optional startup catalog probes can fall back to canned data when a
+   * fixture does not record them, without racing the event stream.
+   */
+  expectsOutbound(operation: string): boolean {
+    const entry = this.peek();
+    if (entry?.type !== "expect_outbound") return false;
+    const frame = entry.frame;
+    return (
+      typeof frame === "object" &&
+      frame !== null &&
+      "type" in frame &&
+      (frame as { readonly type?: string }).type === operation
+    );
+  }
+
   async expectOutbound(actual: unknown): Promise<void> {
     try {
       this.throwFailure();
@@ -373,10 +395,26 @@ export function makeReplayClient(controller: OpenCode2ReplayController): Opencod
     await controller.expectOutbound({ type: operation, input });
     return { data: { data: await controller.response(operation) } };
   };
+  /**
+   * Catalog probes may run at openSession/ensureThread before the transcript
+   * records them. Prefer the transcript when present; otherwise return canned
+   * data so event.subscribe stays first and fixtures do not deadlock.
+   */
+  const optionalCatalog = async (
+    operation: OpenCode2RuntimeOperation,
+    input: unknown,
+    canned: unknown,
+  ) => {
+    if (!controller.expectsOutbound(operation)) {
+      return { data: { data: canned } };
+    }
+    return request(operation, input);
+  };
   return {
     v2: {
       agent: {
-        list: (input: unknown) => request("agent.list", input),
+        list: (input: unknown) =>
+          optionalCatalog("agent.list", input, [{ id: "build" }, { id: "plan" }]),
       },
       event: {
         subscribe: async (options?: { readonly signal?: AbortSignal }) => {
@@ -388,10 +426,10 @@ export function makeReplayClient(controller: OpenCode2ReplayController): Opencod
         list: (input: unknown) => request("message.list", input),
       },
       mcp: {
-        list: (input: unknown) => request("mcp.list", input),
+        list: (input: unknown) => optionalCatalog("mcp.list", input, []),
       },
       model: {
-        list: (input: unknown) => request("model.list", input),
+        list: (input: unknown) => optionalCatalog("model.list", input, []),
       },
       session: {
         context: (input: unknown) => request("session.context", input),

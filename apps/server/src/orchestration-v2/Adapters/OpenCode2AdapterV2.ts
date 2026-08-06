@@ -4076,16 +4076,64 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           scope,
           Effect.sync(() => abortController.abort()),
         );
+        // First event.subscribe runs on this fiber so ensureThread cannot race
+        // ahead under TestClock (fork-only subscribe lost to agent.list/create).
+        // Drain + resubscribe stay forked after the first outbound is established.
+        const firstStreamController = new AbortController();
+        const onFirstSessionAbort = () => firstStreamController.abort();
+        if (abortController.signal.aborted) {
+          firstStreamController.abort();
+        } else {
+          abortController.signal.addEventListener("abort", onFirstSessionAbort, { once: true });
+        }
+        const firstSubscription = yield* sdkCall("event.subscribe", {}, () =>
+          client.v2.event.subscribe({ signal: firstStreamController.signal }),
+        );
+        lastEventAtMs = yield* Clock.currentTimeMillis;
+
+        const consumeEventStream = (stream: AsyncIterable<unknown>) =>
+          Stream.fromAsyncIterable(
+            stream,
+            (cause) =>
+              new OpenCode2RuntimeError({
+                operation: "event.subscribe",
+                category: "event-subscription-failed",
+                cause,
+              }),
+          ).pipe(
+            Stream.tap((event) =>
+              Clock.currentTimeMillis.pipe(
+                Effect.map((now) => {
+                  lastEventAtMs = now;
+                  consecutiveStreamFailures = 0;
+                  // server.connected alone is not progress; do not clear
+                  // stall resubscribe budget on reconnect acks.
+                  if ((event as { readonly type?: string }).type !== "server.connected") {
+                    consecutiveStallResubscribes = 0;
+                  }
+                }),
+              ),
+            ),
+            Stream.runForEach(handleEvent),
+            Effect.exit,
+          );
+
         // Resubscribe loop: `/api/event` is volatile (slow consumer overflows).
         // A single failed or hung pull must not leave active turns uninterruptible.
         yield* Effect.gen(function* () {
+          let pendingStream: AsyncIterable<unknown> | null = firstSubscription.stream;
+          let streamController = firstStreamController;
+          let onSessionAbort = onFirstSessionAbort;
+
           while (!abortController.signal.aborted) {
-            const streamController = new AbortController();
-            const onSessionAbort = () => streamController.abort();
-            if (abortController.signal.aborted) {
-              streamController.abort();
-            } else {
-              abortController.signal.addEventListener("abort", onSessionAbort, { once: true });
+            if (pendingStream === null) {
+              streamController = new AbortController();
+              onSessionAbort = () => streamController.abort();
+              if (abortController.signal.aborted) {
+                streamController.abort();
+              } else {
+                abortController.signal.addEventListener("abort", onSessionAbort, { once: true });
+              }
             }
 
             const watchdog = yield* Effect.gen(function* () {
@@ -4137,34 +4185,15 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             }).pipe(Effect.forkIn(scope));
 
             const exit = yield* Effect.gen(function* () {
+              if (pendingStream !== null) {
+                const stream = pendingStream;
+                pendingStream = null;
+                return yield* consumeEventStream(stream);
+              }
               const subscription = yield* sdkCall("event.subscribe", {}, () =>
                 client.v2.event.subscribe({ signal: streamController.signal }),
               );
-              return yield* Stream.fromAsyncIterable(
-                subscription.stream,
-                (cause) =>
-                  new OpenCode2RuntimeError({
-                    operation: "event.subscribe",
-                    category: "event-subscription-failed",
-                    cause,
-                  }),
-              ).pipe(
-                Stream.tap((event) =>
-                  Clock.currentTimeMillis.pipe(
-                    Effect.map((now) => {
-                      lastEventAtMs = now;
-                      consecutiveStreamFailures = 0;
-                      // server.connected alone is not progress; do not clear
-                      // stall resubscribe budget on reconnect acks.
-                      if (event.type !== "server.connected") {
-                        consecutiveStallResubscribes = 0;
-                      }
-                    }),
-                  ),
-                ),
-                Stream.runForEach(handleEvent),
-                Effect.exit,
-              );
+              return yield* consumeEventStream(subscription.stream);
             }).pipe(
               Effect.catchCause((cause) =>
                 Effect.succeed(
@@ -4503,16 +4532,36 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           const sessionID = state.nativeSessionId;
           return yield* openCode2PendingWorkForSession({
             sessionID,
-            pending: sdkCall("session.pending.list", { sessionID }, () =>
-              Promise.resolve({ data: { data: [] as Array<SessionPendingInfo> } }),
-            ).pipe(
+            // Prefer live Session3 when present; replay client still implements
+            // these routes so fixtures can assert the post-settle probes.
+            pending: sdkCall("session.pending.list", { sessionID }, () => {
+              const pendingList = (
+                client.v2.session as {
+                  pending?: { list: (input: { sessionID: string }) => Promise<unknown> };
+                }
+              ).pending?.list;
+              if (pendingList === undefined) {
+                return Promise.resolve({ data: { data: [] as Array<SessionPendingInfo> } });
+              }
+              return pendingList({ sessionID });
+            }).pipe(
               Effect.flatMap((response) =>
                 unwrapOpenCode2Data<Array<SessionPendingInfo>>("session.pending.list", response),
               ),
             ),
-            shells: sdkCall("shell.list", { location: state.location }, () =>
-              Promise.resolve({ data: { data: [] as Array<ShellInfoV2> } }),
-            ).pipe(
+            shells: sdkCall("shell.list", { location: state.location }, () => {
+              const shellList = (
+                client.v2 as {
+                  shell?: {
+                    list: (input: { location: SessionInfoV2["location"] }) => Promise<unknown>;
+                  };
+                }
+              ).shell?.list;
+              if (shellList === undefined) {
+                return Promise.resolve({ data: { data: [] as Array<ShellInfoV2> } });
+              }
+              return shellList({ location: state.location });
+            }).pipe(
               Effect.flatMap((response) =>
                 unwrapOpenCode2Data<Array<ShellInfoV2>>("shell.list", response),
               ),
@@ -4544,7 +4593,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           if (!hasT3Mcp) return;
           let lastStatus = "missing";
           for (let attempt = 0; attempt < 50; attempt++) {
-            const response = yield* sdkCall("mcp.list", {}, () =>
+            const listed = yield* sdkCall("mcp.list", {}, () =>
               client.mcp.status().then((response) => ({
                 data: {
                   data: Object.entries(
@@ -4552,10 +4601,21 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                   ).map(([name, status]) => ({ name, status })),
                 },
               })),
+            ).pipe(
+              Effect.map((response) => ({ available: true as const, response })),
+              Effect.catch((error: OpenCode2RuntimeError) => {
+                // Beta lildax has no /mcp routes; do not block session open.
+                const detail = openCodeRuntimeErrorDetail(error.cause).toLowerCase();
+                if (detail.includes("404") || detail.includes("not found")) {
+                  return Effect.succeed({ available: false as const, response: null });
+                }
+                return Effect.fail(error);
+              }),
             );
+            if (!listed.available) return;
             const servers = yield* unwrapOpenCode2Data<ReadonlyArray<McpServer>>(
               "mcp.list",
-              response,
+              listed.response,
             );
             const server = servers.find((candidate) => candidate.name === OPENCODE2_T3_MCP_NAME);
             lastStatus = server === undefined ? "missing" : mcpServerStatus(server);

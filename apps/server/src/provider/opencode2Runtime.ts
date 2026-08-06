@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * Runtime for OpenCode 2.x ("OpenCode 2"), which is a different server than
  * the 1.x one `opencodeRuntime.ts` drives, not a newer build of it.
@@ -8,8 +9,10 @@
  *      2.x prints `server listening on <url>`. The 1.x prefix match never fires
  *      and the spawn times out.
  *   2. **Mandatory auth.** 1.x serves unauthenticated and warns about it. 2.x
- *      always mints a password, prints it on stdout beside the URL, and 401s
- *      without it. So startup has to resolve *two* facts, not one.
+ *      mints a password and 401s without it. Next-line builds print it on
+ *      stdout beside the URL; beta `lildax` writes it only to
+ *      `$XDG_STATE_HOME/opencode/password` (no banner line). Startup still has
+ *      to resolve both facts.
  *   3. **Route surface.** 2.x serves only `/api/*`. The SDK is versioned to
  *      match and is pinned here under the `@opencode-ai/sdk-next` alias, since
  *      two majors of one package name cannot coexist. Its `client.v2.*`
@@ -43,6 +46,9 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { openCodeRuntimeErrorDetail } from "./opencodeRuntime.ts";
 import * as SpawnedProcessReaper from "./SpawnedProcessReaper.ts";
@@ -51,6 +57,10 @@ const DEFAULT_OPENCODE2_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const MAX_OPENCODE2_STARTUP_OUTPUT_CHARS = 16_384;
 const OPENCODE2_STARTUP_DRAIN_TIMEOUT = "100 millis";
+/** After the listen URL, poll this many times (20ms each) for a banner password
+ * or the beta state-dir password file before settling. */
+const OPENCODE2_PASSWORD_POLL_ATTEMPTS = 5;
+const OPENCODE2_PASSWORD_POLL_INTERVAL = "20 millis";
 const wallClock = Clock.Clock.defaultValue();
 
 const withOpenCode2WallClock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -191,7 +201,8 @@ export const runOpenCode2Sdk = <A>(
       }),
   }).pipe(Effect.withSpan(`opencode2.${operation}`));
 
-/** Both facts the 2.x startup banner carries. Neither is optional. */
+/** Startup facts from the 2.x banner. Password may be empty on beta builds that
+ * serve unauthenticated. */
 export interface OpenCode2ServerCredentials {
   readonly url: string;
   readonly password: string;
@@ -244,22 +255,51 @@ export class OpenCode2Runtime extends Context.Service<
 >()("t3/provider/opencode2Runtime") {}
 
 /**
- * Read the URL and password out of accumulated server output.
+ * Read the URL and optional password out of accumulated server output.
  *
- * Returns `null` until *both* are present: they arrive on separate lines and a
- * chunked read can see one without the other, and a client built without the
- * password gets 401 on every call. Deliberately not anchored to line start —
- * 2.x has changed the surrounding banner text before.
+ * Ready once the listen URL is present. Next-line builds still print a
+ * password on a later line; beta `lildax` only prints the URL and stores the
+ * password under the state dir (see {@link readOpenCode2StatePassword}).
+ * Deliberately not anchored to line start — surrounding banner text has
+ * changed before.
  *
  * @internal exported for tests
  */
 export function parseOpenCode2Startup(output: string): OpenCode2ServerCredentials | null {
-  const url = output.match(/server listening on\s+(https?:\/\/\S+)/)?.[1];
-  const password = output.match(/server password\s+(\S+)/)?.[1];
-  return url && password ? { url, password } : null;
+  // Require a line starting with `server listening` so 1.x's
+  // `opencode server listening on ...` does not match.
+  const url = output.match(/(?:^|\n)server listening on\s+(https?:\/\/\S+)/)?.[1];
+  if (url === undefined) return null;
+  const password = output.match(/(?:^|\n)server password\s+(\S+)/)?.[1] ?? "";
+  return { url, password };
 }
 
-/** The header the 2.x server checks. Username is fixed; only the password varies. */
+/**
+ * Beta `lildax` mints a server password into
+ * `$XDG_STATE_HOME/opencode/password` (default
+ * `~/.local/state/opencode/password`) and does not print it. Prefer the
+ * banner password when present; fall back to this file after the grace window.
+ *
+ * @internal exported for tests
+ */
+export function readOpenCode2StatePassword(
+  environment: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const stateHome =
+    environment.XDG_STATE_HOME?.trim() ||
+    NodePath.join(environment.HOME?.trim() || NodeOS.homedir(), ".local", "state");
+  try {
+    const password = NodeFS.readFileSync(
+      NodePath.join(stateHome, "opencode", "password"),
+      "utf8",
+    ).trim();
+    return password.length > 0 ? password : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The header the 2.x server checks when auth is enabled. Username is fixed. */
 export function openCode2AuthorizationHeader(password: string): string {
   return `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`;
 }
@@ -430,24 +470,28 @@ export const make = Effect.gen(function* () {
         OpenCode2RuntimeError
       >();
 
-      // The banner is two lines and the split between them lands wherever the
-      // pipe happens to break. Keep a bounded parser buffer only until both
-      // startup facts are found, then continue draining without retaining logs.
+      // Keep a bounded parser buffer until ready. URL and password arrive on
+      // separate lines (and can land in separate chunks); retain each fact on
+      // the ref so a rolling buffer cannot drop them. Ready when both facts are
+      // known. Password may be the empty string after OPENCODE2_PASSWORD_GRACE
+      // when the binary never prints one (beta lildax).
       const absorb = (chunk: string) =>
         Ref.modify(startupOutputRef, (previous) => {
           if (previous.output === null) return [null, previous] as const;
           const combined = `${previous.output}${chunk}`;
           const url =
-            previous.url ?? combined.match(/server listening on\s+(https?:\/\/\S+)/)?.[1] ?? null;
+            previous.url ??
+            combined.match(/(?:^|\n)server listening on\s+(https?:\/\/\S+)/)?.[1] ??
+            null;
           const password =
-            previous.password ?? combined.match(/server password\s+(\S+)/)?.[1] ?? null;
-          const parsed = url !== null && password !== null ? { url, password } : null;
+            previous.password ?? combined.match(/(?:^|\n)server password\s+(\S+)/)?.[1] ?? null;
+          const ready = url !== null && password !== null ? { url, password } : null;
           const output = combined.slice(-MAX_OPENCODE2_STARTUP_OUTPUT_CHARS);
           const category = openCode2ExecutableErrorCategoryFromText(combined);
           return [
-            parsed,
+            ready,
             {
-              output: parsed === null ? output : null,
+              output: ready === null ? output : null,
               password,
               url,
               failureCategory:
@@ -461,6 +505,49 @@ export const make = Effect.gen(function* () {
               : Deferred.succeed(readyDeferred, parsed).pipe(Effect.asVoid),
           ),
         );
+
+      // When the listen URL is present but no password line arrives, fall back
+      // to the beta state-dir password file (lildax), else empty. Poll during
+      // the grace window so a slightly-late file write still wins. Uses the
+      // ambient Clock (wall in production, TestClock in unit tests).
+      yield* Effect.gen(function* () {
+        while (true) {
+          const state = yield* Ref.get(startupOutputRef);
+          if (state.output === null) return;
+          if (state.url !== null) break;
+          yield* Effect.sleep("20 millis");
+        }
+        const env = input.environment ?? process.env;
+        let filePassword: string | null = null;
+        for (let attempt = 0; attempt < OPENCODE2_PASSWORD_POLL_ATTEMPTS; attempt++) {
+          const state = yield* Ref.get(startupOutputRef);
+          if (state.output === null || state.password !== null) return;
+          filePassword = readOpenCode2StatePassword(env);
+          if (filePassword !== null) break;
+          yield* Effect.sleep(OPENCODE2_PASSWORD_POLL_INTERVAL);
+        }
+        yield* Ref.modify(startupOutputRef, (state) => {
+          if (state.output === null || state.url === null || state.password !== null) {
+            return [null, state] as const;
+          }
+          const password = filePassword ?? readOpenCode2StatePassword(env) ?? "";
+          const credentials = { url: state.url, password };
+          return [
+            credentials,
+            {
+              ...state,
+              output: null,
+              password: password.length > 0 ? password : state.password,
+            },
+          ] as const;
+        }).pipe(
+          Effect.flatMap((credentials) =>
+            credentials === null
+              ? Effect.void
+              : Deferred.succeed(readyDeferred, credentials).pipe(Effect.asVoid, Effect.ignore),
+          ),
+        );
+      }).pipe(Effect.ignore, Effect.forkIn(processScope));
 
       const stdoutFiber = yield* child.stdout.pipe(
         Stream.decodeText(),
@@ -590,7 +677,9 @@ export const make = Effect.gen(function* () {
     createOpencodeClient({
       baseUrl: input.baseUrl,
       directory: input.directory,
-      headers: { Authorization: openCode2AuthorizationHeader(input.serverPassword) },
+      ...(input.serverPassword.trim().length === 0
+        ? {}
+        : { headers: { Authorization: openCode2AuthorizationHeader(input.serverPassword) } }),
       throwOnError: true,
     });
 

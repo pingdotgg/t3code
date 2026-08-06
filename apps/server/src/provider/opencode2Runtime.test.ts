@@ -11,6 +11,11 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   escalateOpenCode2ServerTermination,
   isOpenCode2RuntimeError,
@@ -18,6 +23,7 @@ import {
   layer,
   openCode2AuthorizationHeader,
   parseOpenCode2Startup,
+  readOpenCode2StatePassword,
   runOpenCode2Sdk,
 } from "./opencode2Runtime.ts";
 import { SpawnedProcessReaper } from "./SpawnedProcessReaper.ts";
@@ -38,12 +44,17 @@ describe("parseOpenCode2Startup", () => {
     });
   });
 
-  it("withholds a result until the password line has also arrived", () => {
-    // The two lines land in whatever chunks the pipe produces. Resolving on the
-    // URL alone would build a client with no credentials, and 2.x answers every
-    // unauthenticated request with 401 rather than an obvious startup failure.
-    assert.isNull(parseOpenCode2Startup("server listening on http://127.0.0.1:4711\n"));
-    assert.isNotNull(parseOpenCode2Startup(banner));
+  it("accepts a listen URL without a password (beta unauthenticated banner)", () => {
+    // Beta lildax only prints the listen URL. Next-line builds still print a
+    // password; when present it is captured, when absent password is empty.
+    assert.deepStrictEqual(parseOpenCode2Startup("server listening on http://127.0.0.1:4711\n"), {
+      url: "http://127.0.0.1:4711",
+      password: "",
+    });
+    assert.deepStrictEqual(parseOpenCode2Startup(banner), {
+      url: "http://127.0.0.1:4711",
+      password: "Yb4ypFttKtPUvcKlnzQ4iOEUezhRpP4A",
+    });
   });
 
   it("withholds a result until the url line has also arrived", () => {
@@ -51,8 +62,8 @@ describe("parseOpenCode2Startup", () => {
   });
 
   it("does not match the 1.x banner", () => {
-    // 1.x prints `opencode server listening on ...` and never prints a
-    // password, so it must not satisfy the 2.x contract.
+    // 1.x prints `opencode server listening on ...` so it must not satisfy the
+    // 2.x listen-line contract.
     assert.isNull(
       parseOpenCode2Startup(
         [
@@ -84,6 +95,28 @@ describe("openCode2AuthorizationHeader", () => {
       openCode2AuthorizationHeader("s3cr3t"),
       `Basic ${Buffer.from("opencode:s3cr3t", "utf8").toString("base64")}`,
     );
+  });
+});
+
+describe("readOpenCode2StatePassword", () => {
+  it("reads the beta lildax state-dir password file", () => {
+    const stateHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "opencode2-state-"));
+    NodeFS.mkdirSync(NodePath.join(stateHome, "opencode"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(stateHome, "opencode", "password"),
+      "file-minted-password\n",
+    );
+    assert.strictEqual(
+      readOpenCode2StatePassword({ XDG_STATE_HOME: stateHome }),
+      "file-minted-password",
+    );
+  });
+
+  it("returns null when the state-dir password is missing", () => {
+    const stateHome = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "opencode2-state-missing-"),
+    );
+    assert.isNull(readOpenCode2StatePassword({ XDG_STATE_HOME: stateHome }));
   });
 });
 
@@ -349,6 +382,110 @@ describe("OpenCode2Runtime startup cleanup", () => {
 
       assert.strictEqual(credentials.url, "http://127.0.0.1:4711");
       assert.strictEqual(credentials.password, "retained-password");
+    }),
+  );
+
+  it.effect("accepts a listen URL with no password after the grace window", () =>
+    Effect.gen(function* () {
+      const stateHome = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "opencode2-grace-empty-"),
+      );
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(42),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(Stream.make("server listening on http://127.0.0.1:4711\n")),
+            stderr: Stream.never,
+            all: Stream.never,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.never,
+          }),
+        ),
+      );
+
+      const startup = Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* OpenCode2Runtime;
+          return yield* runtime.startOpenCode2ServerProcess({
+            binaryPath: "opencode2",
+            port: 4_711,
+            environment: { XDG_STATE_HOME: stateHome },
+          });
+        }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provideService(SpawnedProcessReaper, {
+          track: () => Effect.void,
+          untrack: () => Effect.void,
+        }),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      const startupFiber = yield* startup.pipe(Effect.forkChild);
+      // Poll loop (20ms) + password grace (100ms).
+      yield* TestClock.adjust("150 millis");
+      const credentials = yield* Fiber.join(startupFiber);
+
+      assert.strictEqual(credentials.url, "http://127.0.0.1:4711");
+      assert.strictEqual(credentials.password, "");
+    }),
+  );
+
+  it.effect("loads the beta state-dir password when the banner omits it", () =>
+    Effect.gen(function* () {
+      const stateHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "opencode2-grace-file-"));
+      NodeFS.mkdirSync(NodePath.join(stateHome, "opencode"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(stateHome, "opencode", "password"),
+        "state-dir-password\n",
+      );
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(42),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(Stream.make("server listening on http://127.0.0.1:4711\n")),
+            stderr: Stream.never,
+            all: Stream.never,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.never,
+          }),
+        ),
+      );
+
+      const startup = Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* OpenCode2Runtime;
+          return yield* runtime.startOpenCode2ServerProcess({
+            binaryPath: "opencode2",
+            port: 4_711,
+            environment: { XDG_STATE_HOME: stateHome },
+          });
+        }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provideService(SpawnedProcessReaper, {
+          track: () => Effect.void,
+          untrack: () => Effect.void,
+        }),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      const startupFiber = yield* startup.pipe(Effect.forkChild);
+      yield* TestClock.adjust("150 millis");
+      const credentials = yield* Fiber.join(startupFiber);
+
+      assert.strictEqual(credentials.url, "http://127.0.0.1:4711");
+      assert.strictEqual(credentials.password, "state-dir-password");
     }),
   );
 
