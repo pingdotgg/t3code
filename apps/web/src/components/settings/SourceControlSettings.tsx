@@ -614,10 +614,10 @@ export function SourceControlSettingsPanel() {
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
                   {item.kind === "git" ? (
-                    <>
+                    <div className="space-y-4">
                       <GitFetchIntervalSettings />
                       <GitWorktreeBranchNamingSettings />
-                    </>
+                    </div>
                   ) : undefined}
                 </DiscoveryItemRow>
               ))}
