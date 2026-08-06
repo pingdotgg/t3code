@@ -379,13 +379,17 @@ function GitActionProgressButtonContent({
       aria-atomic="false"
       aria-live="polite"
       className={cn(
-        "grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2.5",
+        "grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center",
         // Pin the title row to the button's minimum content height (min-height
-        // minus vertical padding) so revealing the output row extends the
-        // button downward without re-centering — the title must not shift.
-        // No row gap: the collapsed output row must contribute zero height so
-        // the single-line running button matches the static button exactly.
-        isPanel ? "grid-rows-[1.75rem]" : "grid-rows-[1.25rem] sm:grid-rows-[1rem]",
+        // minus vertical padding and border) so revealing the output row
+        // extends the button downward without re-centering — the title must
+        // not shift. No row gap: the collapsed output row must contribute zero
+        // height so the single-line running button matches the static button
+        // exactly. The panel column gap matches the static row's icon-to-label
+        // distance (gap-2.5 plus the label's ml-0.5).
+        isPanel
+          ? "grid-rows-[1.75rem] gap-x-3"
+          : "grid-rows-[1.25rem] gap-x-2.5 sm:grid-rows-[1rem]",
       )}
       role="status"
     >
@@ -1638,10 +1642,14 @@ export default function GitActionsControl({
                   : gitActionProgress.status
               }
               className={cn(
+                // Vertical padding subtracts the button's 1px border (same idiom
+                // as the size variants' px) so the h-auto single-line height
+                // lands exactly on the fixed height of the static button.
                 isPanel
                   ? THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS
-                  : "h-auto min-h-7 max-w-72 py-1 sm:h-auto sm:min-h-6",
-                isPanel && "h-auto min-h-9 py-1 disabled:opacity-100 sm:h-auto sm:min-h-9",
+                  : "h-auto min-h-7 max-w-72 py-[calc(--spacing(1)-1px)] sm:h-auto sm:min-h-6",
+                isPanel &&
+                  "h-auto min-h-9 py-[calc(--spacing(1)-1px)] disabled:opacity-100 sm:h-auto sm:min-h-9",
               )}
               disabled
               size="xs"
