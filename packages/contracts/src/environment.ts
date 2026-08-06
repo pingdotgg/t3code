@@ -50,6 +50,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Fork server exposes the bounded thread delta subscription. Missing on
       upstream servers, so fork clients retain the upstream subscription. */
   threadDeltaSubscription: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.pin / thread.unpin commands. Same
+      version-skew contract as threadSettlement. */
+  threadPinning: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
