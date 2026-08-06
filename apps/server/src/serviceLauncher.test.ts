@@ -10,6 +10,7 @@ import {
   decodeServiceState,
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 it("accepts only exact semantic versions", () => {
@@ -111,7 +112,12 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
 
       const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
       const running = launcher.run();
-      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      const stopping = launcher.stop("SIGTERM");
+      // An explicit stop leaves the marker that tells a child shutting down
+      // mid-update that no replacement server is coming. It is present as
+      // soon as stop() returns its promise, before queued transitions run.
+      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
+      yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
     }),
   );
