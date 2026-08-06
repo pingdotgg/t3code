@@ -25,6 +25,22 @@ export const DEFAULT_SANS_FONT_STACK =
 export const DEFAULT_CODE_FONT_STACK =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
 
+export const TYPOGRAPHY_ADVANCED_STORAGE_KEY = "t3code:typography-advanced";
+
+/**
+ * Simple typography treats the terminal as another monospace surface. In
+ * Advanced mode an empty terminal preference means the terminal default,
+ * keeping later code-font changes isolated to code surfaces.
+ */
+export function resolveTerminalFontPreference(input: {
+  readonly advanced: boolean;
+  readonly code: string;
+  readonly terminal: string;
+}): string {
+  if (input.advanced) return input.terminal;
+  return input.code;
+}
+
 function quoteFontFamilyName(name: string): string {
   const bare = name.trim();
   if (bare.length === 0) return "";
@@ -165,6 +181,22 @@ export function isFontFamilyAvailable(family: string): boolean {
   }
 }
 
+const MONOSPACE_PROBE_VARIANTS = ["normal 400", "normal 700", "italic 400", "italic 700"] as const;
+const MONOSPACE_PROBE_GLYPHS = ["i", "M", "W", "0", "@", "#", ".", " "] as const;
+const MONOSPACE_ADVANCE_TOLERANCE = 0.01;
+
+export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
+  const reference = advances[0];
+  if (
+    reference === undefined ||
+    reference <= 0 ||
+    advances.some((advance) => !Number.isFinite(advance) || advance <= 0)
+  ) {
+    return true;
+  }
+  return advances.every((advance) => Math.abs(advance - reference) < MONOSPACE_ADVANCE_TOLERANCE);
+}
+
 /**
  * Whether a family renders every character on the same advance. Cell-grid
  * surfaces (the terminal) require this: a proportional face draws its text
@@ -182,13 +214,15 @@ export function isMonospaceFamily(family: string): boolean {
       fontProbeContext = document.createElement("canvas").getContext("2d");
     }
     if (fontProbeContext === null) return true;
+    const context = fontProbeContext;
     // Fall back to a generic mono so an absent face measures as monospace and
     // is left for the normal fallback chain to resolve.
-    fontProbeContext.font = `32px ${families}, monospace`;
-    const narrow = fontProbeContext.measureText("i").width;
-    const wide = fontProbeContext.measureText("M").width;
-    if (!Number.isFinite(narrow) || !Number.isFinite(wide) || wide === 0) return true;
-    return Math.abs(wide - narrow) < 0.5;
+    for (const variant of MONOSPACE_PROBE_VARIANTS) {
+      context.font = `${variant} 32px ${families}, monospace`;
+      const advances = MONOSPACE_PROBE_GLYPHS.map((glyph) => context.measureText(glyph).width);
+      if (!areFontAdvancesMonospace(advances)) return false;
+    }
+    return true;
   } catch {
     return true;
   }

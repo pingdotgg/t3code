@@ -115,8 +115,9 @@ import {
   isFontFamilyAvailable,
   isMonospaceFamily,
   resolveDefaultFamilyLabel,
+  resolveTerminalFontPreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
-import { DEFAULT_TERMINAL_FONT_FAMILY } from "~/terminal/ghostty/surface";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
@@ -1152,10 +1153,8 @@ function useFontDefaultFamilies() {
   return {
     sans: defaults.sans,
     code: defaults.code,
-    // The composer inherits whatever the interface preference resolves to;
-    // the terminal inherits the monospace preference the same way.
+    // The composer inherits whatever the interface preference resolves to.
     interfaceFamily: settings.fontFamilySans.trim() || defaults.sans,
-    monoFamily: settings.fontFamilyCode.trim() || defaults.code,
   };
 }
 
@@ -1245,8 +1244,8 @@ function TerminalFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("terminal-font")}
-      description="Terminal output. Follows the monospace font unless set."
-      defaultFamily={defaults.monoFamily}
+      description="Terminal output, independent from code blocks and diffs."
+      defaultFamily={defaults.code}
       value={settings.fontFamilyTerminal}
       onValueChange={(fontFamilyTerminal) => updateSettings({ fontFamilyTerminal })}
       requireMonospace
@@ -1259,7 +1258,11 @@ function TerminalFontRow() {
       }}
       preview={
         <TerminalFontPreview
-          family={settings.fontFamilyTerminal.trim() || settings.fontFamilyCode}
+          family={resolveTerminalFontPreference({
+            advanced: true,
+            code: settings.fontFamilyCode,
+            terminal: settings.fontFamilyTerminal,
+          })}
           size={settings.fontSizeTerminal}
         />
       }
@@ -1351,7 +1354,11 @@ function SimpleFontRows() {
           <>
             <CodeFontPreview />
             <TerminalFontPreview
-              family={settings.fontFamilyTerminal.trim() || settings.fontFamilyCode}
+              family={resolveTerminalFontPreference({
+                advanced: false,
+                code: settings.fontFamilyCode,
+                terminal: settings.fontFamilyTerminal,
+              })}
               size={settings.fontSizeTerminal}
             />
           </>
@@ -1371,8 +1378,6 @@ const ADVANCED_TYPOGRAPHY_TARGET_IDS: ReadonlySet<string> = new Set([
     : []),
 ]);
 
-const TYPOGRAPHY_ADVANCED_KEY = "t3code:typography-advanced";
-
 /**
  * The two-font view by default - one sans, one monospace, each cascading to
  * every surface it reaches - with an Advanced switch in the section header
@@ -1381,7 +1386,11 @@ const TYPOGRAPHY_ADVANCED_KEY = "t3code:typography-advanced";
  * target exists to scroll to.
  */
 function TypographySection() {
-  const [advanced, setAdvanced] = useLocalStorage(TYPOGRAPHY_ADVANCED_KEY, false, Schema.Boolean);
+  const [advanced, setAdvanced] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const searchTargetId = useSettingsSearchTargetId();
   // Flip Advanced on once per search jump so the hidden target can mount and
   // scroll; tracking the handled id lets the user turn it back off without

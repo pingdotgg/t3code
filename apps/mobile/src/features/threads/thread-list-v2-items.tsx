@@ -204,6 +204,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly pane?: "screen" | "sidebar";
   /** Draws the "Pending" divider above the first queued row. */
   readonly showPendingDivider: boolean;
+  /** Keeps row hairlines inside a section; section headers draw their own rule. */
+  readonly showTrailingDivider?: boolean;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
@@ -291,7 +293,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           ) : (
             <View className="bg-screen">
               <View className="px-5 py-2.5">{rowContent}</View>
-              <View className="ml-5 h-px bg-border-subtle" />
+              {props.showTrailingDivider !== false ? (
+                <View className="ml-5 h-px bg-border-subtle" />
+              ) : null}
             </View>
           )}
         </Pressable>
@@ -327,6 +331,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       into the drawer surface, selection filled with the accent color —
       matching the v1 sidebar rows. */
   readonly pane?: "screen" | "sidebar";
+  /** Keeps row hairlines inside a section; section headers draw their own rule. */
+  readonly showTrailingDivider?: boolean;
   /** Highlights the thread open in the detail pane (iPad split view). The
       compact Home list never sets it — phones navigate away on select. */
   readonly selected?: boolean;
@@ -728,7 +734,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
              actions reveal behind the row. */
           <View className="bg-screen">
             <View className="px-5 py-2.5">{cardContent}</View>
-            <View className="ml-5 h-px bg-border-subtle" />
+            {props.showTrailingDivider !== false ? (
+              <View className="ml-5 h-px bg-border-subtle" />
+            ) : null}
           </View>
         )}
       </Pressable>

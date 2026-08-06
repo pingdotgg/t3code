@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { GhosttyCell, GhosttyRow } from "./core";
 import {
@@ -11,15 +11,18 @@ import {
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
+  shouldShowTerminalLinkHover,
+  terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
   terminalLinkAtColumn,
   terminalLinkAtPosition,
+  terminalLinkAtPositionWithRange,
   terminalContentOriginY,
   terminalFontFamily,
-  fittedTerminalFontSize,
   terminalFontSize,
   terminalWheelArrowData,
   terminalWheelDeltaRows,
@@ -53,6 +56,32 @@ describe("isTerminalAltGraphText", () => {
         getModifierState: (modifier) => modifier === "AltGraph",
       }),
     ).toBe(false);
+  });
+});
+
+describe("terminalGridCellAt", () => {
+  const options = {
+    bounds: { left: 100, top: 200 },
+    cols: 3,
+    rows: 2,
+    metrics: { width: 10, height: 20 },
+    padding: 4,
+    originY: 24,
+  };
+
+  it("maps points inside the rendered grid without clamping its padding", () => {
+    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 224 })).toEqual({
+      x: 0,
+      y: 0,
+    });
+    expect(terminalGridCellAt({ ...options, clientX: 133, clientY: 263 })).toEqual({
+      x: 2,
+      y: 1,
+    });
+    expect(terminalGridCellAt({ ...options, clientX: 103, clientY: 224 })).toBeNull();
+    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 223 })).toBeNull();
+    expect(terminalGridCellAt({ ...options, clientX: 134, clientY: 224 })).toBeNull();
+    expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 264 })).toBeNull();
   });
 });
 
@@ -99,6 +128,10 @@ describe("terminalLinkAtColumn", () => {
     expect(terminalLinkAtColumn(row, 2)).toBe("https://t3.codes");
     expect(terminalLinkAtColumn(row, cells.length - 1)).toBe("https://t3.codes");
     expect(terminalLinkAtColumn(row, 0)).toBeNull();
+    expect(terminalLinkAtPositionWithRange([row], 0, 8)?.range).toEqual({
+      start: { x: 2, y: 0 },
+      end: { x: cells.length - 1, y: 0 },
+    });
   });
 
   it("uses shared path matching and reconstructs soft-wrapped links", () => {
@@ -119,6 +152,13 @@ describe("terminalLinkAtColumn", () => {
     expect(terminalLinkAtPosition(rows, 1, 4)).toBe("https://example.com/reference");
     expect(terminalLinkAtPosition(rows, 2, 2)).toBe("~/project/file");
     expect(terminalLinkAtPosition(rows, 3, 4)).toBe("C:\\repo\\file.ts");
+    expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
+      text: "https://example.com/reference",
+      range: {
+        start: { x: 0, y: 0 },
+        end: { x: 12, y: 1 },
+      },
+    });
   });
 
   it("refuses links truncated at the viewport edges instead of mis-resolving", () => {
@@ -245,9 +285,37 @@ describe("application mouse reporting", () => {
   it("maps browser buttons to Ghostty's button enum", () => {
     expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
   });
+
+  it("only shows link hover during mouse tracking when the link modifier is held", () => {
+    expect(shouldShowTerminalLinkHover(false, false)).toBe(true);
+    expect(shouldShowTerminalLinkHover(false, true)).toBe(true);
+    expect(shouldShowTerminalLinkHover(true, false)).toBe(false);
+    expect(shouldShowTerminalLinkHover(true, true)).toBe(true);
+  });
 });
 
 describe("terminal font resolution", () => {
+  it("validates the requested face after its styles load", async () => {
+    let loaded = false;
+    const load = vi.fn(async () => {
+      loaded = true;
+      return [];
+    });
+    const resolve = vi.fn(() => {
+      expect(loaded).toBe(true);
+      return DEFAULT_TERMINAL_FONT_FAMILY;
+    });
+
+    await expect(
+      loadTerminalFontFamily("Proportional Test", 12, {
+        load,
+        resolve,
+      }),
+    ).resolves.toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+    expect(load).toHaveBeenCalledTimes(4);
+    expect(resolve).toHaveBeenCalledWith("Proportional Test");
+  });
+
   it("keeps the glyph fallbacks behind a custom text face", () => {
     expect(terminalFontFamily()).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
     expect(terminalFontFamily("  ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
@@ -272,24 +340,6 @@ describe("terminal font resolution", () => {
       true,
     );
     expect(terminalFontFamily(" , ")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
-  });
-
-  it("slides the rendered size down until a full-width grid fits the canvas", () => {
-    // SF Mono-like advance: 0.6em per cell.
-    const cellWidthAt = (size: number) => size * 0.6;
-    // A wide drawer keeps the preference untouched.
-    expect(fittedTerminalFontSize(cellWidthAt, 20, 1140)).toBe(20);
-    // A split pane at the same preference shrinks until 80 columns fit.
-    const fitted = fittedTerminalFontSize(cellWidthAt, 20, 570);
-    expect(fitted).toBeLessThan(20);
-    expect(Math.floor((570 - 8) / cellWidthAt(fitted))).toBeGreaterThanOrEqual(80);
-    // A tiny pane stops at the legibility floor instead of vanishing.
-    expect(fittedTerminalFontSize(cellWidthAt, 20, 220)).toBe(8);
-    // A preference below the floor is honored as-is.
-    expect(fittedTerminalFontSize(cellWidthAt, 6, 220)).toBe(6);
-    // Unmeasured layouts leave the preference alone.
-    expect(fittedTerminalFontSize(cellWidthAt, 14, 0)).toBe(14);
-    expect(fittedTerminalFontSize(() => 0, 14, 600)).toBe(14);
   });
 
   it("clamps requested font sizes to the supported range", () => {
