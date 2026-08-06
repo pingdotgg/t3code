@@ -21,6 +21,7 @@ import {
   type ThreadDeletionReactorShape,
 } from "../Services/ThreadDeletionReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
 type ThreadArchivedEvent = Extract<OrchestrationEvent, { type: "thread.archived" }>;
@@ -83,6 +84,7 @@ const make = Effect.gen(function* () {
   const previewManager = yield* PreviewManager;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const threadColdStorage = yield* ThreadColdStorage;
+  const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const providerEventLoggers = yield* ProviderEventLoggers;
   const retryRequested = yield* Queue.sliding<void>(1);
 
@@ -163,6 +165,11 @@ const make = Effect.gen(function* () {
         threadId,
         Effect.gen(function* () {
           yield* stopArchiveProviderSession(threadId);
+          // Provider runtime ingestion normally clears this process-local state
+          // when it observes session.exited. Archive cleanup can also reach a
+          // settled legacy/subagent shell with no provider binding, so clear it
+          // explicitly once the provider quiescence boundary has succeeded.
+          threadBackgroundLiveness.clearThreadLiveness(threadId);
           yield* terminalManager.close({ threadId, deleteHistory: true });
           yield* closeProviderLogWritersRequired(threadId);
         }),

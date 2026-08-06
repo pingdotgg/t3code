@@ -41,6 +41,7 @@ import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadColdStorage.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import { ThreadColdStorageLive } from "./ThreadColdStorage.ts";
 import {
   enqueueLifecycleJobOnce,
@@ -77,6 +78,7 @@ function testReactorLayer(input: {
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly pendingArchives?: ReadonlyArray<ThreadId>;
   readonly runArchiveQuiesce?: boolean;
+  readonly backgroundLiveness?: ThreadBackgroundLiveness.ThreadBackgroundLivenessService["Service"];
 }) {
   return ThreadDeletionReactorLive.pipe(
     Layer.provide(
@@ -109,6 +111,12 @@ function testReactorLayer(input: {
       }),
     ),
     Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provide(
+      Layer.succeed(
+        ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+        input.backgroundLiveness ?? ThreadBackgroundLiveness.make(),
+      ),
+    ),
     Layer.provide(
       Layer.mock(ThreadColdStorage)({
         archiveThread: (threadId, quiesce) =>
@@ -210,6 +218,42 @@ effectIt.effect("archives a settled thread when its provider binding is already 
   }),
 );
 
+effectIt.effect("clears background liveness after archive provider quiescence", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-archive-background-liveness");
+    const archived = yield* Deferred.make<void>();
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    backgroundLiveness.recordTaskLiveness({
+      threadId,
+      taskId: "task-background-liveness",
+      taskType: "spawn_agent",
+      status: "running",
+      kind: "started",
+    });
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+      backgroundLiveness,
+    });
+
+    expect(backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drain;
+    }).pipe(Effect.provide(layer));
+
+    expect(backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  }),
+);
+
 effectIt.effect("closes previews when observing an archive event", () =>
   Effect.gen(function* () {
     const events = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -256,6 +300,14 @@ effectIt.effect("leaves stale archive cleanup to cold-storage eligibility", () =
     const archived = yield* Deferred.make<void>();
     const stopCalls = yield* Ref.make(0);
     const terminalCloseCalls = yield* Ref.make(0);
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    backgroundLiveness.recordTaskLiveness({
+      threadId,
+      taskId: "task-restored-background-liveness",
+      taskType: "spawn_agent",
+      status: "running",
+      kind: "started",
+    });
     const layer = testReactorLayer({
       eventStream: Stream.fromSubscription(subscription),
       stopSession: () => Ref.update(stopCalls, (count) => count + 1),
@@ -271,6 +323,7 @@ effectIt.effect("leaves stale archive cleanup to cold-storage eligibility", () =
       closeTerminal: () => Ref.update(terminalCloseCalls, (count) => count + 1),
       archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
       runArchiveQuiesce: false,
+      backgroundLiveness,
     });
 
     yield* Effect.gen(function* () {
@@ -282,6 +335,7 @@ effectIt.effect("leaves stale archive cleanup to cold-storage eligibility", () =
 
       expect(yield* Ref.get(stopCalls)).toBe(0);
       expect(yield* Ref.get(terminalCloseCalls)).toBe(0);
+      expect(backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -541,6 +595,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
       Layer.provide(terminalLayer),
       Layer.provide(previewLayer),
       Layer.provide(loggerLayer),
+      Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(coldStorageLayer),
     );
 

@@ -403,12 +403,13 @@ layer("ThreadColdStorage", (it) => {
       yield* sql`
         INSERT INTO projection_threads (
           thread_id, project_id, title, model_selection_json, runtime_mode,
-          interaction_mode, created_at, updated_at, archived_at
+          interaction_mode, created_at, updated_at, archived_at, pinned_at
         ) VALUES (
           ${threadId}, 'project-1', 'Cold thread',
           '{"instanceId":"codex","model":"gpt-5.5","options":[]}',
           'full-access', 'default', '2026-07-01T00:00:00.000Z',
-          '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z'
+          '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z',
+          '2026-07-01T12:00:00.000Z'
         )
       `;
       yield* sql`
@@ -448,8 +449,8 @@ layer("ThreadColdStorage", (it) => {
       const archivedEventCount = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM orchestration_events WHERE stream_id = ${threadId}
       `;
-      const shellCount = yield* sql<{ readonly count: number }>`
-        SELECT COUNT(*) AS count FROM projection_threads WHERE thread_id = ${threadId}
+      const shell = yield* sql<{ readonly pinnedAt: string | null }>`
+        SELECT pinned_at AS "pinnedAt" FROM projection_threads WHERE thread_id = ${threadId}
       `;
       const manifest = yield* sql<{ readonly status: string; readonly compressedBytes: number }>`
         SELECT status, compressed_bytes AS "compressedBytes"
@@ -457,7 +458,7 @@ layer("ThreadColdStorage", (it) => {
       `;
       assert.strictEqual(archivedMessageCount[0]?.count, 0);
       assert.strictEqual(archivedEventCount[0]?.count, 0);
-      assert.strictEqual(shellCount[0]?.count, 1);
+      assert.deepStrictEqual(shell, [{ pinnedAt: "2026-07-01T12:00:00.000Z" }]);
       assert.strictEqual(manifest[0]?.status, "cold");
       assert.isAbove(manifest[0]?.compressedBytes ?? 0, 0);
       assert.isFalse(yield* fs.exists(attachmentPath));
@@ -468,7 +469,11 @@ layer("ThreadColdStorage", (it) => {
       const restoredMessages = yield* sql<{ readonly text: string }>`
         SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}
       `;
+      const restoredShell = yield* sql<{ readonly pinnedAt: string | null }>`
+        SELECT pinned_at AS "pinnedAt" FROM projection_threads WHERE thread_id = ${threadId}
+      `;
       assert.deepStrictEqual(restoredMessages, [{ text: "keep this conversation" }]);
+      assert.deepStrictEqual(restoredShell, [{ pinnedAt: "2026-07-01T12:00:00.000Z" }]);
       assert.strictEqual(yield* fs.readFileString(attachmentPath), "image bytes");
       assert.isFalse(yield* fs.exists(providerLogPath));
 
