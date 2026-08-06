@@ -13,6 +13,7 @@ function actionProps() {
     onAddDiff: vi.fn(),
     onAddFiles: vi.fn(),
     onAddSourceControl: vi.fn(),
+    onAddAgents: vi.fn(),
     browserAvailable: true,
     diffAvailable: false,
     filesAvailable: true,
@@ -30,6 +31,7 @@ describe("RightPanelTabs add-surface actions", () => {
       "terminal",
       "files",
       "diff",
+      "agents",
     ]);
   });
 
@@ -41,6 +43,7 @@ describe("RightPanelTabs add-surface actions", () => {
       "Terminal",
       "Files",
       "Diff",
+      "Agents",
       "Version Control",
     ]);
   });
