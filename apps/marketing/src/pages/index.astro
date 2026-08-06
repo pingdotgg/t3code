@@ -1125,7 +1125,10 @@ const faqs = [
     loadImages();
     mobileHeroQuery.addEventListener("change", () => {
       loadImages();
-      if (mobileHeroQuery.matches) setActivePage(0);
+      if (mobileHeroQuery.matches) {
+        pager.scrollLeft = 0;
+        setActivePage(0);
+      }
     });
   }
 
