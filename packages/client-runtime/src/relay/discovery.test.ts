@@ -61,6 +61,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
   const clerkToken = yield* Ref.make<string | null>("clerk-token");
+  const unlinkedEnvironmentIds = yield* Ref.make<ReadonlyArray<string>>([]);
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
     readonly reason: "application-active" | "credentials-changed";
@@ -107,7 +108,10 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     listDevices: () => Effect.die("unused"),
     createEnvironmentLinkChallenge: () => Effect.die("unused"),
     linkEnvironment: () => Effect.die("unused"),
-    unlinkEnvironment: () => Effect.die("unused"),
+    unlinkEnvironment: ({ environmentId }) =>
+      Ref.update(unlinkedEnvironmentIds, (current) => [...current, environmentId]).pipe(
+        Effect.as({ ok: true }),
+      ),
     connectEnvironment: () => Effect.die("unused"),
     registerDevice: () => Effect.die("unused"),
     unregisterDevice: () => Effect.die("unused"),
@@ -162,6 +166,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     networkStatus,
     secondListCall,
     statusRequests,
+    unlinkedEnvironmentIds,
     wake: (reason: "application-active" | "credentials-changed") =>
       SubscriptionRef.update(wakeups, (event) => ({
         sequence: event.sequence + 1,
@@ -216,6 +221,58 @@ describe("RelayEnvironmentDiscovery", () => {
           "offline",
         );
         expect(complete.refreshing).toBe(false);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("revokes an environment link and drops its row without a refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* discovery.refresh;
+        expect((yield* SubscriptionRef.get(discovery.state)).environments.size).toBe(2);
+
+        yield* discovery.remove(environments[0]!.environmentId);
+
+        expect(yield* Ref.get(harness.unlinkedEnvironmentIds)).toEqual([
+          environments[0]!.environmentId,
+        ]);
+        const remaining = yield* SubscriptionRef.get(discovery.state);
+        expect(remaining.environments.has(environments[0]!.environmentId)).toBe(false);
+        expect(remaining.environments.has(environments[1]!.environmentId)).toBe(true);
+        expect(yield* Ref.get(harness.listCalls)).toBe(1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("reports a signed-out removal instead of dropping the row", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* discovery.refresh;
+        yield* Ref.set(harness.clerkToken, null);
+
+        const error = yield* discovery.remove(environments[0]!.environmentId).pipe(Effect.flip);
+
+        expect(error._tag).toBe("ConnectionBlockedError");
+        expect(yield* Ref.get(harness.unlinkedEnvironmentIds)).toEqual([]);
+        expect((yield* SubscriptionRef.get(discovery.state)).environments.size).toBe(2);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

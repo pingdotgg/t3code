@@ -44,6 +44,9 @@ export class RelayEnvironmentDiscovery extends Context.Service<
   {
     readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
     readonly refresh: Effect.Effect<void>;
+    readonly remove: (
+      environmentId: RelayClientEnvironmentRecord["environmentId"],
+    ) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/relay/discovery/RelayEnvironmentDiscovery") {}
 
@@ -309,6 +312,32 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     ),
   );
 
+  /**
+   * Revokes an environment's link for this account and drops its row. Nothing
+   * is asked of the environment itself, so an environment whose server no
+   * longer exists — wiped host, reinstalled machine — can still be retired;
+   * `t3 connect unlink` only runs where that server still lives. A relay reply
+   * of `ok: false` means the link was already gone, which is the same outcome
+   * the caller wanted, so the row is dropped either way.
+   */
+  const remove = Effect.fn("RelayEnvironmentDiscovery.remove")(function* (
+    environmentId: RelayClientEnvironmentRecord["environmentId"],
+  ) {
+    const clerkToken = yield* session.clerkToken;
+    yield* relay
+      .unlinkEnvironment({ clerkToken, environmentId })
+      .pipe(Effect.mapError(mapManagedRelayError));
+    yield* clearOfflineReport(environmentId);
+    yield* SubscriptionRef.update(state, (current) => {
+      if (!current.environments.has(environmentId)) {
+        return current;
+      }
+      const environments = new Map(current.environments);
+      environments.delete(environmentId);
+      return { ...current, environments };
+    });
+  });
+
   yield* connectivity.changes.pipe(
     Stream.changes,
     Stream.runForEach((networkStatus) =>
@@ -343,7 +372,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     Effect.forkScoped,
   );
 
-  return RelayEnvironmentDiscovery.of({ state, refresh });
+  return RelayEnvironmentDiscovery.of({ state, refresh, remove });
 });
 
 export const layer = Layer.effect(RelayEnvironmentDiscovery, make());
