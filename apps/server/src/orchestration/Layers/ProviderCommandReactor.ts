@@ -887,7 +887,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           title: generated.title,
           ...(thread.label == null && generated.label !== undefined
-            ? { label: generated.label }
+            ? { label: generated.label, expectedLabel: thread.label ?? null }
             : {}),
         });
       }).pipe(
@@ -939,10 +939,6 @@ const make = Effect.gen(function* () {
       ...(attachments.length > 0 ? { attachments } : {}),
       modelSelection,
     });
-    if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
-      return { _tag: "Completed", title: undefined, label: undefined } as const;
-    }
-
     const latestThread = yield* resolveThread(event.payload.threadId);
     if (
       !latestThread ||
@@ -950,6 +946,13 @@ const make = Effect.gen(function* () {
       latestThread.title !== previousTitle
     ) {
       return { _tag: "Superseded" } as const;
+    }
+    if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
+      return {
+        _tag: "Completed",
+        title: undefined,
+        label: latestThread.label == null ? generated.label : undefined,
+      } as const;
     }
 
     return {

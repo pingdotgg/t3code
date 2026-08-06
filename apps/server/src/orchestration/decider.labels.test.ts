@@ -84,4 +84,23 @@ it.layer(NodeServices.layer)("thread label decider", (it) => {
       }
     }),
   );
+
+  it.effect("drops a stale compare-and-set label update", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-stale-label-set"),
+          threadId: ThreadId.make("thread-1"),
+          label: "feature",
+          expectedLabel: null,
+        },
+        readModel: makeReadModel("bug"),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events[0]?.type).toBe("thread.meta-updated");
+      if (events[0]?.type !== "thread.meta-updated") return;
+      expect(events[0].payload.label).toBeUndefined();
+    }),
+  );
 });

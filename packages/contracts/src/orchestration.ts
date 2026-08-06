@@ -653,6 +653,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   label: Schema.optional(Schema.NullOr(ThreadLabel)),
+  expectedLabel: Schema.optional(Schema.NullOr(ThreadLabel)),
 }).check(
   Schema.makeFilter(
     (input) =>

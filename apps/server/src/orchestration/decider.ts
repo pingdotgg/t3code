@@ -757,6 +757,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.branch !== command.expectedBranch
           ? thread.branch
           : command.branch;
+      const label =
+        command.label !== undefined &&
+        command.expectedLabel !== undefined &&
+        (thread.label ?? null) !== command.expectedLabel
+          ? undefined
+          : command.label;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -787,7 +793,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
-          ...(command.label !== undefined ? { label: command.label } : {}),
+          ...(label !== undefined ? { label } : {}),
           updatedAt: occurredAt,
         },
       };
