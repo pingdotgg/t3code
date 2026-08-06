@@ -760,13 +760,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
-        {threadStatus?.presentation === "corner-badge" ? (
-          <ThreadStatusCornerBadge status={threadStatus} thread={thread} />
-        ) : null}
         <div
-          className={`flex min-w-0 flex-1 flex-col justify-center gap-0.5 text-left leading-tight ${
-            threadStatus?.presentation === "corner-badge" ? "pr-[5.5rem]" : ""
-          }`}
+          className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 text-left leading-tight"
           style={threadIndent > 0 ? { paddingLeft: threadIndent } : undefined}
         >
           {projectName ? (
@@ -1011,6 +1006,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   isRemoteThread={isRemoteThread}
                   label={threadEnvironmentLabel}
                 />
+                {/* One right-aligned slot: a keyboard jump hint wins, then the
+                      Working/Done badge, then the relative timestamp. */}
                 {jumpLabel ? (
                   <span
                     className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[length:var(--app-sidebar-font-size)] font-medium tracking-tight text-foreground shadow-sm"
@@ -1018,6 +1015,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   >
                     {jumpLabel}
                   </span>
+                ) : threadStatus?.presentation === "corner-badge" ? (
+                  <ThreadStatusCornerBadge status={threadStatus} thread={thread} />
                 ) : (
                   <span
                     className={`${

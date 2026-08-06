@@ -9,7 +9,7 @@ import {
   ServerIcon,
   TerminalIcon,
 } from "lucide-react";
-import { type CSSProperties, memo, useCallback, useEffect, useState } from "react";
+import { type CSSProperties, memo, useCallback } from "react";
 import type { useSortable } from "@dnd-kit/sortable";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import { threadRaisedHandWhileSnoozed } from "@t3tools/client-runtime/state/thread-settled";
@@ -24,7 +24,6 @@ import { cn } from "~/lib/utils";
 import { hasUnseenCompletion, resolveThreadStatusPill } from "./Sidebar.logic";
 import {
   compactSidebarTimeLabel,
-  formatWorkingDurationLabel,
   resolveSidebarV2StatusLabel,
   resolveWorkingStartedAt,
   type SidebarV2Status,
@@ -39,6 +38,7 @@ import {
 import {
   ThreadBrowserOpenStatus,
   ThreadStatusLabel,
+  WorkingDuration,
   prStatusIndicator,
   resolveTerminalThreadRef,
   terminalStatusFromRunningIds,
@@ -108,23 +108,6 @@ export interface SidebarV2RowProps {
 
 function fourHoursFromNow(): string {
   return new Date(Date.now() + 4 * 60 * 60 * 1_000).toISOString();
-}
-
-// Self-ticking so only this span re-renders each second, not the whole row.
-function WorkingDuration({ startedAt }: { readonly startedAt: string | null }) {
-  const startedMs = startedAt !== null ? Date.parse(startedAt) : Number.NaN;
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (Number.isNaN(startedMs)) return undefined;
-    const timer = window.setInterval(() => setTick((tick) => tick + 1), 1_000);
-    return () => window.clearInterval(timer);
-  }, [startedMs]);
-  if (Number.isNaN(startedMs)) return null;
-  return (
-    <span className="font-mono tabular-nums">
-      {formatWorkingDurationLabel(Date.now() - startedMs)}
-    </span>
-  );
 }
 
 export const SidebarV2Row = memo(function SidebarV2Row({
@@ -501,7 +484,10 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                     <span role="status">{statusLabel.label}</span>
                     {statusLabel.showElapsed ? (
                       <span aria-hidden="true">
-                        <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                        <WorkingDuration
+                          startedAt={resolveWorkingStartedAt(thread)}
+                          className="font-mono"
+                        />
                       </span>
                     ) : null}
                   </span>

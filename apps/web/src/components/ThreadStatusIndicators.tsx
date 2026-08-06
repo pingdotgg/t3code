@@ -8,7 +8,7 @@ import {
   PlayIcon,
   TerminalIcon,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, type ReactNode, useEffect, useMemo, useState } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
   useSavedEnvironmentRegistryStore,
@@ -23,30 +23,30 @@ import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic"
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/** Static glyph nodes — avoid re-allocating Lucide elements on every row render. */
+/** Static glyph nodes — avoid re-allocating Lucide elements on every row render.
+ *  Circle matches text cap-height; play is optically nudged right inside the disc. */
 const WORKING_BADGE_ICON = (
-  <span
-    aria-hidden="true"
-    className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full bg-sky-500 text-white dark:bg-sky-400"
-  >
-    <PlayIcon className="size-2 fill-current" />
+  <span className="inline-flex size-3 shrink-0 items-center justify-center rounded-full bg-sky-500 text-white dark:bg-sky-400">
+    <PlayIcon className="size-[0.45rem] translate-x-px fill-current" strokeWidth={0} />
   </span>
 );
 
 const DONE_BADGE_ICON = (
-  <span
-    aria-hidden="true"
-    className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white dark:bg-emerald-400"
-  >
-    <CheckIcon className="size-2.5 stroke-[3]" />
+  <span className="inline-flex size-3 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white dark:bg-emerald-400">
+    <CheckIcon className="size-2 stroke-[2.75]" />
   </span>
 );
 
-// Self-ticking so only this span re-renders each second, not the whole row.
-const WorkingDuration = memo(function WorkingDuration({
+/**
+ * Self-ticking elapsed label shared by sidebar v1 badges and v2 status rows.
+ * Only this span re-renders each second — not the parent row.
+ */
+export const WorkingDuration = memo(function WorkingDuration({
   startedAt,
+  className,
 }: {
   readonly startedAt: string | null;
+  readonly className?: string;
 }) {
   const startedMs = startedAt !== null ? Date.parse(startedAt) : Number.NaN;
   const [, setTick] = useState(0);
@@ -57,7 +57,7 @@ const WorkingDuration = memo(function WorkingDuration({
   }, [startedMs]);
   if (Number.isNaN(startedMs)) return null;
   return (
-    <span className="font-mono tabular-nums">
+    <span className={cn("tabular-nums", className)}>
       {formatWorkingDurationLabel(Date.now() - startedMs)}
     </span>
   );
@@ -184,44 +184,85 @@ export function ThreadStatusLabel({
 }
 
 /**
+ * Badge treatment per status label. Declared as a total record so adding a new
+ * `ThreadStatusPill["label"]` is a compile error until its badge (or explicit
+ * `null` opt-out) is decided here, instead of silently inheriting one.
+ */
+interface CornerBadgeSpec {
+  readonly text: string;
+  readonly icon: ReactNode;
+  readonly toneClass: string;
+  readonly showElapsed: boolean;
+}
+
+const CORNER_BADGE_SPECS: Record<ThreadStatusPill["label"], CornerBadgeSpec | null> = {
+  Working: {
+    text: "Working",
+    icon: WORKING_BADGE_ICON,
+    toneClass: "text-sky-500 dark:text-sky-400",
+    showElapsed: true,
+  },
+  Completed: {
+    text: "Done",
+    icon: DONE_BADGE_ICON,
+    toneClass: "text-emerald-500 dark:text-emerald-400",
+    showElapsed: false,
+  },
+  Connecting: null,
+  "Pending Approval": null,
+  "Awaiting Input": null,
+  "Plan Ready": null,
+};
+
+/**
  * Top-right Working/Done badge for sidebar v1 rows. Opacity-only CSS pulse on
  * Working (3s); Done stays static. Duration ticks in an isolated child so the
  * parent row does not re-render every second.
+ *
+ * Layout: [icon][label][duration] with tight icon→label gap and a slightly
+ * wider label→duration gap so the elapsed value reads as a separate token.
  */
 export const ThreadStatusCornerBadge = memo(function ThreadStatusCornerBadge({
   status,
   thread,
+  className,
 }: {
   readonly status: ThreadStatusPill;
   readonly thread: Pick<SidebarThreadSummary, "latestTurn" | "session" | "createdAt">;
+  readonly className?: string;
 }) {
-  if (status.presentation !== "corner-badge") {
+  const spec = status.presentation === "corner-badge" ? CORNER_BADGE_SPECS[status.label] : null;
+  if (spec === null) {
     return null;
   }
 
-  const isWorking = status.label === "Working";
-  const label = isWorking ? "Working" : "Done";
-
   return (
     <span
-      role="status"
-      aria-label={status.label}
-      title={status.label}
+      // `img`, not `status`: a per-row live region would re-announce on every
+      // row mount, and the elapsed value ticks every second.
+      role="img"
+      aria-label={spec.text}
+      title={spec.text}
       data-status-corner-badge=""
       // Paint-contain the animated node so native vibrancy rows don't ghost
       // neighboring pixels when opacity pulses (see scars.md).
       className={cn(
-        "pointer-events-none absolute top-1 right-1 z-[1] inline-flex items-center gap-1 font-medium",
+        "pointer-events-none inline-flex shrink-0 items-center leading-none",
         "[contain:paint] [transform:translateZ(0)]",
-        status.colorClass,
-        isWorking && "animate-status-badge-pulse motion-reduce:animate-none",
+        spec.toneClass,
+        spec.showElapsed && "animate-status-badge-pulse motion-reduce:animate-none",
+        className,
       )}
-      style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
+      style={{ fontSize: "var(--app-sidebar-font-size)" }}
     >
-      <span aria-hidden="true" className="inline-flex items-center gap-1">
-        {isWorking ? WORKING_BADGE_ICON : DONE_BADGE_ICON}
-        <span>{label}</span>
-        {isWorking ? <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} /> : null}
+      <span aria-hidden="true" className="inline-flex items-center gap-1.5">
+        {spec.icon}
+        <span className="inline-flex items-baseline gap-1 font-medium tracking-tight">
+          <span>{spec.text}</span>
+          {spec.showElapsed ? (
+            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+          ) : null}
+        </span>
       </span>
     </span>
   );

@@ -301,8 +301,10 @@ html[data-native-vibrancy="true"]
   [data-thread-item]
   :is(
     [data-slot="sidebar-menu-sub-button"],
-    [data-slot="sidebar-menu-sub-button"] *,
-    [class*="transition-"]
+    /* Exclude the Working badge so its 3s opacity pulse still runs; row
+       paint containment above already isolates the animation. */
+    [data-slot="sidebar-menu-sub-button"] *:not([data-status-corner-badge]),
+    [class*="transition-"]:not([data-status-corner-badge])
   ) {
   transition-duration: 0ms !important;
   animation-duration: 0ms !important;
