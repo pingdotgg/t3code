@@ -53,6 +53,7 @@ import {
   MinusIcon,
   SquarePenIcon,
   TerminalIcon,
+  TextQuote,
   Undo2Icon,
   WrenchIcon,
   XIcon,
@@ -108,6 +109,12 @@ import {
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
+  collectChatSelectionAnnotationsByMessageId,
+  parseChatSelectionMessageSegments,
+  stripAppendedChatSelectionAnnotations,
+  type ChatSelectionAnnotation,
+} from "../../chatSelectionAnnotation";
+import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
   parseReviewCommentMessageSegments,
@@ -135,6 +142,12 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  onAddChatSelectionAnnotation: (annotation: Omit<ChatSelectionAnnotation, "id">) => void;
+  onUpdateChatSelectionAnnotation: (annotationId: string, comment: string) => void;
+  onRemoveChatSelectionAnnotation: (annotationId: string) => void;
+  pendingChatSelectionAnnotationIds: ReadonlySet<string>;
+  chatSelectionAnnotationNumberById: ReadonlyMap<string, number>;
+  chatSelectionAnnotationsByMessageId: ReadonlyMap<string, ReadonlyArray<ChatSelectionAnnotation>>;
 }
 
 interface TimelineRowActivityState {
@@ -149,6 +162,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const EMPTY_TIMELINE_CHAT_SELECTION_ANNOTATIONS: ReadonlyArray<ChatSelectionAnnotation> = [];
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 // ---------------------------------------------------------------------------
@@ -184,6 +198,10 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
+  onAddChatSelectionAnnotation: (annotation: Omit<ChatSelectionAnnotation, "id">) => void;
+  onUpdateChatSelectionAnnotation: (annotationId: string, comment: string) => void;
+  onRemoveChatSelectionAnnotation: (annotationId: string) => void;
+  chatSelectionAnnotations?: ReadonlyArray<ChatSelectionAnnotation>;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +237,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
+  onAddChatSelectionAnnotation,
+  onUpdateChatSelectionAnnotation,
+  onRemoveChatSelectionAnnotation,
+  chatSelectionAnnotations = EMPTY_TIMELINE_CHAT_SELECTION_ANNOTATIONS,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -322,6 +344,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
+  );
+  const chatSelectionAnnotationsByMessageId = useMemo(
+    () => collectChatSelectionAnnotationsByMessageId(chatSelectionAnnotations),
+    [chatSelectionAnnotations],
+  );
+  const pendingChatSelectionAnnotationIds = useMemo(
+    () => new Set(chatSelectionAnnotations.map((annotation) => annotation.id)),
+    [chatSelectionAnnotations],
+  );
+  const chatSelectionAnnotationNumberById = useMemo(
+    () => new Map(chatSelectionAnnotations.map((annotation, index) => [annotation.id, index + 1])),
+    [chatSelectionAnnotations],
   );
   const rows = useStableRows(rawRows);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
@@ -430,6 +464,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onAddChatSelectionAnnotation,
+      onUpdateChatSelectionAnnotation,
+      onRemoveChatSelectionAnnotation,
+      pendingChatSelectionAnnotationIds,
+      chatSelectionAnnotationNumberById,
+      chatSelectionAnnotationsByMessageId,
     }),
     [
       timestampFormat,
@@ -444,6 +484,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onAddChatSelectionAnnotation,
+      onUpdateChatSelectionAnnotation,
+      onRemoveChatSelectionAnnotation,
+      pendingChatSelectionAnnotationIds,
+      chatSelectionAnnotationNumberById,
+      chatSelectionAnnotationsByMessageId,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -884,70 +930,105 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
+  const chatSelectionSegments = parseChatSelectionMessageSegments(elementContextState.promptText);
+  const chatSelectionAnnotations = chatSelectionSegments.flatMap((segment) =>
+    segment.kind === "selection" ? [segment.annotation] : [],
+  );
+  const userPromptText =
+    chatSelectionAnnotations.length > 0
+      ? stripAppendedChatSelectionAnnotations(elementContextState.promptText)
+      : elementContextState.promptText;
+  const userCopyText =
+    chatSelectionAnnotations.length > 0
+      ? stripAppendedChatSelectionAnnotations(displayedUserMessage.copyText)
+      : displayedUserMessage.copyText;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const hasVisibleUserBubble =
+    regularImages.length > 0 ||
+    previewAnnotations.length > 0 ||
+    elementContexts.length > 0 ||
+    userPromptText.trim().length > 0 ||
+    terminalContexts.length > 0;
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
-        {regularImages.length > 0 && (
-          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-              <div
-                key={image.id}
-                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block h-auto max-h-[220px] w-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                    {image.name}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {previewAnnotations.map((annotation, index) => (
-          <UserMessagePreviewAnnotationCard
-            key={annotation.id}
-            annotation={annotation}
-            image={previewImages[index] ?? null}
+      {chatSelectionAnnotations.length > 0 ? (
+        <div
+          className="mb-0.5 inline-flex h-7 items-center gap-1.5 rounded-full border border-border/80 bg-accent px-2.5 text-xs text-foreground shadow-xs"
+          data-chat-selection-annotation-summary
+        >
+          <TextQuote className="size-3.5 text-muted-foreground" aria-hidden />
+          <span>
+            {chatSelectionAnnotations.length} annotation
+            {chatSelectionAnnotations.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      ) : null}
+      {hasVisibleUserBubble ? (
+        <div
+          className="relative max-w-[80%] rounded-2xl bg-accent p-3"
+          data-user-message-bubble="true"
+        >
+          {regularImages.length > 0 && (
+            <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+              {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                <div
+                  key={image.id}
+                  className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                >
+                  {image.previewUrl ? (
+                    <button
+                      type="button"
+                      className="h-full w-full cursor-zoom-in"
+                      aria-label={`Preview ${image.name}`}
+                      onClick={() => {
+                        const preview = buildExpandedImagePreview(regularImages, image.id);
+                        if (!preview) return;
+                        ctx.onImageExpand(preview);
+                      }}
+                    >
+                      <img
+                        src={image.previewUrl}
+                        alt={image.name}
+                        className="block h-auto max-h-[220px] w-full object-cover"
+                      />
+                    </button>
+                  ) : (
+                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                      {image.name}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {previewAnnotations.map((annotation, index) => (
+            <UserMessagePreviewAnnotationCard
+              key={annotation.id}
+              annotation={annotation}
+              image={previewImages[index] ?? null}
+            />
+          ))}
+          {elementContexts.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {elementContexts.map((context) => (
+                <UserMessageElementContextChip
+                  key={`${context.header}:${context.body}`}
+                  context={context}
+                />
+              ))}
+            </div>
+          ) : null}
+          <CollapsibleUserMessageBody
+            text={userPromptText}
+            terminalContexts={terminalContexts}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
           />
-        ))}
-        {elementContexts.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {elementContexts.map((context) => (
-              <UserMessageElementContextChip
-                key={`${context.header}:${context.body}`}
-                context={context}
-              />
-            ))}
-          </div>
-        ) : null}
-        <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          markdownCwd={ctx.markdownCwd}
-        />
-      </div>
+        </div>
+      ) : null}
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
@@ -960,8 +1041,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+            {userCopyText.trim().length > 0 && (
+              <MessageCopyButton text={userCopyText} variant="ghost" />
             )}
           </div>
         </div>
@@ -1018,6 +1099,9 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const selectionAnnotations =
+    ctx.chatSelectionAnnotationsByMessageId.get(row.message.id) ??
+    EMPTY_TIMELINE_CHAT_SELECTION_ANNOTATIONS;
 
   return (
     <>
@@ -1028,6 +1112,20 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           threadRef={ctx.threadRef ?? undefined}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
+          annotations={selectionAnnotations}
+          indicatorNumberByAnnotationId={ctx.chatSelectionAnnotationNumberById}
+          editableAnnotationIds={ctx.pendingChatSelectionAnnotationIds}
+          onUpdateAnnotation={ctx.onUpdateChatSelectionAnnotation}
+          onRemoveAnnotation={ctx.onRemoveChatSelectionAnnotation}
+          onTextSelection={
+            row.message.text
+              ? (input) =>
+                  ctx.onAddChatSelectionAnnotation({
+                    ...input,
+                    messageId: row.message.id,
+                  })
+              : undefined
+          }
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}

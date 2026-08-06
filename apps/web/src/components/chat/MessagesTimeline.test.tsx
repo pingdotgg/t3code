@@ -3,6 +3,8 @@ import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import { appendChatSelectionAnnotationsToPrompt } from "../../chatSelectionAnnotation";
+import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -196,6 +198,9 @@ function buildProps() {
     contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
+    onAddChatSelectionAnnotation: () => {},
+    onUpdateChatSelectionAnnotation: () => {},
+    onRemoveChatSelectionAnnotation: () => {},
   };
 }
 
@@ -294,6 +299,182 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
+  });
+
+  it("marks the assistant answer that owns a pending text annotation", () => {
+    const assistantMessageId = MessageId.make("message-assistant-with-selection");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        chatSelectionAnnotations={[
+          {
+            id: "selection-1",
+            messageId: assistantMessageId,
+            selectedText: "Restart the adapter.",
+            comment: "Why?",
+          },
+        ]}
+        timelineEntries={[
+          {
+            id: "entry-assistant-with-selection",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Restart the adapter.",
+              turnId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-chat-selection-annotation-count="1"');
+  });
+
+  it("renders one clickable indicator per annotation in source order", () => {
+    const assistantMessageId = MessageId.make("message-assistant-with-two-selections");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        chatSelectionAnnotations={[
+          {
+            id: "selection-1",
+            messageId: assistantMessageId,
+            selectedText: "first",
+            comment: "",
+          },
+          {
+            id: "selection-2",
+            messageId: assistantMessageId,
+            selectedText: "second",
+            comment: "Add context",
+          },
+        ]}
+        timelineEntries={[
+          {
+            id: "entry-assistant-with-two-selections",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "first and second",
+              turnId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-chat-selection-annotation-count="2"');
+  });
+
+  it("removes the editable source indicator after the annotation has been sent", () => {
+    const assistantMessageId = MessageId.make("message-assistant-sent-selection");
+    const sentAnnotation = {
+      id: "selection-sent",
+      messageId: assistantMessageId,
+      selectedText: "Restart the adapter.",
+      comment: "Why?",
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-user-with-selection",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-user-with-selection"),
+              role: "user",
+              text: appendChatSelectionAnnotationsToPrompt("Please explain.", [sentAnnotation]),
+              turnId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-assistant-sent-selection",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Restart the adapter.",
+              turnId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain('data-chat-selection-annotation-count="1"');
+    expect(markup).toContain('data-chat-selection-annotation-summary="true"');
+  });
+
+  it("summarizes sent text annotations without expanding their contents in the user bubble", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendChatSelectionAnnotationsToPrompt("Send back this message.", [
+              {
+                id: "selection-summary",
+                messageId: "assistant-source",
+                selectedText: "Hidden selected text",
+                comment: "Hidden annotation comment",
+              },
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("1 annotation");
+    expect(markup).toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).toContain("Send back this message.");
+    expect(markup).not.toContain("Hidden selected text");
+    expect(markup).not.toContain("Hidden annotation comment");
+    expect(markup).not.toContain("Selected text");
+  });
+
+  it("does not render an empty user bubble for an annotation-only message", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendChatSelectionAnnotationsToPrompt("", [
+              {
+                id: "selection-only-summary",
+                messageId: "assistant-source",
+                selectedText: "Only selected text",
+                comment: "",
+              },
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).not.toContain('data-user-message-bubble="true"');
+    expect(markup).not.toContain("Only selected text");
+    expect(markup).not.toContain('aria-label="Copy link"');
   });
 
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
@@ -628,6 +809,112 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Clarify this.");
     expect(markup).toContain("# Plan");
     expect(markup).not.toContain('data-testid="file-diff"');
+  });
+
+  it("summarizes attached response text without exposing its prompt markup", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendChatSelectionAnnotationsToPrompt("Please explain.", [
+              {
+                id: "selection-1",
+                selectedText: "Retry the request.",
+                comment: "Why is this safe?",
+              },
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("1 annotation");
+    expect(markup).toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).toContain("lucide-text-quote");
+    expect(markup).toContain("Please explain.");
+    expect(markup).not.toContain("Retry the request.");
+    expect(markup).not.toContain("Why is this safe?");
+    expect(markup).not.toContain("&lt;chat_selection");
+  });
+
+  it("keeps review comments appended after attached response text", () => {
+    const promptWithSelection = appendChatSelectionAnnotationsToPrompt("Please explain.", [
+      {
+        id: "selection-before-review-comment",
+        selectedText: "Retry the request.",
+        comment: "Why is this safe?",
+      },
+    ]);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendReviewCommentsToPrompt(promptWithSelection, [
+              buildFileReviewComment({
+                id: "review-after-selection",
+                filePath: "src/app.ts",
+                startLine: 1,
+                endLine: 1,
+                text: "Keep this configurable.",
+                contents: "const value = true;",
+              }),
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Please explain.");
+    expect(markup).toContain("Keep this configurable.");
+    expect(markup).toContain("src/app.ts");
+    expect(markup).not.toContain("&lt;review_comment");
+  });
+
+  it("preserves leading whitespace before attached response text", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            appendChatSelectionAnnotationsToPrompt("    indented prompt", [
+              {
+                id: "selection-indented",
+                selectedText: "response text",
+                comment: "Please explain.",
+              },
+            ]),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("<pre><code>indented prompt");
+  });
+
+  it("preserves user-authored chat selection markup in the message bubble", () => {
+    const userAuthoredMarkup = [
+      "I am discussing this format:",
+      '<chat_selection id="example">',
+      "<selected_text>",
+      "this is just an example",
+      "</selected_text>",
+      "<user_comment>",
+      "please explain this format",
+      "</user_comment>",
+      "</chat_selection>",
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry(userAuthoredMarkup)]}
+      />,
+    );
+
+    expect(markup).not.toContain('data-chat-selection-annotation-summary="true"');
+    expect(markup).toContain("this is just an example");
+    expect(markup).toContain("please explain this format");
   });
 
   it("renders a failure marker for failed tool lifecycle entries", () => {

@@ -28,8 +28,46 @@ import {
   resolveSendEnvMode,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
+  shouldRestoreClearedPlanFollowUpDraft,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("shouldRestoreClearedPlanFollowUpDraft", () => {
+  it("restores only while the cleared prompt and annotations remain untouched", () => {
+    expect(
+      shouldRestoreClearedPlanFollowUpDraft({
+        currentPrompt: "",
+        currentChatSelectionAnnotationCount: 0,
+        currentComposerMutationVersion: 0,
+        submittedComposerMutationVersion: 0,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRestoreClearedPlanFollowUpDraft({
+        currentPrompt: "new draft",
+        currentChatSelectionAnnotationCount: 0,
+        currentComposerMutationVersion: 1,
+        submittedComposerMutationVersion: 0,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRestoreClearedPlanFollowUpDraft({
+        currentPrompt: "",
+        currentChatSelectionAnnotationCount: 1,
+        currentComposerMutationVersion: 1,
+        submittedComposerMutationVersion: 0,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRestoreClearedPlanFollowUpDraft({
+        currentPrompt: "",
+        currentChatSelectionAnnotationCount: 0,
+        currentComposerMutationVersion: 1,
+        submittedComposerMutationVersion: 0,
+      }),
+    ).toBe(false);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
