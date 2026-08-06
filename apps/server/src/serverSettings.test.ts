@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -689,6 +690,53 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores Discord channel credentials outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        channelIntegrations: {
+          discord: {
+            enabled: true,
+            projectId: ProjectId.make("project-1"),
+            baseBranch: "main",
+            branchPrefix: "demo/discord",
+            applicationId: "app-1",
+            guildId: "guild-1",
+            botToken: "discord-secret",
+            botTokenRedacted: false,
+          },
+        },
+      });
+
+      assert.equal(next.channelIntegrations.discord.botToken, "discord-secret");
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "discord-secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw).channelIntegrations.discord;
+      assert.equal(persisted.botToken, "");
+      assert.equal(persisted.botTokenRedacted, true);
+
+      const roundTripped = yield* serverSettings.updateSettings({
+        channelIntegrations: {
+          discord: {
+            ...next.channelIntegrations.discord,
+            botToken: "",
+            botTokenRedacted: true,
+          },
+        },
+      });
+      assert.equal(roundTripped.channelIntegrations.discord.botToken, "discord-secret");
+
+      const clientSettings = ServerSettingsModule.redactServerSettingsForClient(roundTripped);
+      assert.equal(clientSettings.channelIntegrations.discord.botToken, "");
+      assert.equal(clientSettings.channelIntegrations.discord.botTokenRedacted, true);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });
