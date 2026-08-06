@@ -16,6 +16,7 @@ import {
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  RouteIcon, // fork: f5 Claude Code → Codex routing
   ScrollTextIcon, // fork: f2 system prompt injection
   SearchIcon,
   Settings2Icon,
@@ -51,6 +52,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/model-routing": RouteIcon, // fork: f5
   "/settings/prompt": ScrollTextIcon, // fork: f2 system prompt injection
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,

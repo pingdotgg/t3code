@@ -1,4 +1,5 @@
 import {
+  CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
@@ -21,7 +22,13 @@ const mergeProviderModels = (
   cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
-  return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
+  return [
+    ...fallbackModels,
+    ...cachedModels.filter(
+      (model) =>
+        !fallbackSlugs.has(model.slug) && model.subProvider !== CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
+    ),
+  ];
 };
 
 export const orderProviderSnapshots = (

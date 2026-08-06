@@ -700,6 +700,33 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    // fork: f5 Claude Code → Codex routing
+    claudeCodexBridgeStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:claude-codex-bridge-status",
+      tag: WS_METHODS.claudeCodexBridgeGetStatus,
+      staleTimeMs: 5_000,
+    }),
+    claudeCodexBridgeModels: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:claude-codex-bridge-models",
+      tag: WS_METHODS.claudeCodexBridgeGetModels,
+      staleTimeMs: 5_000,
+    }),
+    installClaudeCodexBridge: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:install-claude-codex-bridge",
+      tag: WS_METHODS.claudeCodexBridgeInstall,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    signOutClaudeCodexBridge: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:sign-out-claude-codex-bridge",
+      tag: WS_METHODS.claudeCodexBridgeSignOut,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

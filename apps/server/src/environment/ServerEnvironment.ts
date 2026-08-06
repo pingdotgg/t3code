@@ -148,6 +148,7 @@ export const make = Effect.gen(function* () {
       threadPinning: true,
       threadTitleRegeneration: true,
       systemPromptInjection: true, // fork: f2 system prompt injection
+      claudeCodexRouting: true, // fork: f5 Claude Code → Codex routing
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" ? { serverSelfUpdateProgress: true } : {}),
     },

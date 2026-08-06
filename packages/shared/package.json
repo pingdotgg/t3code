@@ -206,6 +206,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./claudeCodexRouting": {
+      "types": "./src/claudeCodexRouting.ts",
+      "import": "./src/claudeCodexRouting.ts"
     }
   },
   "scripts": {

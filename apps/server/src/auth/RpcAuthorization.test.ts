@@ -38,6 +38,24 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
   });
 
+  // fork: f5 — these actions configure and operate the Claude/Codex provider
+  // bridge. They belong to normal orchestration rather than T3 access control,
+  // while observing the bridge status remains available to read-only clients.
+  it("authorizes Claude/Codex bridge actions as provider operations", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.claudeCodexBridgeGetStatus)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [
+      WS_METHODS.claudeCodexBridgeInstall,
+      WS_METHODS.claudeCodexBridgeStartSignIn,
+      WS_METHODS.claudeCodexBridgeSignOut,
+      WS_METHODS.claudeCodexBridgeGetModels,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(requiredScopeForRpcMethod(method)).not.toBe(AuthAccessWriteScope);
+    }
+  });
+
   // fork: f1 — signing in/out mutates provider credentials, so it is gated on
   // access:write rather than orchestration:operate. A read-only paired client
   // must not be able to log the host out.

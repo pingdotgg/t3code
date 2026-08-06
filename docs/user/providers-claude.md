@@ -3,6 +3,9 @@
 This guide is for people who want to use more than one Claude setup in T3 Code. For Codex, see
 [Codex](./providers-codex.md). For first-time setup, see [Install T3 Code](./install.md).
 
+To use GPT/Codex models as Claude Code subagents through the Haiku slot, see
+[Claude Code → Codex Model Routing](./claude-codex-model-routing.md).
+
 Common reasons:
 
 - use separate work and personal Claude accounts

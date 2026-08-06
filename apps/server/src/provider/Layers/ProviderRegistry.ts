@@ -23,6 +23,7 @@
  * @module ProviderRegistryLive
  */
 import {
+  CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -119,7 +120,13 @@ const mergeProviderModels = (
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
   return shouldRetainMissingModels
-    ? [...mergedModels, ...previousModels.filter((model) => !nextSlugs.has(model.slug))]
+    ? [
+        ...mergedModels,
+        ...previousModels.filter(
+          (model) =>
+            !nextSlugs.has(model.slug) && model.subProvider !== CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
+        ),
+      ]
     : mergedModels;
 };
 

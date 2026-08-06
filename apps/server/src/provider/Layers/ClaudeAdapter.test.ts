@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  DEFAULT_CLAUDE_CODEX_MODEL_PREFERENCES,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -163,6 +164,8 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly codexBridge?: ClaudeAdapterLiveOptions["codexBridge"];
+  readonly environment?: NodeJS.ProcessEnv;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -178,6 +181,8 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.codexBridge ? { codexBridge: config.codexBridge } : {}),
+    ...(config?.environment ? { environment: config.environment } : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -399,6 +404,132 @@ describe("ClaudeAdapterLive", () => {
         preset: "claude_code",
         append: "Be concise.\n\nPrefer rg.",
       });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not touch the bridge when routing is disabled", () => {
+    let bridgeCalls = 0;
+    const harness = makeHarness({
+      codexBridge: {
+        hybridEnvironment: async () => {
+          bridgeCalls += 1;
+          throw new Error("bridge should stay inert");
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto",
+      });
+      assert.equal(bridgeCalls, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  // fork: f5 Claude Code → Codex routing
+  it.effect("remaps the Haiku slot and prepends the managed routing prompt", () => {
+    let receivedAnthropicBaseUrl: string | undefined;
+    const harness = makeHarness({
+      claudeConfig: {
+        codexRouting: {
+          enabled: true,
+          model: "gpt-5.5",
+          modelPreferences: DEFAULT_CLAUDE_CODEX_MODEL_PREFERENCES,
+          promptMode: "managed",
+          customPrompt: "",
+          additionalInstructions: "Use the project's verification commands.",
+        },
+      },
+      codexBridge: {
+        hybridEnvironment: async (model, anthropicBaseUrl) => {
+          receivedAnthropicBaseUrl = anthropicBaseUrl;
+          return {
+            model: model?.trim() || "gpt-5.6-sol",
+            environment: {
+              ANTHROPIC_BASE_URL: "http://127.0.0.1:7777/x/test-capability",
+              ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+            },
+          };
+        },
+      },
+      environment: { ANTHROPIC_BASE_URL: "https://router.example.test/anthropic" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto",
+        instructions: "Be concise.",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL, "gpt-5.5");
+      assert.equal(options?.env?.ANTHROPIC_BASE_URL, "http://127.0.0.1:7777/x/test-capability");
+      assert.equal(receivedAnthropicBaseUrl, "https://router.example.test/anthropic");
+      const prompt = options?.systemPrompt;
+      assert.isObject(prompt);
+      const append =
+        typeof prompt === "object" && prompt && "append" in prompt ? prompt.append : "";
+      assert.include(String(append), "haiku");
+      assert.include(String(append), "gpt-5.5");
+      assert.include(String(append), "Use the project's verification commands.");
+      assert.match(String(append), /verification commands\.\n\nBe concise\.$/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("runs the routed Codex picker model as the Claude session's main model", () => {
+    const harness = makeHarness({
+      claudeConfig: {
+        codexRouting: {
+          enabled: true,
+          model: "gpt-5.5",
+          modelPreferences: DEFAULT_CLAUDE_CODEX_MODEL_PREFERENCES,
+          promptMode: "managed",
+          customPrompt: "",
+          additionalInstructions: "Keep the final response concise.",
+        },
+      },
+      codexBridge: {
+        hybridEnvironment: async (model) => ({
+          model: model?.trim() || "gpt-5.6-sol",
+          environment: {
+            ANTHROPIC_BASE_URL: "http://127.0.0.1:7777/x/test-capability",
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+          },
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto",
+        modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), "gpt-5.5"),
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.model, "gpt-5.5");
+      const prompt = options?.systemPrompt;
+      assert.isObject(prompt);
+      const append =
+        typeof prompt === "object" && prompt && "append" in prompt ? prompt.append : "";
+      assert.include(String(append), "Codex main session through Claude Code");
+      assert.include(String(append), "It is not running an Anthropic model");
+      assert.notInclude(String(append), "Subagent routing");
+      assert.match(String(append), /Keep the final response concise\.$/u);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

@@ -316,6 +316,85 @@ export const CodexSettings = makeProviderSettingsSchema(
 );
 export type CodexSettings = typeof CodexSettings.Type;
 
+export const ClaudeCodexRoutingPromptMode = Schema.Literals(["managed", "custom", "none"]);
+export type ClaudeCodexRoutingPromptMode = typeof ClaudeCodexRoutingPromptMode.Type;
+
+export const ClaudeCodexTaskRoute = Schema.Literals(["claude", "codex", "adaptive"]);
+export type ClaudeCodexTaskRoute = typeof ClaudeCodexTaskRoute.Type;
+
+export const ClaudeCodexClaudeSubagentModel = Schema.Literals(["opus", "fable", "sonnet"]);
+export type ClaudeCodexClaudeSubagentModel = typeof ClaudeCodexClaudeSubagentModel.Type;
+
+export const ClaudeCodexClaudeSubagentModels = Schema.Struct({
+  exploration: Schema.optionalKey(ClaudeCodexClaudeSubagentModel),
+  implementation: Schema.optionalKey(ClaudeCodexClaudeSubagentModel),
+  verification: Schema.optionalKey(ClaudeCodexClaudeSubagentModel),
+  planning: Schema.optionalKey(ClaudeCodexClaudeSubagentModel),
+  design: Schema.optionalKey(ClaudeCodexClaudeSubagentModel),
+  review: Schema.optionalKey(ClaudeCodexClaudeSubagentModel),
+});
+export type ClaudeCodexClaudeSubagentModels = typeof ClaudeCodexClaudeSubagentModels.Type;
+
+export const ClaudeCodexSecondOpinionMode = Schema.Literals([
+  "off",
+  "plans",
+  "reviews",
+  "plans-and-reviews",
+]);
+export type ClaudeCodexSecondOpinionMode = typeof ClaudeCodexSecondOpinionMode.Type;
+
+/** Structured guidance for choosing the subagent that owns each kind of work.
+ * These are prompt preferences, not a second runtime router: the main session
+ * remains the orchestrator and Codex is reached through Agent. */
+export const ClaudeCodexModelPreferences = Schema.Struct({
+  /** Legacy fallback for settings saved before Claude models became per-category. */
+  claudeSubagentModel: ClaudeCodexClaudeSubagentModel.pipe(
+    Schema.withDecodingDefault(Effect.succeed("opus" as const)),
+  ),
+  claudeSubagentModels: ClaudeCodexClaudeSubagentModels.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  exploration: ClaudeCodexTaskRoute.pipe(
+    Schema.withDecodingDefault(Effect.succeed("codex" as const)),
+  ),
+  implementation: ClaudeCodexTaskRoute.pipe(
+    Schema.withDecodingDefault(Effect.succeed("codex" as const)),
+  ),
+  verification: ClaudeCodexTaskRoute.pipe(
+    Schema.withDecodingDefault(Effect.succeed("adaptive" as const)),
+  ),
+  planning: ClaudeCodexTaskRoute.pipe(
+    Schema.withDecodingDefault(Effect.succeed("claude" as const)),
+  ),
+  design: ClaudeCodexTaskRoute.pipe(Schema.withDecodingDefault(Effect.succeed("claude" as const))),
+  review: ClaudeCodexTaskRoute.pipe(Schema.withDecodingDefault(Effect.succeed("claude" as const))),
+  secondOpinion: ClaudeCodexSecondOpinionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("plans-and-reviews" as const)),
+  ),
+});
+export type ClaudeCodexModelPreferences = typeof ClaudeCodexModelPreferences.Type;
+export const DEFAULT_CLAUDE_CODEX_MODEL_PREFERENCES: ClaudeCodexModelPreferences =
+  Schema.decodeSync(ClaudeCodexModelPreferences)({});
+
+/** Per-Claude-instance routing. Omitted from a Claude config means disabled,
+ * preserving the behavior of every pre-feature settings file. */
+export const ClaudeCodexRoutingSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  model: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  modelPreferences: ClaudeCodexModelPreferences.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLAUDE_CODEX_MODEL_PREFERENCES)),
+  ),
+  promptMode: ClaudeCodexRoutingPromptMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("managed" as const)),
+  ),
+  customPrompt: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  additionalInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type ClaudeCodexRoutingSettings = typeof ClaudeCodexRoutingSettings.Type;
+export const DEFAULT_CLAUDE_CODEX_ROUTING_SETTINGS: ClaudeCodexRoutingSettings = Schema.decodeSync(
+  ClaudeCodexRoutingSettings,
+)({});
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -352,6 +431,11 @@ export const ClaudeSettings = makeProviderSettingsSchema(
           clearWhenEmpty: "omit",
         },
       }),
+    ),
+    codexRouting: Schema.optionalKey(
+      ClaudeCodexRoutingSettings.pipe(
+        Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      ),
     ),
   },
   {
@@ -678,6 +762,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
+  codexRouting: Schema.optionalKey(ClaudeCodexRoutingSettings),
 });
 
 const CursorSettingsPatch = Schema.Struct({

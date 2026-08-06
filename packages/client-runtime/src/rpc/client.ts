@@ -61,6 +61,8 @@ export type EnvironmentStreamCommandRpcTag =
   // it must never auto-resubscribe on reconnect, because resubscribing would
   // silently restart the handshake.
   | typeof WS_METHODS.providerStartSignIn
+  // fork: f5 — same one-shot login lifecycle as provider sign-in.
+  | typeof WS_METHODS.claudeCodexBridgeStartSignIn
   | typeof WS_METHODS.gitRunStackedAction;
 
 export type EnvironmentStreamRpcTag =

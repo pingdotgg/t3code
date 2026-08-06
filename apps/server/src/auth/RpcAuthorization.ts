@@ -49,6 +49,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
+  // fork: f5 — status is a pure read. Installing, signing in/out, and loading
+  // the live catalog operate the provider runtime, so standard paired clients
+  // use the same orchestration scope as the other provider settings.
+  [WS_METHODS.claudeCodexBridgeGetStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.claudeCodexBridgeInstall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.claudeCodexBridgeStartSignIn]: AuthOrchestrationOperateScope,
+  [WS_METHODS.claudeCodexBridgeSignOut]: AuthOrchestrationOperateScope,
+  [WS_METHODS.claudeCodexBridgeGetModels]: AuthOrchestrationOperateScope,
   // fork: f1 — signing in/out mutates the environment's provider credentials,
   // an access-control concern. A read-only paired client must not be able to
   // log the host out.

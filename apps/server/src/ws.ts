@@ -57,8 +57,11 @@ import {
   type TerminalMetadataStreamEvent,
   WS_METHODS,
   WsRpcGroup,
+  ClaudeCodexBridgeError,
+  type ClaudeCodexBridgeSignInEvent,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -83,6 +86,7 @@ import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts"
 import * as ProviderService from "./provider/Services/ProviderService.ts"; // fork: f3 per-task stop
 import { makeProviderTaskRpcHandlers } from "./provider/Services/providerTaskRpcHandlers.ts"; // fork: f3 per-task stop
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import { getClaudeCodexBridge } from "./provider/claudeCodex/ClaudeCodexBridge.ts"; // fork: f5
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -378,6 +382,13 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
+      const hostPlatform = yield* HostProcessPlatform;
+      const hostArchitecture = yield* HostProcessArchitecture;
+      const claudeCodexBridge = getClaudeCodexBridge(
+        config.stateDir,
+        hostPlatform,
+        hostArchitecture,
+      ); // fork: f5
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1553,6 +1564,87 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetBackgroundPolicy, backgroundPolicy.snapshot, {
             "rpc.aggregate": "server",
           }),
+        // fork: f5 — environment-owned Claude Code → Codex bridge. Device
+        // sign-in is streamed so closing the client dialog cancels the child.
+        [WS_METHODS.claudeCodexBridgeGetStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.claudeCodexBridgeGetStatus,
+            Effect.try({
+              try: () => claudeCodexBridge.status(),
+              catch: (cause) =>
+                new ClaudeCodexBridgeError({
+                  operation: "status",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                }),
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.claudeCodexBridgeInstall]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.claudeCodexBridgeInstall,
+            Effect.tryPromise({
+              try: () => claudeCodexBridge.install(),
+              catch: (cause) =>
+                new ClaudeCodexBridgeError({
+                  operation: "install",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                }),
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.claudeCodexBridgeStartSignIn]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.claudeCodexBridgeStartSignIn,
+            Stream.callback<ClaudeCodexBridgeSignInEvent>((queue) =>
+              Effect.gen(function* () {
+                const abortController = new AbortController();
+                yield* Effect.addFinalizer(() => Effect.sync(() => abortController.abort()));
+                const context = yield* Effect.context<never>();
+                const runFork = Effect.runForkWith(context);
+                const emit = (event: ClaudeCodexBridgeSignInEvent) => {
+                  runFork(Queue.offer(queue, event));
+                };
+                yield* Effect.tryPromise(() =>
+                  claudeCodexBridge.signIn(emit, abortController.signal),
+                ).pipe(
+                  Effect.catch((cause) =>
+                    Queue.offer(queue, {
+                      _tag: "failed" as const,
+                      message: cause instanceof Error ? cause.message : String(cause),
+                    }),
+                  ),
+                );
+                yield* Queue.end(queue);
+              }).pipe(Effect.forkScoped),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.claudeCodexBridgeSignOut]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.claudeCodexBridgeSignOut,
+            Effect.try({
+              try: () => claudeCodexBridge.signOut(),
+              catch: (cause) =>
+                new ClaudeCodexBridgeError({
+                  operation: "sign-out",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                }),
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.claudeCodexBridgeGetModels]: ({ refresh }) =>
+          observeRpcEffect(
+            WS_METHODS.claudeCodexBridgeGetModels,
+            Effect.tryPromise({
+              try: () => claudeCodexBridge.models(refresh === true),
+              catch: (cause) =>
+                new ClaudeCodexBridgeError({
+                  operation: "models",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                }),
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
         // fork: f1 — provider account sign-in. The stream's scope IS the
         // login's lifetime: when the client unsubscribes, the server cancels
         // the login and kills the app-server child.

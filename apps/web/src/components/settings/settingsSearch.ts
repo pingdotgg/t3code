@@ -3,6 +3,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/model-routing" // fork: f5 Claude Code → Codex routing
   | "/settings/prompt" // fork: f2 system prompt injection
   | "/settings/source-control"
   | "/settings/connections"
@@ -25,6 +26,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/model-routing": "Model Routing", // fork: f5
   "/settings/prompt": "System Prompt", // fork: f2 system prompt injection
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -162,6 +164,28 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+  },
+  // fork: f5 Claude Code → Codex routing
+  {
+    id: "model-routing",
+    title: "Claude Code → Codex",
+    to: "/settings/model-routing",
+  },
+  {
+    id: "model-routing-account",
+    title: "Codex bridge account",
+    to: "/settings/model-routing",
+    targetId: "model-routing",
+  },
+  {
+    id: "model-routing-preferences",
+    title: "Model preferences",
+    to: "/settings/model-routing",
+  },
+  {
+    id: "model-routing-prompt",
+    title: "Prompt instructions",
+    to: "/settings/model-routing",
   },
   // fork: f2 system prompt injection
   {

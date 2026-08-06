@@ -75,6 +75,10 @@
       "types": "./src/state/providerAuth.ts",
       "default": "./src/state/providerAuth.ts"
     },
+    "./state/claude-codex-routing": {
+      "types": "./src/state/claudeCodexRouting.ts",
+      "default": "./src/state/claudeCodexRouting.ts"
+    },
     "./state/provider-task": {
       "types": "./src/state/providerTask.ts",
       "default": "./src/state/providerTask.ts"

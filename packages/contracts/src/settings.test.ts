@@ -175,6 +175,96 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("Claude Code Codex routing", () => {
+  it("is absent and inactive for legacy Claude settings", () => {
+    expect(decodeServerSettings({}).providers.claudeAgent.codexRouting).toBeUndefined();
+  });
+
+  it("hydrates safe defaults when the per-instance routing block is enabled", () => {
+    const routing = decodeServerSettings({
+      providers: { claudeAgent: { codexRouting: { enabled: true } } },
+    }).providers.claudeAgent.codexRouting;
+    expect(routing).toEqual({
+      enabled: true,
+      model: "",
+      modelPreferences: {
+        claudeSubagentModel: "opus",
+        claudeSubagentModels: {},
+        exploration: "codex",
+        implementation: "codex",
+        verification: "adaptive",
+        planning: "claude",
+        design: "claude",
+        review: "claude",
+        secondOpinion: "plans-and-reviews",
+      },
+      promptMode: "managed",
+      customPrompt: "",
+      additionalInstructions: "",
+    });
+  });
+
+  it("hydrates partial model preferences without losing the balanced defaults", () => {
+    const routing = decodeServerSettings({
+      providers: {
+        claudeAgent: {
+          codexRouting: {
+            enabled: true,
+            modelPreferences: {
+              claudeSubagentModel: "fable",
+              claudeSubagentModels: { implementation: "sonnet" },
+              implementation: "claude",
+              secondOpinion: "reviews",
+            },
+          },
+        },
+      },
+    }).providers.claudeAgent.codexRouting;
+    expect(routing?.modelPreferences).toEqual({
+      claudeSubagentModel: "fable",
+      claudeSubagentModels: { implementation: "sonnet" },
+      exploration: "codex",
+      implementation: "claude",
+      verification: "adaptive",
+      planning: "claude",
+      design: "claude",
+      review: "claude",
+      secondOpinion: "reviews",
+    });
+  });
+
+  it("rejects unknown managed prompt preferences in persisted settings and patches", () => {
+    expect(() =>
+      decodeServerSettings({
+        providers: { claudeAgent: { codexRouting: { promptMode: "automatic" } } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providers: { claudeAgent: { codexRouting: { promptMode: "automatic" } } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettings({
+        providers: {
+          claudeAgent: {
+            codexRouting: { modelPreferences: { claudeSubagentModel: "haiku" } },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettings({
+        providers: {
+          claudeAgent: {
+            codexRouting: { modelPreferences: { claudeSubagentModels: { planning: "haiku" } } },
+          },
+        },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults start-from-origin on for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);

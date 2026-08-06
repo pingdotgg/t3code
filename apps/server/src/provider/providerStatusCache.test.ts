@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -179,6 +180,37 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         skills: cachedCodex.skills,
         message: cachedCodex.message,
       },
+    );
+  });
+
+  it("does not resurrect a stale Claude-via-Codex route from the cache", () => {
+    const cachedClaude = makeProvider(CLAUDE_AGENT_DRIVER, {
+      models: [
+        {
+          slug: "gpt-5.4-mini",
+          name: "GPT-5.4 Mini",
+          subProvider: CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackClaude = makeProvider(CLAUDE_AGENT_DRIVER, {
+      models: [
+        {
+          slug: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          subProvider: CLAUDE_CODEX_ROUTED_SUB_PROVIDER,
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({ cachedProvider: cachedClaude, fallbackProvider: fallbackClaude })
+        .models,
+      fallbackClaude.models,
     );
   });
 

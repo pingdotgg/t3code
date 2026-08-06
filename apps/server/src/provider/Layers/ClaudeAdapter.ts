@@ -45,7 +45,10 @@ import {
   ThreadId,
   TurnId,
   type UserInputQuestion,
+  composeSystemPromptText,
 } from "@t3tools/contracts";
+import { resolveClaudeCodexRoutingPrompt } from "@t3tools/shared/claudeCodexRouting";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
@@ -72,6 +75,7 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { getClaudeCodexBridge, type ClaudeCodexBridge } from "../claudeCodex/ClaudeCodexBridge.ts"; // fork: f5
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -236,6 +240,8 @@ export interface ClaudeAdapterLiveOptions {
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Test seam for the environment-owned Claude/Codex bridge. */
+  readonly codexBridge?: Pick<ClaudeCodexBridge, "hybridEnvironment">;
 }
 
 function isUuid(value: string): boolean {
@@ -1361,6 +1367,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     claudeSettings.binaryPath,
     claudeEnvironment,
   );
+  // fork: f5 — bridge construction is lazy and inert unless this exact Claude
+  // instance opts in. The singleton is keyed by T3 state dir so web, desktop,
+  // and remote clients all configure the environment that runs the provider.
+  let claudeCodexBridge: ClaudeAdapterLiveOptions["codexBridge"];
+  if (claudeSettings.codexRouting?.enabled === true) {
+    if (options?.codexBridge) {
+      claudeCodexBridge = options.codexBridge;
+    } else {
+      const hostPlatform = yield* HostProcessPlatform;
+      const hostArchitecture = yield* HostProcessArchitecture;
+      claudeCodexBridge = getClaudeCodexBridge(
+        serverConfig.stateDir,
+        hostPlatform,
+        hostArchitecture,
+      );
+    }
+  }
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -3599,6 +3622,34 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(ultracode ? { ultracode: true } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const codexRoutingRuntime = claudeCodexBridge
+        ? yield* Effect.tryPromise({
+            try: () =>
+              claudeCodexBridge.hybridEnvironment(
+                claudeSettings.codexRouting?.model,
+                claudeEnvironment.ANTHROPIC_BASE_URL,
+              ),
+            catch: (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId,
+                detail:
+                  "Could not start the Codex bridge for Claude's Haiku subagent slot. Open Settings → Model routing and connect Codex.",
+                cause,
+              }),
+          })
+        : undefined;
+      const routingInstructions = resolveClaudeCodexRoutingPrompt(
+        claudeSettings.codexRouting,
+        codexRoutingRuntime?.model,
+        apiModelId,
+      );
+      // The managed routing fact comes first; ordinary configurable T3 prompt
+      // rules remain authoritative additions and are never overwritten.
+      const sessionInstructions = composeSystemPromptText([
+        routingInstructions,
+        input.instructions,
+      ]);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3607,7 +3658,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          ...(input.instructions ? { append: input.instructions } : {}),
+          ...(sessionInstructions ? { append: sessionInstructions } : {}),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
@@ -3626,7 +3677,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
+        env: codexRoutingRuntime
+          ? { ...claudeEnvironment, ...codexRoutingRuntime.environment }
+          : claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
@@ -3667,6 +3720,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
+        "claude.query.codex_haiku_slot": codexRoutingRuntime !== undefined,
+        "claude.query.codex_haiku_model": codexRoutingRuntime?.model ?? "",
       });
 
       const queryRuntime = yield* Effect.try({

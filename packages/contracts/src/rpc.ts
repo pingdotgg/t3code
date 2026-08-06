@@ -72,6 +72,12 @@ import {
   ProviderSignOutInput,
   ProviderStartSignInInput,
 } from "./providerAuth.ts";
+import {
+  ClaudeCodexBridgeError,
+  ClaudeCodexBridgeModelsResult,
+  ClaudeCodexBridgeSignInEvent,
+  ClaudeCodexBridgeStatus,
+} from "./claudeCodexRouting.ts"; // fork: f5 Claude Code → Codex routing
 // fork: f3 per-task stop
 import { ProviderStopTaskError, ProviderStopTaskInput } from "./providerTask.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -291,6 +297,13 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
 
+  // Claude Code → Codex bridge methods — fork: f5
+  claudeCodexBridgeGetStatus: "claudeCodexBridge.getStatus",
+  claudeCodexBridgeInstall: "claudeCodexBridge.install",
+  claudeCodexBridgeStartSignIn: "claudeCodexBridge.startSignIn",
+  claudeCodexBridgeSignOut: "claudeCodexBridge.signOut",
+  claudeCodexBridgeGetModels: "claudeCodexBridge.getModels",
+
   // Provider account methods — fork: f1 provider account sign-in
   providerStartSignIn: "provider.startSignIn",
   providerSignOut: "provider.signOut",
@@ -478,6 +491,38 @@ export const WsProviderStartSignInRpc = Rpc.make(WS_METHODS.providerStartSignIn,
   success: ProviderSignInEvent,
   error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+export const WsClaudeCodexBridgeGetStatusRpc = Rpc.make(WS_METHODS.claudeCodexBridgeGetStatus, {
+  payload: Schema.Struct({}),
+  success: ClaudeCodexBridgeStatus,
+  error: Schema.Union([ClaudeCodexBridgeError, EnvironmentAuthorizationError]),
+});
+
+export const WsClaudeCodexBridgeInstallRpc = Rpc.make(WS_METHODS.claudeCodexBridgeInstall, {
+  payload: Schema.Struct({}),
+  success: ClaudeCodexBridgeStatus,
+  error: Schema.Union([ClaudeCodexBridgeError, EnvironmentAuthorizationError]),
+});
+
+export const WsClaudeCodexBridgeStartSignInRpc = Rpc.make(WS_METHODS.claudeCodexBridgeStartSignIn, {
+  // Client-only retry nonce; the server intentionally ignores it.
+  payload: Schema.Struct({ attempt: Schema.optional(Schema.Number) }),
+  success: ClaudeCodexBridgeSignInEvent,
+  error: Schema.Union([ClaudeCodexBridgeError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsClaudeCodexBridgeSignOutRpc = Rpc.make(WS_METHODS.claudeCodexBridgeSignOut, {
+  payload: Schema.Struct({}),
+  success: ClaudeCodexBridgeStatus,
+  error: Schema.Union([ClaudeCodexBridgeError, EnvironmentAuthorizationError]),
+});
+
+export const WsClaudeCodexBridgeGetModelsRpc = Rpc.make(WS_METHODS.claudeCodexBridgeGetModels, {
+  payload: Schema.Struct({ refresh: Schema.optional(Schema.Boolean) }),
+  success: ClaudeCodexBridgeModelsResult,
+  error: Schema.Union([ClaudeCodexBridgeError, EnvironmentAuthorizationError]),
 });
 
 // fork: f1 provider account sign-out
@@ -1103,6 +1148,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
+  WsClaudeCodexBridgeGetStatusRpc, // fork: f5 Claude Code → Codex routing
+  WsClaudeCodexBridgeInstallRpc,
+  WsClaudeCodexBridgeStartSignInRpc,
+  WsClaudeCodexBridgeSignOutRpc,
+  WsClaudeCodexBridgeGetModelsRpc,
   WsProviderStartSignInRpc, // fork: f1 provider account sign-in
   WsProviderSignOutRpc, // fork: f1 provider account sign-in
   WsProviderStopTaskRpc, // fork: f3 per-task stop

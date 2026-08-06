@@ -65,6 +65,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       upstream servers, so the settings section renders disabled rather than
       writing a setting the server would drop. */
   systemPromptInjection: Schema.optionalKey(Schema.Boolean), // fork: f2
+  /** Server can manage the local Codex compatibility bridge used to remap
+      Claude Code's Haiku subagent slot. */
+  claudeCodexRouting: Schema.optionalKey(Schema.Boolean), // fork: f5
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
