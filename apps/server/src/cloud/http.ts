@@ -61,7 +61,11 @@ import { requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
-import { SERVICE_STATE_FILE, serviceStateHasPendingUpdate } from "./serviceProtocol.ts";
+import {
+  SERVICE_STATE_FILE,
+  SERVICE_STOP_MARKER_FILE,
+  serviceStateHasPendingUpdate,
+} from "./serviceProtocol.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
@@ -635,14 +639,27 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
 // straight from disk: the launcher owns that file, and this runs while the
 // server is tearing down. Unreadable or unparseable state means no pending
 // update — the release then proceeds as before.
-const pendingServiceUpdateExists = Effect.gen(function* () {
+//
+// A pending update alone is not proof a replacement server is coming: an
+// explicit launcher stop (`t3 service uninstall`, `systemctl stop`) during
+// the pending window also tears this server down, with nothing starting
+// afterwards. The launcher marks that case with a stop-marker file just
+// before it signals the child, so pending + no marker is the update handoff.
+const pendingUpdateHandoffExists = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeDir = path.join(config.baseDir, "runtime");
   const stateText = yield* fs
-    .readFileString(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
+    .readFileString(path.join(runtimeDir, SERVICE_STATE_FILE))
     .pipe(Effect.option);
-  return Option.isSome(stateText) && serviceStateHasPendingUpdate(stateText.value);
+  if (Option.isNone(stateText) || !serviceStateHasPendingUpdate(stateText.value)) {
+    return false;
+  }
+  const stopping = yield* fs
+    .exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE))
+    .pipe(Effect.orElseSucceed(() => false));
+  return !stopping;
 });
 
 // Cloudflare bills per provisioned tunnel, so an environment that goes offline
@@ -676,7 +693,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   // boot respawns the connector from the stored config and is reachable as
   // soon as it connects, and the reconcile confirms the still-live tunnel
   // without replacing it.
-  if (yield* pendingServiceUpdateExists) {
+  if (yield* pendingUpdateHandoffExists) {
     yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
     return false;
   }
