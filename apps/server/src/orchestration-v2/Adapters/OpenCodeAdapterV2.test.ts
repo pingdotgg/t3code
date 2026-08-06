@@ -20,6 +20,7 @@ import {
   openCodePermissionRules,
   openCodePermissionRequestKind,
   openCodeToolProjectionKind,
+  terminalToolStatus,
   makeOpenCodeProtocolLogger,
   OPENCODE_PROVIDER,
   OpenCodeProviderCapabilitiesV2,
@@ -67,6 +68,47 @@ function providerTurn(input: {
 }
 
 describe("OpenCodeAdapterV2", () => {
+  // OpenCode reports no final state for a tool that was mid-flight when the
+  // turn ended, so finalizeTurn re-emits it with the turn's terminal status.
+  // Regression cover for a Stop leaving `command_execution:running` forever.
+  it("maps every terminal turn status onto a terminal tool status", () => {
+    assert.deepStrictEqual(terminalToolStatus("interrupted"), {
+      node: "interrupted",
+      item: "interrupted",
+    });
+    assert.deepStrictEqual(terminalToolStatus("cancelled"), {
+      node: "cancelled",
+      item: "cancelled",
+    });
+    assert.deepStrictEqual(terminalToolStatus("failed"), { node: "failed", item: "failed" });
+    // A turn can finalize as completed with a tool still marked running; the
+    // sweep must close it rather than leave a stale spinner.
+    assert.deepStrictEqual(terminalToolStatus("completed"), {
+      node: "completed",
+      item: "completed",
+    });
+  });
+
+  it("keeps swept tool statuses inside the subagent status literals", () => {
+    // emitSubagent assigns the item status straight across, so every value
+    // terminalToolStatus can produce has to be a legal subagent status.
+    const subagentStatuses = new Set([
+      "pending",
+      "running",
+      "waiting",
+      "completed",
+      "failed",
+      "cancelled",
+      "interrupted",
+    ]);
+    for (const status of ["completed", "interrupted", "cancelled", "failed"] as const) {
+      assert.isTrue(
+        subagentStatuses.has(terminalToolStatus(status).item),
+        `${status} maps outside the subagent status literals`,
+      );
+    }
+  });
+
   it.effect("logs bounded structural protocol diagnostics without native payload values", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;
