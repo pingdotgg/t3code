@@ -21,6 +21,12 @@
  * `live-scenarios/tests/opencode2-drive-probe.mjs` in the parent workspace is
  * the executable statement of this contract against a real binary.
  *
+ * Event stream durability: OpenCode 2 documents `/api/event` as volatile (a
+ * slow consumer overflows and fails the stream). This adapter keeps protocol
+ * logging off the pull path, resubscribes after stream failure or a stall
+ * while a turn is active, and force-finalizes on Stop when the interrupt
+ * terminal event never arrives.
+ *
  * @module orchestration-v2/Adapters/OpenCode2AdapterV2
  */
 import type {
@@ -66,9 +72,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -156,6 +164,25 @@ export const OPENCODE2_DRIVER_KIND = OPENCODE2_PROVIDER;
 export const OPENCODE2_SDK_PROTOCOL = "opencode2-sdk.sse" as const;
 export const OPENCODE2_RETIRED_SUPPRESS_WAKE_LIMIT = 16;
 export const OPENCODE2_PROMOTED_INPUT_ID_LIMIT = 64;
+/**
+ * OpenCode 2 documents `/api/event` as volatile: a slow consumer overflows and
+ * fails the stream. The adapter must keep the pull path hot and resubscribe.
+ */
+export const OPENCODE2_EVENT_STALL_MS = 30_000;
+export const OPENCODE2_EVENT_STALL_CHECK_MS = 5_000;
+export const OPENCODE2_EVENT_STREAM_MAX_FAILURES = 5;
+/** Cap stall-driven resubscribes so a stuck turn cannot thrash subscribe forever. */
+export const OPENCODE2_EVENT_STALL_MAX_RESUBSCRIBES = 2;
+export const OPENCODE2_EVENT_RESUBSCRIBE_DELAY_MS = 250;
+/** Bound Stop so a wedged `session.interrupt` HTTP call cannot hang the UI. */
+export const OPENCODE2_INTERRUPT_REQUEST_TIMEOUT_MS = 5_000;
+/**
+ * After interrupt is requested, wait this long for SSE
+ * `session.execution.interrupted` before force-finalizing the turn. Cursor uses
+ * the same pattern; without it a dead event stream leaves Stop inert.
+ */
+export const OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS = 5_000;
+export const OPENCODE2_INTERRUPT_SETTLE_POLL_MS = 100;
 const DEFAULT_OPENCODE2_SETTINGS = Schema.decodeSync(OpenCode2SettingsSchema)({});
 const OPENCODE2_T3_MCP_NAME = "t3-code";
 const OPENCODE2_T3_INSTRUCTION_KEY = "t3-code.orchestration";
@@ -534,6 +561,43 @@ export function openCode2EventEndsExecution(event: V2Event): boolean {
   );
 }
 
+/**
+ * Decide whether Stop should force-finalize after the interrupt request and
+ * settle wait. Pure so unit tests can cover the Stop recovery path without a
+ * live SSE consumer.
+ *
+ * @internal exported for tests
+ */
+export function openCode2ShouldForceInterruptFinalize(input: {
+  readonly interrupted: boolean;
+  readonly finalized: boolean;
+  readonly stillActive: boolean;
+  readonly waitedMs: number;
+  readonly settleTimeoutMs: number;
+}): boolean {
+  return (
+    input.interrupted &&
+    !input.finalized &&
+    input.stillActive &&
+    input.waitedMs >= input.settleTimeoutMs
+  );
+}
+
+/**
+ * Whether the event subscription loop should abort the current SSE pull and
+ * resubscribe. Pure for tests.
+ *
+ * @internal exported for tests
+ */
+export function openCode2ShouldResubscribeStalledStream(input: {
+  readonly sessionAborted: boolean;
+  readonly hasActiveTurn: boolean;
+  readonly lastEventAgeMs: number;
+  readonly stallMs: number;
+}): boolean {
+  return !input.sessionAborted && input.hasActiveTurn && input.lastEventAgeMs >= input.stallMs;
+}
+
 export const openCode2PendingWorkForSession = Effect.fnUntraced(function* (input: {
   readonly sessionID: string;
   readonly pending: Effect.Effect<ReadonlyArray<SessionPendingInfo>, OpenCode2RuntimeError>;
@@ -598,6 +662,24 @@ export function openCode2ShouldSettleTurn(
   if (source === "idle") return !executionStarted;
   if (source === "execution-interrupted") return executionStarted || interruptRequested;
   return executionStarted;
+}
+
+/**
+ * Whether a terminal `session.execution.*` may adopt a missing start event.
+ * Used when the volatile SSE stream reconnects and drops
+ * `session.execution.started` while later tool/text events still arrived for
+ * this turn. Empty turns (prompt admitted, no parts yet) stay protected so a
+ * late prior terminal cannot settle the next turn.
+ *
+ * @internal exported for tests
+ */
+export function openCode2CanAdoptMissingExecutionStart(turn: {
+  readonly executionStarted: boolean;
+  readonly interrupted: boolean;
+  readonly partCount: number;
+}): boolean {
+  if (turn.executionStarted) return true;
+  return turn.interrupted || turn.partCount > 0;
 }
 
 export interface OpenCode2ProtocolLogEvent {
@@ -1512,17 +1594,28 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
         >();
         const sessionPermissions: OpenCode2SessionPermissionStore = new Map();
         const abortController = new AbortController();
+        // Liveness marker for SSE pull. OpenCode 2 fails a slow event consumer;
+        // if pull stalls while a turn is active we resubscribe.
+        let lastEventAtMs = 0;
+        let consecutiveStreamFailures = 0;
+        let consecutiveStallResubscribes = 0;
+        lastEventAtMs = yield* Clock.currentTimeMillis;
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        const logProtocolEvent = makeOpenCode2ProtocolLogger({
+        const writeProtocolEvent = makeOpenCode2ProtocolLogger({
           nativeEventLogger: options.nativeEventLogger,
           idAllocator,
           providerInstanceId: options.instanceId,
           providerSessionId: input.providerSessionId,
           threadId: input.threadId,
         });
+        // Never block the SSE pull path on disk logging. The stream is
+        // volatile under backpressure; serializing every notification before
+        // the next read is how a long kimi turn can fill Recv-Q and freeze.
+        const logProtocolEvent = (event: OpenCode2ProtocolLogEvent) =>
+          writeProtocolEvent(event).pipe(Effect.forkIn(scope), Effect.asVoid);
 
         const sdkCall = <A>(
           method: OpenCode2RuntimeOperation,
@@ -1543,6 +1636,24 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 method,
                 payload: sdkResponseForRawLog(response),
               }),
+            ),
+          );
+
+        const sdkCallWithTimeout = <A>(
+          method: OpenCode2RuntimeOperation,
+          payload: unknown,
+          call: () => Promise<A>,
+          timeoutMs: number,
+        ): Effect.Effect<Option.Option<A>, never> =>
+          sdkCall(method, payload, call).pipe(
+            Effect.timeoutOption(`${timeoutMs} millis`),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("OpenCode 2 SDK call failed or timed out.", {
+                errorTag: causeErrorTag(cause),
+                operation: method,
+                provider: OPENCODE2_PROVIDER,
+                timeoutMs,
+              }).pipe(Effect.as(Option.none<A>())),
             ),
           );
 
@@ -3910,6 +4021,16 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 return;
               }
               if (
+                !active.turn.executionStarted &&
+                openCode2CanAdoptMissingExecutionStart({
+                  executionStarted: active.turn.executionStarted,
+                  interrupted: active.turn.interrupted,
+                  partCount: active.turn.parts.size,
+                })
+              ) {
+                active.turn.executionStarted = true;
+              }
+              if (
                 !openCode2ShouldSettleTurn(
                   "execution-terminal",
                   active.turn.executionStarted,
@@ -3939,6 +4060,16 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 return;
               }
               if (
+                !active.turn.executionStarted &&
+                openCode2CanAdoptMissingExecutionStart({
+                  executionStarted: active.turn.executionStarted,
+                  interrupted: true,
+                  partCount: active.turn.parts.size,
+                })
+              ) {
+                active.turn.executionStarted = true;
+              }
+              if (
                 !openCode2ShouldSettleTurn(
                   "execution-interrupted",
                   active.turn.executionStarted,
@@ -3965,6 +4096,16 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 )
               ) {
                 return;
+              }
+              if (
+                !active.turn.executionStarted &&
+                openCode2CanAdoptMissingExecutionStart({
+                  executionStarted: active.turn.executionStarted,
+                  interrupted: active.turn.interrupted,
+                  partCount: active.turn.parts.size,
+                })
+              ) {
+                active.turn.executionStarted = true;
               }
               if (!openCode2ShouldSettleTurn("execution-terminal", active.turn.executionStarted)) {
                 return;
@@ -4051,40 +4192,156 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           }
         });
 
-        const subscription = yield* sdkCall("event.subscribe", {}, () =>
-          client.v2.event.subscribe({ signal: abortController.signal }),
-        );
         yield* Scope.addFinalizer(
           scope,
           Effect.sync(() => abortController.abort()),
         );
-        yield* Stream.fromAsyncIterable(
-          subscription.stream,
-          (cause) =>
-            new OpenCode2RuntimeError({
-              operation: "event.subscribe",
-              category: "event-subscription-failed",
-              cause,
-            }),
-        ).pipe(
-          Stream.runForEach(handleEvent),
-          Effect.exit,
-          Effect.flatMap((exit) =>
-            abortController.signal.aborted || Exit.isSuccess(exit)
-              ? Effect.void
-              : Effect.gen(function* () {
-                  yield* Effect.logError("OpenCode 2 event subscription failed.", {
-                    errorTag: causeErrorTag(exit.cause),
-                    provider: OPENCODE2_PROVIDER,
-                  });
+        // Resubscribe loop: `/api/event` is volatile (slow consumer overflows).
+        // A single failed or hung pull must not leave active turns uninterruptible.
+        yield* Effect.gen(function* () {
+          while (!abortController.signal.aborted) {
+            const streamController = new AbortController();
+            const onSessionAbort = () => streamController.abort();
+            if (abortController.signal.aborted) {
+              streamController.abort();
+            } else {
+              abortController.signal.addEventListener("abort", onSessionAbort, { once: true });
+            }
+
+            const watchdog = yield* Effect.gen(function* () {
+              while (!streamController.signal.aborted && !abortController.signal.aborted) {
+                yield* Effect.sleep(`${OPENCODE2_EVENT_STALL_CHECK_MS} millis`);
+                const hasActiveTurn = Array.from(threads.values()).some(
+                  (threadState) => threadState.activeTurn !== null,
+                );
+                const now = yield* Clock.currentTimeMillis;
+                const lastEventAgeMs = now - lastEventAtMs;
+                if (
+                  !openCode2ShouldResubscribeStalledStream({
+                    sessionAborted: abortController.signal.aborted,
+                    hasActiveTurn,
+                    lastEventAgeMs,
+                    stallMs: OPENCODE2_EVENT_STALL_MS,
+                  })
+                ) {
+                  continue;
+                }
+                if (consecutiveStallResubscribes >= OPENCODE2_EVENT_STALL_MAX_RESUBSCRIBES) {
+                  yield* Effect.logError(
+                    "OpenCode 2 event stream stall budget exhausted; failing active turns.",
+                    {
+                      provider: OPENCODE2_PROVIDER,
+                      stallMs: lastEventAgeMs,
+                      consecutiveStallResubscribes,
+                    },
+                  );
                   yield* failActiveTurns(
-                    openCodeRuntimeErrorDetail(Cause.squash(exit.cause)),
+                    "OpenCode 2 event stream stalled and did not recover.",
                     "transport_error",
                   );
-                }),
-          ),
-          Effect.forkIn(scope),
-        );
+                  streamController.abort();
+                  return;
+                }
+                consecutiveStallResubscribes += 1;
+                yield* Effect.logWarning(
+                  "OpenCode 2 event stream stalled while a turn is active; resubscribing.",
+                  {
+                    provider: OPENCODE2_PROVIDER,
+                    stallMs: lastEventAgeMs,
+                    consecutiveStallResubscribes,
+                  },
+                );
+                streamController.abort();
+                return;
+              }
+            }).pipe(Effect.forkIn(scope));
+
+            const exit = yield* Effect.gen(function* () {
+              const subscription = yield* sdkCall("event.subscribe", {}, () =>
+                client.v2.event.subscribe({ signal: streamController.signal }),
+              );
+              return yield* Stream.fromAsyncIterable(
+                subscription.stream,
+                (cause) =>
+                  new OpenCode2RuntimeError({
+                    operation: "event.subscribe",
+                    category: "event-subscription-failed",
+                    cause,
+                  }),
+              ).pipe(
+                Stream.tap((event) =>
+                  Clock.currentTimeMillis.pipe(
+                    Effect.map((now) => {
+                      lastEventAtMs = now;
+                      consecutiveStreamFailures = 0;
+                      // server.connected alone is not progress; do not clear
+                      // stall resubscribe budget on reconnect acks.
+                      if (event.type !== "server.connected") {
+                        consecutiveStallResubscribes = 0;
+                      }
+                    }),
+                  ),
+                ),
+                Stream.runForEach(handleEvent),
+                Effect.exit,
+              );
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.succeed(
+                  Exit.fail(
+                    new OpenCode2RuntimeError({
+                      operation: "event.subscribe",
+                      category: "event-subscription-failed",
+                      cause: Cause.squash(cause),
+                    }),
+                  ),
+                ),
+              ),
+            );
+
+            streamController.abort();
+            abortController.signal.removeEventListener("abort", onSessionAbort);
+            yield* Fiber.interrupt(watchdog).pipe(Effect.ignore);
+
+            if (abortController.signal.aborted) return;
+
+            const hasActiveTurn = Array.from(threads.values()).some(
+              (threadState) => threadState.activeTurn !== null,
+            );
+
+            if (Exit.isFailure(exit)) {
+              consecutiveStreamFailures += 1;
+              const failure = Cause.squash(exit.cause);
+              yield* Effect.logWarning(
+                "OpenCode 2 event subscription ended; will resubscribe when possible.",
+                {
+                  errorTag: causeErrorTag(exit.cause),
+                  provider: OPENCODE2_PROVIDER,
+                  consecutiveStreamFailures,
+                },
+              );
+              if (
+                consecutiveStreamFailures >= OPENCODE2_EVENT_STREAM_MAX_FAILURES &&
+                hasActiveTurn
+              ) {
+                yield* failActiveTurns(openCodeRuntimeErrorDetail(failure), "transport_error");
+                consecutiveStreamFailures = 0;
+              }
+            } else if (!hasActiveTurn) {
+              // Clean EOF while idle: wait for session close rather than opening a
+              // second subscribe. Replay fixtures end the stream this way; a live
+              // idle session almost never EOFs cleanly, and the next openSession
+              // creates a fresh adapter when needed.
+              while (!abortController.signal.aborted) {
+                yield* Effect.sleep("1 second");
+              }
+              return;
+            }
+
+            lastEventAtMs = yield* Clock.currentTimeMillis;
+            yield* Effect.sleep(`${OPENCODE2_EVENT_RESUBSCRIBE_DELAY_MS} millis`);
+          }
+        }).pipe(Effect.forkIn(scope));
 
         if (!connection.external && connection.exitCode !== null) {
           yield* connection.exitCode.pipe(
@@ -4708,6 +4965,10 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                   }),
                 ),
               );
+              // Arm the stall watchdog from the prompt boundary so a long first
+              // token does not immediately resubscribe, but a dead stream after
+              // prompt still recovers.
+              lastEventAtMs = yield* Clock.currentTimeMillis;
               // The admitted input id is the closest native turn correlation
               // point 2.x offers, and it arrives on the prompt response before
               // `session.input.admitted` reaches the event stream.
@@ -4762,21 +5023,78 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             Effect.gen(function* () {
               const sessionID = nativeThreadId(interruptInput.providerThread);
               const state = threads.get(sessionID);
-              const turn = state?.activeTurn;
-              if (
-                turn === undefined ||
-                turn === null ||
-                turn.providerTurnId !== interruptInput.providerTurnId
-              ) {
+              if (state === undefined) {
+                return yield* protocolError(
+                  `OpenCode 2 turn ${interruptInput.providerTurnId} is not active`,
+                );
+              }
+              const turn = state.activeTurn;
+              if (turn === null || turn.providerTurnId !== interruptInput.providerTurnId) {
                 return yield* protocolError(
                   `OpenCode 2 turn ${interruptInput.providerTurnId} is not active`,
                 );
               }
               turn.interrupted = true;
-              yield* sdkCall("session.interrupt", { sessionID }, () =>
-                client.v2.session.interrupt({ sessionID }),
-              ).pipe(Effect.tapError(() => Effect.sync(() => (turn.interrupted = false))));
-              yield* removeRunningShellsForTurn(turn);
+              // Bound the interrupt RPC: a full SSE Recv-Q has wedged concurrent
+              // HTTP before, and Stop must not hang on that path.
+              const interruptedRemote = yield* sdkCallWithTimeout(
+                "session.interrupt",
+                { sessionID },
+                () => client.v2.session.interrupt({ sessionID }),
+                OPENCODE2_INTERRUPT_REQUEST_TIMEOUT_MS,
+              );
+              if (Option.isNone(interruptedRemote)) {
+                yield* Effect.logWarning(
+                  "OpenCode 2 session.interrupt did not complete in time; force-settling locally.",
+                  {
+                    provider: OPENCODE2_PROVIDER,
+                    providerTurnId: turn.providerTurnId,
+                    timeoutMs: OPENCODE2_INTERRUPT_REQUEST_TIMEOUT_MS,
+                  },
+                );
+              }
+              yield* removeRunningShellsForTurn(turn).pipe(
+                Effect.timeoutOption(`${OPENCODE2_INTERRUPT_REQUEST_TIMEOUT_MS} millis`),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to stop OpenCode 2 shells during interrupt.", {
+                    errorTag: causeErrorTag(cause),
+                    provider: OPENCODE2_PROVIDER,
+                    providerTurnId: turn.providerTurnId,
+                  }).pipe(Effect.as(Option.none())),
+                ),
+                Effect.asVoid,
+              );
+              // Prefer SSE-driven `session.execution.interrupted` finalization.
+              // When the event stream is dead, force-finalize so Stop returns
+              // the run to a terminal state (mirrors CursorAdapterV2).
+              const settleStartedAt = yield* Clock.currentTimeMillis;
+              while (true) {
+                if (turn.finalized || state.activeTurn !== turn) return;
+                const now = yield* Clock.currentTimeMillis;
+                const waitedMs = now - settleStartedAt;
+                if (
+                  openCode2ShouldForceInterruptFinalize({
+                    interrupted: turn.interrupted,
+                    finalized: turn.finalized,
+                    stillActive: state.activeTurn === turn,
+                    waitedMs,
+                    settleTimeoutMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+                  })
+                ) {
+                  break;
+                }
+                yield* Effect.sleep(`${OPENCODE2_INTERRUPT_SETTLE_POLL_MS} millis`);
+              }
+              if (turn.finalized || state.activeTurn !== turn) return;
+              yield* Effect.logWarning(
+                "OpenCode 2 interrupt settle timed out; force-finalizing the turn.",
+                {
+                  provider: OPENCODE2_PROVIDER,
+                  providerTurnId: turn.providerTurnId,
+                  settleTimeoutMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+                },
+              );
+              yield* finalizeTurn(state, turn, "interrupted");
             }).pipe(
               Effect.mapError(
                 (cause) =>

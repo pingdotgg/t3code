@@ -23,9 +23,14 @@ import {
   openCode2SessionErrorMessage,
   openCode2SessionErrorStatus,
   openCode2SessionErrorTargetSessionIds,
+  openCode2CanAdoptMissingExecutionStart,
+  openCode2ShouldForceInterruptFinalize,
+  openCode2ShouldResubscribeStalledStream,
   openCode2ShouldSettleTurn,
   openCode2ToolNeedsTerminalOverride,
   normalizeOpenCode2PermissionEvent,
+  OPENCODE2_EVENT_STALL_MS,
+  OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
   OPENCODE2_PROMOTED_INPUT_ID_LIMIT,
   OPENCODE2_RETIRED_SUPPRESS_WAKE_LIMIT,
   pruneOpenCode2PromotedInputIds,
@@ -989,5 +994,112 @@ describe("OpenCode 2 session errors", () => {
     assert.isFalse(openCode2ShouldSettleTurn("idle", true));
     assert.isTrue(openCode2ShouldSettleTurn("execution-terminal", true));
     assert.isTrue(openCode2ShouldSettleTurn("execution-interrupted", true));
+  });
+});
+
+describe("openCode2 interrupt and event-stream recovery helpers", () => {
+  it("force-finalizes only after an interrupted turn outlives the settle wait", () => {
+    assert.isFalse(
+      openCode2ShouldForceInterruptFinalize({
+        interrupted: true,
+        finalized: false,
+        stillActive: true,
+        waitedMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS - 1,
+        settleTimeoutMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+      }),
+    );
+    assert.isTrue(
+      openCode2ShouldForceInterruptFinalize({
+        interrupted: true,
+        finalized: false,
+        stillActive: true,
+        waitedMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+        settleTimeoutMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+      }),
+    );
+    assert.isFalse(
+      openCode2ShouldForceInterruptFinalize({
+        interrupted: true,
+        finalized: true,
+        stillActive: false,
+        waitedMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+        settleTimeoutMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+      }),
+    );
+    assert.isFalse(
+      openCode2ShouldForceInterruptFinalize({
+        interrupted: false,
+        finalized: false,
+        stillActive: true,
+        waitedMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+        settleTimeoutMs: OPENCODE2_INTERRUPT_SETTLE_TIMEOUT_MS,
+      }),
+    );
+  });
+
+  it("resubscribes a stalled stream only while a turn is active", () => {
+    assert.isTrue(
+      openCode2ShouldResubscribeStalledStream({
+        sessionAborted: false,
+        hasActiveTurn: true,
+        lastEventAgeMs: OPENCODE2_EVENT_STALL_MS,
+        stallMs: OPENCODE2_EVENT_STALL_MS,
+      }),
+    );
+    assert.isFalse(
+      openCode2ShouldResubscribeStalledStream({
+        sessionAborted: false,
+        hasActiveTurn: true,
+        lastEventAgeMs: OPENCODE2_EVENT_STALL_MS - 1,
+        stallMs: OPENCODE2_EVENT_STALL_MS,
+      }),
+    );
+    assert.isFalse(
+      openCode2ShouldResubscribeStalledStream({
+        sessionAborted: false,
+        hasActiveTurn: false,
+        lastEventAgeMs: OPENCODE2_EVENT_STALL_MS,
+        stallMs: OPENCODE2_EVENT_STALL_MS,
+      }),
+    );
+    assert.isFalse(
+      openCode2ShouldResubscribeStalledStream({
+        sessionAborted: true,
+        hasActiveTurn: true,
+        lastEventAgeMs: OPENCODE2_EVENT_STALL_MS,
+        stallMs: OPENCODE2_EVENT_STALL_MS,
+      }),
+    );
+  });
+
+  it("adopts a missing execution start only after the turn has parts or interrupt", () => {
+    assert.isTrue(
+      openCode2CanAdoptMissingExecutionStart({
+        executionStarted: true,
+        interrupted: false,
+        partCount: 0,
+      }),
+    );
+    assert.isTrue(
+      openCode2CanAdoptMissingExecutionStart({
+        executionStarted: false,
+        interrupted: false,
+        partCount: 1,
+      }),
+    );
+    assert.isTrue(
+      openCode2CanAdoptMissingExecutionStart({
+        executionStarted: false,
+        interrupted: true,
+        partCount: 0,
+      }),
+    );
+    assert.isFalse(
+      openCode2CanAdoptMissingExecutionStart({
+        executionStarted: false,
+        interrupted: false,
+        partCount: 0,
+      }),
+    );
   });
 });
