@@ -238,10 +238,14 @@ function boundedOrderForMovedThread<T extends PinnedThreadSortInput>(
   if (previous && next) {
     const left = effectivePinnedThreadOrder(previous);
     const right = effectivePinnedThreadOrder(next);
-    return serializePinnedThreadOrder({
+    const candidate = {
       numerator: left.numerator + right.numerator,
       denominator: left.denominator + right.denominator,
-    });
+    };
+    if (compareRationalOrder(left, candidate) >= 0 || compareRationalOrder(candidate, right) >= 0) {
+      return null;
+    }
+    return serializePinnedThreadOrder(candidate);
   }
   if (next) {
     const right = effectivePinnedThreadOrder(next);
@@ -278,6 +282,7 @@ export function pinnedThreadOrderForMove<T extends PinnedThreadSortInput>(
 export interface PinnedThreadOrderUpdate {
   readonly threadId: string;
   readonly pinnedOrder: PinnedThreadOrder;
+  readonly previousPinnedOrder: PinnedThreadOrder;
 }
 
 /** Returns the usual single-thread update, or a compact full-list rebalance
@@ -292,7 +297,18 @@ export function pinnedThreadOrderUpdatesForMove<T extends PinnedThreadSortInput>
 
   const movedOrder = boundedOrderForMovedThread(result.reordered, result.moved);
   if (movedOrder !== null) {
-    return [{ threadId: pinnedThreadIdentity(result.moved), pinnedOrder: movedOrder }];
+    const previousPinnedOrder = serializePinnedThreadOrder(
+      effectivePinnedThreadOrder(result.moved),
+    );
+    return previousPinnedOrder === null
+      ? null
+      : [
+          {
+            threadId: pinnedThreadIdentity(result.moved),
+            pinnedOrder: movedOrder,
+            previousPinnedOrder,
+          },
+        ];
   }
 
   const compacted = result.reordered.map((thread, index) => {
@@ -300,7 +316,10 @@ export function pinnedThreadOrderUpdatesForMove<T extends PinnedThreadSortInput>
       numerator: BigInt(index + 1),
       denominator: 1n,
     });
-    return pinnedOrder === null ? null : { threadId: pinnedThreadIdentity(thread), pinnedOrder };
+    const previousPinnedOrder = serializePinnedThreadOrder(effectivePinnedThreadOrder(thread));
+    return pinnedOrder === null || previousPinnedOrder === null
+      ? null
+      : { threadId: pinnedThreadIdentity(thread), pinnedOrder, previousPinnedOrder };
   });
   return compacted.some((update) => update === null)
     ? null

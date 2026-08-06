@@ -142,9 +142,17 @@ describe("pinned thread ordering", () => {
     expect(pinnedThreadOrderForMove(crowded, "moved", "right")).toBeNull();
     const updates = pinnedThreadOrderUpdatesForMove(crowded, "moved", "right");
     expect(updates).toEqual([
-      { threadId: "left", pinnedOrder: "1/1" },
-      { threadId: "moved", pinnedOrder: "2/1" },
-      { threadId: "right", pinnedOrder: "3/1" },
+      { threadId: "left", pinnedOrder: "1/1", previousPinnedOrder: `${large}/1` },
+      {
+        threadId: "moved",
+        pinnedOrder: "2/1",
+        previousPinnedOrder: expect.stringMatching(/^\d+\/1$/),
+      },
+      {
+        threadId: "right",
+        pinnedOrder: "3/1",
+        previousPinnedOrder: `${BigInt(large) + 1n}/1`,
+      },
     ]);
     expect(
       sortPinnedThreads(
@@ -154,5 +162,24 @@ describe("pinned thread ordering", () => {
         }),
       ).map((thread) => thread.id),
     ).toEqual(["left", "moved", "right"]);
+  });
+
+  it("compacts when duplicate neighbor positions leave no strict gap", () => {
+    const duplicated = [
+      { id: "a", createdAt: pinned[0].createdAt, pinnedOrder: "1/1" as PinnedThreadOrder },
+      { id: "b", createdAt: pinned[1].createdAt, pinnedOrder: "1/1" as PinnedThreadOrder },
+      { id: "c", createdAt: pinned[2].createdAt, pinnedOrder: "2/1" as PinnedThreadOrder },
+    ];
+
+    expect(pinnedThreadOrderForMove(duplicated, "c", "b")).toBeNull();
+    const updates = pinnedThreadOrderUpdatesForMove(duplicated, "c", "b");
+    expect(
+      sortPinnedThreads(
+        duplicated.map((thread) => {
+          const update = updates?.find((candidate) => candidate.threadId === thread.id);
+          return update ? { ...thread, pinnedOrder: update.pinnedOrder } : thread;
+        }),
+      ).map((thread) => thread.id),
+    ).toEqual(["a", "c", "b"]);
   });
 });

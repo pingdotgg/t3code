@@ -585,9 +585,16 @@ function ThreadNavigationSidebarPane(
       setPinnedReorderInFlight(true);
       void (async () => {
         try {
+          const completed: typeof requests = [];
           for (const request of requests) {
             const succeeded = await reorderPinnedThread(request.thread, request.update.pinnedOrder);
-            if (!succeeded) break;
+            if (!succeeded) {
+              for (const applied of completed.toReversed()) {
+                await reorderPinnedThread(applied.thread, applied.update.previousPinnedOrder);
+              }
+              return;
+            }
+            completed.push(request);
           }
         } finally {
           pinnedReorderInFlightRef.current = false;

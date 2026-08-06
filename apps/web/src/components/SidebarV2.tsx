@@ -1901,16 +1901,37 @@ export default function SidebarV2() {
             ),
           })),
         );
-        const failed = results.find(
+        const anyFailure = results.find(({ result }) => result._tag === "Failure");
+        const reportableFailure = results.find(
           ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
         );
-        if (failed?.result._tag === "Failure") {
-          const error = squashAtomCommandFailure(failed.result);
+        const completed = results.filter(({ result }) => result._tag === "Success");
+        const rollbackResults =
+          anyFailure && requests.length > 1
+            ? await Promise.all(
+                completed.map(async ({ request }) =>
+                  reorderPinnedThread(
+                    scopeThreadRef(request.target.environmentId, request.target.id),
+                    request.previousPinnedOrder,
+                  ),
+                ),
+              )
+            : [];
+        const rollbackFailed = rollbackResults.some((result) => result._tag === "Failure");
+        if (reportableFailure?.result._tag === "Failure" || rollbackFailed) {
+          const error =
+            reportableFailure?.result._tag === "Failure"
+              ? squashAtomCommandFailure(reportableFailure.result)
+              : null;
           toastManager.add(
             stackedThreadToast({
               type: "error",
               title: "Failed to reorder pinned thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              description: rollbackFailed
+                ? "The reorder failed and some prior positions could not be restored. Try again."
+                : error instanceof Error
+                  ? error.message
+                  : "An error occurred.",
             }),
           );
         }
