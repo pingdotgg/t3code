@@ -34,6 +34,7 @@ import {
   makeEnvironmentThreadState,
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
+  type ThreadSnapshotLoadResult,
 } from "./threads.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -87,7 +88,7 @@ function awaitThreadState(
 
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationV2ThreadProjection;
-  readonly httpSnapshot?: Option.Option<OrchestrationV2ThreadDetailSnapshot>;
+  readonly httpSnapshot?: ThreadSnapshotLoadResult;
   readonly completionMarker?: boolean;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
@@ -136,8 +137,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Ref.update(loaderCalls, (count) => count + 1).pipe(
         Effect.as(
           threadId === THREAD_ID
-            ? (options?.httpSnapshot ?? Option.none<OrchestrationV2ThreadDetailSnapshot>())
-            : Option.none<OrchestrationV2ThreadDetailSnapshot>(),
+            ? (options?.httpSnapshot ??
+                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
+            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
         ),
       ),
   });
@@ -316,7 +318,10 @@ describe("EnvironmentThreads", () => {
         thread: { ...BASE_PROJECTION.thread, title: "HTTP title" },
       };
       const harness = yield* makeHarness({
-        httpSnapshot: Option.some({ snapshotSequence: 1, projection: httpProjection }),
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 1, projection: httpProjection },
+        },
       });
       // No socket snapshot is pushed; only a live event arrives over the socket.
       // It can only be applied if the HTTP snapshot already seeded the thread.
@@ -335,6 +340,69 @@ describe("EnvironmentThreads", () => {
       // resumed from that snapshot's sequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+    }),
+  );
+
+  it.effect("marks a cold definitive HTTP miss deleted without socket subscribe or retry", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+      });
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(Option.isNone(state.error)).toBe(true);
+      expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(0);
+
+      // A definitive miss must not schedule the expected-failure retry path.
+      yield* TestClock.adjust("1 second");
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* harness.replaceSession;
+      yield* Queue.offer(harness.wakeups, "application-active");
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(0);
+      expect(yield* Ref.get(harness.retryCount)).toBe(0);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      expect((yield* Ref.get(harness.latest)).status).toBe("deleted");
+    }),
+  );
+
+  it.effect("falls back to the socket when the HTTP snapshot is only unavailable", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "unavailable" },
+      });
+
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Socket title" },
+        }),
+      );
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.thread.title === "Socket title",
+      );
+
+      expect(Option.getOrThrow(state.data).thread.title).toBe("Socket title");
+      expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
     }),
   );
 

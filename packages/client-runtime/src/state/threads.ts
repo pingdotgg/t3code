@@ -21,7 +21,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
-import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
+import { ThreadSnapshotLoader, type ThreadSnapshotLoadResult } from "./threadSnapshotHttp.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -249,6 +249,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        let current = yield* SubscriptionRef.get(state);
+        // A prior definitive miss (or delete event) already cleared this thread.
+        // Park the subscription attempt without opening the socket so we do not
+        // retry forever against a known-missing id.
+        if (current.status === "deleted") {
+          return yield* Effect.never;
+        }
+
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.threadResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -256,8 +264,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        let current = yield* SubscriptionRef.get(state);
-        if (Option.isNone(current.data) && current.status !== "deleted") {
+        if (Option.isNone(current.data)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -272,14 +279,30 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpSnapshot = yield* snapshotLoader.load(prepared, threadId);
-          if (Option.isSome(httpSnapshot)) {
-            yield* applyItem({
-              kind: "snapshot",
-              snapshotSequence: httpSnapshot.value.snapshotSequence,
-              projection: httpSnapshot.value.projection,
-            });
-            current = yield* SubscriptionRef.get(state);
+          const httpResult: ThreadSnapshotLoadResult = yield* snapshotLoader.load(
+            prepared,
+            threadId,
+          );
+          switch (httpResult._tag) {
+            case "present": {
+              yield* applyItem({
+                kind: "snapshot",
+                snapshotSequence: httpResult.snapshot.snapshotSequence,
+                projection: httpResult.snapshot.projection,
+              });
+              current = yield* SubscriptionRef.get(state);
+              break;
+            }
+            case "missing": {
+              // Definitive HTTP 404: clear any stale cache and do not open or
+              // retry a socket subscription for this attempt.
+              yield* setDeleted();
+              return yield* Effect.never;
+            }
+            case "unavailable": {
+              // Transient HTTP failure: fall through to the socket path.
+              break;
+            }
           }
         }
 

@@ -37,6 +37,7 @@ import {
   isOrchestrationV2TurnItemVisible,
 } from "@t3tools/shared/orchestrationV2Timeline";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { reduceThreadSettlementEvent } from "@t3tools/shared/orchestrationV2Settled";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -203,8 +204,6 @@ export function applyToProjection(
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
-    case "thread.settled":
-    case "thread.unsettled":
     case "thread.snoozed":
     case "thread.unsnoozed":
     case "thread.pinned":
@@ -226,6 +225,36 @@ export function applyToProjection(
         ...projection,
         thread: event.payload,
       };
+    case "thread.settled":
+    case "thread.unsettled": {
+      // Settlement-only merge: never restore title/archive/model from a stale
+      // full-thread payload (provider-activity unsettle race).
+      const nextThread = reduceThreadSettlementEvent({
+        current: projection.thread,
+        eventType: event.type,
+        settlement: {
+          settledOverride: event.payload.settledOverride,
+          settledAt: event.payload.settledAt,
+          updatedAt: event.payload.updatedAt,
+        },
+        activityAtMs: DateTime.toEpochMillis(event.occurredAt),
+        currentTimestamps: {
+          settledOverride: projection.thread.settledOverride,
+          settledAtMs:
+            projection.thread.settledAt === null
+              ? null
+              : DateTime.toEpochMillis(projection.thread.settledAt),
+          updatedAtMs: DateTime.toEpochMillis(projection.thread.updatedAt),
+        },
+      });
+      if (nextThread === projection.thread) {
+        return projection;
+      }
+      return {
+        ...base,
+        thread: nextThread,
+      };
+    }
     case "run.created":
     case "run.updated":
       return withLocalVisibleTurnItems({
@@ -1116,8 +1145,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.archived":
           case "thread.unarchived":
           case "thread.deleted":
-          case "thread.settled":
-          case "thread.unsettled":
           case "thread.snoozed":
           case "thread.unsnoozed":
           case "thread.pinned":
@@ -1175,6 +1202,83 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
+                payload_json = excluded.payload_json
+            `;
+            break;
+          }
+          case "thread.settled":
+          case "thread.unsettled": {
+            // Transactional settlement-only write: load current row, merge pin
+            // fields (with activity ordering guard), never rewrite unrelated
+            // columns from a stale full-thread payload.
+            const existingRows = yield* sql<PayloadRow>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${event.threadId}
+              LIMIT 1
+            `;
+            const existingRow = existingRows[0];
+            const currentThread =
+              existingRow === undefined
+                ? event.payload
+                : yield* decodeThreadPayload(existingRow.payload_json);
+            const nextThread = reduceThreadSettlementEvent({
+              current: currentThread,
+              eventType: event.type,
+              settlement: {
+                settledOverride: event.payload.settledOverride,
+                settledAt: event.payload.settledAt,
+                updatedAt: event.payload.updatedAt,
+              },
+              activityAtMs: DateTime.toEpochMillis(event.occurredAt),
+              currentTimestamps: {
+                settledOverride: currentThread.settledOverride,
+                settledAtMs:
+                  currentThread.settledAt === null
+                    ? null
+                    : DateTime.toEpochMillis(currentThread.settledAt),
+                updatedAtMs: DateTime.toEpochMillis(currentThread.updatedAt),
+              },
+            });
+            if (existingRow !== undefined && nextThread === currentThread) {
+              break;
+            }
+            const payloadJson = yield* encodeThreadPayload(nextThread);
+            const payload = parseEncodedPayload(payloadJson);
+            yield* sql`
+              INSERT INTO orchestration_v2_projection_threads (
+                thread_id,
+                project_id,
+                title,
+                default_provider,
+                provider_instance_id,
+                runtime_mode,
+                interaction_mode,
+                active_provider_thread_id,
+                created_at,
+                updated_at,
+                archived_at,
+                deleted_at,
+                payload_json
+              )
+              VALUES (
+                ${nextThread.id},
+                ${nextThread.projectId},
+                ${nextThread.title},
+                ${nextThread.providerInstanceId},
+                ${nextThread.providerInstanceId},
+                ${nextThread.runtimeMode},
+                ${nextThread.interactionMode},
+                ${nextThread.activeProviderThreadId},
+                ${stringField(payload, "createdAt")},
+                ${stringField(payload, "updatedAt")},
+                ${nullableStringField(payload, "archivedAt")},
+                ${nullableStringField(payload, "deletedAt")},
+                ${payloadJson}
+              )
+              ON CONFLICT(thread_id)
+              DO UPDATE SET
+                updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
             break;

@@ -3,7 +3,9 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { reduceThreadSettlementEvent } from "@t3tools/shared/orchestrationV2Settled";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
+import * as DateTime from "effect/DateTime";
 
 function upsertEntity<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
@@ -108,8 +110,6 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
-    case "thread.settled":
-    case "thread.unsettled":
     case "thread.snoozed":
     case "thread.unsnoozed":
     case "thread.pinned":
@@ -124,6 +124,32 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.visited":
     case "thread.marked-unread":
       return { ...projection, thread: event.payload };
+    case "thread.settled":
+    case "thread.unsettled": {
+      // Settlement-only merge + activity ordering guard (mirrors server).
+      const nextThread = reduceThreadSettlementEvent({
+        current: projection.thread,
+        eventType: event.type,
+        settlement: {
+          settledOverride: event.payload.settledOverride,
+          settledAt: event.payload.settledAt,
+          updatedAt: event.payload.updatedAt,
+        },
+        activityAtMs: DateTime.toEpochMillis(event.occurredAt),
+        currentTimestamps: {
+          settledOverride: projection.thread.settledOverride,
+          settledAtMs:
+            projection.thread.settledAt === null
+              ? null
+              : DateTime.toEpochMillis(projection.thread.settledAt),
+          updatedAtMs: DateTime.toEpochMillis(projection.thread.updatedAt),
+        },
+      });
+      if (nextThread === projection.thread) {
+        return projection;
+      }
+      return { ...base, thread: nextThread };
+    }
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
