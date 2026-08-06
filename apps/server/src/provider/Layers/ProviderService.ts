@@ -186,6 +186,7 @@ export const SESSION_ACTIVITY_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["typ
   "turn.aborted",
   "task.started",
   "task.progress",
+  "task.updated",
   "task.completed",
 ]);
 
@@ -324,7 +325,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 Effect.logWarning("provider.session.activity-touch-failed", {
                   threadId: event.threadId,
                   eventType: event.type,
-                  cause,
+                  errorTag: causeErrorTag(cause),
                 }),
               ),
             );
