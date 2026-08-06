@@ -38,6 +38,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronPowerSaveBlocker from "../electron/ElectronPowerSaveBlocker.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -57,6 +58,16 @@ const environmentInput = {
   resourcesPath: "/repo/resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
+
+const electronPowerSaveBlockerLayer = Layer.sync(
+  ElectronPowerSaveBlocker.ElectronPowerSaveBlocker,
+  () =>
+    ElectronPowerSaveBlocker.make({
+      start: () => 1,
+      stop: () => true,
+      isStarted: () => true,
+    }),
+);
 
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
@@ -249,6 +260,7 @@ function makeTestLayer(input: {
         desktopServerExposureLayer,
         DesktopState.layer,
         electronMenuLayer,
+        electronPowerSaveBlockerLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
@@ -347,6 +359,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           DesktopAppSettings.layerTest(),
           desktopServerExposureLayer,
           electronMenuLayer,
+          electronPowerSaveBlockerLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
             copyText: () => Effect.void,

@@ -33,6 +33,19 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings caffeinate while agents are running", () => {
+  it("defaults off", () => {
+    expect(decodeClientSettings({}).caffeinateWhileAgentsRunning).toBe(false);
+  });
+
+  it("carries the toggle through the patch", () => {
+    expect(
+      decodeClientSettingsPatch({ caffeinateWhileAgentsRunning: true })
+        .caffeinateWhileAgentsRunning,
+    ).toBe(true);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

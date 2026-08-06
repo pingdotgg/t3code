@@ -12,6 +12,7 @@ import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronPowerSaveBlocker from "../electron/ElectronPowerSaveBlocker.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -251,6 +252,7 @@ export const make = Effect.gen(function* () {
   const electronShell = yield* ElectronShell.ElectronShell;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const powerSaveBlocker = yield* ElectronPowerSaveBlocker.ElectronPowerSaveBlocker;
   const previewManager = yield* PreviewManager.PreviewManager;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   // Window-side latch for the primary backend's readiness. Set by
@@ -650,6 +652,10 @@ export const make = Effect.gen(function* () {
       // that dies immediately on boot cannot reload-loop forever.
       runFork(
         Effect.gen(function* () {
+          // The gone renderer can no longer release the keep-awake assertion
+          // it may hold; drop it here so a dead window cannot pin the machine
+          // awake. A recovered renderer re-sends its computed state on mount.
+          yield* powerSaveBlocker.setKeepAwake(false);
           const now = yield* Clock.currentTimeMillis;
           rendererRecoveryTimestamps = rendererRecoveryTimestamps.filter(
             (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
@@ -696,6 +702,7 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      void runPromise(powerSaveBlocker.setKeepAwake(false));
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 

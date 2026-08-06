@@ -634,6 +634,10 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Provider update checks"]
         : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
+      ...(settings.caffeinateWhileAgentsRunning !==
+      DEFAULT_UNIFIED_SETTINGS.caffeinateWhileAgentsRunning
+        ? ["Caffeinate while agents are running"]
+        : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -656,6 +660,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
       settings.autoOpenPlanSidebar,
+      settings.caffeinateWhileAgentsRunning,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -705,6 +710,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+      caffeinateWhileAgentsRunning: DEFAULT_UNIFIED_SETTINGS.caffeinateWhileAgentsRunning,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
@@ -1605,6 +1611,14 @@ export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  // Gate on the capability, not just the bridge: setKeepAwake is optional in
+  // the contract so a newer renderer degrades gracefully against an older
+  // desktop shell, and showing the toggle then would wire it to nothing.
+  const supportsKeepAwake = isElectron && typeof window.desktopBridge?.setKeepAwake === "function";
+  const caffeinateDevice =
+    typeof navigator !== "undefined" && isMacPlatform(navigator.platform)
+      ? "your Mac"
+      : "your computer";
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -1896,6 +1910,36 @@ export function GeneralSettingsPanel() {
             </>
           }
         />
+
+        {supportsKeepAwake ? (
+          <SettingsRow
+            {...searchableSetting("caffeinate")}
+            description={`Prevent ${caffeinateDevice} from sleeping while an agent is actively working. Shuts off below 10% battery.`}
+            resetAction={
+              settings.caffeinateWhileAgentsRunning !==
+              DEFAULT_UNIFIED_SETTINGS.caffeinateWhileAgentsRunning ? (
+                <SettingResetButton
+                  label="caffeinate while agents are running"
+                  onClick={() =>
+                    updateSettings({
+                      caffeinateWhileAgentsRunning:
+                        DEFAULT_UNIFIED_SETTINGS.caffeinateWhileAgentsRunning,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.caffeinateWhileAgentsRunning}
+                onCheckedChange={(checked) =>
+                  updateSettings({ caffeinateWhileAgentsRunning: Boolean(checked) })
+                }
+                aria-label="Caffeinate while agents are running"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("auto-open-task-panel")}
