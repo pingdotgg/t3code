@@ -102,6 +102,13 @@ describe("urlMatchesIntegratedBrowserPatterns", () => {
     expect(urlMatchesIntegratedBrowserPatterns("https://notgithub.com", patterns)).toBe(false);
   });
 
+  it("matches wildcard apexes that name www against the unstripped hostname", () => {
+    const patterns = ["*.www.example.com"];
+    expect(urlMatchesIntegratedBrowserPatterns("https://www.example.com", patterns)).toBe(true);
+    expect(urlMatchesIntegratedBrowserPatterns("https://a.www.example.com", patterns)).toBe(true);
+    expect(urlMatchesIntegratedBrowserPatterns("https://example.com", patterns)).toBe(false);
+  });
+
   it("matches plain hosts exactly, without subdomains", () => {
     expect(
       urlMatchesIntegratedBrowserPatterns("https://docs.example.com", ["docs.example.com"]),

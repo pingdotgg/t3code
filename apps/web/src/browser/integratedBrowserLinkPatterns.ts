@@ -152,10 +152,18 @@ export function urlMatchesIntegratedBrowserPatterns(
     return false;
   }
 
-  const host = stripWww(url.hostname.toLowerCase());
+  // Match both the raw and www-stripped hostname: stripping lets `example.com`
+  // patterns match `www.example.com` links, while the raw form keeps patterns
+  // that name `www` explicitly (e.g. a `*.www.example.com` apex) working.
+  const rawHostname = url.hostname.toLowerCase();
+  const strippedHost = stripWww(rawHostname);
   return patterns.some((raw) => {
     const pattern = parseIntegratedBrowserUrlPattern(raw);
-    if (pattern === null || !hostMatchesPattern(host, pattern.host)) {
+    if (
+      pattern === null ||
+      (!hostMatchesPattern(strippedHost, pattern.host) &&
+        !hostMatchesPattern(rawHostname, pattern.host))
+    ) {
       return false;
     }
     return (
