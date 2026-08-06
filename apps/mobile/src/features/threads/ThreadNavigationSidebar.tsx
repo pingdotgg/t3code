@@ -339,14 +339,16 @@ function ThreadNavigationSidebarPane(
   );
   const scopedPendingTasks = useMemo(
     () =>
-      selectedProjectRefs === null
-        ? pendingTasks
-        : pendingTasks.filter((pendingTask) =>
-            selectedProjectRefs.has(
-              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+      selectedThreadLabel !== null
+        ? []
+        : selectedProjectRefs === null
+          ? pendingTasks
+          : pendingTasks.filter((pendingTask) =>
+              selectedProjectRefs.has(
+                scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+              ),
             ),
-          ),
-    [pendingTasks, selectedProjectRefs],
+    [pendingTasks, selectedProjectRefs, selectedThreadLabel],
   );
   const groups = useMemo(
     () =>
@@ -571,17 +573,23 @@ function ThreadNavigationSidebarPane(
     // deletable while their environment is offline. Same environment scope
     // and search filter as the list.
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
-      (pendingTask) =>
-        (options.selectedEnvironmentId === null ||
-          pendingTask.message.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
-          selectedProjectRefs.has(
-            scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
-          )) &&
-        (v2SearchQuery.length === 0 ||
-          pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-    );
+    const v2PendingTasks =
+      selectedThreadLabel !== null
+        ? []
+        : pendingTasks.filter(
+            (pendingTask) =>
+              (options.selectedEnvironmentId === null ||
+                pendingTask.message.environmentId === options.selectedEnvironmentId) &&
+              (selectedProjectRefs === null ||
+                selectedProjectRefs.has(
+                  scopedProjectKey(
+                    pendingTask.message.environmentId,
+                    pendingTask.creation.projectId,
+                  ),
+                )) &&
+              (v2SearchQuery.length === 0 ||
+                pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+          );
     const items: SidebarListItem[] = buildThreadListV2ListItems({
       items: threadListV2Layout.items,
       pendingTasks: v2PendingTasks,
@@ -608,6 +616,7 @@ function ThreadNavigationSidebarPane(
     pendingTasks,
     props.searchQuery,
     selectedProjectRefs,
+    selectedThreadLabel,
     settledShelfExpanded,
     snoozedShelfExpanded,
     threadListV2Enabled,
