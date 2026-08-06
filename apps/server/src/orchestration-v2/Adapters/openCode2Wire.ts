@@ -1,6 +1,8 @@
 /**
- * OpenCode 2 beta wire helpers (`session.next.*` and still-current v2 ask
- * events). Maps runtime type strings onto the adapter switch's internal names.
+ * OpenCode 2 wire helpers. Maps runtime type strings onto the adapter switch's
+ * internal names. next-16916 emits short forms (`session.step.*`,
+ * `session.text.*`); earlier beta builds used `session.next.*` for the same
+ * lifecycle. Both are accepted.
  */
 
 /** Canonical event type names used by the adapter switch. */
@@ -34,6 +36,7 @@ export type OpenCode2CanonicalEventType =
   | "session.execution.started"
   | "session.execution.succeeded"
   | "session.execution.failed"
+  | "session.execution.interrupted"
   | "session.idle"
   | "session.error"
   | "permission.v2.asked"
@@ -50,10 +53,12 @@ export type OpenCode2CanonicalEventType =
   | "unknown";
 
 /**
- * Beta durable session events rename lifecycle to `session.next.*`. Internal
- * switch cases keep shorter names for readability.
+ * Lifecycle renames. Internal switch cases keep short canonical names.
+ * Accept both `session.next.*` (earlier beta) and short forms (next-16916).
  */
 const WIRE_TYPE_ALIASES: Readonly<Record<string, OpenCode2CanonicalEventType>> = {
+  "session.agent.switched": "session.agent.selected",
+  "session.model.switched": "session.model.selected",
   "session.next.agent.switched": "session.agent.selected",
   "session.next.model.switched": "session.model.selected",
   "session.next.prompt.admitted": "session.input.admitted",
@@ -82,12 +87,37 @@ const WIRE_TYPE_ALIASES: Readonly<Record<string, OpenCode2CanonicalEventType>> =
   "session.next.tool.success": "session.tool.success",
   "session.next.tool.failed": "session.tool.failed",
   "session.next.retried": "session.retry.scheduled",
+  "session.prompt.admitted": "session.input.admitted",
+  "session.prompted": "session.input.admitted",
+  "session.step.started": "session.execution.started",
+  "session.step.ended": "session.execution.succeeded",
+  "session.step.failed": "session.execution.failed",
+  "session.retried": "session.retry.scheduled",
 };
 
 const PASSTHROUGH_TYPES = new Set<string>([
   "session.created",
+  "session.execution.interrupted",
   "session.idle",
   "session.error",
+  "session.text.started",
+  "session.text.delta",
+  "session.text.ended",
+  "session.reasoning.started",
+  "session.reasoning.delta",
+  "session.reasoning.ended",
+  "session.compaction.started",
+  "session.compaction.delta",
+  "session.compaction.ended",
+  "session.tool.input.started",
+  "session.tool.input.delta",
+  "session.tool.input.ended",
+  "session.tool.called",
+  "session.tool.progress",
+  "session.tool.success",
+  "session.tool.failed",
+  "session.shell.started",
+  "session.shell.ended",
   "server.connected",
   "shell.created",
   "shell.exited",
@@ -138,7 +168,9 @@ export function openCode2WireSessionID(event: { readonly data?: unknown }): stri
 
 export function openCode2WireCallID(event: { readonly data?: unknown }): string | undefined {
   const data = openCode2WireData(event);
-  const value = data.callID ?? data.callId;
+  // next-16916 tool events key the call with `id` (and put the tool name on
+  // `name`). Earlier beta builds used `callID` / `callId` for the same field.
+  const value = data.callID ?? data.callId ?? data.id;
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 

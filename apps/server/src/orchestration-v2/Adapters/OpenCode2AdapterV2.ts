@@ -43,6 +43,7 @@ import {
   openCode2WireCallID,
   openCode2WireCreatedMs,
   openCode2WireData,
+  openCode2WireErrorMessage,
   openCode2WireSessionID,
   openCode2WireToolName,
   unwrapOpenCode2Payload,
@@ -3692,7 +3693,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             case "session.tool.input.started": {
               const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              const callID = openCode2WireCallID(wire) ?? event.data?.callID;
+              const callID = openCode2WireCallID(wire);
               if (callID === undefined) return;
               yield* upsertToolPart(active.state, active.turn, callID, {
                 name: openCode2WireToolName(wire) ?? event.data?.name ?? event.data?.tool ?? "tool",
@@ -3701,50 +3702,64 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               return;
             }
             case "session.tool.input.delta": {
-              const active = activeFor(event.data.sessionID);
+              const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              yield* upsertToolPart(active.state, active.turn, event.data.callID, {
-                inputDelta: event.data.delta,
+              const callID = openCode2WireCallID(wire);
+              if (callID === undefined) return;
+              yield* upsertToolPart(active.state, active.turn, callID, {
+                inputDelta: event.data?.delta,
               });
               return;
             }
             case "session.tool.called": {
-              const active = activeFor(event.data.sessionID);
+              const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              yield* upsertToolPart(active.state, active.turn, event.data.callID, {
-                input: event.data.input,
+              const callID = openCode2WireCallID(wire);
+              if (callID === undefined) return;
+              yield* upsertToolPart(active.state, active.turn, callID, {
+                input: event.data?.input,
                 status: "running",
               });
               return;
             }
             case "session.tool.progress": {
-              const active = activeFor(event.data.sessionID);
+              const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              const output = toolContentText(event.data.content);
-              yield* upsertToolPart(active.state, active.turn, event.data.callID, {
+              const callID = openCode2WireCallID(wire);
+              if (callID === undefined) return;
+              const output = toolContentText(event.data?.content);
+              yield* upsertToolPart(active.state, active.turn, callID, {
                 ...(output === undefined ? {} : { output }),
-                structured: event.data.structured,
+                structured: event.data?.structured,
                 status: "running",
               });
               return;
             }
             case "session.tool.success": {
-              const active = activeFor(event.data.sessionID);
+              const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              const output = toolContentText(event.data.content);
-              yield* upsertToolPart(active.state, active.turn, event.data.callID, {
+              const callID = openCode2WireCallID(wire);
+              if (callID === undefined) return;
+              const output = toolContentText(event.data?.content);
+              yield* upsertToolPart(active.state, active.turn, callID, {
                 ...(output === undefined ? {} : { output }),
-                structured: event.data.structured,
+                structured: event.data?.structured,
                 status: "completed",
               });
               return;
             }
             case "session.tool.failed": {
-              const active = activeFor(event.data.sessionID);
+              const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              yield* upsertToolPart(active.state, active.turn, event.data.callID, {
-                output: event.data.error.message,
-                errorMessage: event.data.error.message,
+              const callID = openCode2WireCallID(wire);
+              if (callID === undefined) return;
+              const errorMessage =
+                (typeof event.data?.error?.message === "string"
+                  ? event.data.error.message
+                  : undefined) ?? openCode2WireErrorMessage(wire);
+              yield* upsertToolPart(active.state, active.turn, callID, {
+                output: errorMessage,
+                errorMessage,
                 status: "error",
               });
               return;
@@ -3990,6 +4005,11 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               if (!openCode2ShouldSettleTurn("execution-terminal", active.turn.executionStarted)) {
                 return;
               }
+              if (active.turn.interrupted) {
+                yield* finalizeTurn(active.state, active.turn, "interrupted");
+                if (!isReplay) active.state.activeExecution = null;
+                return;
+              }
               const message = event.data.error.message;
               if (active.turn.isRoot) yield* updateProviderSession("error", message);
               yield* finalizeTurn(active.state, active.turn, "failed", {
@@ -4000,6 +4020,42 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                   retryable: active.turn.providerRetry === null ? null : true,
                 }),
               });
+              if (!isReplay) active.state.activeExecution = null;
+              return;
+            }
+            case "session.execution.interrupted": {
+              const active = activeFor(event.data.sessionID);
+              if (active === null) return;
+              if (
+                !activeTurnOwnsOpenCode2Execution(
+                  active.state,
+                  active.turn,
+                  context.replayWakeInputId,
+                )
+              ) {
+                return;
+              }
+              active.turn.interrupted = true;
+              if (
+                !active.turn.executionStarted &&
+                openCode2CanAdoptMissingExecutionStart({
+                  executionStarted: active.turn.executionStarted,
+                  interrupted: active.turn.interrupted,
+                  partCount: active.turn.parts.size,
+                })
+              ) {
+                active.turn.executionStarted = true;
+              }
+              if (
+                !openCode2ShouldSettleTurn(
+                  "execution-interrupted",
+                  active.turn.executionStarted,
+                  true,
+                )
+              ) {
+                return;
+              }
+              yield* finalizeTurn(active.state, active.turn, "interrupted");
               if (!isReplay) active.state.activeExecution = null;
               return;
             }

@@ -106,7 +106,9 @@ export function seedOpenCode2ManagedDataHome(
     const host = new NodeSqlite.DatabaseSync(hostDb, { readOnly: true });
     const managed = new NodeSqlite.DatabaseSync(managedDb);
     try {
-      const rows = host.prepare("SELECT * FROM credential").all() as Array<Record<string, unknown>>;
+      const rows = host.prepare("SELECT * FROM credential").all() as Array<
+        Record<string, NodeSqlite.SQLInputValue>
+      >;
       if (rows.length === 0) return;
       managed.exec("DELETE FROM credential");
       const columns = Object.keys(rows[0] ?? {});
@@ -116,7 +118,7 @@ export function seedOpenCode2ManagedDataHome(
         `INSERT INTO credential (${columns.join(", ")}) VALUES (${placeholders})`,
       );
       for (const row of rows) {
-        insert.run(...columns.map((column) => row[column]));
+        insert.run(...columns.map((column) => row[column] ?? null));
       }
     } finally {
       host.close();
