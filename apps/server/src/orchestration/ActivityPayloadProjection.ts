@@ -365,6 +365,107 @@ function dropStaleContextWindowActivities(
   );
 }
 
+/**
+ * Identity both clients use to fold a tool lifecycle row into the call it
+ * belongs to (`deriveToolLifecycleCollapseKey` in web's `session-logic` and
+ * mobile's `threadActivity`): an explicit `data.toolCallId` when the adapter
+ * emits one, otherwise the itemType/title/detail triple. Returns null for rows
+ * with no identity at all — those never collapse on the client either, so they
+ * must not be dropped here.
+ */
+function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | null {
+  const payload = asRecord(activity.payload);
+  if (!payload) {
+    return null;
+  }
+
+  const toolCallId = asTrimmedString(asRecord(payload.data)?.toolCallId);
+  if (toolCallId) {
+    return `id:${toolCallId}`;
+  }
+
+  const itemType = asTrimmedString(payload.itemType) ?? "";
+  // Mirrors the clients' `normalizeCompactToolLabel`: a completion's title may
+  // gain a trailing "complete"/"completed" the in-flight updates lack.
+  const label = (asTrimmedString(payload.title) ?? activity.summary)
+    .replace(/\s+(?:complete|completed)\s*$/iu, "")
+    .trim();
+  const detail = asTrimmedString(payload.detail) ?? "";
+  if (itemType.length === 0 && label.length === 0 && detail.length === 0) {
+    return null;
+  }
+  return [itemType, label, detail].join("");
+}
+
+/**
+ * Drops `tool.updated` rows a `tool.completed` row already supersedes. An
+ * update is the in-flight snapshot of a call; once the call completes, the
+ * completion carries the final state and the clients fold every matching
+ * update into it, so shipping the updates buys nothing — 47k such rows exist
+ * in one real database, and a single thread carries 2,291 of them totalling
+ * ~1MB post-slimming.
+ *
+ * Matching is per turn for the same reason `dropStaleContextWindowActivities`
+ * retains per turn: a live `thread.reverted` makes the client discard whole
+ * turns, so a completion in a different turn could vanish and leave the
+ * dropped update unrepresented. The completion must also come *after* the
+ * update within the turn — a later update belongs to a subsequent call that
+ * reuses the same identity and is still in flight. Rows without a lifecycle
+ * identity pass through, matching the clients, which never collapse them.
+ * Live `thread.activity-appended` events are untouched: updates still stream
+ * in real time and the completion supersedes them on the client as before.
+ *
+ * Deliberate divergence from client collapse: clients fold only *adjacent*
+ * lifecycle rows, so a superseded update separated from its completion by an
+ * interleaved parallel call renders as its own row today, and this drop
+ * removes it. Measured against a real database, that affects 1.5% of dropped
+ * rows (553 of 36,581), all pure in-flight state whose final result the
+ * retained completion still shows. Dropping them is intentional; matching
+ * adjacency server-side would forfeit most of the win for parallel-heavy
+ * threads, which are exactly the heavy ones. Superseding completions always
+ * carry a payload superset of their updates (verified across all 49,515
+ * update rows: zero dropped rows held a client-merged field — detail, title,
+ * command, item, kind, files — their completion lacked), so no expanded-row
+ * content is lost.
+ */
+function dropSupersededToolUpdatedActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  const completionIndicesByKey = new Map<string, number[]>();
+  for (let index = 0; index < activities.length; index += 1) {
+    const activity = activities[index]!;
+    if (activity.kind !== "tool.completed") {
+      continue;
+    }
+    const identity = toolLifecycleIdentity(activity);
+    if (!identity) {
+      continue;
+    }
+    const key = `${activity.turnId ?? ""} ${identity}`;
+    const indices = completionIndicesByKey.get(key);
+    if (indices) {
+      indices.push(index);
+    } else {
+      completionIndicesByKey.set(key, [index]);
+    }
+  }
+  if (completionIndicesByKey.size === 0) {
+    return activities;
+  }
+
+  return activities.filter((activity, index) => {
+    if (activity.kind !== "tool.updated") {
+      return true;
+    }
+    const identity = toolLifecycleIdentity(activity);
+    if (!identity) {
+      return true;
+    }
+    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""} ${identity}`);
+    return !indices?.some((completionIndex) => completionIndex > index);
+  });
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {
@@ -372,9 +473,9 @@ export function projectThreadDetailSnapshot(
     ...snapshot,
     thread: {
       ...snapshot.thread,
-      activities: dropStaleContextWindowActivities(snapshot.thread.activities).map(
-        projectActivityPayload,
-      ),
+      activities: dropSupersededToolUpdatedActivities(
+        dropStaleContextWindowActivities(snapshot.thread.activities),
+      ).map(projectActivityPayload),
     },
   };
 }
