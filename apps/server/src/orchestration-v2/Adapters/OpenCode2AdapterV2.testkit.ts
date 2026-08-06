@@ -422,9 +422,6 @@ export function makeReplayClient(controller: OpenCode2ReplayController): Opencod
           commit: (input: unknown) => request("session.revert.commit", input),
           stage: (input: unknown) => request("session.revert.stage", input),
         },
-        form: {
-          reply: (input: unknown) => request("session.form.reply", input),
-        },
         switchAgent: (input: unknown) => request("session.switchAgent", input),
         switchModel: (input: unknown) => request("session.switchModel", input),
         wait: (input: unknown) => request("session.wait", input),

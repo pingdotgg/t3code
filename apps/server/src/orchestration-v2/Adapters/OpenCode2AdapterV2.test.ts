@@ -103,7 +103,7 @@ describe("unwrapOpenCode2Data", () => {
 
 describe("OpenCode 2 post-settle wake classification", () => {
   const syntheticAdmission = v2Event({
-    type: "session.input.admitted",
+    type: "session.next.prompt.admitted",
     data: {
       sessionID: "ses_root",
       inputID: "input_wake",
@@ -134,7 +134,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isFalse(
       openCode2IsPostSettleWakeAdmission(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_root",
             inputID: "input_user",
@@ -152,7 +152,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isFalse(
       openCode2IsPostSettleWakeAdmission(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_root",
             inputID: "input_background_instruction",
@@ -174,7 +174,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isTrue(
       openCode2IsPostSettleWakeAdmission(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_root",
             inputID: "input_shell_wake",
@@ -208,7 +208,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
 
   it("defers cancelled wake ownership until input promotion identifies the execution", () => {
     const cancelledAdmission = v2Event({
-      type: "session.input.admitted",
+      type: "session.next.prompt.admitted",
       data: {
         sessionID: "ses_root",
         inputID: "input_cancelled",
@@ -235,7 +235,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
   it("isolates cancellation synthetic inputs without dropping the wake boundary", () => {
     for (const state of ["cancelled", "interrupted"] as const) {
       const event = v2Event({
-        type: "session.input.admitted",
+        type: "session.next.prompt.admitted",
         data: {
           sessionID: "ses_root",
           inputID: `input_${state}`,
@@ -266,7 +266,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
       assert.isTrue(
         openCode2IsCancelledPostSettleWake(
           v2Event({
-            type: "session.input.admitted",
+            type: "session.next.prompt.admitted",
             data: {
               sessionID: "ses_root",
               inputID: "input_cancelled",
@@ -283,7 +283,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isFalse(
       openCode2IsCancelledPostSettleWake(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_root",
             inputID: "input_status",
@@ -307,7 +307,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
       assert.isFalse(
         openCode2IsCancelledPostSettleWake(
           v2Event({
-            type: "session.input.admitted",
+            type: "session.next.prompt.admitted",
             data: {
               sessionID: "ses_root",
               inputID: "input_not_cancelled",
@@ -325,7 +325,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
 
   it("suppresses an empty interrupted background-shell wake", () => {
     const interruptedShellAdmission = v2Event({
-      type: "session.input.admitted",
+      type: "session.next.prompt.admitted",
       data: {
         sessionID: "ses_root",
         inputID: "input_interrupted_shell",
@@ -346,7 +346,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isFalse(
       openCode2IsCancelledPostSettleWake(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_root",
             inputID: "input_failed_shell",
@@ -368,7 +368,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isTrue(
       openCode2IsCancelledPostSettleWake(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_child",
             inputID: "input_child_cancelled",
@@ -384,7 +384,7 @@ describe("OpenCode 2 post-settle wake classification", () => {
     assert.isFalse(
       openCode2IsPostSettleWakeAdmission(
         v2Event({
-          type: "session.input.admitted",
+          type: "session.next.prompt.admitted",
           data: {
             sessionID: "ses_child",
             inputID: "input_child_cancelled",
@@ -405,13 +405,12 @@ describe("OpenCode 2 post-settle wake classification", () => {
   it("closes a buffered wake only on execution terminal or idle", () => {
     assert.isFalse(
       openCode2EventEndsExecution(
-        v2Event({ type: "session.execution.started", data: { sessionID: "ses_root" } }),
+        v2Event({ type: "session.next.step.started", data: { sessionID: "ses_root" } }),
       ),
     );
     for (const type of [
-      "session.execution.succeeded",
-      "session.execution.failed",
-      "session.execution.interrupted",
+      "session.next.step.ended",
+      "session.next.step.failed",
       "session.idle",
     ] as const) {
       assert.isTrue(

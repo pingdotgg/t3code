@@ -9,9 +9,8 @@
  *     SDK's own `.data` is the parsed body and the body carries its own
  *     envelope;
  *   - the event vocabulary is a flat stream of typed lifecycle events
- *     (`session.text.*` / `session.next.text.*`, tools, and step/execution
- *     terminals) rather than 1.x's `message.part.updated` carrying
- *     a whole part object;
+ *     (`session.next.*` steps, tools, text) rather than 1.x's
+ *     `message.part.updated` carrying a whole part object;
  *   - the model binds at session create via `ModelRef`, not per prompt;
  *   - permission asks can still arrive under the legacy `permission.asked`
  *     name, but replies always use the `/api` session-scoped
@@ -54,22 +53,6 @@ type AgentInfoV2 = AgentV2Info;
 type ModelInfo = ModelV2Info;
 type SessionInfoV2 = SessionV2Info;
 type SessionMessageInfo = SessionMessage;
-type FormInfo = {
-  readonly id: string;
-  readonly title: string;
-  readonly fields: ReadonlyArray<{
-    readonly key: string;
-    readonly title?: string;
-    readonly description?: string;
-    readonly type?: string;
-    readonly custom?: boolean;
-    readonly options?: ReadonlyArray<{
-      readonly label: string;
-      readonly value: string;
-      readonly description?: string;
-    }>;
-  }>;
-};
 type SessionPendingInfo = {
   readonly sessionID: string;
   readonly type?: string;
@@ -528,13 +511,6 @@ interface PendingOpenCode2Request {
     readonly save: ReadonlyArray<string>;
   };
   readonly questions?: ReadonlyArray<QuestionV2Info>;
-  /**
-   * Present when the questions came from a form (`form.created`); index-aligned
-   * with `questions`, and the reply must go through `session.form.reply`.
-   */
-  readonly formFieldKeys?: ReadonlyArray<string>;
-  /** Index-aligned label-to-value maps for translating UI answers. */
-  readonly formOptionValues?: ReadonlyArray<Readonly<Record<string, string>>>;
 }
 
 export interface OpenCode2SessionPermission {
@@ -631,7 +607,6 @@ export function openCode2EventEndsExecution(event: { readonly type: string }): b
   return (
     type === "session.execution.succeeded" ||
     type === "session.execution.failed" ||
-    type === "session.execution.interrupted" ||
     type === "session.idle"
   );
 }
@@ -1149,78 +1124,6 @@ export function openCode2QuestionId(index: number, header: string): string {
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug.length > 0 ? `question-${index}-${slug}` : `question-${index}`;
-}
-
-/**
- * Current 2.x builds surface the question tool through the form API
- * (`form.created`, with `metadata.kind: "question"`) instead of
- * `question.v2.asked`, which still exists but no longer fires for it. Map a
- * form onto the question request shape so the UI renders it unchanged, and
- * keep the index-aligned field keys so the reply can address
- * `session.form.reply`. Non-question forms get the same treatment: every
- * field becomes a question entry.
- *
- * @internal exported for tests
- */
-export function openCode2FormQuestions(form: FormInfo): {
-  readonly questions: ReadonlyArray<QuestionV2Info>;
-  readonly fieldKeys: ReadonlyArray<string>;
-  readonly optionValuesByLabel: ReadonlyArray<Readonly<Record<string, string>>>;
-} {
-  const questions: Array<QuestionV2Info> = [];
-  const fieldKeys: Array<string> = [];
-  const optionValuesByLabel: Array<Readonly<Record<string, string>>> = [];
-  for (const field of form.fields) {
-    const title = field.title?.trim() ?? "";
-    const description = field.description?.trim() ?? "";
-    const options = "options" in field ? (field.options ?? []) : [];
-    // The UI answers with labels; the wire wants option values.
-    questions.push({
-      header: title || form.title,
-      question: description || title || form.title,
-      options: options.map((option) => ({
-        label: option.label.trim() || option.value,
-        description: option.description?.trim() ?? "",
-      })),
-      ...(("custom" in field && field.custom) === true ? { custom: true } : {}),
-      ...(field.type === "multiselect" ? { multiple: true } : {}),
-    });
-    fieldKeys.push(field.key);
-    const valuesByLabel = Object.create(null) as Record<string, string>;
-    for (const option of options) {
-      valuesByLabel[option.label.trim() || option.value] = option.value;
-    }
-    optionValuesByLabel.push(valuesByLabel);
-  }
-  return { questions, fieldKeys, optionValuesByLabel };
-}
-
-/**
- * Builds the `session.form.reply` answer map from per-question answer arrays.
- * Answer labels translate back to option values where a mapping exists
- * (free-text custom answers pass through), a single selection collapses to
- * the plain string a non-multiselect field expects, and unanswered fields are
- * omitted rather than sent as empty arrays.
- *
- * @internal exported for tests
- */
-export function openCode2FormAnswer(
-  fieldKeys: ReadonlyArray<string>,
-  answers: ReadonlyArray<ReadonlyArray<string>>,
-  optionValuesByLabel?: ReadonlyArray<Readonly<Record<string, string>>>,
-  multiselectFields?: ReadonlyArray<boolean>,
-): Record<string, string | Array<string>> {
-  const answer = Object.create(null) as Record<string, string | Array<string>>;
-  fieldKeys.forEach((key, index) => {
-    const valuesByLabel = optionValuesByLabel?.[index];
-    const values = (answers[index] ?? []).map((value) => {
-      if (valuesByLabel === undefined || !Object.hasOwn(valuesByLabel, value)) return value;
-      return valuesByLabel[value]!;
-    });
-    if (values.length === 0) return;
-    answer[key] = multiselectFields?.[index] === true || values.length > 1 ? values : values[0]!;
-  });
-  return answer;
 }
 
 /**
@@ -2473,8 +2376,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             | {
                 readonly type: "question";
                 readonly questions: ReadonlyArray<QuestionV2Info>;
-                readonly formFieldKeys?: ReadonlyArray<string>;
-                readonly formOptionValues?: ReadonlyArray<Readonly<Record<string, string>>>;
               },
         ) {
           if (pendingRequestsByNativeId.has(nativeRequestId)) return;
@@ -2515,12 +2416,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             pending = {
               ...pendingBase,
               questions: request.questions,
-              ...(request.formFieldKeys === undefined
-                ? {}
-                : { formFieldKeys: request.formFieldKeys }),
-              ...(request.formOptionValues === undefined
-                ? {}
-                : { formOptionValues: request.formOptionValues }),
             };
           }
           pendingRequests.set(String(requestId), pending);
@@ -3303,14 +3198,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           pruneOpenCode2RetiredSuppressWakes(state.retiredSuppressWakes);
         };
 
-        const rememberPromotedInputId = (state: OpenCode2ThreadState, inputId: string): void => {
-          // Refresh an existing id so a genuinely later promotion keeps its
-          // evidence window instead of being evicted as an old duplicate.
-          state.promotedInputIds.delete(inputId);
-          state.promotedInputIds.add(inputId);
-          pruneOpenCode2PromotedInputIds(state.promotedInputIds);
-        };
-
         const beginOpenCode2Execution = (state: OpenCode2ThreadState): void => {
           const activeInputId = state.activeTurn?.nativeInputId;
           const wakeInputIds = state.postSettleWakes
@@ -3424,7 +3311,8 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           // handler. They belong to the turn being replayed and must not
           // settle a live execution that happens to be active beside it.
           if (isReplay) return false;
-          if (event.type === "session.input.admitted" || event.type === "session.input.promoted") {
+          const bufferedType = normalizeOpenCode2WireType(String(event?.type ?? ""));
+          if (bufferedType === "session.input.admitted") {
             return false;
           }
           if (state.activeExecution === null && openCode2EventEndsExecution(event)) {
@@ -3487,7 +3375,8 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
         };
 
         const handleEvent = Effect.fnUntraced(function* (
-          // Dual wire dialects (next-16233 + beta session.next) are not one V2Event union.
+          // Beta V2Event plus structural wire events; type names are normalized
+          // before the switch.
           event: any,
           context: OpenCode2EventHandlingContext = {},
         ) {
@@ -3502,7 +3391,9 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           });
           const isCancelledPostSettleWake = openCode2IsCancelledPostSettleWake(event);
           const admittedState =
-            event.type === "session.input.admitted" ? threads.get(event.data.sessionID) : undefined;
+            eventType === "session.input.admitted"
+              ? threads.get(openCode2WireSessionID(wire) ?? event.data?.sessionID)
+              : undefined;
           if (
             admittedState !== undefined &&
             !isReplay &&
@@ -3513,12 +3404,12 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             yield* offerPostSettleWake(admittedState, event, isCancelledPostSettleWake);
             return;
           }
+          const eventSessionId =
+            openCode2WireSessionID(wire) ?? recordString(event.data, "sessionID");
           const eventState =
             admittedState ??
-            (recordString(event.data, "sessionID") === undefined
-              ? undefined
-              : threads.get(recordString(event.data, "sessionID")!));
-          if (eventState !== undefined && !isReplay && event.type === "session.execution.started") {
+            (eventSessionId === undefined ? undefined : threads.get(eventSessionId));
+          if (eventState !== undefined && !isReplay && eventType === "session.execution.started") {
             beginOpenCode2Execution(eventState);
           }
           if (bufferPostSettleWakeEvent(event, isReplay)) return;
@@ -3550,42 +3441,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               if (context === undefined) return;
               yield* bindSubagentChild(context, nativeSession);
               yield* emitSubagentContext(context);
-              return;
-            }
-            case "session.input.promoted": {
-              const state = threads.get(event.data.sessionID);
-              if (state !== undefined && !isReplay) {
-                const retiredWake = state.retiredSuppressWakes.get(event.data.inputID);
-                if (retiredWake !== undefined) {
-                  state.retiredSuppressWakes.delete(event.data.inputID);
-                  retiredWake.phase = "pending";
-                  state.postSettleWakes.push(retiredWake);
-                }
-                const joinWake =
-                  retiredWake ??
-                  state.postSettleWakes.find(
-                    (wake) => wake.inputId === event.data.inputID && wake.phase === "pending",
-                  );
-                rememberPromotedInputId(state, event.data.inputID);
-                state.sawInputPromotion = true;
-                // A pending wake promoted during any active execution joins
-                // that execution. The protocol has no execution id, so this
-                // is deliberately uniform for replay and suppression wakes;
-                // concurrent-child attribution remains an explicit in-vivo gate.
-                if (state.activeExecution !== null && joinWake?.phase === "pending") {
-                  state.activeExecution.inputIds.add(event.data.inputID);
-                  state.activeExecution.claimedByPromotion = true;
-                  joinWake.promotedAfterExecutionStarted = true;
-                  joinWake.phase = "executing";
-                  state.promotedInputIds.delete(event.data.inputID);
-                } else if (state.activeExecution?.inputIds.has(event.data.inputID) === true) {
-                  state.activeExecution.claimedByPromotion = true;
-                  state.promotedInputIds.delete(event.data.inputID);
-                }
-              }
-              if (state !== undefined && state.activeTurn === null) {
-                yield* updateProviderThread(state, {});
-              }
               return;
             }
             case "session.agent.selected": {
@@ -3750,7 +3605,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               yield* upsertTextPart(active.state, active.turn, "text", event.data, {
                 ...("delta" in event.data ? { delta: event.data.delta } : {}),
                 ...("text" in event.data ? { text: event.data.text } : {}),
-                ...(event.type === "session.text.ended" ? { completed: true } : {}),
+                ...(eventType === "session.text.ended" ? { completed: true } : {}),
               });
               return;
             }
@@ -3762,7 +3617,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               yield* upsertTextPart(active.state, active.turn, "reasoning", event.data, {
                 ...("delta" in event.data ? { delta: event.data.delta } : {}),
                 ...("text" in event.data ? { text: event.data.text } : {}),
-                ...(event.type === "session.reasoning.ended" ? { completed: true } : {}),
+                ...(eventType === "session.reasoning.ended" ? { completed: true } : {}),
               });
               return;
             }
@@ -3828,29 +3683,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 } satisfies OpenCode2Compaction);
               compaction.summary = event.data.text;
               compaction.status = "completed";
-              compaction.completedAt = dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now);
-              if (compaction !== null)
-                active.turn.activeCompaction = compaction as OpenCode2Compaction;
-              yield* emitCompaction(active.state, active.turn, compaction as OpenCode2Compaction);
-              return;
-            }
-            case "session.compaction.failed": {
-              const active = activeFor(event.data.sessionID);
-              if (active === null) return;
-              const now = yield* DateTime.now;
-              const compaction =
-                active.turn.activeCompaction ??
-                ({
-                  id: event.data.inputID ?? event.id,
-                  startedAt: dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now),
-                  summary: "",
-                  status: "running",
-                  completedAt: null,
-                } satisfies OpenCode2Compaction);
-              if (compaction.summary.length === 0) {
-                compaction.summary = event.data.error.message;
-              }
-              compaction.status = "failed";
               compaction.completedAt = dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now);
               if (compaction !== null)
                 active.turn.activeCompaction = compaction as OpenCode2Compaction;
@@ -4015,36 +3847,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
             case "question.v2.rejected":
               yield* resolveRuntimeRequest(event.data.requestID, "cancelled");
               return;
-            // Current 2.x builds route the question tool through the form API;
-            // question.v2.asked no longer fires for it.
-            case "form.created": {
-              const active = activeFor(event.data.form.sessionID);
-              if (active === null) return;
-              const { questions, fieldKeys, optionValuesByLabel } = openCode2FormQuestions(
-                event.data.form,
-              );
-              if (questions.length === 0) return;
-              const projection = runtimeRequestProjectionFor(active);
-              yield* emitRuntimeRequest(
-                projection.state,
-                projection.turn,
-                event.data.form.sessionID,
-                event.data.form.id,
-                {
-                  type: "question",
-                  questions,
-                  formFieldKeys: fieldKeys,
-                  formOptionValues: optionValuesByLabel,
-                },
-              );
-              return;
-            }
-            case "form.replied":
-              yield* resolveRuntimeRequest(event.data.id, "resolved");
-              return;
-            case "form.cancelled":
-              yield* resolveRuntimeRequest(event.data.id, "cancelled");
-              return;
             case "permission.asked": {
               const active = activeFor(event.data.sessionID);
               if (active === null) return;
@@ -4150,8 +3952,8 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               ) {
                 return;
               }
-              // Beta step.ended can mean "tool-calls continue"; only settle
-              // full-turn terminals (and legacy execution.succeeded with no finish).
+              // step.ended can mean "tool-calls continue"; only settle
+              // full-turn terminals.
               if (!openCode2StepFinishSettlesTurn(openCode2WireData(wire).finish)) {
                 return;
               }
@@ -4160,44 +3962,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 active.turn,
                 active.turn.interrupted ? "interrupted" : "completed",
               );
-              if (!isReplay) active.state.activeExecution = null;
-              return;
-            }
-            case "session.execution.interrupted": {
-              const active = activeFor(event.data.sessionID);
-              if (active === null) return;
-              if (
-                !activeTurnOwnsOpenCode2Execution(
-                  active.state,
-                  active.turn,
-                  context.replayWakeInputId,
-                )
-              ) {
-                return;
-              }
-              if (
-                !active.turn.executionStarted &&
-                openCode2CanAdoptMissingExecutionStart({
-                  executionStarted: active.turn.executionStarted,
-                  interrupted: true,
-                  partCount: active.turn.parts.size,
-                })
-              ) {
-                active.turn.executionStarted = true;
-              }
-              if (
-                !openCode2ShouldSettleTurn(
-                  "execution-interrupted",
-                  active.turn.executionStarted,
-                  active.turn.interrupted,
-                )
-              ) {
-                return;
-              }
-              active.turn.interrupted = true;
-              yield* finalizeTurn(active.state, active.turn, "interrupted", {
-                threadDisposition: openCode2InterruptedThreadDisposition(event.data.reason),
-              });
               if (!isReplay) active.state.activeExecution = null;
               return;
             }
@@ -5262,29 +5026,6 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                   if (typeof raw === "string") return raw.trim().length > 0 ? [raw] : [];
                   return [];
                 });
-                if (pending.formFieldKeys !== undefined) {
-                  const answer = openCode2FormAnswer(
-                    pending.formFieldKeys,
-                    answers,
-                    pending.formOptionValues,
-                    pending.questions.map((question) => question.multiple === true),
-                  );
-                  yield* sdkCall(
-                    "session.form.reply",
-                    { sessionID, formID: requestID, answer },
-                    () =>
-                      client.v2.session.question.reply({
-                        sessionID,
-                        requestID,
-                        questionV2Reply: {
-                          answers: Object.values(answer).map((value) =>
-                            Array.isArray(value) ? value : [value],
-                          ),
-                        },
-                      }),
-                  );
-                  return;
-                }
                 yield* sdkCall("session.question.reply", { sessionID, requestID, answers }, () =>
                   client.v2.session.question.reply({
                     sessionID,

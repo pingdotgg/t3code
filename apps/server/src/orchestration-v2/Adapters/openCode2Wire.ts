@@ -1,15 +1,11 @@
 /**
- * Wire compatibility for OpenCode 2 between the next-16233 generation
- * (`session.text.*` / `session.execution.*`) and the beta generation
- * (`session.next.*` steps). Runtime events are normalized to the older
- * canonical type names so the adapter switch can stay dual-compatible while
- * types come from the beta SDK.
+ * OpenCode 2 beta wire helpers (`session.next.*` and still-current v2 ask
+ * events). Maps runtime type strings onto the adapter switch's internal names.
  */
 
 /** Canonical event type names used by the adapter switch. */
 export type OpenCode2CanonicalEventType =
   | "session.created"
-  | "session.input.promoted"
   | "session.input.admitted"
   | "session.agent.selected"
   | "session.model.selected"
@@ -27,7 +23,6 @@ export type OpenCode2CanonicalEventType =
   | "session.compaction.started"
   | "session.compaction.delta"
   | "session.compaction.ended"
-  | "session.compaction.failed"
   | "session.tool.input.started"
   | "session.tool.input.delta"
   | "session.tool.input.ended"
@@ -38,7 +33,6 @@ export type OpenCode2CanonicalEventType =
   | "session.retry.scheduled"
   | "session.execution.started"
   | "session.execution.succeeded"
-  | "session.execution.interrupted"
   | "session.execution.failed"
   | "session.idle"
   | "session.error"
@@ -52,12 +46,13 @@ export type OpenCode2CanonicalEventType =
   | "question.asked"
   | "question.replied"
   | "question.rejected"
-  | "form.created"
-  | "form.replied"
-  | "form.cancelled"
   | "server.connected"
   | "unknown";
 
+/**
+ * Beta durable session events rename lifecycle to `session.next.*`. Internal
+ * switch cases keep shorter names for readability.
+ */
 const WIRE_TYPE_ALIASES: Readonly<Record<string, OpenCode2CanonicalEventType>> = {
   "session.next.agent.switched": "session.agent.selected",
   "session.next.model.switched": "session.model.selected",
@@ -89,18 +84,29 @@ const WIRE_TYPE_ALIASES: Readonly<Record<string, OpenCode2CanonicalEventType>> =
   "session.next.retried": "session.retry.scheduled",
 };
 
+const PASSTHROUGH_TYPES = new Set<string>([
+  "session.created",
+  "session.idle",
+  "session.error",
+  "server.connected",
+  "shell.created",
+  "shell.exited",
+  "shell.deleted",
+  "permission.v2.asked",
+  "permission.v2.replied",
+  "permission.asked",
+  "permission.replied",
+  "question.v2.asked",
+  "question.v2.replied",
+  "question.v2.rejected",
+  "question.asked",
+  "question.replied",
+  "question.rejected",
+]);
+
 export function normalizeOpenCode2WireType(type: string): OpenCode2CanonicalEventType {
   if (type in WIRE_TYPE_ALIASES) return WIRE_TYPE_ALIASES[type]!;
-  if (
-    type.startsWith("session.") ||
-    type.startsWith("shell.") ||
-    type.startsWith("permission.") ||
-    type.startsWith("question.") ||
-    type.startsWith("form.") ||
-    type === "server.connected"
-  ) {
-    return type as OpenCode2CanonicalEventType;
-  }
+  if (PASSTHROUGH_TYPES.has(type)) return type as OpenCode2CanonicalEventType;
   return "unknown";
 }
 
@@ -176,12 +182,12 @@ export function openCode2WireErrorCode(event: { readonly data?: unknown }): stri
 }
 
 /**
- * Whether a step.ended / execution.succeeded event should settle the full turn.
- * Beta multi-step loops end intermediate steps with tool-calls finishes.
+ * Whether a step.ended event should settle the full turn. Multi-step loops end
+ * intermediate steps with tool-calls finishes.
  */
 export function openCode2StepFinishSettlesTurn(finish: unknown): boolean {
   if (typeof finish !== "string" || finish.length === 0) {
-    // Old execution.succeeded has no finish field; treat as terminal.
+    // Missing finish is treated as terminal (failed steps, synthetic settles).
     return true;
   }
   const normalized = finish.trim().toLowerCase();
@@ -205,8 +211,8 @@ export function openCode2WireAgent(event: { readonly data?: unknown }): string |
 }
 
 /**
- * Unwrap SDK responses that may be single- or double-enveloped depending on
- * generation (`{ data: T }` vs `{ data: { data: T } }`).
+ * Unwrap SDK responses that may be single- or double-enveloped
+ * (`{ data: T }` vs `{ data: { data: T } }`).
  */
 export function unwrapOpenCode2Payload<A>(result: unknown): A | undefined {
   if (!isRecord(result)) return undefined;
