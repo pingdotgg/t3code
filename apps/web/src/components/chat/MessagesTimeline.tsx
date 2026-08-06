@@ -1106,6 +1106,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
           resolvedTheme={ctx.resolvedTheme}
+          environmentId={ctx.activeThreadEnvironmentId}
+          cwd={ctx.markdownCwd}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
@@ -1414,11 +1416,15 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   turnSummary,
   routeThreadKey,
   resolvedTheme,
+  environmentId,
+  cwd,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary | undefined;
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
+  environmentId: EnvironmentId;
+  cwd: string | undefined;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   if (!turnSummary) return null;
@@ -1431,6 +1437,8 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
       checkpointFiles={checkpointFiles}
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
+      environmentId={environmentId}
+      cwd={cwd}
       onOpenTurnDiff={onOpenTurnDiff}
     />
   );
@@ -1443,12 +1451,16 @@ function AssistantChangedFilesSectionInner({
   checkpointFiles,
   routeThreadKey,
   resolvedTheme,
+  environmentId,
+  cwd,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
+  environmentId: EnvironmentId;
+  cwd: string | undefined;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   const activity = use(TimelineRowActivityCtx);
@@ -1471,6 +1483,8 @@ function AssistantChangedFilesSectionInner({
       showCompactPreview={isLatestTurn}
       allDirectoriesExpanded={allDirectoriesExpanded}
       resolvedTheme={resolvedTheme}
+      environmentId={environmentId}
+      cwd={cwd}
       onExpandedChange={(nextExpanded) =>
         setExpanded(routeThreadKey, turnSummary.turnId, nextExpanded)
       }

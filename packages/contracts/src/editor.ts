@@ -47,6 +47,8 @@ export type EditorId = typeof EditorId.Type;
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   editor: EditorId,
+  /** Select `cwd` in its parent folder instead of opening it. Only the "file-manager" editor honors this. */
+  reveal: Schema.optionalKey(Schema.Boolean),
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 

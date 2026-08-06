@@ -12,7 +12,15 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import {
+  ChevronRight,
+  Code2,
+  Eye,
+  FolderSearch,
+  FolderTree,
+  Globe2,
+  LoaderCircle,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -20,6 +28,8 @@ import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPre
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { revealInFileExplorerLabel } from "~/components/preview/fileExplorerLabel";
+import { useRevealInFileManager } from "~/hooks/useRevealInFileManager";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
@@ -805,6 +815,8 @@ export default function FilePreviewPanel({
   const canOpenInBrowser =
     relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
+  const revealInFileManager = useRevealInFileManager();
+  const revealLabel = revealInFileExplorerLabel(navigator.platform);
   const breadcrumbs = useMemo(
     () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
     [projectName, relativePath],
@@ -899,6 +911,25 @@ export default function FilePreviewPanel({
               compact
               enableShortcut={false}
             />
+          ) : null}
+          {absolutePath ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={false}
+                    onPressedChange={() => revealInFileManager(environmentId, absolutePath)}
+                    aria-label={revealLabel}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <FolderSearch className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>{revealLabel}</TooltipPopup>
+            </Tooltip>
           ) : null}
           {isMarkdown ? (
             <Tooltip>

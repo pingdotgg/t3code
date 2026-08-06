@@ -16,9 +16,12 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
+import { useRevealInFileManager } from "~/hooks/useRevealInFileManager";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { resolvePathLinkTarget } from "~/terminal-links";
 
+import { revealInFileExplorerLabel } from "../preview/fileExplorerLabel";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
@@ -108,6 +111,7 @@ export default function FileBrowserPanel({
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
+  const revealInFileManager = useRevealInFileManager();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
   const entries = entriesQuery.data?.entries ?? [];
   const entryKinds = useMemo(
@@ -155,6 +159,7 @@ export default function FileBrowserPanel({
         [
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
+          { id: "reveal-in-file-manager", label: revealInFileExplorerLabel(navigator.platform) },
         ],
         position,
       );
@@ -169,6 +174,10 @@ export default function FileBrowserPanel({
             description: error instanceof Error ? error.message : "An error occurred.",
           });
         }
+        return;
+      }
+      if (clicked === "reveal-in-file-manager") {
+        revealInFileManager(environmentId, resolvePathLinkTarget(relativePath, cwd));
         return;
       }
       if (clicked === "add-to-chat") {
