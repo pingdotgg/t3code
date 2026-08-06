@@ -83,7 +83,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   connectHttpApiLayer,
-  pendingUpdateHandoffExists,
+  pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
@@ -579,7 +579,7 @@ export const makeServerLayer = Layer.unwrap(
         // while the launcher's explicit-stop marker allows it to be released.
         // Other runtimes wait for activation so a failed standby cannot tear
         // down the active runtime's tunnel.
-        const cleanupBeforeActivation = yield* pendingUpdateHandoffExists;
+        const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
         }

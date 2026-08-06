@@ -635,17 +635,9 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
   },
 );
 
-// The launcher records an in-flight update in its durable state file. Read
-// straight from disk: the launcher owns that file, and this runs while the
-// server is tearing down. Unreadable or unparseable state means no pending
-// update — the release then proceeds as before.
-//
-// A pending update alone is not proof a replacement server is coming: an
-// explicit launcher stop (`t3 service uninstall`, `systemctl stop`) during
-// the pending window also tears this server down, with nothing starting
-// afterwards. The launcher marks that case with a stop-marker file just
-// before it signals the child, so pending + no marker is the update handoff.
-export const pendingUpdateHandoffExists = Effect.gen(function* () {
+// The launcher owns this durable state, so read it directly both when a trial
+// decides whether it owns pre-activation cleanup and while a server tears down.
+export const pendingServiceUpdateExists = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -653,9 +645,21 @@ export const pendingUpdateHandoffExists = Effect.gen(function* () {
   const stateText = yield* fs
     .readFileString(path.join(runtimeDir, SERVICE_STATE_FILE))
     .pipe(Effect.option);
-  if (Option.isNone(stateText) || !serviceStateHasPendingUpdate(stateText.value)) {
+  return Option.isSome(stateText) && serviceStateHasPendingUpdate(stateText.value);
+});
+
+// A pending update alone is not proof a replacement server is coming: an
+// explicit launcher stop (`t3 service uninstall`, `systemctl stop`) during
+// the pending window also tears this server down. The launcher marks that case
+// just before it signals the child, so pending + no marker is the handoff.
+const pendingUpdateHandoffExists = Effect.gen(function* () {
+  if (!(yield* pendingServiceUpdateExists)) {
     return false;
   }
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runtimeDir = path.join(config.baseDir, "runtime");
   const stopping = yield* fs
     .exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE))
     .pipe(Effect.orElseSucceed(() => false));
