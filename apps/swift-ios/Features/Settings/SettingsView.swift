@@ -225,10 +225,15 @@ public struct SettingsView: View {
 
     private var aboutSection: some View {
         Section("About") {
-            LabeledContent("App", value: "T3 Code (SwiftUI)")
+            LabeledContent("App", value: appDisplayName)
             LabeledContent("Platform", value: "Native SwiftUI")
             Link("Open source", destination: URL(string: "https://github.com/pingdotgg/t3code")!)
         }
+    }
+
+    private var appDisplayName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? "T3 Code SwiftUI"
     }
 
     private var deviceManager: any FeatureDeviceManaging {
