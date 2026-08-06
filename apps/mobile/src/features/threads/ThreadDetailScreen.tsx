@@ -16,7 +16,12 @@ import type {
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, View, type GestureResponderEvent } from "react-native";
+import {
+  Platform,
+  View,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+} from "react-native";
 import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { FadeInDown, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,6 +42,7 @@ import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
+  COMPOSER_PENDING_CARD_MIN_CHROME,
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
@@ -180,7 +186,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const composerExpandedRef = useRef(false);
+  const handleComposerExpandedChange = useCallback((expanded: boolean) => {
+    composerExpandedRef.current = expanded;
+    setComposerExpanded(expanded);
+  }, []);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
+  const [composerMeasuredHeight, setComposerMeasuredHeight] = useState<number | null>(null);
   const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
@@ -201,7 +213,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
-  const composerOverlapHeight = composerChrome + composerBottomInset;
+  const composerExtraChrome =
+    ((props.activePendingApproval === null ? 0 : 1) +
+      (props.activePendingUserInput === null ? 0 : 1)) *
+    COMPOSER_PENDING_CARD_MIN_CHROME;
+  const composerOverlapHeight = composerChrome + composerExtraChrome + composerBottomInset;
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -217,6 +233,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerOverlayRef,
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
     -nativeInsetOvercount,
+  );
+  const handleComposerOverlayLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onComposerLayout(event);
+      // expanded = keyboard transition, which manages its own inset
+      if (!composerExpandedRef.current) {
+        setComposerMeasuredHeight(event.nativeEvent.layout.height);
+      }
+    },
+    [onComposerLayout],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const showContent = props.showContent ?? true;
@@ -240,6 +266,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setAnchorMessageId(null);
     lastScrolledAnchorMessageIdRef.current = null;
     freeze.set(false);
+    setComposerMeasuredHeight(null);
   }, [freeze, selectedThreadKey]);
 
   useEffect(() => {
@@ -364,6 +391,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             freeze={freeze}
             anchorMessageId={anchorMessageId}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
+            composerMeasuredHeight={composerMeasuredHeight}
             contentTopInset={0}
             contentBottomInset={estimatedOverlayHeight}
             contentMaxWidth={contentMaxWidth}
@@ -386,7 +414,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           {/* No paddingTop here: the overlay's measured height becomes the
               list's bottom inset, so any padding above the pill/composer
               pushes the resting content floor up by the same amount. */}
-          <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+          <View ref={composerOverlayRef} onLayout={handleComposerOverlayLayout} className="w-full">
             <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
@@ -443,7 +471,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               onUpdateModelSelection={props.onUpdateThreadModelSelection}
               onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
               onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-              onExpandedChange={setComposerExpanded}
+              onExpandedChange={handleComposerExpandedChange}
             />
           </View>
         </KeyboardStickyView>

@@ -157,6 +157,7 @@ export interface ThreadFeedProps {
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
   readonly contentInsetEndAdjustment: SharedValue<number>;
+  readonly composerMeasuredHeight?: number | null;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly contentMaxWidth?: number;
@@ -1438,6 +1439,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // only region where layout shifts should animate. Starts true because the
   // list opens pinned to the end.
   const nearListEnd = useSharedValue(true);
+  const userDraggedSinceMountRef = useRef(false);
+  const handleScrollBeginDrag = useCallback(() => {
+    userDraggedSinceMountRef.current = true;
+  }, []);
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -1526,12 +1531,29 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // composer-height short of the end. Layout effect: it must land before the
   // list's first positioning tick or the one-shot initial scroll misses it.
   const listMountKey = `${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`;
+  const lastReprimedMountKeyRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
-    if (bottom > 0) {
-      props.listRef.current?.reportContentInset({ bottom });
+    const isInitialMountForKey = lastReprimedMountKeyRef.current !== listMountKey;
+    lastReprimedMountKeyRef.current = listMountKey;
+    if (isInitialMountForKey) {
+      nearListEnd.value = true;
+      userDraggedSinceMountRef.current = false;
     }
-  }, [listMountKey, props.contentInsetEndAdjustment, props.listRef]);
+    if (bottom <= 0) {
+      return;
+    }
+    props.listRef.current?.reportContentInset({ bottom });
+    if (!isInitialMountForKey && nearListEnd.value && !userDraggedSinceMountRef.current) {
+      props.listRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [
+    listMountKey,
+    props.composerMeasuredHeight,
+    props.contentInsetEndAdjustment,
+    props.listRef,
+    nearListEnd,
+  ]);
 
   const anchoredEndSpace = useMemo(
     () =>
@@ -1891,6 +1913,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             alignItemsAtEnd
             initialScrollAtEnd
             onScroll={handleScroll}
+            onScrollBeginDrag={handleScrollBeginDrag}
             scrollEventThrottle={16}
             ListHeaderComponent={
               usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
