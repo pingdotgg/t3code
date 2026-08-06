@@ -1,3 +1,4 @@
+import { isValidElement } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import {
   ProviderDriverKind,
@@ -5,6 +6,7 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { DraftId } from "../../composerDraftStore";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -244,5 +246,59 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+
+  it("forwards optionChangeBlocked through the composerProviderState seam", () => {
+    // ChatComposer passes traitsOptionChangeBlocked into these render helpers;
+    // prove the seam keeps the prop on the traits element so locked rows can
+    // disable without a toast path.
+    const models = modelWith([
+      selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
+    ]);
+    const args = {
+      provider: PROVIDER,
+      draftId: DraftId.make("draft-wiring"),
+      model: MODEL,
+      models,
+      modelOptions: selections(["effort", "low"]),
+      optionChangeBlocked: true,
+      prompt: "",
+      onPromptChange: () => {},
+    };
+    const optionChangeBlockedProp = (
+      node: ReturnType<typeof renderProviderTraitsPicker>,
+    ): boolean | undefined => {
+      if (!isValidElement(node)) {
+        return undefined;
+      }
+      return (node.props as { optionChangeBlocked?: boolean }).optionChangeBlocked;
+    };
+
+    const picker = renderProviderTraitsPicker(args);
+    const menu = renderProviderTraitsMenuContent(args);
+    expect(isValidElement(picker)).toBe(true);
+    expect(isValidElement(menu)).toBe(true);
+    expect(optionChangeBlockedProp(picker)).toBe(true);
+    expect(optionChangeBlockedProp(menu)).toBe(true);
+
+    const unlockedPicker = renderProviderTraitsPicker({
+      ...args,
+      optionChangeBlocked: false,
+    });
+    expect(isValidElement(unlockedPicker)).toBe(true);
+    expect(optionChangeBlockedProp(unlockedPicker)).toBe(false);
+
+    // Omitting the prop leaves it undefined so traits stay editable by default.
+    const omittedPicker = renderProviderTraitsPicker({
+      provider: PROVIDER,
+      draftId: DraftId.make("draft-wiring"),
+      model: MODEL,
+      models,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+    });
+    expect(isValidElement(omittedPicker)).toBe(true);
+    expect(optionChangeBlockedProp(omittedPicker)).toBeUndefined();
   });
 });

@@ -75,6 +75,7 @@ authenticated shows its status in **Settings** and fails at session start with t
 to run.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
+For Grok reasoning controls, see [Grok Build](./providers-grok.md).
 
 ## Next Steps
 

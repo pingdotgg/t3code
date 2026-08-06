@@ -4,9 +4,11 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  modelSelectionsEqual,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -27,6 +29,178 @@ export type ProviderGroup = {
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
 };
+
+export function threadShellHasStarted(
+  thread: Pick<EnvironmentThreadShell, "itemCount" | "latestRun" | "runtime"> | null | undefined,
+): boolean {
+  return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
+}
+
+/**
+ * Providers that cannot change models mid-thread bind option values the same
+ * way (Grok reasoning effort is applied as an agent spawn flag at session
+ * start and a loaded session keeps its original value), so a started thread
+ * cannot apply a new option selection on that provider instance. Mirrors the
+ * web composer's `isStartedThreadOptionChangeBlocked`. Cross-provider handoff
+ * drafts use a different instance id and stay editable.
+ */
+export function startedThreadOptionChangeBlocked(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly threadHasStarted: boolean;
+  readonly threadRuntime: { readonly providerInstanceId: string } | null | undefined;
+  readonly selectionInstanceId: string;
+}): boolean {
+  if (!input.threadHasStarted) {
+    return false;
+  }
+  const lockedInstanceId = input.threadRuntime?.providerInstanceId ?? input.selectionInstanceId;
+  if (lockedInstanceId !== input.selectionInstanceId) {
+    return false;
+  }
+  const provider = input.config?.providers.find(
+    (snapshot) => snapshot.instanceId === input.selectionInstanceId,
+  );
+  return provider?.requiresNewThreadForModelChange === true;
+}
+
+/**
+ * Same-instance model/option changes are rejected on a session-bound started
+ * thread. A draft that targets another provider instance is handoff and must
+ * not be blocked.
+ */
+export function isSameInstanceSessionBoundChangeBlocked(input: {
+  readonly optionChangeBlocked: boolean;
+  readonly committedInstanceId: string;
+  readonly requestedInstanceId: string;
+}): boolean {
+  return input.optionChangeBlocked && input.requestedInstanceId === input.committedInstanceId;
+}
+
+/**
+ * Decide how a model-menu selection should update composer draft state on a
+ * started session-bound thread.
+ *
+ * - Cross-provider (different instance) handoff remains allowed.
+ * - Reselecting the committed instance and model restores the exact committed
+ *   selection so a handoff draft is cancelled and applied effort survives menu
+ *   normalization that may supply default options.
+ * - A different model on the same committed instance is rejected.
+ */
+export type SessionBoundModelSelectionUpdate =
+  | { readonly type: "apply"; readonly selection: ModelSelection }
+  | { readonly type: "restore_committed"; readonly selection: ModelSelection }
+  | { readonly type: "reject_model_change" };
+
+export function resolveSessionBoundModelSelectionUpdate(input: {
+  readonly optionChangeBlocked: boolean;
+  readonly committed: ModelSelection;
+  readonly requested: ModelSelection;
+}): SessionBoundModelSelectionUpdate {
+  if (!input.optionChangeBlocked) {
+    return { type: "apply", selection: input.requested };
+  }
+  if (input.requested.instanceId !== input.committed.instanceId) {
+    return { type: "apply", selection: input.requested };
+  }
+  if (input.requested.model !== input.committed.model) {
+    return { type: "reject_model_change" };
+  }
+  // Same instance + same model: always pin to the exact committed selection.
+  // Menu normalization may have replaced applied effort with defaults; a prior
+  // cross-provider draft is also replaced so the handoff is cancelled.
+  return { type: "restore_committed", selection: input.committed };
+}
+
+/**
+ * On a started session-bound thread, same-instance and same-model display uses
+ * the committed modelSelection. Handoff and legacy model-change drafts remain
+ * visible so send can handle them explicitly instead of silently substituting
+ * the committed model. Draft runtime/interaction settings stay independent.
+ */
+export function resolveEffectiveModelSelection(input: {
+  readonly draftModelSelection: ModelSelection | null | undefined;
+  readonly committedModelSelection: ModelSelection;
+  readonly optionChangeBlocked: boolean;
+}): ModelSelection {
+  const draft = input.draftModelSelection;
+  if (
+    input.optionChangeBlocked &&
+    (draft == null ||
+      (draft.instanceId === input.committedModelSelection.instanceId &&
+        draft.model === input.committedModelSelection.model))
+  ) {
+    return input.committedModelSelection;
+  }
+  return draft ?? input.committedModelSelection;
+}
+
+/**
+ * Resolve a durable outbox entry's model selection against the committed
+ * thread selection using the same session-bound decision as live send. Stale
+ * same-instance model or effort changes pin to committed so settings sync does
+ * not retry a permanent rejection; cross-provider handoff drafts remain intact.
+ */
+export function resolveOutboxModelSelection(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly threadHasStarted: boolean;
+  readonly threadRuntime: { readonly providerInstanceId: string } | null | undefined;
+  readonly committedModelSelection: ModelSelection;
+  readonly queuedModelSelection: ModelSelection | null | undefined;
+}): ModelSelection {
+  const optionChangeBlocked = startedThreadOptionChangeBlocked({
+    config: input.config,
+    threadHasStarted: input.threadHasStarted,
+    threadRuntime: input.threadRuntime,
+    selectionInstanceId: input.committedModelSelection.instanceId,
+  });
+  const decision = resolveSessionBoundModelSelectionUpdate({
+    optionChangeBlocked,
+    committed: input.committedModelSelection,
+    requested: input.queuedModelSelection ?? input.committedModelSelection,
+  });
+  return decision.type === "reject_model_change"
+    ? input.committedModelSelection
+    : decision.selection;
+}
+
+/**
+ * Delivery-time outbox selection: pick the queued message's environment from
+ * the multi-environment config map, then pin stale same-instance spawn-bound
+ * options to committed. Cross-provider handoff drafts remain intact. A missing
+ * environment config defers only a conflicting same-instance selection; other
+ * deliveries do not need provider lock metadata.
+ */
+export function resolveOutboxModelSelectionForEnvironment(input: {
+  readonly serverConfigsByEnvironment: ReadonlyMap<string, T3ServerConfig>;
+  readonly environmentId: string;
+  readonly threadHasStarted: boolean;
+  readonly threadRuntime: { readonly providerInstanceId: string } | null | undefined;
+  readonly committedModelSelection: ModelSelection;
+  readonly queuedModelSelection: ModelSelection | null | undefined;
+}): ModelSelection | null {
+  const config = input.serverConfigsByEnvironment.get(input.environmentId);
+  if (config === undefined) {
+    const queued = input.queuedModelSelection ?? input.committedModelSelection;
+    const lockedInstanceId =
+      input.threadRuntime?.providerInstanceId ?? input.committedModelSelection.instanceId;
+    if (
+      !input.threadHasStarted ||
+      lockedInstanceId !== input.committedModelSelection.instanceId ||
+      queued.instanceId !== input.committedModelSelection.instanceId ||
+      modelSelectionsEqual(queued, input.committedModelSelection)
+    ) {
+      return queued;
+    }
+    return null;
+  }
+  return resolveOutboxModelSelection({
+    config,
+    threadHasStarted: input.threadHasStarted,
+    threadRuntime: input.threadRuntime,
+    committedModelSelection: input.committedModelSelection,
+    queuedModelSelection: input.queuedModelSelection,
+  });
+}
 
 function providerDisplayLabel(provider: {
   readonly displayName?: string | undefined;

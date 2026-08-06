@@ -23,11 +23,17 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
+  isStartedThreadOptionChangeBlocked,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveComposerDisplayModelOptions,
+  resolveDispatchedModelSelection,
+  resolveModelChangeRuntime,
+  resolveSessionLockedInstanceId,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveTraitsOptionChangeBlocked,
   resolveSendEnvMode,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
@@ -314,6 +320,381 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+});
+
+describe("resolveModelChangeRuntime", () => {
+  it("uses shell runtime while the detailed projection is loading", () => {
+    const shellRuntime = makeThread({ runtime: readySession }).runtime;
+    expect(
+      resolveModelChangeRuntime({
+        projectedRuntime: null,
+        shellRuntime,
+      }),
+    ).toBe(shellRuntime);
+  });
+
+  it("keeps a failed first turn without a runtime unlocked", () => {
+    expect(
+      resolveModelChangeRuntime({
+        projectedRuntime: null,
+        shellRuntime: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("isStartedThreadOptionChangeBlocked", () => {
+  const grokPrimary = ProviderInstanceId.make("grok");
+  const grokSecondary = ProviderInstanceId.make("grok_work");
+  const providers = [
+    {
+      instanceId: ProviderInstanceId.make("codex"),
+    },
+    {
+      instanceId: grokPrimary,
+      requiresNewThreadForModelChange: true,
+    },
+    {
+      instanceId: grokSecondary,
+      requiresNewThreadForModelChange: true,
+    },
+  ];
+
+  it("allows option changes before a provider session has started", () => {
+    expect(
+      isStartedThreadOptionChangeBlocked({
+        providers,
+        lockedInstanceId: null,
+        instanceId: grokPrimary,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows started-session option changes for unrestricted providers", () => {
+    expect(
+      isStartedThreadOptionChangeBlocked({
+        providers,
+        lockedInstanceId: ProviderInstanceId.make("codex"),
+        instanceId: ProviderInstanceId.make("codex"),
+      }),
+    ).toBe(false);
+  });
+
+  it("allows option changes when composing for a provider other than the running one", () => {
+    expect(
+      isStartedThreadOptionChangeBlocked({
+        providers,
+        lockedInstanceId: ProviderInstanceId.make("codex"),
+        instanceId: grokPrimary,
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks started-session option changes for the active session-bound instance", () => {
+    expect(
+      isStartedThreadOptionChangeBlocked({
+        providers,
+        lockedInstanceId: grokPrimary,
+        instanceId: grokPrimary,
+      }),
+    ).toBe(true);
+  });
+
+  it("allows options when switching between two Grok instances", () => {
+    // Active session is grok; composing for grok_work must keep that
+    // instance's options editable and independently dispatchable.
+    expect(
+      isStartedThreadOptionChangeBlocked({
+        providers,
+        lockedInstanceId: grokPrimary,
+        instanceId: grokSecondary,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveDispatchedModelSelection", () => {
+  const grokInstance = ProviderInstanceId.make("grok");
+  const committedAbsentOptions = {
+    instanceId: grokInstance,
+    model: "grok-4.5",
+  };
+  const materializedDefaultHigh = {
+    instanceId: grokInstance,
+    model: "grok-4.5",
+    options: [{ id: "reasoningEffort", value: "high" as const }],
+  };
+  const handoffSelection = {
+    instanceId: ProviderInstanceId.make("grok_work"),
+    model: "grok-4.5",
+    options: [{ id: "reasoningEffort", value: "low" as const }],
+  };
+
+  it("dispatches the exact committed selection when locked with absent options", () => {
+    // Descriptor normalization would materialize default High for display;
+    // dispatch must not rewrite pre-feature threads that never stored options.
+    const dispatched = resolveDispatchedModelSelection({
+      optionChangeBlocked: true,
+      committedModelSelection: committedAbsentOptions,
+      selectedInstanceId: grokInstance,
+      selectedModel: "grok-4.5",
+      selectedModelOptionsForDispatch: materializedDefaultHigh.options,
+    });
+    expect(dispatched).toEqual(committedAbsentOptions);
+    expect(dispatched).not.toHaveProperty("options");
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: committedAbsentOptions,
+        nextModelSelection: dispatched,
+        currentBranch: "main",
+        nextBranch: "main",
+      }),
+    ).toBeNull();
+  });
+
+  it("dispatches normalized options when unlocked", () => {
+    expect(
+      resolveDispatchedModelSelection({
+        optionChangeBlocked: false,
+        committedModelSelection: committedAbsentOptions,
+        selectedInstanceId: grokInstance,
+        selectedModel: "grok-4.5",
+        selectedModelOptionsForDispatch: materializedDefaultHigh.options,
+      }),
+    ).toEqual(materializedDefaultHigh);
+  });
+
+  it("dispatches the new instance selection for cross-instance handoff", () => {
+    // optionChangeBlocked is false when selected instance differs from lock.
+    expect(
+      resolveDispatchedModelSelection({
+        optionChangeBlocked: false,
+        committedModelSelection: committedAbsentOptions,
+        selectedInstanceId: handoffSelection.instanceId,
+        selectedModel: handoffSelection.model,
+        selectedModelOptionsForDispatch: handoffSelection.options,
+      }),
+    ).toEqual(handoffSelection);
+  });
+
+  it("does not silently substitute the committed model for a locked draft model change", () => {
+    expect(
+      resolveDispatchedModelSelection({
+        optionChangeBlocked: true,
+        committedModelSelection: committedAbsentOptions,
+        selectedInstanceId: grokInstance,
+        selectedModel: "grok-build",
+        selectedModelOptionsForDispatch: undefined,
+      }),
+    ).toEqual({
+      instanceId: grokInstance,
+      model: "grok-build",
+    });
+  });
+});
+
+describe("composed ChatComposer traits lock source", () => {
+  const grokPrimary = ProviderInstanceId.make("grok");
+  const grokSecondary = ProviderInstanceId.make("grok_work");
+  const providers = [
+    { instanceId: grokPrimary, requiresNewThreadForModelChange: true },
+    { instanceId: grokSecondary, requiresNewThreadForModelChange: true },
+  ];
+  const committedLow = {
+    instanceId: grokPrimary,
+    model: "grok-4.5",
+    options: [{ id: "reasoningEffort", value: "low" as const }],
+  };
+  const draftHigh = {
+    instanceId: grokPrimary,
+    model: "grok-4.5",
+    options: [{ id: "reasoningEffort", value: "high" as const }],
+  };
+  const handoffSelection = {
+    instanceId: grokSecondary,
+    model: "grok-4.5",
+    options: [{ id: "reasoningEffort", value: "medium" as const }],
+  };
+
+  it("keys the lock to the active session instance, not merely the driver kind", () => {
+    expect(
+      resolveSessionLockedInstanceId({
+        hasStartedThread: true,
+        runtimeProviderInstanceId: grokPrimary,
+        committedModelSelectionInstanceId: grokSecondary,
+      }),
+    ).toBe(grokPrimary);
+
+    // Selecting the other Grok instance (same driver kind) stays unlocked.
+    expect(
+      resolveTraitsOptionChangeBlocked({
+        providers,
+        hasStartedThread: true,
+        runtimeProviderInstanceId: grokPrimary,
+        committedModelSelectionInstanceId: grokPrimary,
+        selectedInstanceId: grokSecondary,
+      }),
+    ).toBe(false);
+  });
+
+  it("locks traits and dispatches the committed selection for the active instance", () => {
+    const optionChangeBlocked = resolveTraitsOptionChangeBlocked({
+      providers,
+      hasStartedThread: true,
+      runtimeProviderInstanceId: grokPrimary,
+      committedModelSelectionInstanceId: grokPrimary,
+      selectedInstanceId: grokPrimary,
+    });
+    expect(optionChangeBlocked).toBe(true);
+    expect(
+      resolveDispatchedModelSelection({
+        optionChangeBlocked,
+        committedModelSelection: committedLow,
+        selectedInstanceId: draftHigh.instanceId,
+        selectedModel: draftHigh.model,
+        selectedModelOptionsForDispatch: draftHigh.options,
+      }),
+    ).toEqual(committedLow);
+  });
+
+  it("does not lock when the draft handoff targets another instance", () => {
+    const optionChangeBlocked = resolveTraitsOptionChangeBlocked({
+      providers,
+      hasStartedThread: true,
+      runtimeProviderInstanceId: grokPrimary,
+      committedModelSelectionInstanceId: grokPrimary,
+      selectedInstanceId: grokSecondary,
+    });
+    expect(optionChangeBlocked).toBe(false);
+    expect(
+      resolveDispatchedModelSelection({
+        optionChangeBlocked,
+        committedModelSelection: committedLow,
+        selectedInstanceId: handoffSelection.instanceId,
+        selectedModel: handoffSelection.model,
+        selectedModelOptionsForDispatch: handoffSelection.options,
+      }),
+    ).toEqual(handoffSelection);
+  });
+
+  it("leaves options unlocked when there is no session lock", () => {
+    expect(
+      resolveSessionLockedInstanceId({
+        hasStartedThread: false,
+        runtimeProviderInstanceId: grokPrimary,
+        committedModelSelectionInstanceId: grokPrimary,
+      }),
+    ).toBeNull();
+    expect(
+      resolveTraitsOptionChangeBlocked({
+        providers,
+        hasStartedThread: false,
+        runtimeProviderInstanceId: grokPrimary,
+        committedModelSelectionInstanceId: grokPrimary,
+        selectedInstanceId: grokPrimary,
+      }),
+    ).toBe(false);
+  });
+
+  it("locks a custom Grok instance from committed metadata while runtime is loading", () => {
+    expect(
+      resolveTraitsOptionChangeBlocked({
+        providers,
+        hasStartedThread: true,
+        runtimeProviderInstanceId: null,
+        committedModelSelectionInstanceId: grokSecondary,
+        selectedInstanceId: grokSecondary,
+      }),
+    ).toBe(true);
+  });
+
+  it("swaps display options to committed while locked and draft while unlocked", () => {
+    const committedOptions = committedLow.options;
+    const draftOptions = draftHigh.options;
+    // Locked same-instance: ChatComposer feeds committed options into
+    // getComposerProviderState so the traits UI matches the in-force value.
+    expect(
+      resolveComposerDisplayModelOptions({
+        optionChangeBlocked: true,
+        selectedInstanceId: grokPrimary,
+        selectedModel: "grok-4.5",
+        committedModelSelectionInstanceId: grokPrimary,
+        committedModel: "grok-4.5",
+        committedModelOptions: committedOptions,
+        draftModelOptions: draftOptions,
+      }),
+    ).toBe(committedOptions);
+    // Cross-instance handoff and unlocked threads keep draft options.
+    expect(
+      resolveComposerDisplayModelOptions({
+        optionChangeBlocked: false,
+        selectedInstanceId: grokSecondary,
+        selectedModel: "grok-4.5",
+        committedModelSelectionInstanceId: grokPrimary,
+        committedModel: "grok-4.5",
+        committedModelOptions: committedOptions,
+        draftModelOptions: handoffSelection.options,
+      }),
+    ).toBe(handoffSelection.options);
+    // Pre-feature threads with absent committed options stay absent on display.
+    expect(
+      resolveComposerDisplayModelOptions({
+        optionChangeBlocked: true,
+        selectedInstanceId: grokPrimary,
+        selectedModel: "grok-4.5",
+        committedModelSelectionInstanceId: grokPrimary,
+        committedModel: "grok-4.5",
+        committedModelOptions: undefined,
+        draftModelOptions: draftOptions,
+      }),
+    ).toBeUndefined();
+    // Empty committed options arrays stay empty (not rewritten to draft).
+    expect(
+      resolveComposerDisplayModelOptions({
+        optionChangeBlocked: true,
+        selectedInstanceId: grokPrimary,
+        selectedModel: "grok-4.5",
+        committedModelSelectionInstanceId: grokPrimary,
+        committedModel: "grok-4.5",
+        committedModelOptions: [],
+        draftModelOptions: draftOptions,
+      }),
+    ).toEqual([]);
+
+    // A legacy or stale draft for another model keeps its own option state;
+    // dispatch must not silently substitute the committed model.
+    expect(
+      resolveComposerDisplayModelOptions({
+        optionChangeBlocked: true,
+        selectedInstanceId: grokPrimary,
+        selectedModel: "grok-build",
+        committedModelSelectionInstanceId: grokPrimary,
+        committedModel: "grok-4.5",
+        committedModelOptions: committedOptions,
+        draftModelOptions: draftOptions,
+      }),
+    ).toBe(draftOptions);
+  });
+
+  it("uses draft options when runtime lock is one Grok instance but committed metadata is another", () => {
+    // Narrow handoff window: session/runtime still on grokPrimary so selecting
+    // that instance reports optionChangeBlocked, but committed metadata has
+    // already moved to grokSecondary. Display must not show secondary's
+    // options while primary is selected.
+    const primaryDraftOptions = draftHigh.options;
+    const secondaryCommittedOptions = handoffSelection.options;
+    expect(
+      resolveComposerDisplayModelOptions({
+        optionChangeBlocked: true,
+        selectedInstanceId: grokPrimary,
+        selectedModel: "grok-4.5",
+        committedModelSelectionInstanceId: grokSecondary,
+        committedModel: "grok-4.5",
+        committedModelOptions: secondaryCommittedOptions,
+        draftModelOptions: primaryDraftOptions,
+      }),
+    ).toBe(primaryDraftOptions);
   });
 });
 

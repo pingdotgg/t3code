@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay } from "./TraitsPicker";
+import {
+  buildTraitsTriggerDisplay,
+  LOCKED_PROVIDER_OPTION_TOAST,
+  resolveProviderOptionChange,
+} from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -43,6 +47,94 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
     ultrathinkPromptControlled: false,
   });
 }
+
+describe("resolveProviderOptionChange", () => {
+  it("ignores re-selecting the current select value (locked or unlocked)", () => {
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [EFFORT, CONTEXT_WINDOW],
+        descriptorId: "reasoningEffort",
+        nextValue: "high",
+        optionChangeBlocked: true,
+      }),
+    ).toEqual({ action: "ignore" });
+  });
+
+  it("ignores re-selecting the current boolean value", () => {
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [fastModeDescriptor(true)],
+        descriptorId: "fastMode",
+        nextValue: true,
+        optionChangeBlocked: false,
+      }),
+    ).toEqual({ action: "ignore" });
+  });
+
+  it("ignores currentValue ultrathink re-select even when the descriptor store differs", () => {
+    // Prompt-controlled ultrathink uses currentValue while the descriptor may still
+    // hold the sticky session value (e.g. "high"). Same-value clicks must stay silent.
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [EFFORT],
+        descriptorId: "reasoningEffort",
+        nextValue: "ultrathink",
+        optionChangeBlocked: true,
+        currentValue: "ultrathink",
+      }),
+    ).toEqual({ action: "ignore" });
+  });
+
+  it("warns for a locked select change with no next descriptors", () => {
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [EFFORT, CONTEXT_WINDOW],
+        descriptorId: "reasoningEffort",
+        nextValue: "max",
+        optionChangeBlocked: true,
+      }),
+    ).toEqual({ action: "warn", toast: LOCKED_PROVIDER_OPTION_TOAST });
+  });
+
+  it("warns for a locked boolean change with no next descriptors", () => {
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [fastModeDescriptor(false)],
+        descriptorId: "fastMode",
+        nextValue: true,
+        optionChangeBlocked: true,
+      }),
+    ).toEqual({ action: "warn", toast: LOCKED_PROVIDER_OPTION_TOAST });
+  });
+
+  it("returns next descriptors for an unlocked select change", () => {
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [EFFORT, CONTEXT_WINDOW],
+        descriptorId: "reasoningEffort",
+        nextValue: "max",
+        optionChangeBlocked: false,
+      }),
+    ).toEqual({
+      action: "apply",
+      nextDescriptors: [{ ...EFFORT, currentValue: "max" }, CONTEXT_WINDOW],
+    });
+  });
+
+  it("returns next descriptors for an unlocked boolean change", () => {
+    expect(
+      resolveProviderOptionChange({
+        descriptors: [EFFORT, fastModeDescriptor(false)],
+        descriptorId: "fastMode",
+        nextValue: true,
+        optionChangeBlocked: false,
+      }),
+    ).toEqual({
+      action: "apply",
+      nextDescriptors: [EFFORT, fastModeDescriptor(true)],
+    });
+  });
+});
 
 describe("buildTraitsTriggerDisplay", () => {
   it("omits fast mode from the label entirely when it is off", () => {

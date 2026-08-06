@@ -13,6 +13,20 @@ import {
 
 const PROVIDER_OPTION_EVENT_PREFIX = "provider-option:";
 
+export const LOCKED_PROVIDER_OPTION_ALERT = {
+  title: "Start a new chat to change options",
+  description: "This provider applies these options when a conversation starts.",
+} as const;
+
+export type ProviderOptionMenuChangeResolution =
+  | { action: "ignore" }
+  | {
+      action: "warn";
+      title: (typeof LOCKED_PROVIDER_OPTION_ALERT)["title"];
+      description: (typeof LOCKED_PROVIDER_OPTION_ALERT)["description"];
+    }
+  | { action: "apply"; options: ReadonlyArray<ProviderOptionSelection> };
+
 function providerOptionEvent(id: string, value: string | boolean): string {
   return `${PROVIDER_OPTION_EVENT_PREFIX}${encodeURIComponent(JSON.stringify({ id, value }))}`;
 }
@@ -45,6 +59,57 @@ function parseProviderOptionEvent(
   return null;
 }
 
+function descriptorCurrentValue(
+  descriptor: ProviderOptionDescriptor,
+): string | boolean | undefined {
+  if (descriptor.type === "boolean") {
+    return descriptor.currentValue ?? false;
+  }
+  return getProviderOptionCurrentValue(descriptor);
+}
+
+function tryBuildProviderOptionUpdate(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  event: string,
+): {
+  readonly currentValue: string | boolean | undefined;
+  readonly nextValue: string | boolean;
+  readonly options: ReadonlyArray<ProviderOptionSelection>;
+} | null {
+  const selection = parseProviderOptionEvent(event);
+  if (!selection) {
+    return null;
+  }
+
+  const descriptor = descriptors.find((candidate) => candidate.id === selection.id);
+  if (!descriptor) {
+    return null;
+  }
+  if (
+    (descriptor.type === "boolean" && typeof selection.value !== "boolean") ||
+    (descriptor.type === "select" &&
+      (typeof selection.value !== "string" ||
+        !descriptor.options.some((option) => option.id === selection.value)))
+  ) {
+    return null;
+  }
+
+  const nextDescriptors = descriptors.map((candidate) =>
+    candidate.id === descriptor.id
+      ? {
+          ...candidate,
+          currentValue: selection.value,
+        }
+      : candidate,
+  ) as ReadonlyArray<ProviderOptionDescriptor>;
+
+  return {
+    currentValue: descriptorCurrentValue(descriptor),
+    nextValue: selection.value,
+    options: buildProviderOptionSelectionsFromDescriptors(nextDescriptors) ?? [],
+  };
+}
+
 export function resolveProviderOptionDescriptors(input: {
   readonly capabilities: ModelCapabilities | null | undefined;
   readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
@@ -62,10 +127,7 @@ export function buildProviderOptionMenuActions(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
 ): ReadonlyArray<MenuAction> {
   return descriptors.map((descriptor) => {
-    const currentValue =
-      descriptor.type === "boolean"
-        ? (descriptor.currentValue ?? false)
-        : getProviderOptionCurrentValue(descriptor);
+    const currentValue = descriptorCurrentValue(descriptor);
     const choices =
       descriptor.type === "select"
         ? descriptor.options.map((option) => ({
@@ -106,36 +168,37 @@ export function providerOptionsConfigurationLabel(
   return labels.length > 0 ? labels.join(" · ") : "Configuration";
 }
 
+/**
+ * Parse a provider-option menu event and decide ignore / warn / apply.
+ * Used by ThreadComposer so locked alternates stay tappable and warn, while
+ * re-selecting the current value is a silent no-op.
+ */
+export function resolveProviderOptionMenuChange(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  event: string,
+  input?: { readonly optionsLocked?: boolean },
+): ProviderOptionMenuChangeResolution | null {
+  const update = tryBuildProviderOptionUpdate(descriptors, event);
+  if (!update) {
+    return null;
+  }
+  if (update.currentValue === update.nextValue) {
+    return { action: "ignore" };
+  }
+  if (input?.optionsLocked === true) {
+    return {
+      action: "warn",
+      title: LOCKED_PROVIDER_OPTION_ALERT.title,
+      description: LOCKED_PROVIDER_OPTION_ALERT.description,
+    };
+  }
+  return { action: "apply", options: update.options };
+}
+
+/** Always applies a valid provider-option event (new-thread drafts stay fully mutable). */
 export function applyProviderOptionMenuEvent(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
   event: string,
 ): ReadonlyArray<ProviderOptionSelection> | null {
-  const selection = parseProviderOptionEvent(event);
-  if (!selection) {
-    return null;
-  }
-
-  const descriptor = descriptors.find((candidate) => candidate.id === selection.id);
-  if (!descriptor) {
-    return null;
-  }
-  if (
-    (descriptor.type === "boolean" && typeof selection.value !== "boolean") ||
-    (descriptor.type === "select" &&
-      (typeof selection.value !== "string" ||
-        !descriptor.options.some((option) => option.id === selection.value)))
-  ) {
-    return null;
-  }
-
-  const nextDescriptors = descriptors.map((candidate) =>
-    candidate.id === descriptor.id
-      ? {
-          ...candidate,
-          currentValue: selection.value,
-        }
-      : candidate,
-  ) as ReadonlyArray<ProviderOptionDescriptor>;
-
-  return buildProviderOptionSelectionsFromDescriptors(nextDescriptors) ?? [];
+  return tryBuildProviderOptionUpdate(descriptors, event)?.options ?? null;
 }
