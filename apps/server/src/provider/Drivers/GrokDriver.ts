@@ -3,7 +3,10 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -17,6 +20,8 @@ import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
   enrichGrokSnapshot,
+  ensureGrokStaticSlashCommands,
+  mapAcpCommandsToCatalog,
 } from "../Layers/GrokProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -106,27 +111,75 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         env: processEnv,
       });
 
+      const commandCatalogRef = yield* Ref.make({
+        received: false,
+        slashCommands: [] as ServerProvider["slashCommands"],
+        skills: [] as ServerProvider["skills"],
+      });
+      // Live available_commands_update (and initialize meta seed) must push a
+      // snapshot change so clients do not wait for the next health probe.
+      const commandCatalogChanges = yield* Effect.acquireRelease(
+        PubSub.unbounded<void>(),
+        PubSub.shutdown,
+      );
+
+      const mergeCommandCatalog = (snapshot: ServerProvider): Effect.Effect<ServerProvider> =>
+        Ref.get(commandCatalogRef).pipe(
+          Effect.map((catalog) => {
+            // Until a live catalog arrives, keep discovery/probe catalogs on the snapshot.
+            if (!catalog.received) {
+              return {
+                ...snapshot,
+                slashCommands: ensureGrokStaticSlashCommands(snapshot.slashCommands),
+              };
+            }
+            // Once received, apply even when empty so clients clear stale entries,
+            // but always re-attach static commands (e.g. compact) if missing.
+            return {
+              ...snapshot,
+              slashCommands: ensureGrokStaticSlashCommands(catalog.slashCommands),
+              skills: catalog.skills,
+            };
+          }),
+        );
+
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        onAvailableCommands: (commands) =>
+          Effect.gen(function* () {
+            const catalog = mapAcpCommandsToCatalog(commands);
+            yield* Ref.set(commandCatalogRef, {
+              received: true,
+              slashCommands: ensureGrokStaticSlashCommands(catalog.slashCommands),
+              skills: catalog.skills,
+            });
+            yield* PubSub.publish(commandCatalogChanges, undefined);
+          }),
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
+        Effect.flatMap(mergeCommandCatalog),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
+      const managedSnapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<GrokSettings>
+      >({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+          buildInitialGrokProviderSnapshot(settings.provider).pipe(
+            Effect.map(stampIdentity),
+            Effect.flatMap(mergeCommandCatalog),
+          ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichGrokSnapshot({
@@ -147,6 +200,22 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
             }),
         ),
       );
+
+      const snapshot = {
+        ...managedSnapshot,
+        getSnapshot: managedSnapshot.getSnapshot.pipe(Effect.flatMap(mergeCommandCatalog)),
+        get streamChanges() {
+          const managedChanges = Stream.mapEffect(
+            managedSnapshot.streamChanges,
+            mergeCommandCatalog,
+          );
+          const catalogDrivenChanges = Stream.mapEffect(
+            Stream.fromPubSub(commandCatalogChanges),
+            () => managedSnapshot.getSnapshot.pipe(Effect.flatMap(mergeCommandCatalog)),
+          );
+          return Stream.merge(managedChanges, catalogDrivenChanges);
+        },
+      };
 
       return {
         instanceId,
