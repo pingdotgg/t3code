@@ -297,9 +297,8 @@ const faqs = [
             </svg>
             <span>Connect</span>
           </h2>
-          <p class="connect-command"><code>npx t3</code></p>
           <p class="connect-description">
-            Enable T3 Connect. Use <code>npx t3 pair</code> to connect any device
+            Enable T3 Connect. Run <code>npx t3 pair</code> to connect any device
             and use T3 Code from anywhere.
           </p>
         </div>
@@ -1721,20 +1720,9 @@ const faqs = [
     font-weight: 500;
   }
 
-  #connect .showcase-copy .section-head .connect-command {
-    font-size: clamp(22px, 2vw, 28px);
-    line-height: 1.25;
-  }
-
-  #connect .showcase-copy .section-head .connect-command code {
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.76em;
-  }
-
   #connect .showcase-copy .section-head .connect-description {
     max-width: 520px;
-    margin-top: 22px;
+    margin-top: 18px;
     color: var(--fg-muted);
     font-size: clamp(16px, 1.35vw, 19px);
     line-height: 1.5;
@@ -1742,6 +1730,11 @@ const faqs = [
   }
 
   #connect .connect-description code {
+    display: inline-block;
+    padding: 0.16em 0.42em;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0.4em;
+    background: rgba(255, 255, 255, 0.055);
     color: var(--fg);
     font-family: var(--font-mono);
     font-size: 0.88em;
