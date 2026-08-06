@@ -1886,6 +1886,24 @@ export default function SidebarV2() {
         return target ? [{ ...update, target }] : [];
       });
       if (requests.length !== updates.length) return;
+      if (
+        requests.length > 1 &&
+        requests.some(
+          (request) =>
+            serverConfigs.get(request.target.environmentId)?.environment.capabilities
+              .threadPinReordering !== true,
+        )
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to reorder pinned thread",
+            description:
+              "Pinned ordering needs compacting. Update all connected servers before trying again.",
+          }),
+        );
+        return;
+      }
       setPendingPinnedOrderByKey((current) => {
         const next = new Map(current);
         for (const request of requests) next.set(request.threadId, request.pinnedOrder);
@@ -1946,7 +1964,7 @@ export default function SidebarV2() {
         });
       })();
     },
-    [pinnedThreads, reorderPinnedThread],
+    [pinnedThreads, reorderPinnedThread, serverConfigs],
   );
   const handlePinnedThreadDragEnd = useCallback(
     (event: DragEndEvent) => {

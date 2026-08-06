@@ -17,7 +17,15 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
-import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
+import {
+  Alert,
+  Platform,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+  useColorScheme,
+} from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -581,6 +589,16 @@ function ThreadNavigationSidebarPane(
         return updateThread ? [{ update, thread: updateThread }] : [];
       });
       if (requests.length !== updates.length) return;
+      if (
+        requests.length > 1 &&
+        requests.some((request) => !pinReorderingEnvironmentIds.has(request.thread.environmentId))
+      ) {
+        Alert.alert(
+          "Could not reorder pinned thread",
+          "Pinned ordering needs compacting. Update all connected servers before trying again.",
+        );
+        return;
+      }
       pinnedReorderInFlightRef.current = true;
       setPinnedReorderInFlight(true);
       void (async () => {
@@ -602,7 +620,7 @@ function ThreadNavigationSidebarPane(
         }
       })();
     },
-    [orderedPinnedThreads, reorderPinnedThread],
+    [orderedPinnedThreads, pinReorderingEnvironmentIds, reorderPinnedThread],
   );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).

@@ -24,7 +24,7 @@ import type {
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Platform, Pressable, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -692,6 +692,16 @@ export function HomeScreen(props: HomeScreenProps) {
         return updateThread ? [{ update, thread: updateThread }] : [];
       });
       if (requests.length !== updates.length) return;
+      if (
+        requests.length > 1 &&
+        requests.some((request) => !pinReorderingEnvironmentIds.has(request.thread.environmentId))
+      ) {
+        Alert.alert(
+          "Could not reorder pinned thread",
+          "Pinned ordering needs compacting. Update all connected servers before trying again.",
+        );
+        return;
+      }
       pinnedReorderInFlightRef.current = true;
       setPinnedReorderInFlight(true);
       void (async () => {
@@ -719,7 +729,7 @@ export function HomeScreen(props: HomeScreenProps) {
         }
       })();
     },
-    [orderedPinnedThreads, props.onReorderPinnedThread],
+    [orderedPinnedThreads, pinReorderingEnvironmentIds, props.onReorderPinnedThread],
   );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
