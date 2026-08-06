@@ -1,12 +1,17 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
+/** Which side of a version mismatch is behind, or unknown when ordering is inconclusive. */
+export type VersionOutdatedSide = "client" | "server" | "unknown";
+
 export interface VersionMismatch {
   readonly clientVersion: string;
   readonly serverVersion: string;
+  readonly outdatedSide: VersionOutdatedSide;
   readonly hint: string;
 }
 
@@ -23,6 +28,31 @@ function normalizeVersion(version: string | null | undefined): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+export function resolveVersionOutdatedSide(
+  clientVersion: string,
+  serverVersion: string,
+): VersionOutdatedSide {
+  const comparison = compareSemverVersions(clientVersion, serverVersion);
+  if (comparison < 0) {
+    return "client";
+  }
+  if (comparison > 0) {
+    return "server";
+  }
+  return "unknown";
+}
+
+function versionMismatchHint(outdatedSide: VersionOutdatedSide): string {
+  switch (outdatedSide) {
+    case "client":
+      return "Version mismatch. Update the client to the same T3 Code version as the server.";
+    case "server":
+      return "Version mismatch. Update the server to the same T3 Code version as the client.";
+    default:
+      return "Version mismatch. Try syncing the client and server to the same T3 Code version.";
+  }
+}
+
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
 ): VersionMismatch | null {
@@ -36,10 +66,13 @@ export function resolveVersionMismatch(
     return null;
   }
 
+  const outdatedSide = resolveVersionOutdatedSide(normalizedClientVersion, normalizedServerVersion);
+
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
-    hint: "Version mismatch. Try syncing the client and server to the same T3 Code version.",
+    outdatedSide,
+    hint: versionMismatchHint(outdatedSide),
   };
 }
 
@@ -77,6 +110,11 @@ export function serverUpdateGuidance(
     default:
       return `Relaunch the ${serverLabel} with the copied command to sync them.`;
   }
+}
+
+/** One sentence telling the user to update this client when it is behind the server. */
+export function clientUpdateGuidance(): string {
+  return "Update this client so they stay in sync.";
 }
 
 export function buildVersionMismatchDismissalKey(

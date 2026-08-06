@@ -298,9 +298,11 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ClientUpdateAction } from "./ClientUpdateAction";
 import { ServerUpdateAction, ServerUpdateProgress } from "./ServerUpdateAction";
 import {
   buildVersionMismatchDismissalKey,
+  clientUpdateGuidance,
   dismissVersionMismatch,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
@@ -1915,7 +1917,10 @@ function ChatViewContent(props: ChatViewProps) {
     // "versions differ". A failed update never folds: its error and retry
     // action must stay visible.
     const reconnectingThroughVersionSkew =
-      serverUpdateState.status === "idle" && environmentReconnecting && versionMismatch !== null;
+      serverUpdateState.status === "idle" &&
+      environmentReconnecting &&
+      versionMismatch !== null &&
+      versionMismatch.outdatedSide !== "client";
     // While an update runs, transient connect blips are expected (the server
     // restarts) and the update banner already shows progress. Hard failure
     // phases still surface so the Reconnect action stays reachable.
@@ -1974,8 +1979,9 @@ function ChatViewContent(props: ChatViewProps) {
       (serverUpdateState.status !== "idle" ||
         (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
     ) {
-      const updateInProgress = serverUpdateState.status === "running";
-      const updateFailed = serverUpdateState.status === "failed";
+      const clientOutdated = versionMismatch?.outdatedSide === "client";
+      const updateInProgress = !clientOutdated && serverUpdateState.status === "running";
+      const updateFailed = !clientOutdated && serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : updateInProgress ? "default" : "warning",
@@ -2001,15 +2007,17 @@ function ChatViewContent(props: ChatViewProps) {
             <>
               Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
               {versionMismatch.serverVersion}.{" "}
-              {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+              {clientOutdated
+                ? clientUpdateGuidance()
+                : serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
             </>
           ) : null,
-        // The desktop-managed guidance is already the description; the action
-        // slot would only repeat it.
+        // Client-behind: Update client via the desktop updater. Server-behind +
+        // desktop-managed: guidance is already the description.
         actions:
-          updateInProgress ||
-          !versionMismatch ||
-          versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
+          updateInProgress || !versionMismatch ? undefined : clientOutdated ? (
+            <ClientUpdateAction />
+          ) : versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
             <ServerUpdateAction
               environmentId={serverUpdateEnvironmentId}
               serverLabel={versionMismatchServerLabel}

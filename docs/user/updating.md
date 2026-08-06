@@ -1,7 +1,8 @@
 # Keeping T3 Code in Sync
 
 The T3 Code web or desktop app and the server it connects to work best when they use the same
-version. If they do not match, T3 Code shows a warning with the right update option for that server.
+version. If they do not match, T3 Code shows a warning with the right update option for whichever
+side is behind.
 
 ## Where to Find the Update
 
@@ -11,25 +12,30 @@ You may see the warning in either of these places:
 - **Settings** → **Connections**, beside the affected connection
 
 Dismissing the conversation warning only hides that reminder for those two versions. It does not
-update the server, and the version difference remains visible in Connections.
+update either side, and the version difference remains visible in Connections.
 
 ## Before You Update
 
-Let active agent work and terminal commands finish first. Updating restarts the server, so the
-connection will disappear briefly and work that is still running may be interrupted.
+If the warning asks you to update the **server**, let active agent work and terminal commands finish
+first. Updating restarts the server, so the connection will disappear briefly and work that is still
+running may be interrupted.
+
+If the warning asks you to update this **client**, finish local work you care about before
+restarting the desktop app.
 
 The update does not remove saved threads, settings, or project files.
 
 ## Choose the Action You See
 
-| Action                     | What to do                                                                                                                                                                  |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Available for the T3 Code Linux background service. Select the button and leave T3 Code open while it prepares, tests, restarts, and reconnects.                            |
-| **Update the desktop app** | Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                     |
-| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use. |
+| Action                     | What to do                                                                                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update client**          | Shown when this app is older than the connected server. On the desktop app, select the button to check for, download, and install the newer client build.                             |
+| **Update server**          | Shown when the connected server is older than this client. Available for the T3 Code Linux background service. Leave T3 Code open while it prepares, tests, restarts, and reconnects. |
+| **Update the desktop app** | Shown for a server managed by a desktop app on another machine. Open T3 Code there and install the app update. Reopen it if needed.                                                   |
+| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use.           |
 
-The available action depends on how that server was started. T3 Code does not update connected
-servers silently in the background.
+The available action depends on which side is behind and how that server was started. T3 Code does
+not update connected servers silently in the background.
 
 An older background-service launcher may ask you to run the exact
 `npx t3@<version> service update` command on the server machine. That one local update installs the
