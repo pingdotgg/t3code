@@ -251,9 +251,36 @@ export function selectThreadRightPanelState(
   return ref ? (byThreadKey[scopedThreadKey(ref)] ?? EMPTY_STATE) : EMPTY_STATE;
 }
 
+/** True when the thread's right panel is open on a browser/preview surface. */
+export function selectThreadBrowserOpen(
+  byThreadKey: Readonly<Record<string, ThreadRightPanelState>>,
+  ref: ScopedThreadRef | null,
+): boolean {
+  const state = selectThreadRightPanelState(byThreadKey, ref);
+  return state.isOpen && state.surfaces.some((surface) => surface.kind === "preview");
+}
+
+/**
+ * Open/close the plan surface without clobbering other right-panel surfaces.
+ * Closing must not call `close()` — that would hide an open browser/diff/files
+ * panel when the thread route changes or plan auto-dismiss runs.
+ */
+export function setThreadPlanSidebarOpen(ref: ScopedThreadRef, open: boolean): void {
+  const store = useRightPanelStore.getState();
+  if (open) {
+    store.open(ref, "plan");
+    return;
+  }
+  store.closeSurface(ref, "plan");
+}
+
 const selectRightPanelStates = (state: RightPanelStoreState) => state.byThreadKey;
 
 export function useBrowserPanelState(ref: ScopedThreadRef | null): ThreadRightPanelState {
   const byThreadKey = useRightPanelStore(selectRightPanelStates);
   return selectThreadRightPanelState(byThreadKey, ref);
+}
+
+export function useThreadBrowserOpen(ref: ScopedThreadRef | null): boolean {
+  return useRightPanelStore((state) => selectThreadBrowserOpen(state.byThreadKey, ref));
 }

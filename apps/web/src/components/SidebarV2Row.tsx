@@ -38,6 +38,7 @@ import {
   useThreadEnvironmentLabel,
 } from "./SidebarV2ThreadTooltip";
 import {
+  ThreadBrowserOpenStatus,
   ThreadStatusLabel,
   prStatusIndicator,
   resolveTerminalThreadRef,
@@ -419,9 +420,13 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                 ) : (
                   <InboxIcon className="size-3.5 shrink-0" />
                 )}
-                <span className="truncate text-[length:var(--app-sidebar-title-font-size)] font-medium text-foreground">
+                <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-title-font-size)] font-medium text-foreground">
                   {thread.title}
                 </span>
+                <ThreadBrowserOpenStatus
+                  environmentId={thread.environmentId}
+                  threadId={thread.id}
+                />
               </span>
               <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)] font-normal text-muted-foreground">
                 <span className="truncate">{projectName}</span>
@@ -525,6 +530,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
               <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-title-font-size)] font-medium text-foreground">
                 {thread.title}
               </span>
+              <ThreadBrowserOpenStatus environmentId={thread.environmentId} threadId={thread.id} />
             </span>
             {/* The metadata line earns its row only when it has something to
                 say: a branchless thread with no PR or terminal would otherwise

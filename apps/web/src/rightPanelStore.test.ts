@@ -3,7 +3,12 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 
-import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
+import {
+  selectThreadBrowserOpen,
+  selectThreadRightPanelState,
+  setThreadPlanSidebarOpen,
+  useRightPanelStore,
+} from "./rightPanelStore";
 
 const ref = scopeThreadRef(EnvironmentId.make("environment-test"), ThreadId.make("thread-test"));
 
@@ -77,6 +82,33 @@ describe("rightPanelStore", () => {
       activeSurfaceId: "browser:preview-a",
       surfaces: [{ id: "browser:preview-a", kind: "preview", resourceId: "preview-a" }],
     });
+  });
+
+  it("reports browser-open only while a preview surface is visible", () => {
+    const store = useRightPanelStore.getState();
+    expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(false);
+
+    store.openBrowser(ref, "preview-a");
+    expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(true);
+
+    store.close(ref);
+    expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(false);
+  });
+
+  it("closes plan without collapsing an open browser panel", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(ref, "preview-a");
+    store.open(ref, "plan");
+
+    setThreadPlanSidebarOpen(ref, false);
+
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+    expect(panel.isOpen).toBe(true);
+    expect(panel.surfaces).toEqual([
+      { id: "browser:preview-a", kind: "preview", resourceId: "preview-a" },
+    ]);
+    expect(panel.activeSurfaceId).toBe("browser:preview-a");
+    expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(true);
   });
 
   it("switches and closes independently identified terminal surfaces", () => {

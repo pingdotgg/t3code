@@ -6,7 +6,7 @@ import type { ProviderInstanceEntry } from "../providerInstances";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { getSidebarThreadPrewarmKey } from "./SidebarThreadPrewarmer";
-import { resolveTerminalThreadRef } from "./ThreadStatusIndicators";
+import { resolveTerminalThreadRef, ThreadBrowserOpenStatus } from "./ThreadStatusIndicators";
 import { ThreadDetailsTooltip, useThreadEnvironmentLabel } from "./SidebarV2ThreadTooltip";
 import { Button } from "./ui/button";
 import { SidebarMenuButton, SidebarMenuItem } from "./ui/sidebar";
@@ -149,6 +149,7 @@ export const SidebarV2NestedRow = memo(function SidebarV2NestedRow({
           <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-title-font-size)] text-foreground/85">
             {thread.title}
           </span>
+          <ThreadBrowserOpenStatus environmentId={thread.environmentId} threadId={thread.id} />
         </TooltipTrigger>
         <ThreadDetailsTooltip
           environmentLabel={environmentLabel}

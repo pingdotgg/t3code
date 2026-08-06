@@ -2,7 +2,11 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { prStatusIndicator, resolveTerminalThreadRef } from "./ThreadStatusIndicators";
+import {
+  browserStatusIndicator,
+  prStatusIndicator,
+  resolveTerminalThreadRef,
+} from "./ThreadStatusIndicators";
 import type { SidebarThreadSummary } from "../types";
 
 const environmentId = EnvironmentId.make("env-a");
@@ -54,6 +58,19 @@ describe("resolveTerminalThreadRef", () => {
     expect(resolveTerminalThreadRef(regularThread)).toEqual(
       scopeThreadRef(environmentId, regularThread.id),
     );
+  });
+});
+
+describe("browserStatusIndicator", () => {
+  it("marks an open browser panel", () => {
+    expect(browserStatusIndicator(true)).toEqual({
+      label: "Browser open",
+      colorClass: "text-sky-600 dark:text-sky-300/90",
+    });
+  });
+
+  it("hides when the browser panel is closed", () => {
+    expect(browserStatusIndicator(false)).toBeNull();
   });
 });
 

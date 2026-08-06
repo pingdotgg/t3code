@@ -129,7 +129,11 @@ import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { useBrowserPanelState, useRightPanelStore } from "~/rightPanelStore";
+import {
+  setThreadPlanSidebarOpen,
+  useBrowserPanelState,
+  useRightPanelStore,
+} from "~/rightPanelStore";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
@@ -822,11 +826,9 @@ function ChatViewBody(
   const insightsOpen = activeRightPanel === "insights";
   const setPlanSidebarOpen = useCallback(
     (open: boolean) => {
-      if (open) {
-        useRightPanelStore.getState().open(routeThreadRef, "plan");
-      } else {
-        useRightPanelStore.getState().close(routeThreadRef);
-      }
+      // Close only the plan surface so thread switches / plan dismiss do not
+      // collapse an open browser (or other) right-panel surface for this thread.
+      setThreadPlanSidebarOpen(routeThreadRef, open);
     },
     [routeThreadRef],
   );

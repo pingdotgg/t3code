@@ -17,6 +17,7 @@ import {
   prStatusIndicator,
   resolveThreadPr,
   terminalStatusFromRunningIds,
+  ThreadBrowserOpenStatus,
   ThreadStatusCornerBadge,
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
@@ -828,6 +829,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </TooltipPopup>
               </Tooltip>
             )}
+            <ThreadBrowserOpenStatus environmentId={thread.environmentId} threadId={thread.id} />
             {props.hasChildren ? (
               <button
                 type="button"
