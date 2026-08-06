@@ -1883,13 +1883,15 @@ export default function Sidebar() {
   // On macOS, Ctrl+click fires contextmenu and Safari then also fires click on
   // the same element, which would activate the radio item and change the scope
   // underneath the settings page. stopPropagation on contextmenu cannot block
-  // that separate click, so scope changes are suppressed briefly instead.
-  const projectSettingsInvokedAtRef = useRef(0);
+  // that separate click, so the next scope change is suppressed instead. The
+  // flag clears when the menu reopens, and a real selection always starts by
+  // reopening the menu, so it can never swallow one.
+  const suppressNextScopeChangeRef = useRef(false);
   const handleProjectSettings = useCallback(
     (event: ReactMouseEvent<HTMLElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
-      projectSettingsInvokedAtRef.current = Date.now();
+      suppressNextScopeChangeRef.current = true;
       setProjectScopeMenuOpen(false);
       if (isMobile) {
         setOpenMobile(false);
@@ -3335,7 +3337,13 @@ export default function Sidebar() {
             </div>
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
-                <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
+                <Menu
+                  open={projectScopeMenuOpen}
+                  onOpenChange={(open) => {
+                    if (open) suppressNextScopeChangeRef.current = false;
+                    setProjectScopeMenuOpen(open);
+                  }}
+                >
                   <MenuTrigger
                     render={
                       <SidebarMenuButton
@@ -3363,7 +3371,10 @@ export default function Sidebar() {
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
                       onValueChange={(value) => {
-                        if (Date.now() - projectSettingsInvokedAtRef.current < 500) return;
+                        if (suppressNextScopeChangeRef.current) {
+                          suppressNextScopeChangeRef.current = false;
+                          return;
+                        }
                         setProjectScopeKey(value === "all" ? null : (value as string));
                       }}
                     >
