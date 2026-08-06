@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -18,6 +18,12 @@ import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
+import { writeServiceState } from "../serviceLauncher.ts";
+import {
+  SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_STATE_FILE,
+  type ServiceUpdateRecord,
+} from "./serviceProtocol.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
@@ -259,18 +265,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respond?: () => Response;
   }
 
-  // Writes the launcher's durable state file into this test's baseDir; the
-  // release reads it to detect an in-flight update handoff.
-  const writeServiceState = (update: Record<string, unknown>) =>
+  // Writes the launcher's durable state file into this test's baseDir with
+  // the launcher's own writer; the release reads it to detect an in-flight
+  // update handoff.
+  const writeLauncherState = (update: ServiceUpdateRecord) =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfigModule.ServerConfig;
-      const statePath = path.join(config.baseDir, "runtime", "service-state.json");
-      yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
-      yield* fs.writeFileString(
-        statePath,
-        JSON.stringify({ version: 1, activeVersion: "0.0.30", update }),
+      const statePath = path.join(config.baseDir, "runtime", SERVICE_STATE_FILE);
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "0.0.30",
+          update,
+        }),
       );
     });
 
@@ -326,8 +334,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         // The release consults the launcher state file under the configured
         // baseDir, so every harness run gets a scoped temp baseDir.
-        Effect.provide(ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" })),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(
+          ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
         Effect.scoped,
       );
 
@@ -419,7 +430,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
 
     return Effect.gen(function* () {
-      yield* writeServiceState({
+      yield* writeLauncherState({
         id: "update-1",
         fromVersion: "0.0.30",
         targetVersion: "0.0.31",
@@ -446,7 +457,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
 
     return Effect.gen(function* () {
-      yield* writeServiceState({
+      yield* writeLauncherState({
         id: "update-1",
         fromVersion: "0.0.30",
         targetVersion: "0.0.31",
