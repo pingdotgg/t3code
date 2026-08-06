@@ -880,7 +880,7 @@ export const makeCopilotAdapterV2 = (options: {
           ownerNodeId: identity.nodeId,
           nativeThreadRef: {
             driver: COPILOT_DRIVER_KIND,
-            nativeId: agentId,
+            nativeId: nativeThreadId,
             strength: "strong",
           },
           nativeConversationHeadRef: null,
@@ -1058,7 +1058,7 @@ export const makeCopilotAdapterV2 = (options: {
                 runAttemptId: null,
                 nativeTurnRef: {
                   driver: COPILOT_DRIVER_KIND,
-                  nativeId: nativeTurnId,
+                  nativeId: providerNativeTurnId,
                   strength: "strong",
                 },
                 ordinal,
@@ -1134,7 +1134,7 @@ export const makeCopilotAdapterV2 = (options: {
               runAttemptId: null,
               nativeTurnRef: {
                 driver: COPILOT_DRIVER_KIND,
-                nativeId: turn.nativeTurnId,
+                nativeId: `${subagent.agentId}:${turn.nativeTurnId}`,
                 strength: "strong",
               },
               ordinal: Array.from(subagent.turns).findIndex(([id]) => id === turn.nativeTurnId) + 1,

@@ -350,7 +350,7 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
       expect(runtimeMock.state.sessions[0]?.sendAndWait).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: expect.stringContaining(
-            "Title should summarize the user's request, not restate it verbatim.",
+            "Generate a title that will help the user recognize this T3 Code thread weeks later.",
           ),
         }),
         180_000,

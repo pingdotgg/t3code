@@ -430,6 +430,10 @@ describe("CopilotAdapterV2", () => {
             event.providerThread.id === completedSubagent?.providerThreadId,
         )?.providerThread;
         assert.isNull(childProviderThread?.appThreadId);
+        assert.equal(
+          childProviderThread?.nativeThreadRef?.nativeId,
+          "copilot-subagent:copilot-agent-1",
+        );
         const childMessage = collected.find(
           (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
             event.type === "message.updated" && event.message.text === "Child result",
@@ -440,6 +444,7 @@ describe("CopilotAdapterV2", () => {
             event.type === "provider_turn.updated" && event.threadId === childThread?.id,
         )?.providerTurn;
         assert.equal(childProviderTurn?.status, "completed");
+        assert.equal(childProviderTurn?.nativeTurnRef?.nativeId, "copilot-agent-1:child-turn-1");
         assert.equal(
           collected.some((event) => event.type === "turn.terminal"),
           false,
