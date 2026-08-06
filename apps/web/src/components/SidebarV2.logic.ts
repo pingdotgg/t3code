@@ -483,16 +483,22 @@ export function firstValidTimestamp(
 }
 
 /** The timestamp a working thread's elapsed label counts from: the running
-    turn's start (request time until adoption), falling back to the session's
-    last transition when the turn projection lags behind. */
+    turn's start (request time until adoption), then the session's last
+    transition, then `createdAt`. Synthetic background-agent rows set
+    `session`/`latestTurn` to null and store the run start in `createdAt`. */
 export function resolveWorkingStartedAt(
-  thread: Pick<SidebarThreadSummary, "latestTurn" | "session">,
+  thread: Pick<SidebarThreadSummary, "latestTurn" | "session" | "createdAt">,
 ): string | null {
   const turn = thread.latestTurn;
   if (turn && turn.completedAt === null) {
-    return firstValidTimestamp(turn.startedAt, turn.requestedAt, thread.session?.updatedAt);
+    return firstValidTimestamp(
+      turn.startedAt,
+      turn.requestedAt,
+      thread.session?.updatedAt,
+      thread.createdAt,
+    );
   }
-  return firstValidTimestamp(thread.session?.updatedAt);
+  return firstValidTimestamp(thread.session?.updatedAt, thread.createdAt);
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {

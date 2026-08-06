@@ -7,6 +7,8 @@
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --animate-status-pulse: status-pulse 2s infinite;
+  /* Opacity-only, 3s cadence — cheap to composite and matches the Working badge. */
+  --animate-status-badge-pulse: status-badge-pulse 3s ease-in-out infinite;
   --animate-status-ping: status-ping 2s infinite;
   --font-mono: var(--app-font-mono-stack);
   --font-sans: var(--app-font-sans-stack);
@@ -61,6 +63,15 @@
     }
     100% {
       opacity: 1;
+    }
+  }
+  @keyframes status-badge-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
     }
   }
   @keyframes status-ping {
@@ -295,6 +306,15 @@ html[data-native-vibrancy="true"]
   ) {
   transition-duration: 0ms !important;
   animation-duration: 0ms !important;
+}
+
+/* Working corner badge intentionally pulses under native vibrancy; the row
+   isolation above already contains the opacity animation. Restore duration
+   after the blanket 0ms kill-switch. */
+html[data-native-vibrancy="true"]
+  [data-thread-item]
+  [data-status-corner-badge].animate-status-badge-pulse {
+  animation-duration: 3s !important;
 }
 
 html[data-native-vibrancy="true"] [data-thread-item] [data-slot="sidebar-menu-sub-button"] {

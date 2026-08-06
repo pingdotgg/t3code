@@ -556,6 +556,7 @@ describe("resolveWorkingStartedAt", () => {
           completedAt: null,
         } as NonNullable<SidebarThreadSummary["latestTurn"]>,
         session: session(),
+        createdAt: "2025-12-31T00:00:00.000Z",
       }),
     ).toBe(startedAt);
     expect(
@@ -566,6 +567,7 @@ describe("resolveWorkingStartedAt", () => {
           completedAt: null,
         } as NonNullable<SidebarThreadSummary["latestTurn"]>,
         session: session(),
+        createdAt: "2025-12-31T00:00:00.000Z",
       }),
     ).toBe("2026-01-01T00:00:00.000Z");
   });
@@ -579,6 +581,7 @@ describe("resolveWorkingStartedAt", () => {
           completedAt: null,
         } as NonNullable<SidebarThreadSummary["latestTurn"]>,
         session: session({ updatedAt: startedAt }),
+        createdAt: "2025-12-31T00:00:00.000Z",
       }),
     ).toBe(startedAt);
   });
@@ -592,6 +595,19 @@ describe("resolveWorkingStartedAt", () => {
           completedAt: "2026-01-01T00:00:09.000Z",
         } as NonNullable<SidebarThreadSummary["latestTurn"]>,
         session: session({ updatedAt: startedAt }),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toBe(startedAt);
+  });
+
+  it("uses createdAt for synthetic background-agent rows with no turn or session", () => {
+    // Agent-run sidebar rows set session/latestTurn to null and store the run
+    // start in createdAt (see expandThreadsWithAgentRuns).
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: null,
+        session: null,
+        createdAt: startedAt,
       }),
     ).toBe(startedAt);
   });

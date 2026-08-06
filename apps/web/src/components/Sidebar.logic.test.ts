@@ -599,7 +599,7 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
-  it("renders purely informational states as a bare dot", () => {
+  it("renders purely informational states as a top-right corner badge", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -611,7 +611,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Working", dotOnly: true });
+    ).toMatchObject({ label: "Working", presentation: "corner-badge", pulse: true });
   });
 
   it("keeps a label on states that ask the user to act", () => {
@@ -619,7 +619,7 @@ describe("resolveThreadStatusPill", () => {
       resolveThreadStatusPill({
         thread: { ...baseThread, hasPendingApprovals: true },
       }),
-    ).toMatchObject({ label: "Pending Approval", dotOnly: false });
+    ).toMatchObject({ label: "Pending Approval", presentation: "label" });
   });
 
   it("shows pending approval before all other statuses", () => {
@@ -713,7 +713,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toMatchObject({ label: "Completed", pulse: false, presentation: "corner-badge" });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
@@ -731,7 +731,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toMatchObject({ label: "Completed", pulse: false, presentation: "corner-badge" });
   });
 });
 
@@ -839,21 +839,21 @@ describe("resolveProjectStatusIndicator", () => {
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
-          dotOnly: true,
+          presentation: "corner-badge",
         },
         {
           label: "Pending Approval",
           colorClass: "text-amber-600",
           dotClass: "bg-amber-500",
           pulse: false,
-          dotOnly: false,
+          presentation: "label",
         },
         {
           label: "Working",
           colorClass: "text-sky-600",
           dotClass: "bg-sky-500",
           pulse: true,
-          dotOnly: true,
+          presentation: "corner-badge",
         },
       ]),
     ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
@@ -867,14 +867,14 @@ describe("resolveProjectStatusIndicator", () => {
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
-          dotOnly: true,
+          presentation: "corner-badge",
         },
         {
           label: "Plan Ready",
           colorClass: "text-violet-600",
           dotClass: "bg-violet-500",
           pulse: false,
-          dotOnly: false,
+          presentation: "label",
         },
       ]),
     ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });

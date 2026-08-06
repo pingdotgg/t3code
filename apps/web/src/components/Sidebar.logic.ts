@@ -24,6 +24,14 @@ type SidebarProject = {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
+/**
+ * How a status renders in the v1 sidebar:
+ * - `label`: inline colored dot + text (actionable / transient states)
+ * - `dot`: compact/bare marker for rolled-up contexts (show-more, palette)
+ * - `corner-badge`: top-right icon+text badge (Working / Completed)
+ */
+export type ThreadStatusPresentation = "label" | "dot" | "corner-badge";
+
 export interface ThreadStatusPill {
   label:
     | "Working"
@@ -35,12 +43,7 @@ export interface ThreadStatusPill {
   colorClass: string;
   dotClass: string;
   pulse: boolean;
-  /**
-   * Render as a bare dot with no text. Purely informational states ("this is
-   * running", "this finished") read fine from colour alone and keep the row
-   * quiet; states that ask the user to do something keep their label.
-   */
-  dotOnly: boolean;
+  presentation: ThreadStatusPresentation;
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
@@ -376,7 +379,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
-      dotOnly: false,
+      presentation: "label",
     };
   }
 
@@ -386,7 +389,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
       pulse: false,
-      dotOnly: false,
+      presentation: "label",
     };
   }
 
@@ -399,7 +402,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
-      dotOnly: true,
+      presentation: "corner-badge",
     };
   }
 
@@ -409,7 +412,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
-      dotOnly: false,
+      presentation: "label",
     };
   }
 
@@ -424,7 +427,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-violet-600 dark:text-violet-300/90",
       dotClass: "bg-violet-500 dark:bg-violet-300/90",
       pulse: false,
-      dotOnly: false,
+      presentation: "label",
     };
   }
 
@@ -434,7 +437,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
       pulse: false,
-      dotOnly: true,
+      presentation: "corner-badge",
     };
   }
 

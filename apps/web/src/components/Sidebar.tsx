@@ -17,6 +17,7 @@ import {
   prStatusIndicator,
   resolveThreadPr,
   terminalStatusFromRunningIds,
+  ThreadStatusCornerBadge,
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -772,8 +773,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
+        {threadStatus?.presentation === "corner-badge" ? (
+          <ThreadStatusCornerBadge status={threadStatus} thread={thread} />
+        ) : null}
         <div
-          className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 text-left leading-tight"
+          className={`flex min-w-0 flex-1 flex-col justify-center gap-0.5 text-left leading-tight ${
+            threadStatus?.presentation === "corner-badge" ? "pr-[5.5rem]" : ""
+          }`}
           style={threadIndent > 0 ? { paddingLeft: threadIndent } : undefined}
         >
           {projectName ? (
@@ -790,7 +796,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
           ) : null}
           <div className="flex min-w-0 items-center gap-1.5">
-            {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+            {threadStatus && threadStatus.presentation !== "corner-badge" ? (
+              <ThreadStatusLabel status={threadStatus} />
+            ) : null}
             {renamingThreadKey === threadKey ? (
               <input
                 ref={handleRenameInputRef}
