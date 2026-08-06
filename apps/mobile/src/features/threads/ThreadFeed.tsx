@@ -87,6 +87,7 @@ import {
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import { autolinkMarkdownUrls } from "@t3tools/mobile-markdown-text/autolink";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
@@ -972,6 +973,7 @@ function renderFeedEntry(
             />
           ) : (
             <Markdown
+              astTransform={autolinkMarkdownUrls}
               options={{ gfm: true }}
               renderers={styles.renderers}
               styles={styles.styles}
@@ -1071,6 +1073,7 @@ function UserMessageContent(props: {
     }
     return (
       <Markdown
+        astTransform={autolinkMarkdownUrls}
         options={{ gfm: true }}
         renderers={props.markdownStyles.renderers}
         styles={props.markdownStyles.styles}
@@ -1111,6 +1114,7 @@ function UserMessageContent(props: {
         ) : (
           <Markdown
             key={segment.id}
+            astTransform={autolinkMarkdownUrls}
             options={{ gfm: true }}
             renderers={props.markdownStyles.renderers}
             styles={props.markdownStyles.styles}
