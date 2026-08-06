@@ -1,19 +1,12 @@
-import { PanelLeftCloseIcon, PlusIcon, SearchIcon, SparklesIcon } from "lucide-react";
+import { PlusIcon, SearchIcon, SparklesIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import { CommandDialogTrigger } from "./ui/command";
 import { Kbd } from "./ui/kbd";
-import {
-  SidebarGroup,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "./ui/sidebar";
+import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "./ui/sidebar";
 
 interface SidebarTopActionsProps {
   readonly commandPaletteShortcutLabel: string | null;
-  readonly sidebarToggleShortcutLabel?: string | null;
   readonly newThread?: {
     readonly disabled: boolean;
     readonly onClick: () => void;
@@ -22,38 +15,13 @@ interface SidebarTopActionsProps {
 
 export function SidebarTopActions({
   commandPaletteShortcutLabel,
-  sidebarToggleShortcutLabel = null,
   newThread,
 }: SidebarTopActionsProps) {
   const navigate = useNavigate();
-  const { isMobile, toggleSidebar } = useSidebar();
 
   return (
     <SidebarGroup className="px-2 pt-0 pb-1">
       <SidebarMenu>
-        {!isMobile ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-1.5 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-              data-testid="sidebar-collapse-trigger"
-              onClick={toggleSidebar}
-              title={
-                sidebarToggleShortcutLabel
-                  ? `Collapse sidebar (${sidebarToggleShortcutLabel})`
-                  : "Collapse sidebar"
-              }
-            >
-              <PanelLeftCloseIcon className="size-3.5" />
-              <span className="flex-1 truncate text-left">Collapse</span>
-              {sidebarToggleShortcutLabel ? (
-                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[length:var(--app-sidebar-font-size)]">
-                  {sidebarToggleShortcutLabel}
-                </Kbd>
-              ) : null}
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : null}
         <SidebarMenuItem>
           <CommandDialogTrigger
             render={

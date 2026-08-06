@@ -3052,7 +3052,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   const canGoForward = historyIndex < router.history.length - 1;
   const wordmark = (
     <div className="flex w-full items-center gap-2">
-      {/* Mobile sheet open/close; desktop collapse lives in SidebarTopActions + content headers. */}
+      {/* Mobile sheet open/close; desktop collapse uses content-header SidebarTrigger icons. */}
       <SidebarTrigger className="no-drag shrink-0 md:hidden" />
       <div
         aria-label="Chat navigation history"
@@ -3153,7 +3153,6 @@ interface SidebarProjectsContentProps {
   routeThreadKey: string | null;
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
-  sidebarToggleShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -3199,7 +3198,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     routeThreadKey,
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
-    sidebarToggleShortcutLabel,
     threadJumpLabelByKey,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -3244,10 +3242,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   );
   return (
     <SidebarContent className="gap-0">
-      <SidebarTopActions
-        commandPaletteShortcutLabel={commandPaletteShortcutLabel}
-        sidebarToggleShortcutLabel={sidebarToggleShortcutLabel}
-      />
+      <SidebarTopActions commandPaletteShortcutLabel={commandPaletteShortcutLabel} />
       {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
         <SidebarGroup className="px-2 pt-2 pb-0">
           <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
@@ -3965,11 +3960,6 @@ export default function Sidebar() {
     "commandPalette.toggle",
     newThreadShortcutLabelOptions,
   );
-  const sidebarToggleShortcutLabel = shortcutLabelForCommand(
-    keybindings,
-    "sidebar.toggle",
-    newThreadShortcutLabelOptions,
-  );
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;
@@ -4099,7 +4089,6 @@ export default function Sidebar() {
             routeThreadKey={routeThreadKey}
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
-            sidebarToggleShortcutLabel={sidebarToggleShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
             expandThreadListForProject={expandThreadListForProject}
             collapseThreadListForProject={collapseThreadListForProject}
