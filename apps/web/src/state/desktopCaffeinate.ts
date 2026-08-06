@@ -145,7 +145,11 @@ export function useDesktopCaffeination(): void {
         return;
       }
       lastSentRef.current = value;
-      void setKeepAwake(value).catch(() => {});
+      void setKeepAwake(value).catch(() => {
+        // Forget the failed send so the next evaluation resends; the
+        // main-process handler is idempotent, so an extra send is harmless.
+        lastSentRef.current = null;
+      });
     };
     send(keepAwake);
     if (!keepAwake) {
