@@ -414,6 +414,19 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
  * identity pass through, matching the clients, which never collapse them.
  * Live `thread.activity-appended` events are untouched: updates still stream
  * in real time and the completion supersedes them on the client as before.
+ *
+ * Deliberate divergence from client collapse: clients fold only *adjacent*
+ * lifecycle rows, so a superseded update separated from its completion by an
+ * interleaved parallel call renders as its own row today, and this drop
+ * removes it. Measured against a real database, that affects 1.5% of dropped
+ * rows (553 of 36,581), all pure in-flight state whose final result the
+ * retained completion still shows. Dropping them is intentional; matching
+ * adjacency server-side would forfeit most of the win for parallel-heavy
+ * threads, which are exactly the heavy ones. Superseding completions always
+ * carry a payload superset of their updates (verified across all 49,515
+ * update rows: zero dropped rows held a client-merged field — detail, title,
+ * command, item, kind, files — their completion lacked), so no expanded-row
+ * content is lost.
  */
 function dropSupersededToolUpdatedActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,

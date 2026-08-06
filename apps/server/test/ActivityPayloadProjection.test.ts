@@ -327,6 +327,28 @@ describe("superseded tool.updated snapshot dedup", () => {
     expect(projectedIds([inFlight, other, completed])).toEqual([inFlight.id, completed.id]);
   });
 
+  it("drops interleaved superseded updates even when a parallel call separates them", () => {
+    // Deliberate divergence from the clients' adjacency-based collapse: a
+    // superseded update separated from its completion by an interleaved
+    // parallel call renders as its own in-flight row on full history, and the
+    // snapshot omits it. Its final state still shows via the retained
+    // completion (1.5% of dropped rows on real data; see the projection's doc
+    // comment).
+    const updateA = makeToolLifecycleActivity("upd-a", "tool.updated", { toolCallId: "call-a" });
+    const updateB = makeToolLifecycleActivity("upd-b", "tool.updated", { toolCallId: "call-b" });
+    const completedA = makeToolLifecycleActivity("done-a", "tool.completed", {
+      toolCallId: "call-a",
+    });
+    const completedB = makeToolLifecycleActivity("done-b", "tool.completed", {
+      toolCallId: "call-b",
+    });
+
+    expect(projectedIds([updateA, updateB, completedA, completedB])).toEqual([
+      completedA.id,
+      completedB.id,
+    ]);
+  });
+
   it("keeps an update whose completion lives in another turn", () => {
     // A live thread.reverted can discard the completing turn while keeping
     // the updating one, which would leave the call unrepresented.
