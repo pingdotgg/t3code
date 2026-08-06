@@ -96,8 +96,18 @@ struct MarkdownMessageView: View {
             return renderedDocument
         }
         // While streaming, a slightly stale document is better than flashing
-        // back to plain text between renders; streamed content only appends.
-        if isStreaming { return renderedDocument }
+        // back to plain text between renders. Streamed content only appends,
+        // so require the stale document to be a prefix of the current source:
+        // that accepts earlier snapshots of this message and rejects leftovers
+        // from a recycled cell showing a different message.
+        if isStreaming {
+            if let renderedDocument,
+               renderedDocument.revision.utf8Count <= revision.utf8Count,
+               source.utf8.starts(with: renderedDocument.revision.source.utf8) {
+                return renderedDocument
+            }
+            return nil
+        }
         return MarkdownRenderCache.shared.documentImmediately(for: revision)
     }
 }
