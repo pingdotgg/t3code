@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Tracer from "effect/Tracer";
 import {
@@ -15,6 +17,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfigModule from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
@@ -256,6 +259,21 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respond?: () => Response;
   }
 
+  // Writes the launcher's durable state file into this test's baseDir; the
+  // release reads it to detect an in-flight update handoff.
+  const writeServiceState = (update: Record<string, unknown>) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfigModule.ServerConfig;
+      const statePath = path.join(config.baseDir, "runtime", "service-state.json");
+      yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
+      yield* fs.writeFileString(
+        statePath,
+        JSON.stringify({ version: 1, activeVersion: "0.0.30", update }),
+      );
+    });
+
   const provideReleaseHarness =
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -306,6 +324,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
             }),
           ),
         ),
+        // The release consults the launcher state file under the configured
+        // baseDir, so every harness run gets a scoped temp baseDir.
+        Effect.provide(ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" })),
+        Effect.provide(NodeServices.layer),
+        Effect.scoped,
       );
 
   // The persisted state of a CLI-managed link whose tunnel is releasable.
@@ -387,6 +410,54 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(applyConfigCalls).toEqual([]);
       expect(requests).toEqual([]);
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("keeps the tunnel when shutdown hands off to a pending update", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      yield* writeServiceState({
+        id: "update-1",
+        fromVersion: "0.0.30",
+        targetVersion: "0.0.31",
+        dbPath: "/tmp/state.sqlite",
+        status: "pending",
+      });
+
+      const released = yield* releaseManagedTunnelOnShutdown();
+
+      // The launcher restarts a server immediately, so the tunnel is not
+      // orphaned; keeping it avoids the hostname route re-propagation that
+      // dominates update downtime. The stored config must survive so the
+      // next boot respawns the connector against the same tunnel.
+      expect(released).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("still releases when the recorded update already settled", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      yield* writeServiceState({
+        id: "update-1",
+        fromVersion: "0.0.30",
+        targetVersion: "0.0.31",
+        status: "committed",
+      });
+
+      const released = yield* releaseManagedTunnelOnShutdown();
+
+      expect(released).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
