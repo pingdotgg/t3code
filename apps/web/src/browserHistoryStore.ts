@@ -164,7 +164,7 @@ interface BrowserHistoryStoreState {
     environmentHostname?: string | null,
   ) => void;
   removeUrl: (projectKey: string, url: string) => void;
-  registerThreadProject: (ref: ScopedThreadRef, projectKey: string | null) => void;
+  registerThreadProject: (ref: ScopedThreadRef, projectKey: string) => void;
 }
 
 function addPendingByThread<T>(
@@ -190,10 +190,10 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
       projectKeyByThreadKey: {},
       pendingVisitsByThreadKey: {},
       pendingTitlesByThreadKey: {},
-      recordVisit: (projectKey, url, at, options) =>
+      recordVisit: (projectKey, url, at, options) => {
+        const normalized = normalizeHistoryUrl(url);
+        if (!normalized) return;
         set((state) => {
-          const normalized = normalizeHistoryUrl(url);
-          if (!normalized) return state;
           return {
             byProjectKey: evictExcessProjects({
               ...state.byProjectKey,
@@ -205,73 +205,63 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
               ),
             }),
           };
-        }),
-      setTitleForUrl: (projectKey, url, title, environmentHostname) =>
-        set((state) => {
-          const normalized = normalizeHistoryUrl(url);
-          const entries = state.byProjectKey[projectKey];
-          const trimmed = title.trim().slice(0, BROWSER_HISTORY_MAX_TITLE_LENGTH);
-          if (!normalized || !entries || trimmed.length === 0) return state;
-          const key = titleLookupKey(normalized, environmentHostname);
-          const index = entries.findIndex(
-            (candidate) => titleLookupKey(candidate.url, environmentHostname) === key,
-          );
-          if (index === -1) return state;
-          // Skip the write when nothing changed so unrelated re-renders don't
-          // trigger a fresh persist of the whole history blob.
-          if (entries[index]?.title === trimmed) return state;
-          return {
-            byProjectKey: {
-              ...state.byProjectKey,
-              [projectKey]: entries.map((candidate, candidateIndex) =>
-                candidateIndex === index ? { ...candidate, title: trimmed } : candidate,
-              ),
-            },
-          };
-        }),
-      removeUrl: (projectKey, url) =>
-        set((state) => {
-          const normalized = normalizeHistoryUrl(url);
-          const entries = state.byProjectKey[projectKey];
-          if (!normalized || !entries) return state;
-          const next = entries.filter((candidate) => candidate.url !== normalized);
-          if (next.length === entries.length) return state;
-          if (next.length === 0) {
-            const { [projectKey]: _removed, ...rest } = state.byProjectKey;
-            return { byProjectKey: rest };
-          }
-          return { byProjectKey: { ...state.byProjectKey, [projectKey]: next } };
-        }),
+        });
+      },
+      setTitleForUrl: (projectKey, url, title, environmentHostname) => {
+        const normalized = normalizeHistoryUrl(url);
+        const state = get();
+        const entries = state.byProjectKey[projectKey];
+        const trimmed = title.trim().slice(0, BROWSER_HISTORY_MAX_TITLE_LENGTH);
+        if (!normalized || !entries || trimmed.length === 0) return;
+        const key = titleLookupKey(normalized, environmentHostname);
+        const index = entries.findIndex(
+          (candidate) => titleLookupKey(candidate.url, environmentHostname) === key,
+        );
+        if (index === -1 || entries[index]?.title === trimmed) return;
+        set({
+          byProjectKey: {
+            ...state.byProjectKey,
+            [projectKey]: entries.map((candidate, candidateIndex) =>
+              candidateIndex === index ? { ...candidate, title: trimmed } : candidate,
+            ),
+          },
+        });
+      },
+      removeUrl: (projectKey, url) => {
+        const normalized = normalizeHistoryUrl(url);
+        const state = get();
+        const entries = state.byProjectKey[projectKey];
+        if (!normalized || !entries) return;
+        const next = entries.filter((candidate) => candidate.url !== normalized);
+        if (next.length === entries.length) return;
+        if (next.length === 0) {
+          const { [projectKey]: _removed, ...rest } = state.byProjectKey;
+          set({ byProjectKey: rest });
+          return;
+        }
+        set({ byProjectKey: { ...state.byProjectKey, [projectKey]: next } });
+      },
       registerThreadProject: (ref, projectKey) => {
         const threadKey = scopedThreadKey(ref);
-        let pendingVisits: PendingVisit[] | undefined;
-        let pendingTitles: PendingTitle[] | undefined;
-        set((state) => {
-          if (projectKey === null) {
-            if (!(threadKey in state.projectKeyByThreadKey)) return state;
-            const { [threadKey]: _removed, ...rest } = state.projectKeyByThreadKey;
-            return { projectKeyByThreadKey: rest };
-          }
-          pendingVisits = state.pendingVisitsByThreadKey[threadKey];
-          pendingTitles = state.pendingTitlesByThreadKey[threadKey];
-          if (
-            state.projectKeyByThreadKey[threadKey] === projectKey &&
-            !pendingVisits &&
-            !pendingTitles
-          ) {
-            return state;
-          }
-          const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
-          const nextPendingTitles = { ...state.pendingTitlesByThreadKey };
-          delete nextPendingVisits[threadKey];
-          delete nextPendingTitles[threadKey];
-          return {
-            projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
-            pendingVisitsByThreadKey: nextPendingVisits,
-            pendingTitlesByThreadKey: nextPendingTitles,
-          };
+        const state = get();
+        const pendingVisits = state.pendingVisitsByThreadKey[threadKey];
+        const pendingTitles = state.pendingTitlesByThreadKey[threadKey];
+        if (
+          state.projectKeyByThreadKey[threadKey] === projectKey &&
+          !pendingVisits &&
+          !pendingTitles
+        ) {
+          return;
+        }
+        const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
+        const nextPendingTitles = { ...state.pendingTitlesByThreadKey };
+        delete nextPendingVisits[threadKey];
+        delete nextPendingTitles[threadKey];
+        set({
+          projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
+          pendingVisitsByThreadKey: nextPendingVisits,
+          pendingTitlesByThreadKey: nextPendingTitles,
         });
-        if (projectKey === null) return;
         for (const visit of pendingVisits ?? [])
           get().recordVisit(projectKey, visit.url, visit.at, {
             insertOrdered: true,

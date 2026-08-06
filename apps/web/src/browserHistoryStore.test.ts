@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
@@ -30,6 +30,13 @@ function entry(overrides: Partial<BrowserHistoryEntry> = {}): BrowserHistoryEntr
 }
 
 beforeEach(() => readPreparedConnection.mockReturnValue(null));
+afterEach(() => vi.restoreAllMocks());
+
+function spyOnPersistWrites() {
+  const storage = useBrowserHistoryStore.persist.getOptions().storage;
+  if (!storage) throw new Error("Browser history persistence storage is unavailable.");
+  return vi.spyOn(storage, "setItem");
+}
 
 describe("normalizeHistoryUrl", () => {
   it("normalizes bare loopback hosts to http and keeps path/query", () => {
@@ -81,7 +88,6 @@ describe("upsertHistoryEntry", () => {
     const next = upsertHistoryEntry(full, "http://new.test/", 9999);
     expect(next).toHaveLength(BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT);
     expect(next[0]?.url).toBe("http://new.test/");
-    // Prepending the new head pushes the LAST fixture entry off the end.
     const lastPort = 3000 + BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT - 1;
     expect(next.some((e) => e.url === `http://localhost:${lastPort}/`)).toBe(false);
     expect(next.some((e) => e.url === "http://localhost:3000/")).toBe(true);
@@ -220,17 +226,19 @@ describe("useBrowserHistoryStore", () => {
     ]);
   });
 
+  it("does not persist when a thread is already registered to the same project", () => {
+    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
+    const persist = spyOnPersistWrites();
+
+    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
+
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("ignores invalid urls whether queued pending or recorded post-registration", () => {
     recordVisitForThread(threadRef, "ftp://a.test/", 1);
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     recordVisitForThread(threadRef, "ftp://a.test/", 2);
-    expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({});
-  });
-
-  it("unregisters a thread when project key is null", () => {
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, null);
-    recordVisitForThread(threadRef, "http://a.test/", 1);
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({});
   });
 
@@ -243,13 +251,17 @@ describe("useBrowserHistoryStore", () => {
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe("My App");
   });
 
-  it("skips the write when the title is already set", () => {
+  it("does not persist when the title is already set", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     recordVisitForThread(threadRef, "http://a.test/", 1);
     setTitleForThreadUrl(threadRef, "http://a.test/", "My App");
+    const persist = spyOnPersistWrites();
     const byProjectKey = useBrowserHistoryStore.getState().byProjectKey;
+
     setTitleForThreadUrl(threadRef, "http://a.test/", "My App");
+
     expect(useBrowserHistoryStore.getState().byProjectKey).toBe(byProjectKey);
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("sets a title against a settled url that differs from the stored one only by a trailing slash", () => {
@@ -353,19 +365,6 @@ describe("pendingVisitsByThreadKey", () => {
     expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
   });
 
-  it("preserves pending visits through a null registration and drains them later", () => {
-    recordVisitForThread(threadRef, "http://a.test/", 1);
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, null);
-    expect(Object.values(useBrowserHistoryStore.getState().pendingVisitsByThreadKey)).toEqual([
-      [{ url: "http://a.test/", at: 1, environmentHostname: null }],
-    ]);
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]).toEqual([
-      { url: "http://a.test/", lastVisitedAt: 1 },
-    ]);
-    expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
-  });
-
   it("caps the per-thread pending list at 10, dropping the oldest", () => {
     for (let i = 0; i < 12; i++) {
       recordVisitForThread(threadRef, `http://a.test/${i}`, i);
@@ -373,7 +372,6 @@ describe("pendingVisitsByThreadKey", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     const urls = useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.map((e) => e.url);
     expect(urls).toHaveLength(10);
-    // Oldest two (index 0, 1) were dropped; newest (index 11) drained last so it's MRU.
     expect(urls).not.toContain("http://a.test/0");
     expect(urls).not.toContain("http://a.test/1");
     expect(urls?.[0]).toBe("http://a.test/11");
@@ -384,10 +382,8 @@ describe("pendingVisitsByThreadKey", () => {
       environmentId: EnvironmentId.make("env-1"),
       threadId: ThreadId.make("thread-2"),
     };
-    // Another thread in the same project records a visit live...
     useBrowserHistoryStore.getState().registerThreadProject(otherThreadRef, "proj-a");
     recordVisitForThread(otherThreadRef, "http://newer.test/", 2000);
-    // ...while this thread's older visit was queued before it registered.
     recordVisitForThread(threadRef, "http://older.test/", 1000);
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
 
@@ -412,21 +408,6 @@ describe("pendingTitlesByThreadKey", () => {
 
     const entries = useBrowserHistoryStore.getState().byProjectKey["proj-a"];
     expect(entries?.[0]).toMatchObject({ url: "http://a.test/", title: "My App" });
-    expect(useBrowserHistoryStore.getState().pendingTitlesByThreadKey).toEqual({});
-  });
-
-  it("preserves pending titles through a null registration and applies them later", () => {
-    recordVisitForThread(threadRef, "http://a.test/", 1);
-    setTitleForThreadUrl(threadRef, "http://a.test/", "My App");
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, null);
-    expect(Object.values(useBrowserHistoryStore.getState().pendingTitlesByThreadKey)).toEqual([
-      [{ url: "http://a.test/", title: "My App", environmentHostname: undefined }],
-    ]);
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]).toMatchObject({
-      url: "http://a.test/",
-      title: "My App",
-    });
     expect(useBrowserHistoryStore.getState().pendingTitlesByThreadKey).toEqual({});
   });
 

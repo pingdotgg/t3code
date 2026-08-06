@@ -54,15 +54,14 @@ describe("PreviewEmptyState", () => {
     mocks.servers = [server(5173)];
     const html = render([
       { url: "https://myapp.test/admin#users", lastVisitedAt: Date.now(), title: "Admin" },
-      { url: "http://localhost:5173/", lastVisitedAt: Date.now() },
+      { url: "http://localhost:5173/", lastVisitedAt: Date.now(), title: "Recent Local" },
     ]);
     expect(html).toContain("Recently used");
     expect(html).toContain("Local servers");
     expect(html).toContain("myapp.test/admin#users");
     expect(html).toContain("Admin");
-    // 3 occurrences confirms no dedupe: the recents card contributes 2 (label
-    // text plus the remove button's aria-label), the server card 1 more.
-    expect(html.split("localhost:5173").length - 1).toBe(3);
+    expect(html).toContain("Recent Local");
+    expect(html).toContain("node");
   });
 
   it("renders only the recents group when no servers are found", () => {

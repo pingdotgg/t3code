@@ -34,8 +34,6 @@ vi.mock("~/browserHistoryStore", () => ({
   setTitleForThreadUrl: vi.fn(),
   removeUrlForThread: vi.fn(),
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT: 50,
-  // Module-level constant: an inline `() => []` returns a fresh reference per
-  // render and defeats the memoization the real hook guarantees.
   useThreadRecentHistory: () => EMPTY_HISTORY,
 }));
 

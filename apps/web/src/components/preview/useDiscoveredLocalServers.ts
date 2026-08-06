@@ -15,8 +15,7 @@ export interface PreviewableServer extends DiscoveredLocalServer {
   listening: boolean;
   /**
    * Pre-resolution loopback url. `url` is the resolved navigation target
-   * (volatile on a remote environment); this is what history and favicon
-   * lookups must key off instead.
+   * (volatile on a remote environment); history must key off this instead.
    */
   requestedUrl: string;
 }
