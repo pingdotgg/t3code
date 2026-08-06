@@ -1289,9 +1289,8 @@ export const makeCodexSessionRuntime = (
 
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
-        if (suppressMemoryConsolidationNotification(notification)) {
-          return;
-        }
+        const isMemoryConsolidationNotification =
+          suppressMemoryConsolidationNotification(notification);
 
         const payload = notification.params;
         const route = readRouteFields(notification);
@@ -1367,6 +1366,10 @@ export const makeCodexSessionRuntime = (
             }
           }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+          return;
+        }
+
+        if (isMemoryConsolidationNotification) {
           return;
         }
 
