@@ -180,9 +180,20 @@ describe("ServerSettings worktree defaults", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
 
+  it("defaults conventional branch names on for legacy configs", () => {
+    expect(decodeServerSettings({}).newWorktreesUseConventionalBranchNames).toBe(true);
+  });
+
   it("accepts start-from-origin updates", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
+    ).toBe(false);
+  });
+
+  it("accepts conventional branch name updates", () => {
+    expect(
+      decodeServerSettingsPatch({ newWorktreesUseConventionalBranchNames: false })
+        .newWorktreesUseConventionalBranchNames,
     ).toBe(false);
   });
 });

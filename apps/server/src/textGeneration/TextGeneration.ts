@@ -51,6 +51,8 @@ export interface BranchNameGenerationInput {
   cwd: string;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** When false, use the legacy unprefixed branch-name style. */
+  useConventionalBranchNames?: boolean | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }

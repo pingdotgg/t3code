@@ -144,6 +144,7 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
 export interface BranchNamePromptInput {
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  useConventionalBranchNames?: boolean | undefined;
   policy?: TextGenerationPolicy | undefined;
 }
 
@@ -189,6 +190,11 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
     rules: [
       "Branch should describe the requested work from the user message.",
       "Keep it short and specific (2-6 words).",
+      ...(input.useConventionalBranchNames !== false
+        ? [
+            "Start with exactly one category prefix: feat/, fix/, docs/, style/, refactor/, perf/, test/, build/, ci/, chore/, or revert/.",
+          ]
+        : []),
       "Use plain words only, no issue prefixes and no punctuation-heavy text.",
       "If images are attached, use them as primary context for visual/UI issues.",
     ],

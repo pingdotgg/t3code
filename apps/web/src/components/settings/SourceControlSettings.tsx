@@ -2,14 +2,15 @@ import { ChevronDownIcon, GitPullRequestIcon, InfoIcon, RefreshCwIcon } from "lu
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
-import type {
-  BackgroundActivitySettings,
-  SourceControlProviderKind,
-  SourceControlDiscoveryResult,
-  SourceControlProviderAuth,
-  SourceControlProviderDiscoveryItem,
-  VcsDriverKind,
-  VcsDiscoveryItem,
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type BackgroundActivitySettings,
+  type SourceControlProviderKind,
+  type SourceControlDiscoveryResult,
+  type SourceControlProviderAuth,
+  type SourceControlProviderDiscoveryItem,
+  type VcsDriverKind,
+  type VcsDiscoveryItem,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
@@ -426,6 +427,57 @@ function GitFetchIntervalSettings() {
   );
 }
 
+function GitWorktreeBranchNamingSettings() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const usesConventionalBranchNames = settings.newWorktreesUseConventionalBranchNames;
+  const canReset =
+    usesConventionalBranchNames !== DEFAULT_SERVER_SETTINGS.newWorktreesUseConventionalBranchNames;
+
+  return (
+    <div
+      {...searchableSetting("conventional-worktree-branch-prefixes")}
+      className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+    >
+      <div className="min-w-0 space-y-1">
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="text-xs font-medium text-foreground">Conventional branch prefixes</span>
+          <span
+            className={cn(
+              "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
+              canReset ? "opacity-100" : "pointer-events-none opacity-0",
+            )}
+            aria-hidden={!canReset}
+          >
+            {canReset ? (
+              <SettingResetButton
+                label="conventional worktree branch prefixes"
+                onClick={() =>
+                  updateSettings({
+                    newWorktreesUseConventionalBranchNames:
+                      DEFAULT_SERVER_SETTINGS.newWorktreesUseConventionalBranchNames,
+                  })
+                }
+              />
+            ) : null}
+          </span>
+        </div>
+        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+          Name generated worktree branches with prefixes such as feat/, fix/, and refactor/. Turn
+          this off to keep the legacy t3code/ prefix.
+        </p>
+      </div>
+      <Switch
+        checked={usesConventionalBranchNames}
+        onCheckedChange={(checked) =>
+          updateSettings({ newWorktreesUseConventionalBranchNames: Boolean(checked) })
+        }
+        aria-label="Use conventional prefixes for generated worktree branches"
+      />
+    </div>
+  );
+}
+
 function SourceControlSectionSkeleton({
   title,
   headerAction,
@@ -561,7 +613,12 @@ export function SourceControlSettingsPanel() {
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                  {item.kind === "git" ? (
+                    <>
+                      <GitFetchIntervalSettings />
+                      <GitWorktreeBranchNamingSettings />
+                    </>
+                  ) : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>

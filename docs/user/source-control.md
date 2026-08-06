@@ -35,6 +35,11 @@ T3 Code works with the platforms your team already uses:
 - T3 Code can suggest titles and descriptions based on your commits
 - Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
 
+**Use descriptive worktree branches**
+
+- New worktrees start on a temporary branch, then T3 Code names the branch from your first message
+- Generated names use a conventional category prefix such as `feat/`, `fix/`, `docs/`, `refactor/`, or `chore/`; turn this off in **Settings → Source Control → Version Control** to keep the legacy `t3code/` prefix
+
 **Stay on top of open reviews**
 
 - See if your current branch already has an open PR/MR

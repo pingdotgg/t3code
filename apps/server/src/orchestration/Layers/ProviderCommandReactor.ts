@@ -287,7 +287,24 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
-function buildGeneratedWorktreeBranchName(raw: string): string {
+const GENERATED_WORKTREE_BRANCH_TYPES = new Set([
+  "feat",
+  "fix",
+  "docs",
+  "style",
+  "refactor",
+  "perf",
+  "test",
+  "build",
+  "ci",
+  "chore",
+  "revert",
+]);
+
+function buildGeneratedWorktreeBranchName(
+  raw: string,
+  useConventionalBranchNames: boolean,
+): string {
   const normalized = raw
     .trim()
     .toLowerCase()
@@ -307,7 +324,17 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+  if (!useConventionalBranchNames) {
+    return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+  }
+
+  const [branchType, ...branchNameParts] = safeFragment.split("/");
+  if (branchType && GENERATED_WORKTREE_BRANCH_TYPES.has(branchType)) {
+    const branchName = branchNameParts.filter((part) => part.length > 0).join("/");
+    return `${branchType}/${branchName || "update"}`;
+  }
+
+  return `chore/${safeFragment}`;
 }
 
 const make = Effect.gen(function* () {
@@ -825,11 +852,15 @@ const make = Effect.gen(function* () {
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
+        useConventionalBranchNames: settings.newWorktreesUseConventionalBranchNames,
         modelSelection,
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      const targetBranch = buildGeneratedWorktreeBranchName(
+        generated.branch,
+        settings.newWorktreesUseConventionalBranchNames,
+      );
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });

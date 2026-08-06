@@ -121,6 +121,7 @@ describe("buildBranchNamePrompt", () => {
 
     expect(result.prompt).toContain("User message:");
     expect(result.prompt).toContain("Fix the login timeout bug");
+    expect(result.prompt).toContain("feat/, fix/, docs/, style/, refactor/");
     expect(result.prompt).not.toContain("Attachment metadata:");
   });
 
@@ -142,6 +143,15 @@ describe("buildBranchNamePrompt", () => {
     expect(result.prompt).toContain("screenshot.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("12345 bytes");
+  });
+
+  it("omits conventional prefixes when disabled", () => {
+    const result = buildBranchNamePrompt({
+      message: "Fix the login timeout bug",
+      useConventionalBranchNames: false,
+    });
+
+    expect(result.prompt).not.toContain("Start with exactly one category prefix");
   });
 });
 
