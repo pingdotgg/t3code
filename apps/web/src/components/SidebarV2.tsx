@@ -380,7 +380,10 @@ function SidebarV2SettledLifecycleControls({
       ) : null}
       <button
         type="button"
-        aria-label="Archive thread"
+        aria-label={
+          archiveDisabled ? "Archive unavailable while work is still active" : "Archive thread"
+        }
+        title={archiveDisabled ? "Cannot archive while work is still active" : undefined}
         disabled={archiveDisabled}
         onClick={onArchive}
         className={cn(SIDEBAR_V2_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "disabled:opacity-50")}

@@ -268,28 +268,27 @@ export function isThreadSessionRunning(
 }
 
 type ThreadArchiveState = {
-  readonly session?:
-    | { readonly status: string; readonly activeTurnId?: unknown }
-    | null
-    | undefined;
-  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
+  readonly session: Parameters<typeof isThreadSessionRunning>[0];
+  readonly backgroundLiveness?: SidebarThreadSummary["backgroundLiveness"];
 };
 
 export function isThreadArchiveBlocked(thread: ThreadArchiveState | null | undefined): boolean {
-  return (
-    isThreadSessionRunning(thread?.session) ||
-    thread?.backgroundLiveness === "working" ||
-    thread?.backgroundLiveness === "monitoring"
-  );
+  return isThreadSessionRunning(thread?.session) || thread?.backgroundLiveness != null;
 }
 
 export function canArchiveSettledSidebarThread(input: {
   readonly threadKey: string;
   readonly settledThreadKeys: ReadonlySet<string>;
-  readonly session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined;
-  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
+  readonly session: ThreadArchiveState["session"];
+  readonly backgroundLiveness: ThreadArchiveState["backgroundLiveness"];
 }): boolean {
-  return input.settledThreadKeys.has(input.threadKey) && !isThreadArchiveBlocked(input);
+  return (
+    input.settledThreadKeys.has(input.threadKey) &&
+    !isThreadArchiveBlocked({
+      session: input.session,
+      backgroundLiveness: input.backgroundLiveness,
+    })
+  );
 }
 
 export function filterArchivableSidebarThreads<T extends ThreadArchiveState>(

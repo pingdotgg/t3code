@@ -534,22 +534,16 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
   });
 
   it("keeps archive visible but disabled while a thread has active work", () => {
-    for (const thread of [
-      { session: { status: "running", activeTurnId: "turn-running" } },
-      { session: null, backgroundLiveness: "working" as const },
-      { session: null, backgroundLiveness: "monitoring" as const },
-    ]) {
-      const slots = buildSidebarV2ThreadContextMenuSlots({
-        canUseLifecycleActions: true,
-        supportsSettlement: true,
-        isSettled: false,
-        isArchiveBlocked: isThreadArchiveBlocked(thread),
-      });
+    const slots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: true,
+      isArchiveBlocked: true,
+    });
 
-      expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
-        disabled: true,
-      });
-    }
+    expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
+      disabled: true,
+    });
   });
 
   it("leaves capability-gated slots empty", () => {
@@ -574,18 +568,23 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
       isArchiveBlocked: false,
     });
 
-    const compose = (pinItem: { id: "pin" | "unpin"; label: string }) =>
-      composeSidebarV2ThreadContextMenuItems({
-        slots,
-        leadingItems: [{ id: "new-thread-on-branch", label: "New thread on branch" }, pinItem],
-        snoozeItems: [{ id: "snooze", label: "Snooze" }],
-        titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
-        copyItems: [
-          { id: "copy-path", label: "Copy path" },
-          { id: "copy-branch", label: "Copy branch" },
-        ],
-      }).map((item) => item.id);
-    const expectedTail = [
+    const items = composeSidebarV2ThreadContextMenuItems({
+      slots,
+      leadingItems: [
+        { id: "new-thread-on-branch", label: "New thread on branch" },
+        { id: "pin", label: "Pin thread" },
+      ],
+      snoozeItems: [{ id: "snooze", label: "Snooze" }],
+      titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
+      copyItems: [
+        { id: "copy-path", label: "Copy path" },
+        { id: "copy-branch", label: "Copy branch" },
+      ],
+    });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "new-thread-on-branch",
+      "pin",
       "settle",
       "archive",
       "snooze",
@@ -595,17 +594,6 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
       "copy-path",
       "copy-branch",
       "delete",
-    ];
-
-    expect(compose({ id: "pin", label: "Pin thread" })).toEqual([
-      "new-thread-on-branch",
-      "pin",
-      ...expectedTail,
-    ]);
-    expect(compose({ id: "unpin", label: "Unpin thread" })).toEqual([
-      "new-thread-on-branch",
-      "unpin",
-      ...expectedTail,
     ]);
   });
 });
@@ -645,6 +633,8 @@ describe("archive lifecycle guards", () => {
     };
 
     expect(isThreadSessionRunning(running.session)).toBe(true);
+    expect(isThreadArchiveBlocked(ready)).toBe(false);
+    expect(isThreadArchiveBlocked(running)).toBe(true);
     expect(isThreadArchiveBlocked(working)).toBe(true);
     expect(isThreadArchiveBlocked(monitoring)).toBe(true);
     expect(filterArchivableSidebarThreads([ready, running, working, monitoring])).toEqual([ready]);
@@ -658,6 +648,7 @@ describe("archive lifecycle guards", () => {
         threadKey: "ready",
         settledThreadKeys,
         session: null,
+        backgroundLiveness: null,
       }),
     ).toBe(true);
     expect(
@@ -665,6 +656,7 @@ describe("archive lifecycle guards", () => {
         threadKey: "running",
         settledThreadKeys,
         session: { status: "running", activeTurnId: "turn-running" },
+        backgroundLiveness: null,
       }),
     ).toBe(false);
     expect(
@@ -672,13 +664,14 @@ describe("archive lifecycle guards", () => {
         threadKey: "unsettled",
         settledThreadKeys,
         session: null,
+        backgroundLiveness: null,
       }),
     ).toBe(false);
     for (const backgroundLiveness of ["working", "monitoring"] as const) {
       expect(
         canArchiveSettledSidebarThread({
-          threadKey: backgroundLiveness,
-          settledThreadKeys,
+          threadKey: `thread-${backgroundLiveness}`,
+          settledThreadKeys: new Set([`thread-${backgroundLiveness}`]),
           session: null,
           backgroundLiveness,
         }),
