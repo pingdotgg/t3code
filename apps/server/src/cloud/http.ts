@@ -46,7 +46,9 @@ import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -56,8 +58,10 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import { SERVICE_STATE_FILE, serviceStateHasPendingUpdate } from "./serviceProtocol.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
@@ -627,6 +631,20 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
   },
 );
 
+// The launcher records an in-flight update in its durable state file. Read
+// straight from disk: the launcher owns that file, and this runs while the
+// server is tearing down. Unreadable or unparseable state means no pending
+// update — the release then proceeds as before.
+const pendingServiceUpdateExists = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const stateText = yield* fs
+    .readFileString(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
+    .pipe(Effect.option);
+  return Option.isSome(stateText) && serviceStateHasPendingUpdate(stateText.value);
+});
+
 // Cloudflare bills per provisioned tunnel, so an environment that goes offline
 // must not leave its tunnel behind. Releasing deletes only the tunnel — the
 // relay keeps the link and its hostname reservation, and the next startup's
@@ -647,6 +665,19 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   // reapplying the stored connector token — it has no boot-time re-provision
   // path — so its tunnel must survive the restart. (Unlink still deletes it.)
   if (!(yield* readCliDesiredCloudLink) || (yield* readCliDesiredLinkMode) !== "managed") {
+    return false;
+  }
+  // A shutdown that hands off to a pending remote update is not the
+  // environment going offline: the launcher immediately brings a server back
+  // (the new version, or the old one after a rollback). Deleting the tunnel
+  // here forces that server to provision a replacement UUID, and the public
+  // hostname's route to the new tunnel takes 1-2 minutes to propagate — the
+  // dominant cost of an update restart. Keep the tunnel instead: the next
+  // boot respawns the connector from the stored config and is reachable as
+  // soon as it connects, and the reconcile confirms the still-live tunnel
+  // without replacing it.
+  if (yield* pendingServiceUpdateExists) {
+    yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
     return false;
   }
   const token = yield* dependencies.cliTokenManager.getExisting;
