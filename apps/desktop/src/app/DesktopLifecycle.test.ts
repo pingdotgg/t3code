@@ -29,12 +29,13 @@ describe("DesktopLifecycle", () => {
         setName: () => Effect.void,
         setAboutPanelOptions: () => Effect.void,
         setAppUserModelId: () => Effect.void,
-        requestSingleInstanceLock: Effect.succeed(true),
+        getAppMetrics: Effect.succeed([]),
         isDefaultProtocolClient: () => Effect.succeed(false),
         setAsDefaultProtocolClient: () => Effect.succeed(true),
         setDesktopName: () => Effect.void,
         setDockIcon: () => Effect.void,
         appendCommandLineSwitch: () => Effect.void,
+        removeCommandLineSwitch: () => Effect.void,
         onBeforeQuitForUpdate: (listener) =>
           Effect.acquireRelease(
             Effect.sync(() => {

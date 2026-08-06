@@ -1,10 +1,20 @@
-import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  InfoIcon,
+  LoaderIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import type { CSSProperties } from "react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
+  type BackgroundActivityProfile,
+  type BackgroundActivitySettings,
   type DesktopUpdateChannel,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
@@ -24,14 +34,28 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
+  MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
+  MAX_INTERFACE_FONT_SIZE,
+  MAX_PROMPT_FONT_SIZE,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_CODE_FONT_SIZE,
   MIN_GLASS_OPACITY,
+  MIN_INTERFACE_FONT_SIZE,
+  MIN_PROMPT_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
 } from "@t3tools/contracts/settings";
+import {
+  getBackgroundActivityBaseProfile,
+  getBackgroundActivityPresetSettings,
+  resolveServerBackgroundActivitySettings,
+} from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
   canCheckForUpdate,
@@ -49,6 +73,7 @@ import {
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -62,6 +87,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { isMacPlatform } from "../../lib/utils";
 import {
   primaryServerObservabilityAtom,
   primaryServerProvidersAtom,
@@ -72,7 +98,35 @@ import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { DraftInput } from "../ui/draft-input";
+import { Input } from "../ui/input";
+import {
+  DEFAULT_CODE_FONT_STACK,
+  DEFAULT_SANS_FONT_STACK,
+  isFontFamilyAvailable,
+  isMonospaceFamily,
+  resolveDefaultFamilyLabel,
+  resolveTerminalFontPreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../../appearanceFonts";
+import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
+import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -88,12 +142,15 @@ import {
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
+  backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
+  resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -101,7 +158,9 @@ import {
   SettingsRow,
   SettingsSection,
   useRelativeTimeTick,
+  useSettingsSearchTargetId,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -132,7 +191,129 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
+  balanced: "Balanced",
+  performance: "Performance",
+  "battery-saver": "Battery saver",
+};
+
+type BackgroundActivityProfileOption = BackgroundActivityProfile | "advanced";
+type BackgroundActivityOverridePatch = Partial<{
+  [K in keyof BackgroundActivitySettings["overrides"]]:
+    | BackgroundActivitySettings["overrides"][K]
+    | undefined;
+}>;
+
+const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<BackgroundActivityProfileOption, string> = {
+  ...BACKGROUND_ACTIVITY_PROFILE_LABELS,
+  advanced: "Advanced",
+};
+
+const BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS: Record<BackgroundActivityProfile, string> = {
+  balanced:
+    "Pauses background probes when clients are idle, the host is locked, or low power mode is active.",
+  performance: "Allows scoped background probes while any subscribed client remains connected.",
+  "battery-saver": "Also pauses background probes when the host or client is on battery.",
+};
+
+const ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION =
+  "Uses custom background intervals with the selected shared power policy.";
+
+const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+const BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES: ReadonlyArray<{
+  readonly key:
+    | "pauseWhenHostLocked"
+    | "pauseWhenHostLowPower"
+    | "pauseWhenClientLowPower"
+    | "pauseWhenOnBattery";
+  readonly label: string;
+}> = [
+  { key: "pauseWhenHostLocked", label: "Pause when host is locked" },
+  { key: "pauseWhenHostLowPower", label: "Pause on host low power" },
+  { key: "pauseWhenClientLowPower", label: "Pause on client low power" },
+  { key: "pauseWhenOnBattery", label: "Pause on battery" },
+];
+
+function durationToSeconds(duration: Duration.Duration): number {
+  return Math.round(Duration.toMillis(duration) / 1_000);
+}
+
+function normalizeIntervalSeconds(value: number | null, minimum = 0): number {
+  if (value === null || !Number.isFinite(value)) {
+    return minimum;
+  }
+  return Math.max(minimum, Math.round(value));
+}
+
+function resetBackgroundActivitySettings() {
+  return {
+    backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+  };
+}
+
+function backgroundActivityProfileSettings(profile: BackgroundActivityProfile) {
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile,
+      overrides: {},
+    },
+  };
+}
+
+function backgroundActivityOverrideSettings(
+  current: BackgroundActivitySettings,
+  resolved: ReturnType<typeof resolveServerBackgroundActivitySettings>,
+  overrides: BackgroundActivityOverridePatch,
+) {
+  const nextOverrides: BackgroundActivityOverridePatch = {
+    automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+    hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
+    hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
+    idleClientTtl: resolved.idleClientTtl,
+    pauseWhenHostLocked: resolved.pauseWhenHostLocked,
+    pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
+    pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
+    pauseWhenOnBattery: resolved.pauseWhenOnBattery,
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(nextOverrides)) {
+    if (value === undefined) {
+      delete nextOverrides[key as keyof typeof nextOverrides];
+    }
+  }
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile: "custom" as const,
+      baseProfile: getBackgroundActivityBaseProfile(current),
+      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
+    },
+  };
+}
+
+function PolicyTooltip({ children }: { readonly children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            aria-label="Background policy details"
+          >
+            <InfoIcon className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 function withoutProviderInstanceKey<V>(
   record: Readonly<Record<ProviderInstanceId, V>> | undefined,
@@ -408,6 +589,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -428,6 +610,16 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Project Grouping"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans
+        ? ["Interface font"]
+        : []),
+      ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer
+        ? ["Prompt font"]
+        : []),
+      ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ? ["Code font"] : []),
+      ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal
+        ? ["Terminal font"]
+        : []),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
@@ -441,10 +633,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
-      ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
-      Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
-        ? ["Automatic Git fetch interval"]
-        : []),
+      ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -465,6 +654,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ],
     [
       isTextGenerationModelDirty,
+      isBackgroundActivityDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -473,8 +663,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
+      settings.fontFamilyCode,
+      settings.fontFamilyComposer,
+      settings.fontFamilySans,
+      settings.fontFamilyTerminal,
+      settings.fontSizeCode,
+      settings.fontSizeInterface,
+      settings.fontSizePrompt,
+      settings.fontSizeTerminal,
       settings.glassOpacity,
-      settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
@@ -507,13 +704,20 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+      backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+      providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
+      fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
+      fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
+      fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
     });
     onRestored?.();
   }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
@@ -522,6 +726,272 @@ export function useSettingsRestore(onRestored?: () => void) {
     changedSettingLabels,
     restoreDefaults,
   };
+}
+
+function BackgroundActivityAdvancedDialog({
+  open,
+  onOpenChange,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeProfile = resolvedBackgroundActivity.profile;
+  const automaticGitFetchIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.automaticGitFetchInterval,
+  );
+  const providerHealthRefreshIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.providerHealthRefreshInterval,
+  );
+  const hostPowerMonitorActiveIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.hostPowerMonitorActiveInterval,
+  );
+  const hostPowerMonitorIdleIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.hostPowerMonitorIdleInterval,
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Background Activity</DialogTitle>
+          <DialogDescription>
+            Tune the shared power policy and the background intervals that feed it.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-0 px-6 pb-5">
+          <div className="overflow-hidden rounded-xl border bg-card text-card-foreground">
+            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Shared policy</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Controls whether background work may run after a subscribed interval fires.
+                </p>
+              </div>
+              <Select
+                value={activeProfile}
+                onValueChange={(value) => {
+                  if (
+                    value === "balanced" ||
+                    value === "performance" ||
+                    value === "battery-saver"
+                  ) {
+                    updateSettings({
+                      backgroundActivity: backgroundActivitySharedPolicySettings(settings, value),
+                    });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Shared background policy">
+                  <SelectValue>{BACKGROUND_ACTIVITY_PROFILE_LABELS[activeProfile]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="balanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="performance">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="battery-saver">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Git fetch interval</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Refresh remote branch status in the background.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={automaticGitFetchIntervalSeconds}
+                  min={0}
+                  step={5}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          automaticGitFetchInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease Git fetch interval" />
+                    <NumberFieldInput aria-label="Git fetch interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase Git fetch interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Provider health interval</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Refresh provider availability, versions, auth state, and model metadata.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={providerHealthRefreshIntervalSeconds}
+                  min={0}
+                  step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          providerHealthRefreshInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease provider health interval" />
+                    <NumberFieldInput aria-label="Provider health interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase provider health interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Host power monitor</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Poll host power state while clients are active.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={hostPowerMonitorActiveIntervalSeconds}
+                  min={5}
+                  step={5}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          hostPowerMonitorActiveInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value, 5),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease active host power interval" />
+                    <NumberFieldInput aria-label="Active host power interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase active host power interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Idle host monitor</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Poll host power state when no foreground client is active.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={hostPowerMonitorIdleIntervalSeconds}
+                  min={5}
+                  step={30}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          hostPowerMonitorIdleInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value, 5),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease idle host power interval" />
+                    <NumberFieldInput aria-label="Idle host power interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase idle host power interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="grid gap-0 border-t sm:grid-cols-2">
+              {BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES.map(({ key, label }) => (
+                <label
+                  key={key}
+                  className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0 sm:border-r sm:even:border-r-0"
+                >
+                  <span className="text-sm font-medium">{label}</span>
+                  <Switch
+                    checked={resolvedBackgroundActivity[key]}
+                    onCheckedChange={(checked) =>
+                      updateSettings(
+                        backgroundActivityOverrideSettings(
+                          settings.backgroundActivity,
+                          resolvedBackgroundActivity,
+                          {
+                            [key]: Boolean(checked),
+                          },
+                        ),
+                      )
+                    }
+                    aria-label={label}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => updateSettings(resetBackgroundActivitySettings())}
+          >
+            Reset all
+          </Button>
+          <Button onClick={() => onOpenChange(false)}>Done</Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
 }
 
 export function AppearanceSettingsPanel() {
@@ -534,15 +1004,15 @@ export function AppearanceSettingsPanel() {
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
-    "--glass-slider-progress": `${glassOpacityRatio * 100}%`,
-    "--glass-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
+    "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
   } as CSSProperties;
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Appearance">
+      <SettingsSection id="appearance" title="Appearance">
         <SettingsRow
-          title="Theme"
+          {...searchableSetting("theme")}
           description="Choose how T3 Code looks across the app."
           resetAction={
             theme !== "system" ? (
@@ -575,7 +1045,7 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
-          title="Glass opacity"
+          {...searchableSetting("setting-glass-opacity")}
           description="Control how transparent glass surfaces are. Higher values make menus, dialogs, and the composer more solid."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
@@ -597,7 +1067,7 @@ export function AppearanceSettingsPanel() {
               </output>
               <input
                 aria-label="Glass opacity"
-                className="glass-opacity-slider min-w-0 flex-1"
+                className="settings-slider min-w-0 flex-1"
                 id="glass-opacity"
                 max={MAX_GLASS_OPACITY}
                 min={MIN_GLASS_OPACITY}
@@ -622,7 +1092,7 @@ export function AppearanceSettingsPanel() {
 
         {showEnvironmentIdentification ? (
           <SettingsRow
-            title="Environment identification"
+            {...searchableSetting("environment-identification")}
             description="Choose how Dev and Nightly environments are identified."
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
@@ -661,38 +1131,480 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
-
-        <SettingsRow
-          title="Word wrap"
-          description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
-          resetAction={
-            settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
-              <SettingResetButton
-                label="word wrapping"
-                onClick={() =>
-                  updateSettings({
-                    wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.wordWrap}
-              onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
-              aria-label="Wrap code, tables, diffs, and file previews by default"
-            />
-          }
-        />
       </SettingsSection>
+
+      <TypographySection />
     </SettingsPageContainer>
+  );
+}
+
+function useFontDefaultFamilies() {
+  const settings = usePrimarySettings();
+  // An unset preference shows the font it resolves to on this machine; the
+  // default stacks are the platform's own faces, so the name is probed, not
+  // hardcoded.
+  const defaults = useMemo(
+    () => ({
+      sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
+      code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
+    }),
+    [],
+  );
+  return {
+    sans: defaults.sans,
+    code: defaults.code,
+    // The composer inherits whatever the interface preference resolves to.
+    interfaceFamily: settings.fontFamilySans.trim() || defaults.sans,
+  };
+}
+
+function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const defaults = useFontDefaultFamilies();
+  return (
+    <FontFamilySettingsRow
+      {...searchableSetting("interface-font")}
+      description="Everything outside code blocks and the terminal."
+      defaultFamily={defaults.sans}
+      value={settings.fontFamilySans}
+      onValueChange={(fontFamilySans) => updateSettings({ fontFamilySans })}
+      size={{
+        label: "Interface font size",
+        min: MIN_INTERFACE_FONT_SIZE,
+        max: MAX_INTERFACE_FONT_SIZE,
+        value: settings.fontSizeInterface,
+        onChange: (fontSizeInterface) => updateSettings({ fontSizeInterface }),
+      }}
+      {...(preview !== undefined ? { preview } : {})}
+    />
+  );
+}
+
+function PromptFontRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const defaults = useFontDefaultFamilies();
+  return (
+    <FontFamilySettingsRow
+      {...searchableSetting("prompt-font")}
+      description="Only the box you write prompts in. Mono works well here."
+      defaultFamily={defaults.interfaceFamily}
+      value={settings.fontFamilyComposer}
+      onValueChange={(fontFamilyComposer) => updateSettings({ fontFamilyComposer })}
+      size={{
+        label: "Prompt font size",
+        min: MIN_PROMPT_FONT_SIZE,
+        max: MAX_PROMPT_FONT_SIZE,
+        value: settings.fontSizePrompt,
+        onChange: (fontSizePrompt) => updateSettings({ fontSizePrompt }),
+      }}
+      preview={<PromptFontPreview />}
+    />
+  );
+}
+
+function CodeFontRow({
+  title,
+  description = "Code blocks, diffs, and file previews.",
+  preview,
+}: {
+  title?: string;
+  description?: string;
+  preview?: ReactNode;
+}) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const defaults = useFontDefaultFamilies();
+  return (
+    <FontFamilySettingsRow
+      {...searchableSetting("code-font")}
+      {...(title !== undefined ? { title } : {})}
+      description={description}
+      defaultFamily={defaults.code}
+      value={settings.fontFamilyCode}
+      onValueChange={(fontFamilyCode) => updateSettings({ fontFamilyCode })}
+      requireMonospace
+      size={{
+        label: "Code font size",
+        min: MIN_CODE_FONT_SIZE,
+        max: MAX_CODE_FONT_SIZE,
+        value: settings.fontSizeCode,
+        onChange: (fontSizeCode) => updateSettings({ fontSizeCode }),
+      }}
+      preview={preview ?? <CodeFontPreview />}
+    />
+  );
+}
+
+function TerminalFontRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const defaults = useFontDefaultFamilies();
+  return (
+    <FontFamilySettingsRow
+      {...searchableSetting("terminal-font")}
+      description="Terminal output, independent from code blocks and diffs."
+      defaultFamily={defaults.code}
+      value={settings.fontFamilyTerminal}
+      onValueChange={(fontFamilyTerminal) => updateSettings({ fontFamilyTerminal })}
+      requireMonospace
+      size={{
+        label: "Terminal font size",
+        min: MIN_TERMINAL_FONT_SIZE,
+        max: MAX_TERMINAL_FONT_SIZE,
+        value: settings.fontSizeTerminal,
+        onChange: (fontSizeTerminal) => updateSettings({ fontSizeTerminal }),
+      }}
+      preview={
+        <TerminalFontPreview
+          family={resolveTerminalFontPreference({
+            advanced: true,
+            code: settings.fontFamilyCode,
+            terminal: settings.fontFamilyTerminal,
+          })}
+          size={settings.fontSizeTerminal}
+        />
+      }
+    />
+  );
+}
+
+function FontSmoothingRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  if (!isMacPlatform(navigator.platform)) return null;
+  return (
+    <SettingsRow
+      {...searchableSetting("font-smoothing")}
+      description="Render text with thinner grayscale anti-aliasing instead of macOS's heavier default."
+      resetAction={
+        settings.fontSmoothing !== DEFAULT_UNIFIED_SETTINGS.fontSmoothing ? (
+          <SettingResetButton
+            label="font smoothing"
+            onClick={() =>
+              updateSettings({ fontSmoothing: DEFAULT_UNIFIED_SETTINGS.fontSmoothing })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.fontSmoothing}
+          onCheckedChange={(checked) => updateSettings({ fontSmoothing: Boolean(checked) })}
+          aria-label="Font smoothing"
+        />
+      }
+    />
+  );
+}
+
+function WordWrapRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("word-wrap")}
+      description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
+      resetAction={
+        settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
+          <SettingResetButton
+            label="word wrapping"
+            onClick={() => updateSettings({ wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.wordWrap}
+          onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
+          aria-label="Wrap code, tables, diffs, and file previews by default"
+        />
+      }
+    />
+  );
+}
+
+function FontSettingsGroup() {
+  return (
+    <>
+      <InterfaceFontRow />
+      <PromptFontRow />
+      <CodeFontRow />
+      <TerminalFontRow />
+      <FontSmoothingRow />
+    </>
+  );
+}
+
+/**
+ * The two-font view: one sans, one monospace. The prompt follows the
+ * interface font and the terminal follows the monospace font, so the demos
+ * under each row show every surface the choice reaches.
+ */
+function SimpleFontRows() {
+  const settings = usePrimarySettings();
+  return (
+    <>
+      <InterfaceFontRow preview={<PromptFontPreview />} />
+      <CodeFontRow
+        title="Monospace font"
+        description="Code blocks, diffs, file previews, and the terminal."
+        preview={
+          <>
+            <CodeFontPreview />
+            <TerminalFontPreview
+              family={resolveTerminalFontPreference({
+                advanced: false,
+                code: settings.fontFamilyCode,
+                terminal: settings.fontFamilyTerminal,
+              })}
+              size={settings.fontSizeTerminal}
+            />
+          </>
+        }
+      />
+    </>
+  );
+}
+
+// Font smoothing only renders on macOS, so a search jump to it elsewhere
+// must not flip the section - the target would never mount to be scrolled to.
+const ADVANCED_TYPOGRAPHY_TARGET_IDS: ReadonlySet<string> = new Set([
+  "prompt-font",
+  "terminal-font",
+  ...(typeof navigator !== "undefined" && isMacPlatform(navigator.platform)
+    ? ["font-smoothing"]
+    : []),
+]);
+
+/**
+ * The two-font view by default - one sans, one monospace, each cascading to
+ * every surface it reaches - with an Advanced switch in the section header
+ * that reveals the per-surface override rows. The choice persists locally,
+ * and a settings-search jump to an override row flips Advanced on so the
+ * target exists to scroll to.
+ */
+function TypographySection() {
+  const [advanced, setAdvanced] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  const searchTargetId = useSettingsSearchTargetId();
+  // Flip Advanced on once per search jump so the hidden target can mount and
+  // scroll; tracking the handled id lets the user turn it back off without
+  // the still-set target immediately re-expanding the section.
+  const lastExpandedTargetRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (searchTargetId === null || !ADVANCED_TYPOGRAPHY_TARGET_IDS.has(searchTargetId)) return;
+    if (lastExpandedTargetRef.current === searchTargetId) return;
+    lastExpandedTargetRef.current = searchTargetId;
+    setAdvanced(true);
+  }, [searchTargetId, setAdvanced]);
+  return (
+    <SettingsSection
+      title="Typography"
+      headerAction={
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-muted-foreground">
+          Advanced
+          <Switch
+            checked={advanced}
+            onCheckedChange={(checked) => setAdvanced(Boolean(checked))}
+            aria-label="Show advanced typography settings"
+          />
+        </label>
+      }
+    >
+      {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
+      <WordWrapRow />
+    </SettingsSection>
+  );
+}
+
+function FontFamilySettingsRow({
+  id,
+  title,
+  description,
+  defaultFamily,
+  preview,
+  value,
+  onValueChange,
+  requireMonospace = false,
+  size,
+}: {
+  id?: string;
+  title: string;
+  description: string;
+  /** What an unset preference renders as, e.g. "Menlo". */
+  defaultFamily: string;
+  preview?: ReactNode;
+  value: string;
+  onValueChange: (value: string) => void;
+  requireMonospace?: boolean;
+  size: { label: string; min: number; max: number; value: number; onChange: (v: number) => void };
+}) {
+  const trimmed = value.trim();
+  // The fallback input edits a draft; the preference only commits once typing
+  // pauses and the text probes as an available font (or is an explicit
+  // clear), so the current font holds and nothing reflows mid-word.
+  const [draft, setDraft] = useState(value);
+  const [draftSettled, setDraftSettled] = useState(true);
+  const commitTimerRef = useRef<number | null>(null);
+  const lastValueRef = useRef(value);
+  if (lastValueRef.current !== value) {
+    // The committed value changed externally (hydration, reset, picker
+    // selection); adopt it and drop any pending commit of a stale draft.
+    lastValueRef.current = value;
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+    setDraft(value);
+    setDraftSettled(true);
+  }
+  useEffect(
+    () => () => {
+      if (commitTimerRef.current !== null) window.clearTimeout(commitTimerRef.current);
+    },
+    [],
+  );
+  const acceptsFamily = (candidate: string) =>
+    isFontFamilyAvailable(candidate) && (!requireMonospace || isMonospaceFamily(candidate));
+  const commitDraft = (next: string) => {
+    setDraftSettled(true);
+    // A rejected name stays in the field, flagged: the terminal would silently
+    // fall back to its default, so the row must not claim it took the value.
+    if (next.trim().length === 0 || acceptsFamily(next)) {
+      onValueChange(next);
+    }
+  };
+  const flushDraft = () => {
+    if (commitTimerRef.current === null) return;
+    window.clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = null;
+    commitDraft(draft);
+  };
+  const draftTrimmed = draft.trim();
+  // Flag an unknown name only once typing pauses, and never for an empty
+  // field - that is the starting state, not a rejected entry.
+  const draftPending = draftSettled && draftTrimmed.length > 0 && draftTrimmed !== trimmed;
+  const resetAction =
+    trimmed.length > 0 ? (
+      <SettingResetButton
+        label={`${title.toLowerCase()} family`}
+        onClick={() => onValueChange("")}
+      />
+    ) : null;
+  const fontEnumeration = useFontEnumeration();
+  // Everyone starts on the plain input; focusing it is the user gesture that
+  // runs font discovery. Where the engine can enumerate, the control then
+  // upgrades to the picker - popped open when the swap happens under focus,
+  // so the interaction continues without a second click.
+  const inputFocusedRef = useRef(false);
+  const familyControl =
+    fontEnumeration.status === "granted" ? (
+      <FontFamilyPicker
+        ariaLabel={`${title} family`}
+        defaultFamily={defaultFamily}
+        selectedFamily={trimmed}
+        requireMonospace={requireMonospace}
+        initialOpen={inputFocusedRef.current}
+        onSelect={onValueChange}
+      />
+    ) : (
+      <Input
+        aria-label={`${title} family`}
+        aria-invalid={draftPending || undefined}
+        autoCapitalize="off"
+        autoComplete="off"
+        className="min-w-0 flex-1"
+        maxLength={200}
+        onFocus={() => {
+          inputFocusedRef.current = true;
+          discoverInstalledFonts();
+        }}
+        onBlur={() => {
+          inputFocusedRef.current = false;
+          flushDraft();
+        }}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          setDraft(next);
+          setDraftSettled(false);
+          if (commitTimerRef.current !== null) {
+            window.clearTimeout(commitTimerRef.current);
+          }
+          commitTimerRef.current = window.setTimeout(() => {
+            commitTimerRef.current = null;
+            commitDraft(next);
+          }, 400);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") flushDraft();
+          if (event.key === "Escape") {
+            // Discard uncommitted typing without closing the settings page,
+            // which is what an unhandled Escape does.
+            event.preventDefault();
+            event.stopPropagation();
+            if (commitTimerRef.current !== null) {
+              window.clearTimeout(commitTimerRef.current);
+              commitTimerRef.current = null;
+            }
+            setDraft(value);
+            setDraftSettled(true);
+          }
+        }}
+        placeholder={defaultFamily}
+        spellCheck={false}
+        value={draft}
+      />
+    );
+  const control = (
+    <div className="flex w-full items-center gap-2 sm:w-auto">
+      <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
+      <Select
+        value={String(size.value)}
+        onValueChange={(next) => {
+          if (typeof next !== "string") return;
+          const parsed = Number(next);
+          if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
+            size.onChange(parsed);
+          }
+        }}
+      >
+        <SelectTrigger className="w-22 shrink-0" aria-label={size.label}>
+          <SelectValue>{size.value} px</SelectValue>
+        </SelectTrigger>
+        <SelectPopup align="end" alignItemWithTrigger={false}>
+          {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
+            (px) => (
+              <SelectItem hideIndicator key={px} value={String(px)}>
+                {px} px
+              </SelectItem>
+            ),
+          )}
+        </SelectPopup>
+      </Select>
+    </div>
+  );
+  return (
+    <SettingsRow
+      {...(id !== undefined ? { id } : {})}
+      title={title}
+      description={description}
+      resetAction={resetAction}
+      control={control}
+    >
+      {preview}
+    </SettingsRow>
   );
 }
 
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -728,12 +1640,25 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
+  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const backgroundActivityDescription =
+    backgroundActivityProfileOption === "advanced"
+      ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
+          BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
+        }.`
+      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
+  const canResetBackgroundActivity = !Equal.equals(
+    settings.backgroundActivity,
+    DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+  );
 
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
         <SettingsRow
-          title="Project Grouping"
+          {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
           resetAction={
             settings.sidebarProjectGroupingMode !==
@@ -763,13 +1688,13 @@ export function GeneralSettingsPanel() {
                   ),
                 });
               }}
-              aria-label="Project Grouping"
+              aria-label="Project grouping"
             />
           }
         />
 
         <SettingsRow
-          title="Time format"
+          {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."
           resetAction={
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
@@ -811,7 +1736,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Hide whitespace changes"
+          {...searchableSetting("hide-whitespace-changes")}
           description="Set whether the diff panel ignores whitespace-only edits by default."
           resetAction={
             settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
@@ -837,7 +1762,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Assistant output"
+          {...searchableSetting("assistant-output")}
           description="Show token-by-token output while a response is in progress."
           resetAction={
             settings.enableAssistantStreaming !==
@@ -864,7 +1789,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Provider update checks"
+          {...searchableSetting("provider-update-checks")}
           description="Check installed provider CLIs for newer available versions."
           resetAction={
             settings.enableProviderUpdateChecks !==
@@ -891,7 +1816,89 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Auto-open task panel"
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Background activity
+              <PolicyTooltip>
+                This shared policy gates background work such as Git refreshes and provider health
+                probes after their individual intervals elapse.
+              </PolicyTooltip>
+            </span>
+          }
+          description={backgroundActivityDescription}
+          resetAction={
+            canResetBackgroundActivity ? (
+              <SettingResetButton
+                label="background activity"
+                onClick={() => updateSettings(resetBackgroundActivitySettings())}
+              />
+            ) : null
+          }
+          control={
+            <>
+              <Select
+                value={backgroundActivityProfileOption}
+                onValueChange={(value) => {
+                  if (value === "advanced") {
+                    setBackgroundActivityDialogOpen(true);
+                    return;
+                  }
+                  if (
+                    value === "balanced" ||
+                    value === "performance" ||
+                    value === "battery-saver"
+                  ) {
+                    updateSettings(backgroundActivityProfileSettings(value));
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Background activity profile">
+                  <SelectValue>
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="balanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="performance">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="battery-saver">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="advanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              {backgroundActivityProfileOption === "advanced" ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label="Configure advanced background activity"
+                        onClick={() => setBackgroundActivityDialogOpen(true)}
+                      >
+                        <SettingsIcon className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Configure background activity</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              <BackgroundActivityAdvancedDialog
+                open={backgroundActivityDialogOpen}
+                onOpenChange={setBackgroundActivityDialogOpen}
+              />
+            </>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("auto-open-task-panel")}
           description="Open the right-side plan and task panel automatically when steps appear."
           resetAction={
             settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
@@ -917,7 +1924,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="New threads"
+          {...searchableSetting("new-threads")}
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
             settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
@@ -964,7 +1971,7 @@ export function GeneralSettingsPanel() {
         {settings.defaultThreadEnvMode === "worktree" ? (
           <SettingsRow
             className="bg-muted/20 sm:pl-9"
-            title="Start from origin"
+            title={searchableSetting("start-from-origin").title}
             description="Creates the worktree from the latest matching branch on origin instead of your local branch."
             resetAction={
               settings.newWorktreesStartFromOrigin !==
@@ -993,7 +2000,7 @@ export function GeneralSettingsPanel() {
         ) : null}
 
         <SettingsRow
-          title="Add project starts in"
+          {...searchableSetting("add-project-starts-in")}
           description='Leave empty to use "~/" when the Add Project browser opens.'
           resetAction={
             settings.addProjectBaseDirectory !==
@@ -1021,7 +2028,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Archive confirmation"
+          {...searchableSetting("archive-confirmation")}
           description="Require a second click on the inline archive action before a thread is archived."
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
@@ -1047,7 +2054,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Delete confirmation"
+          {...searchableSetting("delete-confirmation")}
           description="Ask before deleting a thread and its chat history."
           resetAction={
             settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
@@ -1073,7 +2080,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Text generation model"
+          {...searchableSetting("text-generation-model")}
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
             isTextGenerationModelDirty ? (
@@ -1157,7 +2164,7 @@ export function GeneralSettingsPanel() {
           />
         )}
         <SettingsRow
-          title="Diagnostics"
+          {...searchableSetting("diagnostics")}
           description={diagnosticsDescription}
           control={
             <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
@@ -1207,6 +2214,14 @@ export function ProviderSettingsPanel() {
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const providerHealthPreset = getBackgroundActivityPresetSettings(
+    resolvedBackgroundActivity.profile,
+  ).providerHealthRefreshInterval;
+  const providerHealthRefreshIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.providerHealthRefreshInterval,
+  );
+  const defaultProviderHealthRefreshIntervalSeconds = durationToSeconds(providerHealthPreset);
   const lastCheckedAt =
     serverProviders.length > 0
       ? serverProviders.reduce(
@@ -1464,7 +2479,7 @@ export function ProviderSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Providers"
+        {...searchableSetting("providers")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
@@ -1508,6 +2523,69 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
+        <SettingsRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Health check interval
+              <PolicyTooltip>
+                This interval is configured here, then the shared Background activity policy decides
+                whether provider probes may run when the timer fires. Custom intervals appear as
+                Advanced in General settings.
+              </PolicyTooltip>
+            </span>
+          }
+          description="Refresh provider availability, versions, auth state, and model metadata in the background. Set this to 0 seconds to rely on manual refreshes."
+          resetAction={
+            providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
+              <SettingResetButton
+                label="provider health check interval"
+                onClick={() =>
+                  updateSettings(
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: undefined,
+                      },
+                    ),
+                  )
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex shrink-0 items-center gap-2">
+              <NumberField
+                value={providerHealthRefreshIntervalSeconds}
+                min={0}
+                step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
+                size="sm"
+                className="w-32"
+                onValueChange={(value) =>
+                  updateSettings(
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: Duration.seconds(
+                          normalizeIntervalSeconds(value),
+                        ),
+                      },
+                    ),
+                  )
+                }
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
+                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
+                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">seconds</span>
+            </div>
+          }
+        />
+
         {rows.map((row) => {
           const driverOption = getDriverOption(row.driver);
           const liveProvider = serverProviders.find(
@@ -1730,7 +2808,10 @@ export function ArchivedThreadsPanel() {
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
-        <SettingsSection title="Archived threads">
+        <SettingsSection
+          id={isLoadingArchive ? undefined : searchableSetting("archive").id}
+          title={searchableSetting("archive").title}
+        >
           <SettingsRow
             title={
               <span className="inline-flex items-center gap-2">
@@ -1754,9 +2835,10 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }) => (
+        archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
             key={project.id}
+            id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.name}
             icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
           >

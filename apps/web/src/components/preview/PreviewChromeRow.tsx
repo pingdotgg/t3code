@@ -23,7 +23,6 @@ import { cn } from "~/lib/utils";
 
 interface Props {
   url: string;
-  displayUrl?: string | undefined;
   loading: boolean;
   loadProgress: number;
   canGoBack: boolean;
@@ -65,7 +64,6 @@ const NOOP = () => {};
 
 export function PreviewChromeRow({
   url,
-  displayUrl,
   loading,
   loadProgress,
   canGoBack,
@@ -166,13 +164,13 @@ export function PreviewChromeRow({
           </Tooltip>
         </div>
 
-        <InputGroup className="group/address h-7 flex-1 rounded-md border-transparent bg-transparent shadow-none before:shadow-none hover:bg-muted/40 focus-within:bg-background">
+        <InputGroup variant="ghost" className="group/address h-7 flex-1 rounded-md">
           <Tooltip>
             <TooltipTrigger
               render={
                 <InputGroupInput
                   ref={inputRef}
-                  value={inputFocused ? draft : (displayUrl ?? url)}
+                  value={inputFocused ? draft : url}
                   className={cn(
                     onOpenInBrowser &&
                       !inputFocused &&
@@ -203,7 +201,6 @@ export function PreviewChromeRow({
                 />
               }
             />
-            {!inputFocused && displayUrl ? <TooltipPopup>{url}</TooltipPopup> : null}
           </Tooltip>
           {onOpenInBrowser && !inputFocused ? (
             <InputGroupAddon

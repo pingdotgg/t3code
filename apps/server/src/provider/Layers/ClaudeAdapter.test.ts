@@ -55,6 +55,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private failure: unknown | undefined;
 
   public readonly interruptCalls: Array<void> = [];
+  public readonly stopTaskCalls: Array<string> = [];
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
@@ -96,6 +97,10 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly interrupt = async (): Promise<void> => {
     this.interruptCalls.push(undefined);
+  };
+
+  readonly stopTask = async (taskId: string): Promise<void> => {
+    this.stopTaskCalls.push(taskId);
   };
 
   readonly setModel = async (model?: string): Promise<void> => {
@@ -1438,6 +1443,243 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(turnCompleted.payload.state, "interrupted");
         assert.equal(turnCompleted.payload.errorMessage, "Error: Request was aborted.");
         assert.equal(turnCompleted.payload.stopReason, "tool_use");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("interruptTurn stops every live task before interrupting the turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // Wait for the three task.* runtime events to prove the lifecycle
+      // handlers processed the emissions (no wall-clock sleeps under the
+      // test clock).
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn agents",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-live",
+        description: "Agent A",
+        task_type: "local_agent",
+        uuid: "task-live-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-settled",
+        description: "Agent B",
+        task_type: "local_agent",
+        uuid: "task-settled-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-settled",
+        status: "completed",
+        output_file: "/tmp/task-settled.jsonl",
+        summary: "done",
+        uuid: "task-settled-done-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      yield* Fiber.join(taskEventsFiber);
+
+      yield* adapter.interruptTurn(session.threadId);
+
+      // Only the still-live task is stopped; interrupt always fires after.
+      assert.deepEqual(harness.query.stopTaskCalls, ["task-live"]);
+      assert.equal(harness.query.interruptCalls.length, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("workflow member coalescing: identical snapshots suppress, changes emit", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // Collect task.progress until member-0's tick-3 emission lands, then
+      // evaluate member emissions.
+      const progressFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.progress"),
+        Stream.takeUntil(
+          // Sentinel: member-0's tick-3 emission (tokens 20) — members are
+          // emitted after the coordinator row within a tick.
+          (event) =>
+            (event.payload as { taskId?: string }).taskId === "wf-coalesce:wf:0" &&
+            (event.payload as { typedUsage?: { totalTokens?: number } }).typedUsage?.totalTokens ===
+              20,
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run workflow",
+        attachments: [],
+      });
+
+      const memberSnapshot = (tokens: number) => [
+        { type: "workflow_phase", index: 0, title: "Work" },
+        {
+          type: "workflow_agent",
+          index: 0,
+          state: "running",
+          label: "member-0",
+          phaseIndex: 0,
+          tokens,
+        },
+        {
+          type: "workflow_agent",
+          index: 1,
+          state: "running",
+          label: "member-1",
+          phaseIndex: 0,
+          tokens: 50,
+        },
+      ];
+      const tick = (usageTotal: number, snapshot: ReturnType<typeof memberSnapshot>) =>
+        harness.query.emit({
+          type: "system",
+          subtype: "task_progress",
+          task_id: "wf-coalesce",
+          description: "Coalescing workflow",
+          usage: { total_tokens: usageTotal, tool_uses: 1, duration_ms: 10 },
+          workflow_progress: snapshot,
+          uuid: `wf-tick-${usageTotal}`,
+          session_id: "sdk-session",
+        } as unknown as SDKMessage);
+
+      // Tick 1: both members are new -> 2 member events.
+      tick(100, memberSnapshot(10));
+      // Tick 2: IDENTICAL member snapshot -> 0 member events (coordinator
+      // usage changed, but members did not).
+      tick(200, memberSnapshot(10));
+      // Tick 3: member-0's tokens advanced -> exactly 1 member event.
+      tick(300, memberSnapshot(20));
+
+      const progressEvents = Array.from(yield* Fiber.join(progressFiber));
+      const byMember = new Map<string, number>();
+      for (const event of progressEvents) {
+        const taskId = (event.payload as { taskId: string }).taskId;
+        if (!taskId.includes(":wf:")) continue;
+        byMember.set(taskId, (byMember.get(taskId) ?? 0) + 1);
+      }
+      // member-0: tick 1 + tick 3. member-1: tick 1 only (tick 2 identical,
+      // tick 3 unchanged).
+      assert.equal(byMember.get("wf-coalesce:wf:0"), 2);
+      assert.equal(byMember.get("wf-coalesce:wf:1"), 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("task.started carries model/effort; subagent snapshots refine the model", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      // No explicit model/effort on the launch input: the task inherits the
+      // session's selection.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-model",
+        description: "Agent M",
+        task_type: "local_agent",
+        tool_use_id: "toolu_agent_m",
+        uuid: "task-model-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // The subagent's assistant snapshot carries the authoritative API
+      // model id, which refines the linkage on later rows.
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_m",
+        message: {
+          model: "claude-sonnet-5[1m]",
+          content: [],
+        },
+        uuid: "subagent-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-model",
+        description: "Agent M",
+        usage: { total_tokens: 100, tool_uses: 1, duration_ms: 10 },
+        uuid: "task-model-progress-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.model, "claude-opus-4-6");
+        assert.equal(started.payload.effort, "max");
+      }
+      const progress = taskEvents[1];
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.model, "claude-sonnet-5[1m]");
+        assert.equal(progress.payload.effort, "max");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { ExecutionEnvironmentDescriptor, ServerSelfUpdateMethod } from "./environment.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
+  ForwardCompatibleArray,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -38,7 +39,9 @@ export const ServerConfigIssue = Schema.Union([
 ]);
 export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
-const ServerConfigIssues = Schema.Array(ServerConfigIssue);
+// Issue kinds grow over time; older clients must not fail the whole config
+// decode over a kind they cannot render.
+const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
 
 export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
 export type ServerProviderState = typeof ServerProviderState.Type;
@@ -65,6 +68,7 @@ export const ServerProviderModel = Schema.Struct({
   subProvider: Schema.optional(TrimmedNonEmptyString),
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
+  isLegacy: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -193,7 +197,11 @@ export const ServerProvider = Schema.Struct({
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
-export const ServerProviders = Schema.Array(ServerProvider);
+// Provider status kinds grow over time (ServerProviderState,
+// ServerProviderAuthStatus, ServerProviderVersionAdvisoryStatus,
+// ServerProviderUpdateStatus); an older client must not fail the whole config
+// decode over one provider it cannot render.
+export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
 
 /**
@@ -303,6 +311,7 @@ export type ServerProcessSignal = typeof ServerProcessSignal.Type;
 
 export const ServerProcessDiagnosticsEntry = Schema.Struct({
   pid: PositiveInt,
+  startTimeMs: NonNegativeInt,
   ppid: NonNegativeInt,
   pgid: Schema.Option(Schema.Int),
   status: TrimmedNonEmptyString,
@@ -395,6 +404,7 @@ export type ServerProcessResourceHistoryResult = typeof ServerProcessResourceHis
 
 export const ServerSignalProcessInput = Schema.Struct({
   pid: PositiveInt,
+  startTimeMs: NonNegativeInt,
   signal: ServerProcessSignal,
 });
 export type ServerSignalProcessInput = typeof ServerSignalProcessInput.Type;
@@ -415,7 +425,9 @@ export const ServerConfig = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
   providers: ServerProviders,
-  availableEditors: Schema.Array(EditorId),
+  // Editor ids grow over time; drop ones this build does not know rather than
+  // failing the whole config decode.
+  availableEditors: ForwardCompatibleArray(EditorId),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
@@ -514,9 +526,21 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
+/** Terminal selection recorded by the service launcher for one update. */
+export const ServerSelfUpdateOutcome = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  fromVersion: TrimmedNonEmptyString,
+  targetVersion: TrimmedNonEmptyString,
+  status: Schema.Literals(["committed", "rolled-back", "failed"]),
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
+
 export const ServerLifecycleReadyPayload = Schema.Struct({
   at: IsoDateTime,
   environment: ExecutionEnvironmentDescriptor,
+  /** Present when this process resumed a launcher-managed update. */
+  updateOutcome: Schema.optionalKey(ServerSelfUpdateOutcome),
 });
 export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
 
@@ -587,8 +611,25 @@ export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 export const ServerSelfUpdateResult = Schema.Struct({
   targetVersion: TrimmedNonEmptyString,
   method: ServerSelfUpdateMethod,
+  /** Launcher-generated correlation ID. Absent when talking to older servers. */
+  updateId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;
+
+export const ServerSelfUpdateProgressStage = Schema.Literals(["downloading", "installing"]);
+export type ServerSelfUpdateProgressStage = typeof ServerSelfUpdateProgressStage.Type;
+
+export const ServerSelfUpdateProgressEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("progress"),
+    stage: ServerSelfUpdateProgressStage,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("complete"),
+    result: ServerSelfUpdateResult,
+  }),
+]);
+export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent.Type;
 
 export class ServerSelfUpdateError extends Schema.TaggedErrorClass<ServerSelfUpdateError>()(
   "ServerSelfUpdateError",

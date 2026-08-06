@@ -20,9 +20,9 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
 });
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
-/** How a server can replace itself with another version when asked over RPC:
-    "boot-service" rewrites the systemd user unit and restarts it; "respawn"
-    installs the target version and respawns the foreground process. */
+/** How a server can replace itself with another version when asked over RPC.
+    New servers only advertise the stable launcher-backed "boot-service" path;
+    "respawn" remains decodable for compatibility with older servers. */
 export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 
@@ -47,10 +47,19 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.pin / thread.unpin commands. Same
+      version-skew contract as threadSettlement. */
+  threadPinning: Schema.optionalKey(Schema.Boolean),
+  /** Server understands regenerateTitle on thread.meta.update. Absent on
+      older servers, so clients hide the action instead of sending it. */
+  threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
+  /** Server can stream self-update progress before acknowledging the
+      restart. Clients fall back to server.updateServer when absent. */
+  serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

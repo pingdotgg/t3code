@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.29",
+  "version": "0.0.31",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -16,7 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/bin.ts",
-    "build:bundle": "vp pack",
+    "build:bundle": "vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "start": "node dist/bin.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"

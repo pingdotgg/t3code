@@ -3,6 +3,7 @@ import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
 
+import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
@@ -11,6 +12,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
@@ -25,28 +27,43 @@ export function HomeRouteScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
-  const { state: catalogState } = useWorkspaceState();
+  const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
-  const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
-    useThreadListActions();
+
+  useEffect(() => {
+    void checkForAppUpdateOnLaunch();
+  }, []);
+
+  const {
+    archiveThread,
+    confirmDeleteThread,
+    settleThread,
+    snoozeThread,
+    unsnoozeThread,
+    pinThread,
+    unpinThread,
+    unsettleThread,
+  } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
-  const environments = useMemo(
-    () =>
-      Arr.sort(
-        Object.values(savedConnectionsById).map((connection) => ({
-          environmentId: connection.environmentId,
-          label: connection.environmentLabel,
-        })),
-        Order.mapInput(
-          Order.String,
-          (environment: { readonly label: string }) => environment.label,
-        ),
+  const environments = useMemo(() => {
+    const connectionStateByEnvironmentId = new Map(
+      workspaceEnvironments.map(
+        (environment) => [environment.environmentId, environment.connectionState] as const,
       ),
-    [savedConnectionsById],
-  );
+    );
+    return Arr.sort(
+      Object.values(savedConnectionsById).map((connection) => ({
+        environmentId: connection.environmentId,
+        label: connection.environmentLabel,
+        connectionState:
+          connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
+      })),
+      Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
+    );
+  }, [savedConnectionsById, workspaceEnvironments]);
   const availableEnvironmentIds = useMemo(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
@@ -85,7 +102,9 @@ export function HomeRouteScreen() {
   if (layout.usesSplitView) {
     return (
       <>
-        <NativeStackScreenOptions options={{ title: "", headerTitle: "" }} />
+        <NativeStackScreenOptions
+          options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
+        />
         <WorkspaceSidebarToolbar
           afterSidebarButton={
             <NativeHeaderToolbar.Button
@@ -107,8 +126,8 @@ export function HomeRouteScreen() {
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
-        {/* Restore the compact title in case the split branch blanked it. */}
-        <NativeStackScreenOptions options={{ title: "Threads", headerTitle: "Threads" }} />
+        {/* Restore the compact title after the split branch blanks the detail header. */}
+        <NativeStackScreenOptions options={getCompactBrandHeaderOptions()} />
         <HomeHeader
           environments={environments}
           projects={projectFilterOptions}
@@ -135,7 +154,11 @@ export function HomeRouteScreen() {
           onArchiveThread={archiveThread}
           onDeleteThread={confirmDeleteThread}
           onSettleThread={settleThread}
+          onSnoozeThread={snoozeThread}
+          onUnsnoozeThread={unsnoozeThread}
           onUnsettleThread={unsettleThread}
+          onPinThread={pinThread}
+          onUnpinThread={unpinThread}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onOpenEnvironments={() =>

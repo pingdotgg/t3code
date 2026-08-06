@@ -18,7 +18,12 @@ import type {
   VcsStatusInput,
   VcsStatusResult,
 } from "./git.ts";
-import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
+import type {
+  ReviewDiffFileContentsInput,
+  ReviewDiffFileContentsResult,
+  ReviewDiffPreviewInput,
+  ReviewDiffPreviewResult,
+} from "./review.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
@@ -31,20 +36,6 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
-import type { ProviderInstanceId } from "./providerInstance.ts";
-import type {
-  ServerConfig,
-  ServerProcessDiagnosticsResult,
-  ServerProcessResourceHistoryInput,
-  ServerProcessResourceHistoryResult,
-  ServerProviderUpdateInput,
-  ServerProviderUpdatedPayload,
-  ServerRemoveKeybindingResult,
-  ServerSignalProcessInput,
-  ServerSignalProcessResult,
-  ServerTraceDiagnosticsResult,
-  ServerUpsertKeybindingResult,
-} from "./server.ts";
 import type {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
@@ -57,7 +48,6 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
-import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -100,13 +90,11 @@ import type {
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
-import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type { ClientSettings } from "./settings.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
-  SourceControlDiscoveryResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryInfo,
@@ -908,6 +896,20 @@ export const PreviewAnnotationPayloadSchema: Schema.Codec<PreviewAnnotationPaylo
   },
 );
 
+export type PreviewAnnotationSubmission = "attach" | "send";
+export const PreviewAnnotationSubmissionSchema: Schema.Codec<PreviewAnnotationSubmission> =
+  Schema.Literals(["attach", "send"]);
+
+export interface PreviewAnnotationSubmissionResult {
+  annotation: PreviewAnnotationPayload;
+  submission: PreviewAnnotationSubmission;
+}
+export const PreviewAnnotationSubmissionResultSchema: Schema.Codec<PreviewAnnotationSubmissionResult> =
+  Schema.Struct({
+    annotation: PreviewAnnotationPayloadSchema,
+    submission: PreviewAnnotationSubmissionSchema,
+  });
+
 export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
@@ -1074,10 +1076,11 @@ export interface DesktopPreviewBridge {
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   /**
    * Activate the in-page element picker for the given tab. Resolves with
-   * the picked payload, or `null` when the user cancels (Escape / nav). The
-   * promise rejects if the picker can't be activated (no webview, etc.).
+   * the picked annotation and its attach/send intent, or `null` when the
+   * user cancels (Escape / nav). The promise rejects if the picker can't be
+   * activated (no webview, etc.).
    */
-  pickElement: (tabId: string) => Promise<PreviewAnnotationPayload | null>;
+  pickElement: (tabId: string) => Promise<PreviewAnnotationSubmissionResult | null>;
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
@@ -1115,7 +1118,7 @@ export interface DesktopPreviewBridge {
  * APIs bound to the local app shell, not to any particular backend environment.
  *
  * These capabilities describe the desktop/browser host that the user is
- * currently running: dialogs, editor/external-link opening, context menus, and
+ * currently running: dialogs, external-link opening, context menus, and
  * app-level settings/config access. They must not be used as a proxy for
  * "whatever environment the user is targeting", because in a multi-environment
  * world the local shell and a selected backend environment are distinct
@@ -1127,7 +1130,6 @@ export interface LocalApi {
     confirm: (message: string) => Promise<boolean>;
   };
   shell: {
-    openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   contextMenu: {
@@ -1139,29 +1141,6 @@ export interface LocalApi {
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
     setClientSettings: (settings: ClientSettings) => Promise<void>;
-  };
-  server: {
-    getConfig: () => Promise<ServerConfig>;
-    /**
-     * Refresh provider snapshots. When `input.instanceId` is supplied only that
-     * configured instance is probed; otherwise every configured instance is
-     * refreshed (legacy untargeted refresh).
-     */
-    refreshProviders: (input?: {
-      readonly instanceId?: ProviderInstanceId;
-    }) => Promise<ServerProviderUpdatedPayload>;
-    updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdatedPayload>;
-    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
-    removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
-    getSettings: () => Promise<ServerSettings>;
-    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
-    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
-    getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
-    getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;
-    getProcessResourceHistory: (
-      input: ServerProcessResourceHistoryInput,
-    ) => Promise<ServerProcessResourceHistoryResult>;
-    signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }
 
@@ -1244,6 +1223,9 @@ export interface EnvironmentApi {
   };
   review: {
     getDiffPreview: (input: ReviewDiffPreviewInput) => Promise<ReviewDiffPreviewResult>;
+    getDiffFileContents: (
+      input: ReviewDiffFileContentsInput,
+    ) => Promise<ReviewDiffFileContentsResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
