@@ -410,7 +410,7 @@ export const make = (options?: StartupOptions) =>
     );
 
     const startup = Effect.gen(function* () {
-      const logCuaUnavailable = (context: Readonly<Record<string, string>>) =>
+      const logCuaUnavailable = (context: Readonly<Record<string, unknown>>) =>
         Effect.logWarning(
           "embedded cua-driver failed to start; computer use is unavailable",
           context,
@@ -420,9 +420,9 @@ export const make = (options?: StartupOptions) =>
         startEmbeddedCuaDriver().pipe(
           Effect.catchTags({
             CuaDriverModuleLoadError: (error) =>
-              logCuaUnavailable({ modulePath: error.modulePath, cause: String(error.cause) }),
+              logCuaUnavailable({ modulePath: error.modulePath, cause: error.cause }),
             CuaDriverStartError: (error) =>
-              logCuaUnavailable({ binaryPath: error.binaryPath, cause: String(error.cause) }),
+              logCuaUnavailable({ binaryPath: error.binaryPath, cause: error.cause }),
           }),
         ),
       );

@@ -296,7 +296,7 @@ const startup = Effect.gen(function* () {
   });
   if (cuaEnabled) {
     const continueWithoutCua = Effect.fn("desktop.continueWithoutCua")(function* (
-      context: Readonly<Record<string, string>>,
+      context: Readonly<Record<string, unknown>>,
     ) {
       yield* disableCuaDriverServerEnvironment();
       yield* logStartupError("embedded cua-driver failed to configure", context);
@@ -318,7 +318,7 @@ const startup = Effect.gen(function* () {
     ).pipe(
       Effect.catchTags({
         CuaDriverConfigurationError: (error) =>
-          continueWithoutCua({ modulePath: error.modulePath, cause: String(error.cause) }),
+          continueWithoutCua({ modulePath: error.modulePath, cause: error.cause }),
         CuaDriverNotConfiguredError: () => continueWithoutCua({}),
       }),
     );

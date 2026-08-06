@@ -63,7 +63,6 @@ export const monitorEmbeddedCuaDriverExit = Effect.fn("server.monitorEmbeddedCua
     const exit = yield* Effect.tryPromise(waitForExit);
     yield* onUnexpectedExit(exit);
   },
-  Effect.catch((cause) => Effect.logWarning("embedded cua-driver exit monitor failed", { cause })),
 );
 
 export const installCodexLaunchArgs = Effect.fn("server.installCodexLaunchArgs")(function* (
@@ -137,7 +136,24 @@ export const startEmbeddedCuaDriver = Effect.fn("server.startEmbeddedCuaDriver")
             : Effect.void,
         ),
       ),
-  ).pipe(Effect.forkScoped);
+  ).pipe(
+    Effect.catch((cause) =>
+      disableCua().pipe(
+        Effect.flatMap((disabled) =>
+          disabled
+            ? Effect.logWarning(
+                "embedded cua-driver exit monitor failed; computer use is unavailable",
+                {
+                  component: "embedded-cua-driver",
+                  cause,
+                },
+              )
+            : Effect.void,
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
 
   yield* Effect.logInfo("embedded cua-driver ready", {
     component: "embedded-cua-driver",

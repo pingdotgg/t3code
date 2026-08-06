@@ -68,6 +68,27 @@ describe("embedded cua-driver Codex configuration", () => {
     ).pipe(Effect.tap(() => Effect.sync(() => expect(reported).toBe(false))));
   });
 
+  it.effect("surfaces exit monitor failures", () => {
+    const failure = new Error("wait failed");
+    let reported = false;
+
+    return monitorEmbeddedCuaDriverExit(
+      () => Promise.reject(failure),
+      () =>
+        Effect.sync(() => {
+          reported = true;
+        }),
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.cause).toBe(failure);
+          expect(reported).toBe(false);
+        }),
+      ),
+    );
+  });
+
   it.effect("restores prior Codex launch arguments once when Cua becomes unavailable", () => {
     const original = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
     process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = "--existing";
