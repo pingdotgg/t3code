@@ -83,6 +83,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   connectHttpApiLayer,
+  pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
@@ -559,26 +560,34 @@ export const makeServerLayer = Layer.unwrap(
           yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
           return;
         }
+        const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
+          Effect.timeout("10 seconds"),
+          Effect.tap((released) =>
+            released ? Effect.logInfo("Released the managed tunnel on shutdown") : Effect.void,
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "Failed to release the managed tunnel on shutdown; the next link reuses it",
+              { cause },
+            ),
+          ),
+          Effect.asVoid,
+        );
+        // A launcher trial can be stopped before activation. The previous
+        // server is already gone, so the trial owns cleanup immediately; the
+        // pending-state check keeps the tunnel for normal commit or rollback,
+        // while the launcher's explicit-stop marker allows it to be released.
+        // Other runtimes wait for activation so a failed standby cannot tear
+        // down the active runtime's tunnel.
+        const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
+        if (cleanupBeforeActivation) {
+          yield* Effect.addFinalizer(() => releaseManagedTunnel);
+        }
         yield* forkParked(
           Effect.gen(function* () {
-            // Only an activated runtime owns the tunnel cleanup finalizer.
-            yield* Effect.addFinalizer(() =>
-              releaseManagedTunnelOnShutdown().pipe(
-                Effect.timeout("10 seconds"),
-                Effect.tap((released) =>
-                  released
-                    ? Effect.logInfo("Released the managed tunnel on shutdown")
-                    : Effect.void,
-                ),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning(
-                    "Failed to release the managed tunnel on shutdown; the next link reuses it",
-                    { cause },
-                  ),
-                ),
-                Effect.asVoid,
-              ),
-            );
+            if (!cleanupBeforeActivation) {
+              yield* Effect.addFinalizer(() => releaseManagedTunnel);
+            }
             if (!(yield* CloudCliState.readCliDesiredCloudLink)) return;
             const server = yield* HttpServer.HttpServer;
             const address = server.address;
