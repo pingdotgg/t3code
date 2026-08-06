@@ -129,42 +129,6 @@ export async function loadTerminalFontFamily(
   return (environment?.resolve ?? terminalFontFamily)(family);
 }
 
-/**
- * Grids narrower than a classic 80-column terminal wrap command output hard,
- * so the rendered font size follows the canvas width: the preference is the
- * ceiling, and the size slides down (to a legibility floor) until a full-width
- * grid fits. A widening pane slides it back up toward the preference.
- */
-const MIN_TERMINAL_FIT_COLUMNS = 80;
-const MIN_TERMINAL_FIT_FONT_SIZE = 8;
-
-export function fittedTerminalFontSize(
-  cellWidthAt: (size: number) => number,
-  requested: number,
-  mountWidth: number,
-): number {
-  const available = mountWidth - CONTENT_PADDING * 2;
-  if (available <= 0) return requested;
-  const floor = Math.min(requested, MIN_TERMINAL_FIT_FONT_SIZE);
-  const fits = (cellWidth: number) =>
-    cellWidth > 0 && Math.floor(available / cellWidth) >= MIN_TERMINAL_FIT_COLUMNS;
-  let cellWidth = cellWidthAt(requested);
-  if (cellWidth <= 0 || fits(cellWidth)) return requested;
-  // The advance scales linearly with size for monospace faces: jump close to
-  // the fitting size, then settle the remaining rounding one step at a time.
-  const targetCellWidth = available / MIN_TERMINAL_FIT_COLUMNS;
-  let size = Math.max(
-    floor,
-    Math.min(requested, Math.floor((requested * targetCellWidth) / cellWidth)),
-  );
-  while (size > floor) {
-    cellWidth = cellWidthAt(size);
-    if (cellWidth <= 0 || fits(cellWidth)) break;
-    size -= 1;
-  }
-  return size;
-}
-
 export function terminalFontSize(size?: number): number {
   if (size === undefined || !Number.isFinite(size)) return DEFAULT_TERMINAL_FONT_SIZE;
   return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.round(size)));
@@ -519,7 +483,6 @@ export class GhosttyTerminalSurface {
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
   private fontSize: number;
-  private requestedFontSize: number;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
   private readonly resizeObserver: ResizeObserver;
@@ -601,7 +564,6 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
-    this.requestedFontSize = this.fontSize;
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.installEvents();
     this.watchDevicePixelRatio();
@@ -642,6 +604,11 @@ export class GhosttyTerminalSurface {
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
+    // An opaque canvas backing store initializes to solid black, and the font
+    // and WASM loads below leave it on screen for the whole setup window; paint
+    // the theme background first so the mount never flashes a black box.
+    context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
+    context.fillRect(0, 0, canvas.width, canvas.height);
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Cell metrics must come from the faces that will render; measuring before
@@ -719,7 +686,6 @@ export class GhosttyTerminalSurface {
     this.pendingFontEpoch = null;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = font.family;
-    this.requestedFontSize = fontSize;
     this.fontSize = fontSize;
     this.applyFontMetrics();
   }
@@ -775,22 +741,6 @@ export class GhosttyTerminalSurface {
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
     if (width <= 0 || height <= 0) return false;
-    const fitted = fittedTerminalFontSize(
-      (size) => measureGhosttyCell(this.context, size, this.fontFamily).width,
-      this.requestedFontSize,
-      width,
-    );
-    if (fitted !== this.fontSize) {
-      this.fontSize = fitted;
-      this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
-      // The grid-change branch below resizes the core, but only when the
-      // column count moved; the cell geometry always did, so sync it here.
-      this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
-      this.inputLeft = -1;
-      this.inputTop = -1;
-      this.forceFullRender = true;
-      this.scrollbarDirty = true;
-    }
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
