@@ -219,6 +219,25 @@ final class WebSocketRPCRaceTests: XCTestCase {
         XCTAssertEqual(receiveCount, 0)
     }
 
+    func testConnectionLoopDoesNotRetainReleasedClient() async {
+        let connection = BlockingStopConnection()
+        let connector = SequencedConnector(connections: [connection])
+        var client: WebSocketRPCClient? = WebSocketRPCClient(
+            connector: connector,
+            endpointProvider: { URL(string: "wss://studio.example/ws")! }
+        )
+        weak var releasedClient: WebSocketRPCClient?
+        releasedClient = client
+
+        await client?.start()
+        await connection.waitUntilReceiving()
+        client = nil
+
+        XCTAssertNil(releasedClient, "The reconnect task must not own the RPC client.")
+        await connection.waitUntilCloseStarted()
+        await connection.releaseClose()
+    }
+
     func testRestartWhileOldSocketClosesKeepsTheNewConnection() async throws {
         let closing = BlockingStopConnection()
         let recovered = AutoReplyConnection()

@@ -173,6 +173,65 @@ public actor WebSocketRPCClient {
         let finish: @Sendable (Error?) -> Void
     }
 
+    private struct ConnectionAttempt: Sendable {
+        let connector: any WebSocketConnecting
+        let endpointProvider: EndpointProvider
+    }
+
+    /// Long-lived tasks retain this box, never the client. Each actor hop
+    /// briefly promotes the weak reference, then releases it before the next
+    /// socket receive or reconnect wait.
+    private final class WeakOwner: @unchecked Sendable {
+        weak var value: WebSocketRPCClient?
+
+        init(_ value: WebSocketRPCClient) {
+            self.value = value
+        }
+
+        func connectionAttempt(loopID: UUID) async -> ConnectionAttempt? {
+            guard let value else { return nil }
+            return await value.connectionAttempt(loopID: loopID)
+        }
+
+        func isCurrentConnectionLoop(_ loopID: UUID) async -> Bool {
+            guard let value else { return false }
+            return await value.isCurrentConnectionLoop(loopID)
+        }
+
+        func installConnection(
+            _ connection: any WebSocketConnection,
+            loopID: UUID
+        ) async -> UUID? {
+            guard let value else { return nil }
+            return await value.installConnection(connection, loopID: loopID)
+        }
+
+        func ownsConnection(loopID: UUID, connectionID: UUID) async -> Bool {
+            guard let value else { return false }
+            return await value.ownsConnection(loopID: loopID, connectionID: connectionID)
+        }
+
+        func handle(_ data: Data, connectionID: UUID) async throws -> Bool {
+            guard let value else { return false }
+            return try await value.handle(data, expectedConnectionID: connectionID)
+        }
+
+        func disconnected(connectionID: UUID) async -> Bool {
+            guard let value else { return false }
+            return await value.disconnected(expectedConnectionID: connectionID)
+        }
+
+        func finishConnectionLoop(_ loopID: UUID) async {
+            guard let value else { return }
+            await value.finishConnectionLoop(loopID)
+        }
+
+        func sendKeepalive(connectionID: UUID) async -> Bool {
+            guard let value else { return false }
+            return await value.sendKeepalive(expectedConnectionID: connectionID)
+        }
+    }
+
     private let connector: any WebSocketConnecting
     private let endpointProvider: EndpointProvider
     private let connectionWaitTimeout: Duration
@@ -210,9 +269,10 @@ public actor WebSocketRPCClient {
         guard loopTask == nil else { return }
         let id = UUID()
         loopID = id
-        // Weak: the loop must not keep a released client (and its socket plus
-        // keepalive heartbeat) alive forever; deinit cancels it as a backstop.
-        loopTask = Task { [weak self] in await self?.connectionLoop(id: id) }
+        let owner = WeakOwner(self)
+        loopTask = Task {
+            await Self.connectionLoop(owner: owner, id: id)
+        }
     }
 
     public func isConnected() -> Bool {
@@ -322,40 +382,54 @@ public actor WebSocketRPCClient {
         }
     }
 
-    private func connectionLoop(id loopID: UUID) async {
+    private static func connectionLoop(owner: WeakOwner, id loopID: UUID) async {
         var retry = 0
-        while isCurrentConnectionLoop(loopID), !Task.isCancelled {
+        while await owner.isCurrentConnectionLoop(loopID), !Task.isCancelled {
             var openedID: UUID?
+            var openedConnection: (any WebSocketConnection)?
             do {
-                let url = try await endpointProvider()
-                guard isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
-                let opened = try await connector.connect(to: url)
-                guard isCurrentConnectionLoop(loopID), !Task.isCancelled else {
+                guard let attempt = await owner.connectionAttempt(loopID: loopID) else { break }
+                let url = try await attempt.endpointProvider()
+                guard await owner.isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
+                let opened = try await attempt.connector.connect(to: url)
+                openedConnection = opened
+                guard await owner.isCurrentConnectionLoop(loopID), !Task.isCancelled else {
                     await opened.close()
                     break
                 }
-                let id = UUID()
-                openedID = id
-                connection = opened
-                connectionID = id
-                retry = 0
-                await connected()
-                // Sending queued work during setup is actor-reentrant. A send
-                // failure can discard this socket before setup completes, so
-                // never enter its receive loop after ownership has moved on.
-                guard isCurrentConnectionLoop(loopID), connectionID == id else {
-                    await disconnected(expectedConnectionID: id)
-                    guard isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
+                guard let id = await owner.installConnection(opened, loopID: loopID) else {
+                    await opened.close()
+                    guard await owner.isCurrentConnectionLoop(loopID), !Task.isCancelled else {
+                        break
+                    }
                     throw RPCError.disconnected
                 }
-                try await receiveLoop(opened)
-                await disconnected(expectedConnectionID: id)
-                guard isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
+                openedID = id
+                retry = 0
+                try await withTaskCancellationHandler {
+                    while await owner.ownsConnection(loopID: loopID, connectionID: id),
+                          !Task.isCancelled {
+                        let data = try await opened.receive()
+                        guard try await owner.handle(data, connectionID: id) else {
+                            throw RPCError.disconnected
+                        }
+                    }
+                } onCancel: {
+                    Task { await opened.close() }
+                }
+                if !(await owner.disconnected(connectionID: id)) {
+                    await opened.close()
+                }
+                guard await owner.isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
             } catch {
                 if let openedID {
-                    await disconnected(expectedConnectionID: openedID)
+                    if !(await owner.disconnected(connectionID: openedID)) {
+                        await openedConnection?.close()
+                    }
+                } else {
+                    await openedConnection?.close()
                 }
-                guard isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
+                guard await owner.isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
                 retry += 1
                 // Jitter desynchronizes reconnects across environments so a
                 // server restart doesn't trigger simultaneous ticket mints.
@@ -364,10 +438,37 @@ public actor WebSocketRPCClient {
                 try? await Task.sleep(for: .seconds(delay))
             }
         }
-        if self.loopID == loopID {
-            self.loopID = nil
-            loopTask = nil
-        }
+        await owner.finishConnectionLoop(loopID)
+    }
+
+    private func connectionAttempt(loopID: UUID) -> ConnectionAttempt? {
+        guard isCurrentConnectionLoop(loopID) else { return nil }
+        return ConnectionAttempt(connector: connector, endpointProvider: endpointProvider)
+    }
+
+    private func installConnection(
+        _ opened: any WebSocketConnection,
+        loopID: UUID
+    ) async -> UUID? {
+        guard isCurrentConnectionLoop(loopID), !Task.isCancelled else { return nil }
+        let id = UUID()
+        connection = opened
+        connectionID = id
+        await connected()
+        // Sending queued work during setup is actor-reentrant. A send failure
+        // can discard this socket before setup completes.
+        guard isCurrentConnectionLoop(loopID), connectionID == id else { return nil }
+        return id
+    }
+
+    private func ownsConnection(loopID: UUID, connectionID: UUID) -> Bool {
+        isCurrentConnectionLoop(loopID) && self.connectionID == connectionID
+    }
+
+    private func finishConnectionLoop(_ loopID: UUID) {
+        guard self.loopID == loopID else { return }
+        self.loopID = nil
+        loopTask = nil
     }
 
     private func isCurrentConnectionLoop(_ id: UUID) -> Bool {
@@ -376,7 +477,12 @@ public actor WebSocketRPCClient {
 
     private func connected() async {
         keepaliveTask?.cancel()
-        keepaliveTask = Task { [weak self] in await self?.keepaliveLoop() }
+        if let connectionID {
+            let owner = WeakOwner(self)
+            keepaliveTask = Task {
+                await Self.keepaliveLoop(owner: owner, connectionID: connectionID)
+            }
+        }
         // Snapshot the keys: the sends suspend, and reentrant completions or
         // failures mutate these dictionaries mid-iteration.
         for id in Array(unary.keys) {
@@ -388,9 +494,10 @@ public actor WebSocketRPCClient {
         }
     }
 
-    private func disconnected(expectedConnectionID: UUID? = nil) async {
+    @discardableResult
+    private func disconnected(expectedConnectionID: UUID? = nil) async -> Bool {
         if let expectedConnectionID, connectionID != expectedConnectionID {
-            return
+            return false
         }
         let closingConnection = connection
         keepaliveTask?.cancel()
@@ -409,14 +516,14 @@ public actor WebSocketRPCClient {
             subscriptions[id]?.requestConnectionID = nil
         }
         await closingConnection?.close()
+        return true
     }
 
-    private func receiveLoop(_ opened: any WebSocketConnection) async throws {
-        while desired, !Task.isCancelled {
-            let data = try await opened.receive()
-            let response = try JSONDecoder.t3.decode(RPCResponseEnvelope.self, from: data)
-            try await handle(response)
-        }
+    private func handle(_ data: Data, expectedConnectionID: UUID) async throws -> Bool {
+        guard connectionID == expectedConnectionID else { return false }
+        let response = try JSONDecoder.t3.decode(RPCResponseEnvelope.self, from: data)
+        try await handle(response)
+        return connectionID == expectedConnectionID
     }
 
     private func handle(_ response: RPCResponseEnvelope) async throws {
@@ -511,11 +618,23 @@ public actor WebSocketRPCClient {
         }
     }
 
-    private func keepaliveLoop() async {
-        while desired, connection != nil, !Task.isCancelled {
+    private static func keepaliveLoop(owner: WeakOwner, connectionID: UUID) async {
+        while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(5))
-            guard desired, connection != nil, !Task.isCancelled else { return }
-            try? await sendControl("Ping", requestID: nil)
+            guard !Task.isCancelled,
+                  await owner.sendKeepalive(connectionID: connectionID) else { return }
+        }
+    }
+
+    private func sendKeepalive(expectedConnectionID: UUID) async -> Bool {
+        guard desired, connectionID == expectedConnectionID, connection != nil else {
+            return false
+        }
+        do {
+            try await sendControl("Ping", requestID: nil)
+            return connectionID == expectedConnectionID
+        } catch {
+            return false
         }
     }
 
