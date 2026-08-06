@@ -13,6 +13,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -341,11 +342,15 @@ function SnoozePopoverButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: SnoozePreset) => void;
+  timestampFormat: TimestampFormat;
 }) {
-  const { open, onOpenChange, onSnooze } = props;
+  const { open, onOpenChange, onSnooze, timestampFormat } = props;
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
-  const presets = useMemo(() => (open ? resolveSnoozePresets(new Date()) : []), [open]);
+  const presets = useMemo(
+    () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
+    [open, timestampFormat],
+  );
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
@@ -412,6 +417,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   projectCwd: string | null;
   projectTitle: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -482,7 +488,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
   // working threads aren't your problem yet) — only the colored status label
   // stands out.
-  const isInFlight = status === "working" || status === "approval" || status === "input";
+  const isInFlight =
+    status === "working" || status === "monitoring" || status === "approval" || status === "input";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
@@ -496,37 +503,45 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           className:
             "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
         }
-      : status === "approval"
+      : status === "monitoring"
         ? {
-            label: "Approval",
+            // Steady label, no duty-cycled shimmer: monitoring is calm
+            // background presence, not active progress (monitoring-pill D6).
+            label: "Monitoring",
             icon: null,
-            className: "text-amber-700 dark:text-amber-300",
+            className: "text-sky-600 dark:text-sky-400",
           }
-        : status === "input"
+        : status === "approval"
           ? {
-              label: "Input",
+              label: "Approval",
               icon: null,
-              className: "text-indigo-600 dark:text-indigo-300",
+              className: "text-amber-700 dark:text-amber-300",
             }
-          : status === "failed"
+          : status === "input"
             ? {
-                label: "Failed",
+                label: "Input",
                 icon: null,
-                className: "text-red-700 dark:text-red-300",
+                className: "text-indigo-600 dark:text-indigo-300",
               }
-            : isWoke
+            : status === "failed"
               ? {
-                  label: "Woke",
-                  icon: "woke" as const,
-                  className: "text-amber-700 dark:text-amber-300",
+                  label: "Failed",
+                  icon: null,
+                  className: "text-red-700 dark:text-red-300",
                 }
-              : isUnread
+              : isWoke
                 ? {
-                    label: "Done",
-                    icon: "done" as const,
-                    className: "text-emerald-700 dark:text-emerald-300",
+                    label: "Woke",
+                    icon: "woke" as const,
+                    className: "text-amber-700 dark:text-amber-300",
                   }
-                : null;
+                : isUnread
+                  ? {
+                      label: "Done",
+                      icon: "done" as const,
+                      className: "text-emerald-700 dark:text-emerald-300",
+                    }
+                  : null;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
@@ -1011,6 +1026,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                         open={snoozeMenuOpen}
                         onOpenChange={setSnoozeMenuOpen}
                         onSnooze={handleSnoozePreset}
+                        timestampFormat={props.timestampFormat}
                       />
                     ) : null}
                     {props.settlementSupported ? (
@@ -1198,6 +1214,7 @@ export default function SidebarV2() {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -2147,7 +2164,7 @@ export default function SidebarV2() {
           toastManager.add(
             stackedThreadToast({
               type: "success",
-              title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date())}`,
+              title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
               timeout: 5_000,
               actionProps: {
                 children: "Undo",
@@ -2165,7 +2182,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [attemptUnsnooze, planForwardNavigation, snoozeThread],
+    [attemptUnsnooze, planForwardNavigation, snoozeThread, timestampFormat],
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
@@ -2206,7 +2223,7 @@ export default function SidebarV2() {
         supportedCount: titleRegenerationThreads.length,
         actionableCount: regeneratableTitleThreads.length,
       });
-      const snoozePresets = resolveSnoozePresets(new Date());
+      const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -2343,6 +2360,7 @@ export default function SidebarV2() {
       removeFromSelection,
       serverConfigs,
       updateThreadMetadata,
+      timestampFormat,
     ],
   );
 
@@ -2382,7 +2400,7 @@ export default function SidebarV2() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
-        const snoozePresets = resolveSnoozePresets(new Date());
+        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
@@ -2581,6 +2599,7 @@ export default function SidebarV2() {
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,
+      timestampFormat,
     ],
   );
 
@@ -2989,6 +3008,7 @@ export default function SidebarV2() {
                           ) ?? null
                         }
                         providerEntryByInstanceId={providerEntryByInstanceId}
+                        timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}
                         onStartRename={startThreadRename}
