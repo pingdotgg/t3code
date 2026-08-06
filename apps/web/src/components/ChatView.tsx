@@ -1152,6 +1152,9 @@ type LocalThreadErrorEntry = {
   readonly at: number;
 };
 
+// Module state survives route changes but resets when the client reloads.
+const timelineScrollOffsetByThreadKey = new Map<string, number>();
+
 function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
@@ -1174,6 +1177,10 @@ function ChatViewContent(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const restoredTimelineScrollOffset = useMemo(
+    () => timelineScrollOffsetByThreadKey.get(routeThreadKey),
+    [routeThreadKey],
+  );
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -3769,6 +3776,13 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, []);
 
+  const onTimelineScrollOffsetChange = useCallback(
+    (offset: number) => {
+      timelineScrollOffsetByThreadKey.set(routeThreadKey, offset);
+    },
+    [routeThreadKey],
+  );
+
   useEffect(() => {
     if (!activeThread?.id) {
       return;
@@ -3838,8 +3852,10 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    timelineScrollModeRef.current =
+      restoredTimelineScrollOffset === undefined ? "following-end" : "free-scrolling";
+    liveFollowUserScrollGenerationRef.current =
+      restoredTimelineScrollOffset === undefined ? anchorUserScrollGenerationRef.current : null;
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
@@ -3854,7 +3870,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [activeThread?.id, restoredTimelineScrollOffset]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -5979,7 +5995,7 @@ function ChatViewContent(props: ChatViewProps) {
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={activeThread.id}
+                key={routeThreadKey}
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
                 activeTurnStartedAt={activeWorkStartedAt}
@@ -6008,8 +6024,10 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
+                initialScrollOffset={restoredTimelineScrollOffset}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                onScrollOffsetChange={onTimelineScrollOffsetChange}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
               />

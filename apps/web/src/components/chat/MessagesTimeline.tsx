@@ -14,6 +14,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_SCROLL_OFFSET_CHANGE = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -192,8 +193,10 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
+  initialScrollOffset?: number | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
+  onScrollOffsetChange?: (offset: number) => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
 }
@@ -229,8 +232,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  initialScrollOffset,
   onIsAtEndChange,
   onManualNavigation,
+  onScrollOffsetChange = NOOP_SCROLL_OFFSET_CHANGE,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
 }: MessagesTimelineProps) {
@@ -371,6 +376,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
+    if (typeof state?.scroll === "number" && Number.isFinite(state.scroll)) {
+      onScrollOffsetChange(state.scroll);
+    }
     const isAtEnd = resolveTimelineIsAtEnd(state);
     if (isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
@@ -397,7 +405,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange, onScrollOffsetChange]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -509,7 +517,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd
+            initialScrollAtEnd={initialScrollOffset === undefined}
+            {...(initialScrollOffset === undefined ? {} : { initialScrollOffset })}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
             maintainScrollAtEnd={
