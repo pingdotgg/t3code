@@ -1208,12 +1208,19 @@ export const makeCodexSessionRuntime = (
               payload: childIdentity,
             });
             return true;
-          case "error":
+          case "error": {
             // A child error must surface as a failed agent, not vanish into
             // the default swallow (review finding: the child stayed
-            // "running" forever). Reuses the statusChanged systemError path.
-            // Same live-turn cleanup as thread/closed: an errored child has
-            // no turn left to interrupt.
+            // "running" forever). Retryable errors (willRetry) keep the
+            // child RUNNING and interruptible — mirroring the root error
+            // handler; settling it would orphan a still-live child from
+            // Stop (review finding). Terminal errors clean up the live turn
+            // like thread/closed and reuse the statusChanged systemError
+            // path.
+            const willRetry = (notification.params as { willRetry?: boolean }).willRetry === true;
+            if (willRetry) {
+              return true;
+            }
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
@@ -1230,6 +1237,7 @@ export const makeCodexSessionRuntime = (
               },
             });
             return true;
+          }
           default:
             // Routing table decides (single source of truth, asserted
             // against captured wire traces): enumerated chatter is dropped,
