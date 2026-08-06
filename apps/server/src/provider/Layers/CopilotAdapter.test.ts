@@ -39,7 +39,7 @@ import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { makeCopilotAdapter } from "./CopilotAdapter.ts";
 
 const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class CopilotAdapter extends Context.Service<CopilotAdapter, CopilotAdapterShape>()(
   "t3/provider/Layers/CopilotAdapter.test/CopilotAdapter",
