@@ -41,6 +41,13 @@ const mobileShowcaseScenes = [
   "environments",
 ] as const;
 
+const connectDevices = [
+  { name: "Web", icon: "M3 5.5h18v11H3zM3 9h18M9 20.5h6M12 16.5v4" },
+  { name: "Theo’s iPhone", icon: "M7.5 2.5h9A1.5 1.5 0 0 1 18 4v16a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V4a1.5 1.5 0 0 1 1.5-1.5Z" },
+  { name: "iPad", icon: "M5 3.5h14A1.5 1.5 0 0 1 20.5 5v14a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V5A1.5 1.5 0 0 1 5 3.5Z" },
+  { name: "Pixel 9", icon: "M7.5 2.5h9A1.5 1.5 0 0 1 18 4v16a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V4a1.5 1.5 0 0 1 1.5-1.5Z" },
+] as const;
+
 const faqs = [
   {
     question: "What is T3 Code?",
@@ -312,36 +319,29 @@ const faqs = [
 
       <div class="showcase-visual">
         <div class="connect-visual" data-connect-visual>
-          <div class="connect-desktop">
-            <img
-              src="/demo-states/inbox-overview-crop.png"
-              alt="T3 Code desktop showing active project threads"
-              width="2160"
-              height="1239"
-              loading="lazy"
-            />
+          <div class="connect-host">
+            <span class="connect-status" aria-hidden="true"></span>
+            <div>
+              <strong>Theo’s Mac Studio</strong>
+              <small>T3 Connect</small>
+            </div>
+            <span class="connect-toggle" aria-hidden="true"><i></i></span>
           </div>
-          <div class="connect-bridge" aria-hidden="true">
-            <span>T3 Connect</span>
-          </div>
-          <div class="connect-mobile" aria-label="The same T3 Code threads on iPhone and iPad">
-            <img
-              class="connect-mobile__ipad"
-              src="/mobile-states/ipad-threads.png"
-              alt="T3 Code threads on iPad"
-              width="2752"
-              height="2064"
-              loading="lazy"
-            />
-            <img
-              class="connect-mobile__phone"
-              src="/mobile-states/threads.png"
-              alt="The same T3 Code threads on iPhone"
-              width="1320"
-              height="2868"
-              loading="lazy"
-            />
-          </div>
+          <svg class="connect-lines" viewBox="0 0 520 90" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M260 0 C260 46 48 34 48 90" />
+            <path d="M260 0 C260 54 192 44 192 90" />
+            <path d="M260 0 C260 54 332 44 332 90" />
+            <path d="M260 0 C260 46 457 34 457 90" />
+          </svg>
+          <ul class="connect-devices" aria-label="Screens paired through T3 Connect">
+            {connectDevices.map((device) => (
+              <li>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d={device.icon} /></svg>
+                <span>{device.name}</span>
+                <i aria-hidden="true"></i>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </div>
@@ -1806,114 +1806,136 @@ const faqs = [
   }
 
   .connect-visual {
-    position: relative;
     display: flex;
-    width: min(100%, 620px);
+    width: min(100%, 520px);
     flex-direction: column;
     align-items: center;
   }
 
-  .connect-desktop {
-    position: relative;
+  .connect-host {
     z-index: 2;
-    width: 100%;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex;
+    width: min(100%, 420px);
+    align-items: center;
+    gap: 12px;
+    padding: 15px 16px;
+    border: 1px solid rgba(178, 165, 255, 0.24);
     border-radius: 16px;
-    background: #08080a;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.48);
+    background: rgba(10, 10, 14, 0.86);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 30px 80px rgba(0, 0, 0, 0.5);
     opacity: 0;
-    transform: translateY(16px);
-    transition:
-      opacity 0.55s ease,
-      transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateY(12px);
+    transition: opacity 0.5s ease, transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .connect-desktop img {
+  .connect-host strong,
+  .connect-host small {
     display: block;
-    width: 100%;
-    height: auto;
   }
 
-  .connect-bridge {
-    position: relative;
-    z-index: 3;
-    display: grid;
-    width: 100%;
-    height: 66px;
-    place-items: center;
-    opacity: 0;
-    transition: opacity 0.45s ease 0.35s;
+  .connect-host strong {
+    font-size: 14px;
+    font-weight: 600;
   }
 
-  .connect-bridge::before {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 1px;
-    background: linear-gradient(rgba(165, 151, 255, 0.65), rgba(165, 151, 255, 0.08));
-    content: "";
-  }
-
-  .connect-bridge span {
-    position: relative;
-    padding: 6px 10px;
-    border: 1px solid rgba(172, 160, 255, 0.22);
-    border-radius: 8px;
-    color: rgba(222, 217, 255, 0.78);
+  .connect-host small {
+    margin-top: 2px;
+    color: var(--fg-dim);
     font-family: var(--font-mono);
     font-size: 10px;
-    background: #08080a;
   }
 
-  .connect-mobile {
+  .connect-status,
+  .connect-devices li > i {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #9fe88f;
+    box-shadow: 0 0 12px rgba(159, 232, 143, 0.65);
+  }
+
+  .connect-toggle {
     position: relative;
-    width: 88%;
-    height: 260px;
-    opacity: 0;
-    transform: translateY(18px);
-    transition:
-      opacity 0.55s ease 0.48s,
-      transform 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.48s;
+    width: 46px;
+    height: 27px;
+    margin-left: auto;
+    border-radius: 999px;
+    background: #6d5ce6;
+    box-shadow: 0 0 22px rgba(109, 92, 230, 0.5);
   }
 
-  .connect-mobile img {
+  .connect-toggle i {
     position: absolute;
-    display: block;
-    border: 1px solid rgba(255, 255, 255, 0.13);
-    background: #08080a;
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+    top: 3px;
+    right: 3px;
+    width: 21px;
+    height: 21px;
+    border-radius: 50%;
+    background: #fff;
   }
 
-  .connect-mobile__ipad {
-    top: 0;
-    right: 8%;
-    width: 62%;
-    border-radius: 16px;
-    transform: rotate(2deg);
+  .connect-lines {
+    width: 100%;
+    height: 86px;
+    overflow: visible;
   }
 
-  .connect-mobile__phone {
-    top: 8px;
-    left: 18%;
-    z-index: 2;
-    width: 20%;
-    border-radius: 18px;
-    transform: rotate(-3deg);
+  .connect-lines path {
+    fill: none;
+    stroke: rgba(171, 159, 255, 0.42);
+    stroke-linecap: round;
+    stroke-width: 1.25;
+    vector-effect: non-scaling-stroke;
+    opacity: 0;
+    transition: opacity 0.6s ease 0.3s;
   }
 
-  .connect-visual.is-inview .connect-desktop,
-  .connect-visual.is-inview .connect-bridge,
-  .connect-visual.is-inview .connect-mobile {
+  .connect-devices {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .connect-devices li {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-muted);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.45s ease 0.55s, transform 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.55s;
+  }
+
+  .connect-devices svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+  }
+
+  .connect-visual.is-inview .connect-host,
+  .connect-visual.is-inview .connect-lines path,
+  .connect-visual.is-inview .connect-devices li {
     opacity: 1;
     transform: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .connect-desktop,
-    .connect-bridge,
-    .connect-mobile {
+    .connect-host,
+    .connect-lines path,
+    .connect-devices li {
       opacity: 1;
       transform: none;
       transition: none;
