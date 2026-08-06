@@ -18,7 +18,10 @@ import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
+import {
+  readArchivedThreadDeletionContext,
+  refreshArchivedThreadsForEnvironment,
+} from "../lib/archivedThreadsState";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
@@ -236,8 +239,9 @@ export function useThreadActions() {
   const deleteThread = useCallback(
     async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
       const resolved = resolveThreadTarget(target);
-      if (!resolved) {
-        // Thread not in main store (e.g. archived thread) — dispatch delete directly.
+      const archivedContext = resolved ? null : readArchivedThreadDeletionContext(target);
+      const thread = resolved?.thread ?? archivedContext?.thread;
+      if (!thread) {
         const result = await deleteThreadMutation({
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
@@ -247,15 +251,19 @@ export function useThreadActions() {
         }
         return result;
       }
-      const { thread, threadRef } = resolved;
+      const threadRef = target;
       const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
       });
-      const threadProject = readProject({
-        environmentId: threadRef.environmentId,
-        projectId: thread.projectId,
-      });
+      const worktreeThreads = archivedContext ? [...threads, ...archivedContext.threads] : threads;
+      const projectCwd =
+        resolved !== null
+          ? (readProject({
+              environmentId: threadRef.environmentId,
+              projectId: thread.projectId,
+            })?.workspaceRoot ?? null)
+          : (archivedContext?.projectCwd ?? null);
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -265,18 +273,20 @@ export function useThreadActions() {
               }),
             )
           : undefined;
-      const survivingThreads =
+      const survivingWorktreeThreads =
         deletedIds && deletedIds.size > 0
-          ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
-          : threads;
+          ? worktreeThreads.filter(
+              (entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id),
+            )
+          : worktreeThreads;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
+        survivingWorktreeThreads,
         threadRef.threadId,
       );
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
+      const canDeleteWorktree = orphanedWorktreePath !== null && projectCwd !== null;
       const localApi = readLocalApi();
       let shouldDeleteWorktree = false;
       if (canDeleteWorktree && localApi) {
@@ -370,14 +380,14 @@ export function useThreadActions() {
         }
       }
 
-      if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
+      if (!shouldDeleteWorktree || !orphanedWorktreePath || !projectCwd) {
         return deleteResult;
       }
 
       const removeResult = await removeWorktree({
         environmentId: threadRef.environmentId,
         input: {
-          cwd: threadProject.workspaceRoot,
+          cwd: projectCwd,
           path: orphanedWorktreePath,
           force: true,
         },
@@ -386,7 +396,7 @@ export function useThreadActions() {
         removeResult._tag === "Success"
           ? await refreshVcsStatus({
               environmentId: threadRef.environmentId,
-              input: { cwd: threadProject.workspaceRoot },
+              input: { cwd: projectCwd },
             })
           : null;
       const cleanupFailure =
@@ -400,7 +410,7 @@ export function useThreadActions() {
         const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
         console.error("Failed to remove orphaned worktree after thread deletion", {
           threadId: threadRef.threadId,
-          projectCwd: threadProject.workspaceRoot,
+          projectCwd,
           worktreePath: orphanedWorktreePath,
           error,
         });
@@ -591,9 +601,10 @@ export function useThreadActions() {
     async (target: ScopedThreadRef) => {
       const localApi = readLocalApi();
       const resolved = resolveThreadTarget(target);
+      const archivedContext = resolved ? null : readArchivedThreadDeletionContext(target);
 
       if (confirmThreadDelete && localApi) {
-        const title = resolved?.thread.title ?? "this thread";
+        const title = resolved?.thread.title ?? archivedContext?.thread.title ?? "this thread";
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [
