@@ -24,6 +24,7 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "source-control",
+  "agents",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -48,7 +49,8 @@ export type RightPanelSurface =
       revealRequestId: number;
     }
   | { id: "plan"; kind: "plan" }
-  | { id: "source-control"; kind: "source-control" }; // fork: f4 source-control surface
+  | { id: "source-control"; kind: "source-control" } // fork: f4 legacy source-control surface
+  | { id: "agents"; kind: "agents" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 9;
@@ -111,6 +113,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "plan":
       return { id: "plan", kind };
+    case "agents":
+      return { id: "agents", kind };
   }
 };
 

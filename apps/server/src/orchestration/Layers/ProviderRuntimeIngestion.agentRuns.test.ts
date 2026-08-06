@@ -46,7 +46,7 @@ describe("runtimeEventToActivities agent-run fields", () => {
     expect(payload.data).toBeUndefined();
   });
 
-  it("omits absent task.started enrichment rather than writing null keys", () => {
+  it("omits absent task.started enrichment while retaining the derived classification", () => {
     const payload = payloadOf({
       ...base,
       type: "task.started",
@@ -57,7 +57,8 @@ describe("runtimeEventToActivities agent-run fields", () => {
       },
     } satisfies ProviderRuntimeEvent);
 
-    expect(Object.keys(payload).toSorted()).toEqual(["detail", "taskId"]);
+    expect(Object.keys(payload).toSorted()).toEqual(["agentKind", "detail", "taskId"]);
+    expect(payload.agentKind).toBe("agent");
   });
 
   it("puts task.progress metrics at the top level of payload", () => {

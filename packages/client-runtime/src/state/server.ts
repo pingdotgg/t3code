@@ -149,6 +149,35 @@ export function validateServerUpdateReadyEvent(
   );
 }
 
+/**
+ * Keeps reconnect attempts ~1s apart for the whole update restart.
+ *
+ * A restart takes the server down for ~15 seconds, but the supervisor's normal
+ * backoff ladder (1/2/4/8/16s) assumes an unexpected failure and lands attempts
+ * at ~3, 5, 9, 17 and 33 seconds — so a 15-second restart is observed as a
+ * 33-second "Resuming". Nudging on every backoff entry (not just the first)
+ * holds the retry cadence flat until the server answers again. The sleep before
+ * each nudge is the pacer: a connection that fails instantly re-enters backoff
+ * immediately and would otherwise spin a tight retry loop.
+ *
+ * Callers fork this as a child of the update command so it is interrupted as
+ * soon as the update settles, whether it succeeds, fails, or times out.
+ */
+export function nudgeReconnectDuringUpdateRestart(input: {
+  readonly stateChanges: Stream.Stream<{ readonly phase: string }, unknown>;
+  readonly retryNow: Effect.Effect<void>;
+  readonly interval?: Duration.Duration;
+}): Effect.Effect<void> {
+  return input.stateChanges.pipe(
+    Stream.filter((state) => state.phase === "backoff"),
+    Stream.runForEach(() =>
+      Effect.sleep(input.interval ?? Duration.seconds(1)).pipe(Effect.andThen(input.retryNow)),
+    ),
+    Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
+    Effect.ignore,
+  );
+}
+
 export function serverUpdateStateForProgressEvent(
   fromVersion: string,
   targetVersion: string,
@@ -589,18 +618,13 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         );
 
-        // The update restart is intentional. As soon as the supervisor sees
-        // that first failed connection, discard any prior backoff debt and
-        // retry immediately instead of carrying an old 16-second delay.
-        yield* environmentRegistry.stateChanges(target.environmentId).pipe(
-          Stream.filter((state) => state.phase === "backoff"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.andThen(environmentRegistry.retryNow(target.environmentId)),
-          Effect.timeoutOption(Duration.seconds(30)),
-          Effect.ignore,
-          Effect.forkChild,
-        );
+        // The update restart is intentional and the server stays unreachable
+        // for the whole restart, so hold the retry cadence flat instead of
+        // letting the supervisor climb its backoff ladder.
+        yield* nudgeReconnectDuringUpdateRestart({
+          stateChanges: environmentRegistry.stateChanges(target.environmentId),
+          retryNow: environmentRegistry.retryNow(target.environmentId),
+        }).pipe(Effect.forkChild);
 
         const resumed = yield* environmentRegistry
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
