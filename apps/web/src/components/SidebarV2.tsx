@@ -117,6 +117,7 @@ import {
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  resolveSidebarBranchLabel,
   resolveSidebarV2Status,
   searchSidebarThreadsByTitle,
   resolveWorkingStartedAt,
@@ -552,6 +553,27 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         })
       : null,
   );
+  // Keep this project-scoped so local threads share one cached refs query instead of
+  // launching a separate Git command group for every branch-backed row.
+  const branchRefs = useEnvironmentQuery(
+    thread.branch !== null && thread.worktreePath === null && gitCwd !== null
+      ? vcsEnvironment.listRefs({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd, limit: 2 },
+        })
+      : null,
+  );
+  const defaultBranchRef = branchRefs.data?.refs.find((refName) => refName.isDefault);
+  const isDefaultBranch =
+    defaultBranchRef?.name === thread.branch ||
+    (gitStatus.data?.isDefaultRef === true && gitStatus.data.refName === thread.branch);
+  const isDefaultBranchPending =
+    thread.worktreePath === null
+      ? branchRefs.isPending && branchRefs.data === null
+      : gitStatus.isPending && gitStatus.data === null;
+  const branchLabel = isDefaultBranchPending
+    ? null
+    : resolveSidebarBranchLabel(thread.branch, isDefaultBranch);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
@@ -1053,8 +1075,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+              {branchLabel ? (
+                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{branchLabel}</span>
               ) : (
                 <span className="flex-1" />
               )}

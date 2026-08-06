@@ -169,6 +169,13 @@ export function resolveSidebarStageBadgeLabel(input: {
   return resolveServerBackedAppStageLabel(input);
 }
 
+export function resolveSidebarBranchLabel(
+  branch: string | null,
+  isDefaultBranch: boolean,
+): string | null {
+  return branch && !isDefaultBranch ? branch : null;
+}
+
 export function createThreadJumpHintVisibilityController(input: {
   delayMs: number;
   onVisibilityChange: (visible: boolean) => void;
