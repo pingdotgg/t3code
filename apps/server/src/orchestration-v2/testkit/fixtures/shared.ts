@@ -50,6 +50,8 @@ export const SUBAGENT_PROMPT =
 export const SUBAGENT_V2_PROMPT = "just say hello";
 export const OPENCODE_SUBAGENT_PROMPT =
   "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
+export const OPENCODE_ERROR_CLEANUP_DRAIN_PROMPT =
+  "Run a local command that prints the authoritative cleanup result.";
 export const SUBAGENT_CONTINUE_PROMPT =
   "Spawn one subagent and have it reply exactly: initial subagent response";
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
