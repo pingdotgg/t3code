@@ -221,14 +221,14 @@ function surfaceTitle(
 function PreviewFavicon({ url }: { url: string | null }) {
   const faviconUrl = faviconUrlForOrigin(url, 32);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3.5 shrink-0" />;
+  if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3 shrink-0" />;
   return (
     <img
       src={faviconUrl}
       alt=""
       aria-hidden
       draggable={false}
-      className="size-3.5 shrink-0 rounded-sm"
+      className="size-3 shrink-0 rounded-sm"
       onError={() => setFailedUrl(faviconUrl)}
     />
   );
@@ -250,22 +250,22 @@ function SurfaceIcon({
       return <PreviewFavicon url={url} />;
     }
     case "diff":
-      return <FileDiff className="size-3.5 shrink-0" />;
+      return <FileDiff className="size-3 shrink-0" />;
     case "files":
-      return <Files className="size-3.5 shrink-0" />;
+      return <Files className="size-3 shrink-0" />;
     case "file":
       return (
         <PierreEntryIcon
           pathValue={surface.relativePath}
           kind="file"
           theme={theme}
-          className="size-3.5"
+          className="size-3"
         />
       );
     case "terminal":
-      return <TerminalSquare className="size-3.5 shrink-0" />;
+      return <TerminalSquare className="size-3 shrink-0" />;
     case "plan":
-      return <ClipboardList className="size-3.5 shrink-0" />;
+      return <ClipboardList className="size-3 shrink-0" />;
   }
 }
 
@@ -358,7 +358,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn(
           "workspace-topbar gap-1 pl-2",
-          !ownsDesktopTitleBar && "[--workspace-topbar-height:--spacing(11)]",
+          props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
           props.mode === "inline" ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
@@ -385,62 +385,57 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
-                    "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",
+                    "group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
                     active
                       ? "bg-accent text-foreground"
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
+                  <button
+                    type="button"
+                    className="group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                    aria-label={`Close ${title}`}
+                    onClick={() => props.onCloseSurface(surface)}
+                  >
+                    <span className="relative flex size-3 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
+                      <SurfaceIcon
+                        surface={surface}
+                        sessions={props.previewSessions}
+                        theme={resolvedTheme}
+                      />
+                      {pending ? (
+                        <span
+                          className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                          aria-hidden
+                        />
+                      ) : null}
+                    </span>
+                    <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
+                  </button>
                   <Tooltip>
                     <TooltipTrigger
                       render={
                         <button
                           type="button"
-                          className="flex min-w-0 flex-1 items-center gap-1.5"
+                          className="flex min-w-0 items-center"
                           onClick={() => props.onActivate(surface)}
                         >
-                          <SurfaceIcon
-                            surface={surface}
-                            sessions={props.previewSessions}
-                            theme={resolvedTheme}
-                          />
                           <span className="truncate">{title}</span>
                         </button>
                       }
                     />
                     <TooltipPopup>{title}</TooltipPopup>
                   </Tooltip>
-                  <button
-                    type="button"
-                    className={cn(
-                      "relative flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted focus:opacity-100",
-                      pending ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                    )}
-                    aria-label={`Close ${title}`}
-                    onClick={() => props.onCloseSurface(surface)}
-                  >
-                    {pending ? (
-                      <>
-                        <span
-                          className="size-2 rounded-full bg-current group-hover:hidden"
-                          aria-hidden
-                        />
-                        <X className="hidden size-3 group-hover:block" />
-                      </>
-                    ) : (
-                      <X className="size-3" />
-                    )}
-                  </button>
                 </div>
               );
             })}
             {props.surfaces.length > 0 ? (
               <Menu>
                 <MenuTrigger
-                  className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="relative inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                   aria-label="Add panel surface"
                 >
-                  <Plus className="size-4" />
+                  <Plus className="size-3.5" />
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
                   <SurfaceMenuItem
@@ -478,7 +473,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         </ScrollArea>
         {props.layoutControls}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
