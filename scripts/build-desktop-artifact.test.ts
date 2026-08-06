@@ -9,6 +9,7 @@ import {
   resolveBuildOptions,
   resolveDesktopAppId,
   resolveDesktopArtifactName,
+  resolveDesktopDevSourceRoot,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
   resolveDesktopStageCacheKey,
@@ -141,6 +142,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "T3-Code-Local-Alpha-${version}-${arch}.${ext}",
     );
     assert.equal(resolveDesktopArtifactName("dev"), "T3-Code-Dev-${version}-${arch}.${ext}");
+    assert.equal(resolveDesktopDevSourceRoot("dev", "/repo/t3code"), "/repo/t3code");
+    assert.equal(resolveDesktopDevSourceRoot("alpha", "/repo/t3code"), undefined);
   });
 
   it("writes the flavor product name into packaged runtime metadata", async () => {

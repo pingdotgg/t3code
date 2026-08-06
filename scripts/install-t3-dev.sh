@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build the arm64 macOS Dev app directly and install it into /Applications,
+# Build the host-native macOS Dev app directly and install it into /Applications,
 # replacing any previous Dev installation. The default fast path skips DMG/ZIP
 # creation; pass --dmg when validating the release artifact path.
 #
@@ -15,7 +15,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_FLAVOR="dev"
 APP_NAME="T3 Code (Dev)"
-ARTIFACT_GLOB="T3-Code-Dev-*-arm64.dmg"
 APP_BUNDLE="${APP_NAME}.app"
 INSTALL_DEST="/Applications/${APP_BUNDLE}"
 RELEASE_DIR="${REPO_ROOT}/release"
@@ -45,52 +44,81 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 HOST_ARCH="$(uname -m)"
-if [[ "$HOST_ARCH" != "arm64" ]]; then
-  echo "Warning: host arch is ${HOST_ARCH}; this script builds an arm64 DMG." >&2
-fi
-
-log() { printf '\n[install-t3-dev] %s\n' "$*"; }
-
-log "Quitting any running ${APP_NAME} instance..."
-osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
-for _ in {1..20}; do
-  if ! pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.05
-done
-if pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
-  echo "${APP_NAME} did not quit; close it and retry." >&2
-  exit 1
-fi
-
-if [[ "$DO_BUILD" -eq 1 ]]; then
-  if [[ "$USE_DMG" -eq 1 ]]; then
-    log "Building ${APP_FLAVOR} arm64 DMG..."
-    rm -f "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.dmg \
-          "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.dmg.blockmap \
-          "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.zip \
-          "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.zip.blockmap
-    ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --flavor "$APP_FLAVOR" )
-  else
-    log "Building unpacked ${APP_FLAVOR} arm64 app..."
-    rm -rf "${RELEASE_DIR}/${APP_BUNDLE}"
-    ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dir --arch arm64 --flavor "$APP_FLAVOR" )
-  fi
-fi
-
+case "$HOST_ARCH" in
+  arm64) BUILD_ARCH="arm64" ;;
+  x86_64) BUILD_ARCH="x64" ;;
+  *)
+    echo "Unsupported macOS architecture: ${HOST_ARCH}" >&2
+    exit 1
+    ;;
+esac
+ARTIFACT_GLOB="T3-Code-Dev-*-${BUILD_ARCH}.dmg"
+LOCK_PATH="${T3CODE_DEV_REBUILD_LOCK_PATH:-${HOME}/Library/Caches/t3code-dev/rebuild.lock}"
 MOUNT_POINT=""
+
 cleanup() {
   if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
     hdiutil detach "$MOUNT_POINT" -quiet || hdiutil detach "$MOUNT_POINT" -force -quiet || true
   fi
+  if [[ -L "$LOCK_PATH" && "$(readlink "$LOCK_PATH" 2>/dev/null || true)" == "$$" ]]; then
+    rm -f "$LOCK_PATH"
+  fi
 }
 trap cleanup EXIT
+
+mkdir -p "$(dirname "$LOCK_PATH")"
+while ! ln -s "$$" "$LOCK_PATH" 2>/dev/null; do
+  LOCK_PID="$(readlink "$LOCK_PATH" 2>/dev/null || true)"
+  if [[ "$LOCK_PID" =~ ^[0-9]+$ ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    echo "Another T3 Code Dev rebuild is already running (PID ${LOCK_PID})." >&2
+    exit 1
+  fi
+
+  STALE_LOCK_PATH="${LOCK_PATH}.stale.$$.$RANDOM"
+  if mv "$LOCK_PATH" "$STALE_LOCK_PATH" 2>/dev/null; then
+    rm -f "$STALE_LOCK_PATH"
+  fi
+done
+
+if [[ -n "${T3CODE_DEV_REBUILD_LOG_PATH:-}" ]]; then
+  mkdir -p "$(dirname "$T3CODE_DEV_REBUILD_LOG_PATH")"
+  : > "$T3CODE_DEV_REBUILD_LOG_PATH"
+  exec > >(/usr/bin/awk -v path="$T3CODE_DEV_REBUILD_LOG_PATH" -v max_bytes=10485760 '
+    BEGIN { written = 0; truncated = 0 }
+    {
+      line = $0 ORS
+      if (written + length(line) <= max_bytes) {
+        printf "%s", line >> path
+        written += length(line)
+      } else if (!truncated) {
+        printf "\n[install-t3-dev] Log truncated after %d bytes.\n", max_bytes >> path
+        truncated = 1
+      }
+    }
+  ') 2>&1
+fi
+
+log() { printf '\n[install-t3-dev] %s\n' "$*"; }
+
+if [[ "$DO_BUILD" -eq 1 ]]; then
+  if [[ "$USE_DMG" -eq 1 ]]; then
+    log "Building ${APP_FLAVOR} ${BUILD_ARCH} DMG..."
+    rm -f "${RELEASE_DIR}"/T3-Code-Dev-*-"${BUILD_ARCH}".dmg \
+      "${RELEASE_DIR}"/T3-Code-Dev-*-"${BUILD_ARCH}".dmg.blockmap \
+      "${RELEASE_DIR}"/T3-Code-Dev-*-"${BUILD_ARCH}".zip \
+      "${RELEASE_DIR}"/T3-Code-Dev-*-"${BUILD_ARCH}".zip.blockmap
+    ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch "$BUILD_ARCH" --flavor "$APP_FLAVOR" )
+  else
+    log "Building unpacked ${APP_FLAVOR} ${BUILD_ARCH} app..."
+    rm -rf "${RELEASE_DIR}/${APP_BUNDLE}"
+    ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dir --arch "$BUILD_ARCH" --flavor "$APP_FLAVOR" )
+  fi
+fi
 
 if [[ "$USE_DMG" -eq 1 ]]; then
   DMG_PATH="$(ls -t "${RELEASE_DIR}"/${ARTIFACT_GLOB} 2>/dev/null | head -n 1 || true)"
   if [[ -z "$DMG_PATH" || ! -f "$DMG_PATH" ]]; then
-    echo "No arm64 DMG found in ${RELEASE_DIR}." >&2
+    echo "No ${BUILD_ARCH} DMG found in ${RELEASE_DIR}." >&2
     echo "Re-run without --no-build to produce one." >&2
     exit 1
   fi
@@ -113,6 +141,19 @@ fi
 if [[ ! -d "$SRC_APP" ]]; then
   echo "Source app not found at ${SRC_APP}." >&2
   ls -la "$MOUNT_POINT" >&2
+  exit 1
+fi
+
+log "Quitting any running ${APP_NAME} instance..."
+osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
+for _ in {1..50}; do
+  if ! pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+if pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
+  echo "${APP_NAME} did not quit; close it and retry." >&2
   exit 1
 fi
 

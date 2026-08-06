@@ -19,6 +19,7 @@ import {
   DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD,
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  type DesktopLocalRebuildState,
   type ModelSelection,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -507,10 +508,67 @@ function AboutVersionSection() {
   const queryClient = useQueryClient();
   const updateStateQuery = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
+  const [localRebuildState, setLocalRebuildState] = useState<DesktopLocalRebuildState | null>(null);
+  const [isStartingLocalRebuild, setIsStartingLocalRebuild] = useState(false);
 
   const updateState = updateStateQuery.data ?? null;
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
+
+  useEffect(() => {
+    const getLocalRebuildState = window.desktopBridge?.getLocalRebuildState;
+    if (!getLocalRebuildState) return;
+
+    let cancelled = false;
+    void getLocalRebuildState()
+      .then((state) => {
+        if (!cancelled) setLocalRebuildState(state);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleLocalRebuild = useCallback(() => {
+    const rebuildAndRestart = window.desktopBridge?.rebuildAndRestart;
+    if (!rebuildAndRestart || isStartingLocalRebuild) return;
+    if (!window.confirm("Build the current checkout, install it, and restart T3 Code?")) return;
+
+    setIsStartingLocalRebuild(true);
+    void rebuildAndRestart()
+      .then((result) => {
+        if (result.accepted) {
+          toastManager.add({
+            type: "success",
+            title: "Local rebuild started",
+            description: "T3 Code will restart after the new build is ready.",
+          });
+          return;
+        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start local rebuild",
+            description: [result.message, result.logPath ? `Log: ${result.logPath}` : null]
+              .filter(Boolean)
+              .join(" "),
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start local rebuild",
+            description: error instanceof Error ? error.message : "Local rebuild failed to start.",
+          }),
+        );
+      })
+      .finally(() => {
+        setIsStartingLocalRebuild(false);
+      });
+  }, [isStartingLocalRebuild]);
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -663,6 +721,28 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
+      {localRebuildState?.enabled ? (
+        <SettingsRow
+          title="Local source"
+          description="Build and install the current checkout, then restart T3 Code."
+          status={
+            <span className="block break-all font-mono text-[11px] text-foreground">
+              {localRebuildState.sourceRoot}
+            </span>
+          }
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={isStartingLocalRebuild}
+              onClick={handleLocalRebuild}
+            >
+              <RefreshCwIcon className={isStartingLocalRebuild ? "animate-spin" : undefined} />
+              {isStartingLocalRebuild ? "Starting..." : "Rebuild and restart"}
+            </Button>
+          }
+        />
+      ) : null}
       <SettingsRow
         title="Update track"
         description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."

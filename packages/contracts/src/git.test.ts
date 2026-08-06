@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  GitResolvedPullRequest,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInput);
@@ -58,6 +59,19 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+
+  it("defaults legacy null pull request states to open", () => {
+    const parsed = Schema.decodeUnknownSync(GitResolvedPullRequest)({
+      number: 39,
+      title: "Optimize relay snapshot reads",
+      url: "https://github.com/ronak-guliani/t3code/pull/39",
+      baseBranch: "main",
+      headBranch: "rg/optimize-relay-snapshot-reads",
+      state: null,
+    });
+
+    expect(parsed.state).toBe("open");
   });
 });
 

@@ -260,6 +260,8 @@ const createDesktopBridgeStub = (overrides?: {
   readonly serverExposureState?: Awaited<ReturnType<DesktopBridge["getServerExposureState"]>>;
   readonly setServerExposureMode?: DesktopBridge["setServerExposureMode"];
   readonly setUpdateChannel?: DesktopBridge["setUpdateChannel"];
+  readonly getLocalRebuildState?: NonNullable<DesktopBridge["getLocalRebuildState"]>;
+  readonly rebuildAndRestart?: NonNullable<DesktopBridge["rebuildAndRestart"]>;
 }): DesktopBridge => {
   const idleUpdateState: DesktopUpdateState = {
     enabled: false,
@@ -328,6 +330,10 @@ const createDesktopBridgeStub = (overrides?: {
     installUpdate: vi
       .fn()
       .mockResolvedValue({ accepted: false, completed: false, state: idleUpdateState }),
+    ...(overrides?.getLocalRebuildState
+      ? { getLocalRebuildState: overrides.getLocalRebuildState }
+      : {}),
+    ...(overrides?.rebuildAndRestart ? { rebuildAndRestart: overrides.rebuildAndRestart } : {}),
     onUpdateState: () => () => {},
     showNotification: vi.fn().mockResolvedValue(false),
     onNotificationClick: () => () => {},
@@ -454,6 +460,40 @@ describe("GeneralSettingsPanel observability", () => {
         ),
       )
       .toBeInTheDocument();
+  });
+
+  it("starts a local rebuild when a packaged Dev checkout is available", async () => {
+    const rebuildAndRestart = vi.fn().mockResolvedValue({
+      accepted: true,
+      logPath: "/tmp/t3code/dev-rebuild.log",
+      message: null,
+    });
+    window.desktopBridge = createDesktopBridgeStub({
+      getLocalRebuildState: vi.fn().mockResolvedValue({
+        enabled: true,
+        sourceRoot: "/repo/t3code",
+        reason: null,
+      }),
+      rebuildAndRestart,
+    });
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const rebuildButton = page.getByRole("button", { name: "Rebuild and restart", exact: true });
+    await expect.element(rebuildButton).toBeInTheDocument();
+    await rebuildButton.click();
+    await vi.waitFor(() => {
+      expect(rebuildAndRestart).toHaveBeenCalledOnce();
+    });
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {

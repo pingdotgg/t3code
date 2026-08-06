@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Schema, SchemaTransformation } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ReviewChangesScope } from "./agentWorkflows.ts";
 import { ReviewSnapshot } from "./reviewSchemas.ts";
@@ -101,7 +101,15 @@ export const GitResolvedPullRequest = Schema.Struct({
   url: Schema.String,
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
-  state: GitPullRequestState,
+  state: Schema.NullOr(GitPullRequestState).pipe(
+    Schema.decodeTo(
+      GitPullRequestState,
+      SchemaTransformation.transform({
+        decode: (state) => state ?? "open",
+        encode: (state) => state,
+      }),
+    ),
+  ),
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 

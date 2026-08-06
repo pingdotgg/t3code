@@ -215,6 +215,7 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly t3codeDevSourceRoot?: string;
   readonly private: true;
   readonly description: string;
   readonly author: string;
@@ -598,6 +599,13 @@ export function resolveDesktopArtifactName(flavor: typeof DesktopBuildFlavor.Typ
   return flavor === "dev"
     ? "T3-Code-Dev-${version}-${arch}.${ext}"
     : "T3-Code-Local-Alpha-${version}-${arch}.${ext}";
+}
+
+export function resolveDesktopDevSourceRoot(
+  flavor: typeof DesktopBuildFlavor.Type,
+  repoRoot: string,
+): string | undefined {
+  return flavor === "dev" ? repoRoot : undefined;
 }
 
 /**
@@ -998,6 +1006,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    ...(resolveDesktopDevSourceRoot(options.flavor, repoRoot)
+      ? { t3codeDevSourceRoot: repoRoot }
+      : {}),
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
