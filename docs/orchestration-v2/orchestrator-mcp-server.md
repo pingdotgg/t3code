@@ -187,8 +187,8 @@ provider session. The request becomes the V2 command
 `delegated_task.request`.
 
 `mode: "async"` returns the current durable state immediately.
-`mode: "wait"` polls the same durable state until it becomes terminal or the
-timeout expires. A wait timeout does not cancel the child; the result sets
+`mode: "wait"` polls the original delegated run until it becomes terminal or
+the timeout expires. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`.
 
 ```ts
@@ -198,10 +198,15 @@ type DelegateTaskResult = {
   childRunId: string | null;
   childNodeId: string;
   status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
+  hasPendingChildRuns: boolean;
   providerInstanceId: string;
   model: string | null;
   summary: string | null;
   resultContextTransferId: string | null;
+  latestTerminalRunId: string | null;
+  latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;
+  latestTerminalSummary: string | null;
+  latestTerminalResultContextTransferId: string | null;
   waitTimedOut: boolean;
 };
 ```
@@ -209,8 +214,13 @@ type DelegateTaskResult = {
 ### `task_status`
 
 Reads a delegated task from the parent thread's durable projection. A task ID
-from another parent thread is rejected. Terminal results include the child
-summary and the durable `subagent_result` context transfer ID when available.
+from another parent thread is rejected. The primary `childRunId`, `status`,
+`summary`, and `resultContextTransferId` fields stay tied to the original
+delegated run. `hasPendingChildRuns` remains true while any later child run is
+queued or executing. The `latestTerminal*` fields expose the original run or
+the highest-ordinal later terminal run that began execution. Rolled-back runs
+and never-started later cancellations do not displace the latest meaningful
+result.
 
 ### `task_cancel`
 

@@ -155,6 +155,15 @@ export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
 ]);
 export type OrchestratorMcpDelegatedTaskStatus = typeof OrchestratorMcpDelegatedTaskStatus.Type;
 
+export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+export type OrchestratorMcpTerminalDelegatedTaskStatus =
+  typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",
@@ -176,10 +185,15 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus,
+  hasPendingChildRuns: Schema.Boolean,
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  latestTerminalRunId: Schema.NullOr(RunId),
+  latestTerminalStatus: Schema.NullOr(OrchestratorMcpTerminalDelegatedTaskStatus),
+  latestTerminalSummary: Schema.NullOr(Schema.String),
+  latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   waitTimedOut: Schema.Boolean,
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
