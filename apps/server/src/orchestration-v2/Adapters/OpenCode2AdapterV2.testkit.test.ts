@@ -350,9 +350,21 @@ describe("OpenCode2AdapterV2 replay testkit", () => {
       const client = makeReplayClient(controller);
 
       yield* Effect.promise(async () => {
-        await client.v2.agent.list(agentInput);
-        await client.v2.mcp.list(mcpInput);
-        await client.v2.session.instructions.entry.put(instructionsInput);
+        // makeReplayClient is a structural double; cast past Session3 surface.
+        const replay = client as unknown as {
+          v2: {
+            agent: { list: (input: unknown) => Promise<unknown> };
+            mcp: { list: (input: unknown) => Promise<unknown> };
+            session: {
+              instructions: {
+                entry: { put: (input: unknown) => Promise<unknown> };
+              };
+            };
+          };
+        };
+        await replay.v2.agent.list(agentInput);
+        await replay.v2.mcp.list(mcpInput);
+        await replay.v2.session.instructions.entry.put(instructionsInput);
       });
       controller.assertComplete();
     }),

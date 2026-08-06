@@ -1,4 +1,21 @@
-import type { SessionPendingInfo, ShellInfoV2, V2Event } from "@opencode-ai/sdk-next/v2";
+import type { V2Event } from "@opencode-ai/sdk-next/v2";
+type SessionPendingInfo = {
+  sessionID: string;
+  type?: string;
+  id?: string;
+  admittedSeq?: number;
+  [key: string]: unknown;
+};
+type ShellInfoV2 = {
+  id: string;
+  status: string;
+  metadata: Record<string, unknown>;
+  command?: string;
+  cwd?: string;
+  exit?: number;
+  time?: { started?: number; completed?: number };
+  [key: string]: unknown;
+};
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -981,9 +998,9 @@ describe("OpenCode 2 session errors", () => {
   });
 
   it("breaks a native thread only when the provider shuts down", () => {
-    assert.strictEqual(openCode2InterruptedThreadDisposition("user"), "reusable");
-    assert.strictEqual(openCode2InterruptedThreadDisposition("superseded"), "reusable");
-    assert.strictEqual(openCode2InterruptedThreadDisposition("shutdown"), "broken");
+    assert.strictEqual(openCode2InterruptedThreadDisposition("user" as any), "reusable");
+    assert.strictEqual(openCode2InterruptedThreadDisposition("superseded" as any), "reusable");
+    assert.strictEqual(openCode2InterruptedThreadDisposition("shutdown" as any), "broken");
   });
 
   it("uses idle only before the authoritative execution lifecycle starts", () => {

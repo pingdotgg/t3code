@@ -1,4 +1,4 @@
-import type { FormInfo } from "@opencode-ai/sdk-next/v2";
+type FormInfo = Parameters<typeof import("./OpenCode2AdapterV2.ts").openCode2FormQuestions>[0];
 import { describe, expect, it } from "vite-plus/test";
 
 import { openCode2FormAnswer, openCode2FormQuestions } from "./OpenCode2AdapterV2.ts";

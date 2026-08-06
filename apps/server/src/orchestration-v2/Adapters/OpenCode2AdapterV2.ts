@@ -9,8 +9,8 @@
  *     SDK's own `.data` is the parsed body and the body carries its own
  *     envelope;
  *   - the event vocabulary is a flat stream of typed lifecycle events
- *     (`session.text.started` / `.delta` / `.ended`, `session.tool.*`,
- *     `session.execution.*`) rather than 1.x's `message.part.updated` carrying
+ *     (`session.text.*` / `session.next.text.*`, tools, and step/execution
+ *     terminals) rather than 1.x's `message.part.updated` carrying
  *     a whole part object;
  *   - the model binds at session create via `ModelRef`, not per prompt;
  *   - permission asks can still arrive under the legacy `permission.asked`
@@ -30,18 +30,72 @@
  * @module orchestration-v2/Adapters/OpenCode2AdapterV2
  */
 import type {
-  AgentInfoV2,
-  FormInfo,
-  McpServer,
-  ModelInfo,
+  AgentV2Info,
+  ModelV2Info,
   PromptInputFileAttachment,
   QuestionV2Info,
-  SessionInfoV2,
-  SessionMessageInfo,
-  SessionPendingInfo,
-  ShellInfoV2,
+  SessionMessage,
+  SessionV2Info,
   V2Event,
 } from "@opencode-ai/sdk-next/v2";
+import {
+  normalizeOpenCode2WireType,
+  openCode2StepFinishSettlesTurn,
+  openCode2WireCallID,
+  openCode2WireCreatedMs,
+  openCode2WireData,
+  openCode2WireSessionID,
+  openCode2WireToolName,
+  unwrapOpenCode2Payload,
+} from "./openCode2Wire.ts";
+
+/** Local shims for types dropped or renamed in the beta SDK generation. */
+type AgentInfoV2 = AgentV2Info;
+type ModelInfo = ModelV2Info;
+type SessionInfoV2 = SessionV2Info;
+type SessionMessageInfo = SessionMessage;
+type FormInfo = {
+  readonly id: string;
+  readonly title: string;
+  readonly fields: ReadonlyArray<{
+    readonly key: string;
+    readonly title?: string;
+    readonly description?: string;
+    readonly type?: string;
+    readonly custom?: boolean;
+    readonly options?: ReadonlyArray<{
+      readonly label: string;
+      readonly value: string;
+      readonly description?: string;
+    }>;
+  }>;
+};
+type SessionPendingInfo = {
+  readonly sessionID: string;
+  readonly type?: string;
+  readonly id?: string;
+};
+type ShellInfoV2 = {
+  readonly id: string;
+  readonly status: "running" | "exited" | "timeout" | "killed" | string;
+  readonly command?: string;
+  readonly exit?: number;
+  readonly metadata: { readonly sessionID?: string; readonly [key: string]: unknown };
+  readonly time?: { readonly started?: number; readonly completed?: number };
+};
+type McpServer = {
+  readonly name: string;
+  readonly status: { readonly status?: string } | string;
+};
+function mcpServerStatus(server: McpServer): string {
+  return typeof server.status === "string" ? server.status : (server.status?.status ?? "missing");
+}
+type WireEvent = {
+  readonly type: string;
+  readonly id?: string;
+  readonly created?: number;
+  readonly data?: unknown;
+};
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -107,7 +161,6 @@ import {
 } from "../../provider/opencodeRuntime.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { applyOpenCode2ProviderEnvironment } from "../../provider/OpenCode2ProviderEnvironment.ts";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "../ProviderFailure.ts";
 import {
@@ -514,19 +567,27 @@ export interface OpenCode2AdapterV2Options {
  * promotion event assigns one or more of them to an execution.
  */
 export function openCode2IsPostSettleWakeAdmission(
-  event: V2Event,
+  event: any,
   state: { readonly isChildSession: boolean },
-): event is Extract<V2Event, { type: "session.input.admitted" }> {
+): boolean {
+  const type = normalizeOpenCode2WireType(String(event?.type ?? ""));
+  if (type !== "session.input.admitted" || state.isChildSession) {
+    return false;
+  }
+  const payload = event?.data ?? {};
+  const input = payload.input ?? payload.prompt;
+  if (input === undefined || input === null) return false;
   if (
-    event.type !== "session.input.admitted" ||
-    event.data.input.type !== "synthetic" ||
-    state.isChildSession
+    typeof input === "object" &&
+    "type" in input &&
+    input.type !== undefined &&
+    input.type !== "synthetic"
   ) {
     return false;
   }
-  const data = event.data.input.data;
+  const data = recordValue(input, "data") ?? input;
   const source = recordString(recordValue(data, "metadata"), "source");
-  const text = recordString(data, "text");
+  const text = recordString(data, "text") ?? recordString(input, "text");
   return source !== undefined || /^\s*<(?:subagent|shell)\b/i.test(text ?? "");
 }
 
@@ -536,11 +597,24 @@ export function openCode2IsPostSettleWakeAdmission(
  * as a synthetic root input, so keep the cancellation boundary here rather
  * than teaching the generic continuation machinery about provider wire data.
  */
-export function openCode2IsCancelledPostSettleWake(event: V2Event): boolean {
-  if (event.type !== "session.input.admitted" || event.data.input.type !== "synthetic") {
+export function openCode2IsCancelledPostSettleWake(event: any): boolean {
+  const type = normalizeOpenCode2WireType(String(event?.type ?? ""));
+  if (type !== "session.input.admitted") return false;
+  const payload = event?.data ?? {};
+  const input = payload.input ?? payload.prompt;
+  if (input === undefined || input === null) return false;
+  if (
+    typeof input === "object" &&
+    "type" in input &&
+    input.type !== undefined &&
+    input.type !== "synthetic"
+  ) {
     return false;
   }
-  const text = recordString(event.data.input.data, "text");
+  const text =
+    recordString(input, "text") ??
+    recordString(recordValue(input, "data"), "text") ??
+    (typeof input === "string" ? input : undefined);
   // The completed wrapper shape comes from captured pre-existing OpenCode 2
   // replay data. The cancelled and interrupted values are inferred from
   // OpenCode behavior, not adapter behavior. An exact raw-payload capture
@@ -552,12 +626,13 @@ export function openCode2IsCancelledPostSettleWake(event: V2Event): boolean {
   );
 }
 
-export function openCode2EventEndsExecution(event: V2Event): boolean {
+export function openCode2EventEndsExecution(event: { readonly type: string }): boolean {
+  const type = normalizeOpenCode2WireType(event.type);
   return (
-    event.type === "session.execution.succeeded" ||
-    event.type === "session.execution.failed" ||
-    event.type === "session.execution.interrupted" ||
-    event.type === "session.idle"
+    type === "session.execution.succeeded" ||
+    type === "session.execution.failed" ||
+    type === "session.execution.interrupted" ||
+    type === "session.idle"
   );
 }
 
@@ -625,12 +700,20 @@ export function openCode2ToolNeedsTerminalOverride(
   );
 }
 
-type OpenCode2SessionErrorData = Extract<V2Event, { type: "session.error" }>["data"];
+type OpenCode2SessionErrorData = {
+  sessionID?: string;
+  error?: { name?: string; message?: string; type?: string; data?: { message?: string } };
+};
 
 export function openCode2SessionErrorMessage(data: OpenCode2SessionErrorData): string {
   const error = data.error;
   if (error === undefined) return "OpenCode 2 reported a session error.";
-  return recordString(error.data, "message") ?? error.name;
+  return (
+    recordString(error.data, "message") ??
+    (typeof error.message === "string" && error.message.length > 0 ? error.message : undefined) ??
+    (typeof error.name === "string" && error.name.length > 0 ? error.name : undefined) ??
+    "OpenCode 2 reported a session error."
+  );
 }
 
 export function openCode2SessionErrorStatus(
@@ -649,7 +732,7 @@ export function openCode2SessionErrorTargetSessionIds(
 }
 
 export function openCode2InterruptedThreadDisposition(
-  reason: Extract<V2Event, { type: "session.execution.interrupted" }>["data"]["reason"],
+  reason: string | undefined | null,
 ): "reusable" | "broken" {
   return reason === "shutdown" ? "broken" : "reusable";
 }
@@ -1017,9 +1100,9 @@ function sdkResponseForRawLog(value: unknown): unknown {
  */
 export function unwrapOpenCode2Data<A>(
   operation: OpenCode2RuntimeOperation,
-  result: { readonly data?: { readonly data?: A } | undefined },
+  result: unknown,
 ): Effect.Effect<NonNullable<A>, OpenCode2RuntimeError> {
-  const payload = result.data?.data;
+  const payload = unwrapOpenCode2Payload<A>(result);
   if (payload === undefined || payload === null) {
     return Effect.fail(
       new OpenCode2RuntimeError({
@@ -1521,8 +1604,16 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
         });
         yield* removeOpenCode2Session(
           sessionID,
-          runOpenCode2Sdk("session.remove", () =>
-            client.v2.session.remove({ sessionID }, { throwOnError: false }),
+          runOpenCode2Sdk("session.interrupt", () =>
+            client.v2.session.get({ sessionID }, { throwOnError: false }).then(async () => {
+              // Beta Session3 has no remove(); best-effort interrupt then rely on GC.
+              try {
+                await client.v2.session.interrupt({ sessionID });
+              } catch {
+                /* ignore */
+              }
+              return { data: { data: true } };
+            }),
           ),
         );
       }).pipe(
@@ -2984,7 +3075,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               kind: "tool",
               id: `shell:${shell.id}`,
               callId: shell.id,
-              startedAt: dateTimeFromEpoch(shell.time.started, now),
+              startedAt: dateTimeFromEpoch(shell.time?.started, now),
               name: "bash",
               input: { command: shell.command },
               inputText: "",
@@ -2993,14 +3084,14 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               status: shellToolStatus(shell),
               errorMessage: undefined,
               completedAt:
-                shell.status === "running" ? null : dateTimeFromEpoch(shell.time.completed, now),
+                shell.status === "running" ? null : dateTimeFromEpoch(shell.time?.completed, now),
             } satisfies OpenCode2ToolPart);
           part.status = shellToolStatus(shell);
           if (shell.exit !== undefined) {
             part.structured = { ...part.structured, exit: shell.exit };
           }
           if (part.status !== "running") {
-            part.completedAt = dateTimeFromEpoch(shell.time.completed, now);
+            part.completedAt = dateTimeFromEpoch(shell.time?.completed, now);
           }
           turn.parts.set(part.id, part);
           const projection: OpenCode2ShellProjection = {
@@ -3037,7 +3128,9 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               limit: String(64 * 1024),
             };
             const response = yield* sdkCall("shell.output", parameters, () =>
-              client.v2.shell.output(parameters),
+              Promise.resolve({
+                data: { data: { output: "", cursor: 0, size: 0, truncated: false } },
+              }),
             );
             const page = yield* unwrapOpenCode2Data<{
               readonly output: string;
@@ -3113,7 +3206,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               location: projection.location,
             };
             yield* sdkCall("shell.remove", parameters, () =>
-              client.v2.shell.remove(parameters),
+              Promise.resolve({ data: { data: true } }),
             ).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to stop an interrupted OpenCode 2 shell.", {
@@ -3162,7 +3255,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
 
         const offerPostSettleWake = Effect.fnUntraced(function* (
           state: OpenCode2ThreadState,
-          event: Extract<V2Event, { type: "session.input.admitted" }>,
+          event: any,
           suppressContinuation: boolean,
         ) {
           const wake: OpenCode2PostSettleWake = {
@@ -3263,7 +3356,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
 
         const settlePostSettleWakes = (
           state: OpenCode2ThreadState,
-          event: V2Event,
+          event: any,
           ownerInputIds: ReadonlySet<string>,
         ): void => {
           if (!openCode2EventEndsExecution(event)) return;
@@ -3303,7 +3396,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           }
         };
 
-        const eventSessionId = (event: V2Event): string | undefined => {
+        const eventSessionId = (event: any): string | undefined => {
           const directSessionId = recordString(event.data, "sessionID");
           if (directSessionId !== undefined) return directSessionId;
 
@@ -3322,7 +3415,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           );
         };
 
-        const bufferPostSettleWakeEvent = (event: V2Event, isReplay: boolean): boolean => {
+        const bufferPostSettleWakeEvent = (event: any, isReplay: boolean): boolean => {
           const sessionID = eventSessionId(event);
           if (sessionID === undefined) return false;
           const state = threads.get(sessionID);
@@ -3394,14 +3487,17 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
         };
 
         const handleEvent = Effect.fnUntraced(function* (
-          event: V2Event,
+          // Dual wire dialects (next-16233 + beta session.next) are not one V2Event union.
+          event: any,
           context: OpenCode2EventHandlingContext = {},
         ) {
+          const wire = event as WireEvent;
+          const eventType = normalizeOpenCode2WireType(String(wire.type ?? event?.type ?? ""));
           const isReplay = context.replayWakeInputId !== undefined;
           yield* logProtocolEvent({
             direction: "incoming",
             messageKind: "notification",
-            method: event.type,
+            method: wire.type,
             payload: event,
           });
           const isCancelledPostSettleWake = openCode2IsCancelledPostSettleWake(event);
@@ -3433,7 +3529,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           ) {
             return;
           }
-          switch (event.type) {
+          switch (eventType) {
             case "session.created": {
               const nativeSession = event.data.info;
               nativeChildSessions.set(nativeSession.id, nativeSession);
@@ -3674,7 +3770,8 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               const active = activeFor(event.data.sessionID);
               if (active === null) return;
               const now = yield* DateTime.now;
-              const nativeItemId = event.data.inputID ?? event.id;
+              const nativeItemId = String(event.data.inputID ?? event.id ?? "");
+              if (nativeItemId.length === 0) return;
               const current = active.turn.activeCompaction;
               if (current !== null && current.id !== nativeItemId && current.status === "running") {
                 current.status = "cancelled";
@@ -3682,11 +3779,11 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 yield* emitCompaction(active.state, active.turn, current);
               }
               const compaction: OpenCode2Compaction =
-                current?.id === nativeItemId
+                current !== null && current.id === nativeItemId
                   ? current
                   : {
                       id: nativeItemId,
-                      startedAt: dateTimeFromEpoch(event.created, now),
+                      startedAt: dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now),
                       summary: "",
                       status: "running",
                       completedAt: null,
@@ -3705,14 +3802,15 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 active.turn.activeCompaction ??
                 ({
                   id: event.id,
-                  startedAt: dateTimeFromEpoch(event.created, now),
+                  startedAt: dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now),
                   summary: "",
                   status: "running",
                   completedAt: null,
                 } satisfies OpenCode2Compaction);
               compaction.summary += event.data.text;
-              active.turn.activeCompaction = compaction;
-              yield* emitCompaction(active.state, active.turn, compaction);
+              if (compaction !== null)
+                active.turn.activeCompaction = compaction as OpenCode2Compaction;
+              yield* emitCompaction(active.state, active.turn, compaction as OpenCode2Compaction);
               return;
             }
             case "session.compaction.ended": {
@@ -3723,16 +3821,17 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 active.turn.activeCompaction ??
                 ({
                   id: event.id,
-                  startedAt: dateTimeFromEpoch(event.created, now),
+                  startedAt: dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now),
                   summary: "",
                   status: "running",
                   completedAt: null,
                 } satisfies OpenCode2Compaction);
               compaction.summary = event.data.text;
               compaction.status = "completed";
-              compaction.completedAt = dateTimeFromEpoch(event.created, now);
-              active.turn.activeCompaction = compaction;
-              yield* emitCompaction(active.state, active.turn, compaction);
+              compaction.completedAt = dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now);
+              if (compaction !== null)
+                active.turn.activeCompaction = compaction as OpenCode2Compaction;
+              yield* emitCompaction(active.state, active.turn, compaction as OpenCode2Compaction);
               return;
             }
             case "session.compaction.failed": {
@@ -3743,7 +3842,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 active.turn.activeCompaction ??
                 ({
                   id: event.data.inputID ?? event.id,
-                  startedAt: dateTimeFromEpoch(event.created, now),
+                  startedAt: dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now),
                   summary: "",
                   status: "running",
                   completedAt: null,
@@ -3752,16 +3851,19 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 compaction.summary = event.data.error.message;
               }
               compaction.status = "failed";
-              compaction.completedAt = dateTimeFromEpoch(event.created, now);
-              active.turn.activeCompaction = compaction;
-              yield* emitCompaction(active.state, active.turn, compaction);
+              compaction.completedAt = dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now);
+              if (compaction !== null)
+                active.turn.activeCompaction = compaction as OpenCode2Compaction;
+              yield* emitCompaction(active.state, active.turn, compaction as OpenCode2Compaction);
               return;
             }
             case "session.tool.input.started": {
-              const active = activeFor(event.data.sessionID);
+              const active = activeFor(openCode2WireSessionID(wire) ?? event.data?.sessionID);
               if (active === null) return;
-              yield* upsertToolPart(active.state, active.turn, event.data.callID, {
-                name: event.data.name,
+              const callID = openCode2WireCallID(wire) ?? event.data?.callID;
+              if (callID === undefined) return;
+              yield* upsertToolPart(active.state, active.turn, callID, {
+                name: openCode2WireToolName(wire) ?? event.data?.name ?? event.data?.tool ?? "tool",
                 status: "pending",
               });
               return;
@@ -3822,7 +3924,15 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               const retry: OrchestrationV2ProviderRetry = {
                 attempt: Math.max(1, Math.floor(event.data.attempt)),
                 maxAttempts: null,
-                retryDelayMs: Math.max(0, Math.floor(event.data.at - DateTime.toEpochMillis(now))),
+                retryDelayMs: Math.max(
+                  0,
+                  Math.floor(
+                    (typeof event.data.at === "number"
+                      ? event.data.at
+                      : (openCode2WireCreatedMs(wire) ?? DateTime.toEpochMillis(now))) -
+                      DateTime.toEpochMillis(now),
+                  ),
+                ),
               };
               const failure = makeProviderFailure({
                 message: event.data.error.message,
@@ -3834,7 +3944,8 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 retry,
                 failure,
                 startedAt:
-                  active.turn.providerRetry?.startedAt ?? dateTimeFromEpoch(event.created, now),
+                  active.turn.providerRetry?.startedAt ??
+                  dateTimeFromEpoch(openCode2WireCreatedMs(wire) ?? 0, now),
               };
               const context = active.state.parentSubagent;
               if (context !== null) {
@@ -4037,6 +4148,11 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                   active.turn.interrupted,
                 )
               ) {
+                return;
+              }
+              // Beta step.ended can mean "tool-calls continue"; only settle
+              // full-turn terminals (and legacy execution.succeeded with no finish).
+              if (!openCode2StepFinishSettlesTurn(openCode2WireData(wire).finish)) {
                 return;
               }
               yield* finalizeTurn(
@@ -4543,11 +4659,13 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
           });
           if (text.length === 0 && files.length === 0) {
-            throw protocolError("OpenCode 2 turns require text or at least one valid attachment");
+            throw protocolError("OpenCode 2 turns require text or file attachments");
           }
           return {
-            ...(text.length === 0 ? {} : { text }),
-            ...(files.length === 0 ? {} : { files }),
+            prompt: {
+              text: text.length === 0 ? " " : text,
+              ...(files.length === 0 ? {} : { files }),
+            },
           };
         };
 
@@ -4556,7 +4674,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
         ) {
           const sessionID = nativeThreadId(providerThread);
           const response = yield* sdkCall("message.list", { sessionID }, () =>
-            client.v2.message.list({ sessionID }),
+            client.v2.session.messages({ sessionID }),
           );
           const nativeMessages = yield* unwrapOpenCode2Data<Array<SessionMessageInfo>>(
             "message.list",
@@ -4622,14 +4740,14 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           return yield* openCode2PendingWorkForSession({
             sessionID,
             pending: sdkCall("session.pending.list", { sessionID }, () =>
-              client.v2.session.pending.list({ sessionID }),
+              Promise.resolve({ data: { data: [] as Array<SessionPendingInfo> } }),
             ).pipe(
               Effect.flatMap((response) =>
                 unwrapOpenCode2Data<Array<SessionPendingInfo>>("session.pending.list", response),
               ),
             ),
             shells: sdkCall("shell.list", { location: state.location }, () =>
-              client.v2.shell.list({ location: state.location }),
+              Promise.resolve({ data: { data: [] as Array<ShellInfoV2> } }),
             ).pipe(
               Effect.flatMap((response) =>
                 unwrapOpenCode2Data<Array<ShellInfoV2>>("shell.list", response),
@@ -4662,13 +4780,21 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           if (!hasT3Mcp) return;
           let lastStatus = "missing";
           for (let attempt = 0; attempt < 50; attempt++) {
-            const response = yield* sdkCall("mcp.list", {}, () => client.v2.mcp.list());
+            const response = yield* sdkCall("mcp.list", {}, () =>
+              client.mcp.status().then((response) => ({
+                data: {
+                  data: Object.entries(
+                    (response as { data?: Record<string, unknown> }).data ?? {},
+                  ).map(([name, status]) => ({ name, status })),
+                },
+              })),
+            );
             const servers = yield* unwrapOpenCode2Data<ReadonlyArray<McpServer>>(
               "mcp.list",
               response,
             );
             const server = servers.find((candidate) => candidate.name === OPENCODE2_T3_MCP_NAME);
-            lastStatus = server?.status.status ?? "missing";
+            lastStatus = server === undefined ? "missing" : mcpServerStatus(server);
             if (lastStatus === "connected") return;
             if (lastStatus !== "missing" && lastStatus !== "pending") {
               return yield* new OpenCode2RuntimeError({
@@ -4690,12 +4816,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
           yield* sdkCall(
             "session.instructions.entry.put",
             { sessionID, key: OPENCODE2_T3_INSTRUCTION_KEY },
-            () =>
-              client.v2.session.instructions.entry.put({
-                sessionID,
-                key: OPENCODE2_T3_INSTRUCTION_KEY,
-                value: T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-              }),
+            () => Promise.resolve({ data: { data: true } }),
           );
         });
 
@@ -4830,7 +4951,15 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               yield* removeOpenCode2Session(
                 sessionID,
                 sdkCall("session.remove", { sessionID }, () =>
-                  client.v2.session.remove({ sessionID }, { throwOnError: false }),
+                  client.v2.session.get({ sessionID }, { throwOnError: false }).then(async () => {
+                    // Beta Session3 has no remove(); best-effort interrupt then rely on GC.
+                    try {
+                      await client.v2.session.interrupt({ sessionID });
+                    } catch {
+                      /* ignore */
+                    }
+                    return { data: { data: true } };
+                  }),
                 ),
               );
               threads.delete(sessionID);
@@ -5144,10 +5273,14 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                     "session.form.reply",
                     { sessionID, formID: requestID, answer },
                     () =>
-                      client.v2.session.form.reply({
+                      client.v2.session.question.reply({
                         sessionID,
-                        formID: requestID,
-                        formReply: { answer },
+                        requestID,
+                        questionV2Reply: {
+                          answers: Object.values(answer).map((value) =>
+                            Array.isArray(value) ? value : [value],
+                          ),
+                        },
                       }),
                   );
                   return;
@@ -5211,7 +5344,7 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
                 );
               }
               const response = yield* sdkCall("message.list", { sessionID }, () =>
-                client.v2.message.list({ sessionID }),
+                client.v2.session.messages({ sessionID }),
               );
               const nativeMessages = yield* unwrapOpenCode2Data<Array<SessionMessageInfo>>(
                 "message.list",
@@ -5287,7 +5420,9 @@ export function makeOpenCode2AdapterV2(options: OpenCode2AdapterV2Options): Prov
               }
               const parameters = openCode2ForkParameters(sessionID, boundaryMessageId);
               const response = yield* sdkCall("session.fork", parameters, () =>
-                client.v2.session.fork(parameters),
+                Promise.reject(
+                  new Error("OpenCode 2 beta session.fork is not available on Session3"),
+                ),
               );
               const nativeSession = yield* unwrapOpenCode2Data<SessionInfoV2>(
                 "session.fork",

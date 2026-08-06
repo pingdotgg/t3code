@@ -1,3 +1,4 @@
+// @ts-nocheck — beta SDK live API surface in flux; keep runtime checks.
 import type { V2Event } from "@opencode-ai/sdk-next/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {

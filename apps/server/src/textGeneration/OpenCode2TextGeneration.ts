@@ -41,14 +41,6 @@ const OpenCode2TextGenerationOperation = Schema.Literals([
 ]);
 type OpenCode2TextGenerationOperation = typeof OpenCode2TextGenerationOperation.Type;
 
-const OpenCode2GenerateResponse = Schema.Struct({
-  data: Schema.Struct({
-    data: Schema.Struct({
-      text: Schema.String,
-    }),
-  }),
-});
-
 const OpenCode2SessionCreateResponse = Schema.Struct({
   data: Schema.Struct({
     data: Schema.Struct({
@@ -56,10 +48,49 @@ const OpenCode2SessionCreateResponse = Schema.Struct({
     }),
   }),
 });
-const decodeOpenCode2GenerateResponse = Schema.decodeUnknownEffect(OpenCode2GenerateResponse);
 const decodeOpenCode2SessionCreateResponse = Schema.decodeUnknownEffect(
   OpenCode2SessionCreateResponse,
 );
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Beta `session.prompt` only admits input. Text is collected after wait from
+ * projected messages (`session.context` / `session.messages`).
+ */
+function extractAssistantTextFromMessages(payload: unknown): string | null {
+  let messages: unknown = payload;
+  if (isRecord(payload) && "data" in payload) {
+    const outer = payload.data;
+    if (isRecord(outer) && "data" in outer) {
+      messages = outer.data;
+    } else {
+      messages = outer;
+    }
+  }
+  if (isRecord(messages) && Array.isArray(messages.data)) {
+    messages = messages.data;
+  }
+  if (!Array.isArray(messages)) return null;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.type !== "assistant") continue;
+    const content = message.content;
+    if (!Array.isArray(content)) continue;
+    const text = content
+      .filter((entry): entry is { type: string; text: string } => {
+        return isRecord(entry) && entry.type === "text" && typeof entry.text === "string";
+      })
+      .map((entry) => entry.text)
+      .join("\n")
+      .trim();
+    if (text.length > 0) return text;
+  }
+  return null;
+}
 
 interface SharedOpenCode2TextGenerationServerState {
   server: OpenCode2Runtime.OpenCode2ServerProcess | null;
@@ -259,44 +290,20 @@ export const makeOpenCode2TextGeneration = Effect.fn("makeOpenCode2TextGeneratio
       ),
     );
 
-  const decodeGenerateText = Effect.fn("OpenCode2TextGeneration.decodeGenerateText")(function* (
-    operation: OpenCode2TextGenerationOperation,
-    response: unknown,
-  ) {
-    const decoded = yield* decodeOpenCode2GenerateResponse(response).pipe(
-      Effect.mapError(
-        (cause) =>
-          new TextGenerationError({
-            operation,
-            detail: "OpenCode 2 returned an invalid generation response.",
-            cause,
-          }),
-      ),
-    );
-    const text = decoded.data.data.text.trim();
-    if (text.length === 0) {
-      return yield* new TextGenerationError({
-        operation,
-        detail: "OpenCode 2 returned empty output.",
-      });
-    }
-    return text;
-  });
-
-  const generateWithSessionAgent = Effect.fn("OpenCode2TextGeneration.generateWithSessionAgent")(
+  const generateWithSession = Effect.fn("OpenCode2TextGeneration.generateWithSession")(
     function* (input: {
       readonly client: OpencodeClient;
       readonly operation: OpenCode2TextGenerationOperation;
       readonly cwd: string;
       readonly prompt: string;
       readonly model: ModelRef;
-      readonly agent: string;
+      readonly agent?: string;
     }) {
       const createResponse = yield* sdkCall(input.operation, "session.create", () =>
         input.client.v2.session.create({
           model: input.model,
           location: { directory: input.cwd },
-          agent: input.agent,
+          ...(input.agent === undefined ? {} : { agent: input.agent }),
         }),
       );
       const created = yield* decodeOpenCode2SessionCreateResponse(createResponse).pipe(
@@ -310,25 +317,45 @@ export const makeOpenCode2TextGeneration = Effect.fn("makeOpenCode2TextGeneratio
         ),
       );
       const sessionID = created.data.data.id;
+      const promptText =
+        typeof input.prompt === "string" ? input.prompt : String(input.prompt ?? "");
 
       return yield* Effect.gen(function* () {
-        const response = yield* sdkCall(input.operation, "session.generate", () =>
-          input.client.v2.session.generate({
+        // Session3 prompt admits input and schedules the agent loop; it does
+        // not return generation text.
+        yield* sdkCall(input.operation, "session.prompt", () =>
+          input.client.v2.session.prompt({
             sessionID,
-            prompt: input.prompt,
+            prompt: { text: promptText },
           }),
         );
-        return yield* decodeGenerateText(input.operation, response);
+        yield* sdkCall(input.operation, "session.wait", () =>
+          input.client.v2.session.wait({ sessionID }),
+        );
+        const messagesResponse = yield* sdkCall(input.operation, "session.context", () =>
+          input.client.v2.session.context({ sessionID }),
+        );
+        const text = extractAssistantTextFromMessages(messagesResponse);
+        if (text === null || text.length === 0) {
+          return yield* new TextGenerationError({
+            operation: input.operation,
+            detail: "OpenCode 2 returned empty output.",
+          });
+        }
+        return text;
       }).pipe(
         Effect.ensuring(
-          sdkCall(input.operation, "session.remove", () =>
-            input.client.v2.session.remove({ sessionID }),
+          sdkCall(input.operation, "session.interrupt", () =>
+            input.client.v2.session.interrupt({ sessionID }),
           ).pipe(
             Effect.catch((cause) =>
-              Effect.logWarning("Failed to remove temporary OpenCode 2 text generation session.", {
-                sessionID,
-                cause,
-              }),
+              Effect.logWarning(
+                "Failed to clean up temporary OpenCode 2 text generation session.",
+                {
+                  sessionID,
+                  cause,
+                },
+              ),
             ),
           ),
         ),
@@ -357,22 +384,14 @@ export const makeOpenCode2TextGeneration = Effect.fn("makeOpenCode2TextGeneratio
         serverPassword: server.password,
       });
       return yield* retryModelStartup(() =>
-        agent !== undefined
-          ? generateWithSessionAgent({
-              client,
-              operation: input.operation,
-              cwd: input.cwd,
-              prompt: input.prompt,
-              model,
-              agent,
-            })
-          : sdkCall(input.operation, "generate.text", () =>
-              client.v2.generate.text({
-                location: { directory: input.cwd },
-                prompt: input.prompt,
-                model,
-              }),
-            ).pipe(Effect.flatMap((response) => decodeGenerateText(input.operation, response))),
+        generateWithSession({
+          client,
+          operation: input.operation,
+          cwd: input.cwd,
+          prompt: input.prompt,
+          model,
+          ...(agent === undefined ? {} : { agent }),
+        }),
       );
     });
 

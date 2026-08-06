@@ -394,6 +394,7 @@ export function makeReplayClient(controller: OpenCode2ReplayController): Opencod
         list: (input: unknown) => request("model.list", input),
       },
       session: {
+        context: (input: unknown) => request("session.context", input),
         create: (input: unknown) => request("session.create", input),
         fork: (input: unknown) => request("session.fork", input),
         get: (input: unknown) => request("session.get", input),
@@ -403,6 +404,9 @@ export function makeReplayClient(controller: OpenCode2ReplayController): Opencod
             put: (input: unknown) => request("session.instructions.entry.put", input),
           },
         },
+        // Beta Session3 projects messages under session.messages; older
+        // transcripts still label the operation message.list.
+        messages: (input: unknown) => request("message.list", input),
         pending: {
           list: (input: unknown) => request("session.pending.list", input),
         },
@@ -423,6 +427,7 @@ export function makeReplayClient(controller: OpenCode2ReplayController): Opencod
         },
         switchAgent: (input: unknown) => request("session.switchAgent", input),
         switchModel: (input: unknown) => request("session.switchModel", input),
+        wait: (input: unknown) => request("session.wait", input),
       },
       shell: {
         list: (input: unknown) => request("shell.list", input),

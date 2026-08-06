@@ -14,7 +14,14 @@
  *
  * @module provider/Layers/OpenCode2Provider
  */
-import type { AgentInfoV2, IntegrationInfo, ModelInfo } from "@opencode-ai/sdk-next/v2";
+import type { AgentV2Info, ModelV2Info } from "@opencode-ai/sdk-next/v2";
+
+type IntegrationInfo = {
+  readonly id: string;
+  readonly connections: ReadonlyArray<unknown>;
+  readonly [key: string]: unknown;
+};
+
 import {
   type ModelCapabilities,
   type OpenCode2Settings,
@@ -201,8 +208,8 @@ const DEFAULT_OPENCODE2_MODEL_CAPABILITIES: ModelCapabilities = createModelCapab
 });
 
 export interface OpenCode2Inventory {
-  readonly models: ReadonlyArray<ModelInfo>;
-  readonly agents: ReadonlyArray<AgentInfoV2>;
+  readonly models: ReadonlyArray<ModelV2Info>;
+  readonly agents: ReadonlyArray<AgentV2Info>;
 }
 
 export interface OpenCode2InventorySnapshot extends OpenCode2Inventory {
@@ -224,8 +231,8 @@ interface OpenCode2InventorySettlementOptions {
 function openCode2InventoryFingerprint(inventory: OpenCode2InventorySnapshot): string {
   return JSON.stringify({
     agents: inventory.agents
-      .map((agent) => [agent.id, agent.name, agent.mode, agent.hidden] as const)
-      .toSorted(([left], [right]) => left.localeCompare(right)),
+      .map((agent) => [agent.id, agent.mode, agent.hidden] as const)
+      .toSorted(([left], [right]) => String(left).localeCompare(String(right))),
     connectedIntegrationIDs: inventory.connectedIntegrationIDs.toSorted(),
     models: inventory.models
       .map(
@@ -235,13 +242,15 @@ function openCode2InventoryFingerprint(inventory: OpenCode2InventorySnapshot): s
             model.id,
             model.name,
             model.enabled,
-            model.variants.map((variant) => variant.id).toSorted(),
+            (model.variants ?? [])
+              .map((variant) => (typeof variant === "string" ? variant : String(variant?.id ?? "")))
+              .toSorted(),
           ] as const,
       )
       .toSorted(([leftProvider, leftModel], [rightProvider, rightModel]) =>
-        leftProvider === rightProvider
-          ? leftModel.localeCompare(rightModel)
-          : leftProvider.localeCompare(rightProvider),
+        String(leftProvider) === String(rightProvider)
+          ? String(leftModel).localeCompare(String(rightModel))
+          : String(leftProvider).localeCompare(String(rightProvider)),
       ),
   });
 }
@@ -330,11 +339,12 @@ function inferOpenCode2DefaultVariant(
  * budget tiers), synthesized per model from models.dev capability flags.
  */
 function openCode2CapabilitiesForModel(input: {
-  readonly model: ModelInfo;
-  readonly agents: ReadonlyArray<AgentInfoV2>;
+  readonly model: ModelV2Info;
+  readonly agents: ReadonlyArray<AgentV2Info>;
 }): ModelCapabilities {
-  const variantValues = input.model.variants
+  const variantValues = (input.model.variants ?? [])
     .map((variant) => variant.id)
+    .filter((variantId): variantId is string => typeof variantId === "string")
     .filter((variant) => variant !== OPENCODE2_DEFAULT_VARIANT);
   const defaultVariant = inferOpenCode2DefaultVariant(input.model.providerID, variantValues);
   const variantOptions = variantValues.map((variant) => {
@@ -362,7 +372,10 @@ function openCode2CapabilitiesForModel(input: {
       ? []
       : [
           { id: OPENCODE2_AUTO_AGENT, label: "Auto (Build/Plan)" },
-          ...customAgents.map((agent) => ({ id: agent.id, label: titleCaseSlug(agent.name) })),
+          ...customAgents.map((agent) => ({
+            id: agent.id,
+            label: titleCaseSlug(agent.id),
+          })),
         ];
   const defaultVariantSelection = defaultVariant ? { currentValue: defaultVariant } : {};
   return createModelCapabilities({
@@ -400,11 +413,13 @@ export function flattenOpenCode2Models(
   for (const model of inventory.models) {
     if (!model.enabled) continue;
     const name = nonEmptyTrimmed(model.name);
-    if (!name) continue;
+    const providerID = nonEmptyTrimmed(model.providerID);
+    const modelID = nonEmptyTrimmed(model.id);
+    if (!name || !providerID || !modelID) continue;
     models.push({
-      slug: `${model.providerID}/${model.id}`,
+      slug: `${providerID}/${modelID}`,
       name,
-      subProvider: titleCaseSlug(model.providerID),
+      subProvider: titleCaseSlug(providerID),
       isCustom: false,
       capabilities: openCode2CapabilitiesForModel({ model, agents: inventory.agents }),
     });
@@ -415,7 +430,8 @@ export function flattenOpenCode2Models(
 /**
  * Reads the 2.x inventory and version over HTTP, spawning a server when none
  * is configured. `/api/model` and `/api/agent` replaced the inventory CLI
- * subcommands, while `/api/health` avoids a second binary launch for version.
+ * subcommands. Version comes from `/global/health` (beta) with a fallback to
+ * `/api/health` for older next builds that still stamp version there.
  */
 const loadOpenCode2Inventory = (input: {
   readonly runtime: OpenCode2Runtime["Service"];
@@ -463,13 +479,19 @@ const loadOpenCode2Inventory = (input: {
               } satisfies OpenCode2InventorySnapshot;
             }),
           ),
-          runOpenCode2Sdk("health.get", () => client.v2.health.get()),
+          runOpenCode2Sdk("health.get", () =>
+            client.global.health().catch(() => client.v2.health.get()),
+          ),
         ],
         { concurrency: "unbounded" },
       );
+      const healthBody = healthResponse.data as
+        | { readonly version?: string; readonly data?: { readonly version?: string } }
+        | undefined;
+      const versionRaw = healthBody?.version ?? healthBody?.data?.version ?? "";
       return {
         inventory,
-        version: parseOpenCode2Version(healthResponse.data?.version ?? ""),
+        version: parseOpenCode2Version(String(versionRaw)),
       };
     }),
   );
@@ -580,7 +602,9 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
 
   const version = inventoryExit.value.version;
   if (version === null) {
-    return fallback(new Error("Unable to determine OpenCode 2 version from `/api/health`."));
+    return fallback(
+      new Error("Unable to determine OpenCode 2 version from `/global/health` or `/api/health`."),
+    );
   }
   const build = openCode2NextBuild(version);
   if (build !== null && build < MINIMUM_OPENCODE2_NEXT_BUILD) {

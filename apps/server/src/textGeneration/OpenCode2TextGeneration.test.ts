@@ -21,6 +21,29 @@ import * as OpenCode2Runtime from "../provider/opencode2Runtime.ts";
 import * as OpenCode2TextGeneration from "./OpenCode2TextGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 
+function assistantTextResponse(text: string) {
+  return {
+    data: {
+      data: [
+        {
+          type: "user",
+          id: "msg-user",
+          text: "prompt",
+          time: { created: 1 },
+        },
+        {
+          type: "assistant",
+          id: "msg-assistant",
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode" },
+          content: [{ type: "text", id: "part-text", text }],
+          time: { created: 2 },
+        },
+      ],
+    },
+  };
+}
+
 const runtimeMock = {
   state: {
     startCalls: [] as string[],
@@ -37,22 +60,17 @@ const runtimeMock = {
       directory: string;
       serverPassword: string;
     }>,
-    generateRequests: [] as Array<Record<string, unknown>>,
     sessionCreateRequests: [] as Array<Record<string, unknown>>,
-    sessionGenerateRequests: [] as Array<Record<string, unknown>>,
-    sessionRemoveRequests: [] as Array<Record<string, unknown>>,
-    generateResponse: {
-      data: {
-        data: {
-          text: JSON.stringify({
-            subject: "Add OpenCode 2 generation",
-            body: "Use the stateless generation endpoint.",
-          }),
-        },
-      },
-    } as unknown,
-    generateErrors: [] as Array<unknown>,
-    sessionGenerateError: undefined as unknown,
+    sessionPromptRequests: [] as Array<Record<string, unknown>>,
+    sessionWaitRequests: [] as Array<Record<string, unknown>>,
+    sessionContextRequests: [] as Array<Record<string, unknown>>,
+    sessionInterruptRequests: [] as Array<Record<string, unknown>>,
+    assistantText: JSON.stringify({
+      subject: "Add OpenCode 2 generation",
+      body: "Use the stateless generation endpoint.",
+    }),
+    promptErrors: [] as Array<unknown>,
+    sessionPromptError: undefined as unknown,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -61,22 +79,17 @@ const runtimeMock = {
     this.state.closeCalls.length = 0;
     this.state.connectCalls.length = 0;
     this.state.clientConnections.length = 0;
-    this.state.generateRequests.length = 0;
     this.state.sessionCreateRequests.length = 0;
-    this.state.sessionGenerateRequests.length = 0;
-    this.state.sessionRemoveRequests.length = 0;
-    this.state.generateResponse = {
-      data: {
-        data: {
-          text: JSON.stringify({
-            subject: "Add OpenCode 2 generation",
-            body: "Use the stateless generation endpoint.",
-          }),
-        },
-      },
-    };
-    this.state.generateErrors.length = 0;
-    this.state.sessionGenerateError = undefined;
+    this.state.sessionPromptRequests.length = 0;
+    this.state.sessionWaitRequests.length = 0;
+    this.state.sessionContextRequests.length = 0;
+    this.state.sessionInterruptRequests.length = 0;
+    this.state.assistantText = JSON.stringify({
+      subject: "Add OpenCode 2 generation",
+      body: "Use the stateless generation endpoint.",
+    });
+    this.state.promptErrors.length = 0;
+    this.state.sessionPromptError = undefined;
   },
 };
 
@@ -125,28 +138,41 @@ const OpenCode2RuntimeTestDouble: OpenCode2Runtime.OpenCode2Runtime["Service"] =
     runtimeMock.state.clientConnections.push({ baseUrl, directory, serverPassword });
     return {
       v2: {
-        generate: {
-          text: async (parameters: Record<string, unknown>) => {
-            runtimeMock.state.generateRequests.push(parameters);
-            const error = runtimeMock.state.generateErrors.shift();
-            if (error !== undefined) throw error;
-            return runtimeMock.state.generateResponse;
-          },
-        },
         session: {
           create: async (parameters: Record<string, unknown>) => {
             runtimeMock.state.sessionCreateRequests.push(parameters);
             return { data: { data: { id: "temporary-session" } } };
           },
-          generate: async (parameters: Record<string, unknown>) => {
-            runtimeMock.state.sessionGenerateRequests.push(parameters);
-            if (runtimeMock.state.sessionGenerateError !== undefined) {
-              throw runtimeMock.state.sessionGenerateError;
+          prompt: async (parameters: Record<string, unknown>) => {
+            runtimeMock.state.sessionPromptRequests.push(parameters);
+            if (runtimeMock.state.sessionPromptError !== undefined) {
+              throw runtimeMock.state.sessionPromptError;
             }
-            return runtimeMock.state.generateResponse;
+            const error = runtimeMock.state.promptErrors.shift();
+            if (error !== undefined) throw error;
+            return {
+              data: {
+                data: {
+                  id: "input-1",
+                  sessionID: "temporary-session",
+                  admittedSeq: 1,
+                  delivery: "queue",
+                  timeCreated: 1,
+                  prompt: parameters.prompt,
+                },
+              },
+            };
           },
-          remove: async (parameters: Record<string, unknown>) => {
-            runtimeMock.state.sessionRemoveRequests.push(parameters);
+          wait: async (parameters: Record<string, unknown>) => {
+            runtimeMock.state.sessionWaitRequests.push(parameters);
+            return { data: undefined };
+          },
+          context: async (parameters: Record<string, unknown>) => {
+            runtimeMock.state.sessionContextRequests.push(parameters);
+            return assistantTextResponse(runtimeMock.state.assistantText);
+          },
+          interrupt: async (parameters: Record<string, unknown>) => {
+            runtimeMock.state.sessionInterruptRequests.push(parameters);
             return { data: undefined };
           },
         },
@@ -241,14 +267,16 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
         });
         expect(second).toEqual(first);
         expect(runtimeMock.state.startCalls).toEqual(["fake-opencode2"]);
-        expect(runtimeMock.state.generateRequests).toHaveLength(2);
-        expect(runtimeMock.state.generateRequests[0]).toMatchObject({
+        expect(runtimeMock.state.sessionCreateRequests).toHaveLength(2);
+        expect(runtimeMock.state.sessionCreateRequests[0]).toMatchObject({
           location: { directory: process.cwd() },
           model: { providerID: "opencode", id: "big-pickle" },
         });
-        expect(runtimeMock.state.generateRequests[0]?.prompt).toContain(
-          "Use concise release-note wording.",
-        );
+        expect(runtimeMock.state.sessionPromptRequests).toHaveLength(2);
+        const firstPrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+          | { text?: string }
+          | undefined;
+        expect(firstPrompt?.text).toContain("Use concise release-note wording.");
         expect(runtimeMock.state.closeCalls).toEqual([]);
 
         yield* advanceIdleClock;
@@ -352,13 +380,8 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
   it.effect("generates PR content and branch names through the shared endpoint", () =>
     withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
-        runtimeMock.state.generateResponse = {
-          data: {
-            data: {
-              text: '{"title":"Add OpenCode 2 text generation","body":"## Summary\\n\\n- Add generation"}',
-            },
-          },
-        };
+        runtimeMock.state.assistantText =
+          '{"title":"Add OpenCode 2 text generation","body":"## Summary\\n\\n- Add generation"}';
         const pr = yield* textGeneration.generatePrContent({
           cwd: process.cwd(),
           baseBranch: "main",
@@ -375,13 +398,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
           modelSelection: DEFAULT_MODEL_SELECTION,
         });
 
-        runtimeMock.state.generateResponse = {
-          data: {
-            data: {
-              text: '{"branch":"opencode2-text-generation"}',
-            },
-          },
-        };
+        runtimeMock.state.assistantText = '{"branch":"opencode2-text-generation"}';
         const branch = yield* textGeneration.generateBranchName({
           cwd: process.cwd(),
           message: "Add OpenCode 2 text generation.",
@@ -392,10 +409,11 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
           title: "Add OpenCode 2 text generation",
           body: "## Summary\n\n- Add generation",
         });
-        expect(runtimeMock.state.generateRequests[0]?.prompt).toContain(
-          "Call out the rollout plan.",
-        );
-        expect(runtimeMock.state.generateRequests[0]?.prompt).toContain("## Change summary");
+        const prPrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+          | { text?: string }
+          | undefined;
+        expect(prPrompt?.text).toContain("Call out the rollout plan.");
+        expect(prPrompt?.text).toContain("## Change summary");
         expect(branch).toEqual({ branch: "opencode2-text-generation" });
       }),
     ),
@@ -404,13 +422,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
   it.effect("uses prior title context when regenerating a thread title", () =>
     withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
-        runtimeMock.state.generateResponse = {
-          data: {
-            data: {
-              text: '{"title":"Repair OpenCode 2 status handling"}',
-            },
-          },
-        };
+        runtimeMock.state.assistantText = '{"title":"Repair OpenCode 2 status handling"}';
 
         const result = yield* textGeneration.generateThreadTitle({
           cwd: process.cwd(),
@@ -420,10 +432,13 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
         });
 
         expect(result).toEqual({ title: "Repair OpenCode 2 status handling" });
-        expect(runtimeMock.state.generateRequests[0]?.prompt).toContain(
+        const titlePrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+          | { text?: string }
+          | undefined;
+        expect(titlePrompt?.text).toContain(
           'The previous title was "Investigate provider status".',
         );
-        expect(runtimeMock.state.generateRequests[0]?.prompt).toContain(
+        expect(titlePrompt?.text).toContain(
           "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
         );
       }),
@@ -446,7 +461,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
         expect(error).toBeInstanceOf(TextGenerationError);
         expect(error.message).toContain("must use the 'provider/model' format");
         expect(runtimeMock.state.startCalls).toEqual([]);
-        expect(runtimeMock.state.generateRequests).toEqual([]);
+        expect(runtimeMock.state.sessionPromptRequests).toEqual([]);
       }),
     ),
   );
@@ -454,7 +469,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
   it.effect("retries the exact model bootstrap race and then succeeds", () =>
     withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
-        runtimeMock.state.generateErrors.push(
+        runtimeMock.state.promptErrors.push(
           new Error("Model unavailable: opencode/big-pickle"),
           new Error("Model unavailable: opencode/big-pickle"),
         );
@@ -467,61 +482,63 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
         const result = yield* Fiber.join(fiber);
 
         expect(result.subject).toBe("Add OpenCode 2 generation");
-        expect(runtimeMock.state.generateRequests).toHaveLength(3);
+        expect(runtimeMock.state.sessionPromptRequests).toHaveLength(3);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("uses a temporary session for an agent selection and removes it after generation", () =>
-    withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
-      Effect.gen(function* () {
-        runtimeMock.state.generateResponse = {
-          data: {
-            data: {
-              text: '{"title":"Fix the model picker icon"}',
+  it.effect(
+    "uses a temporary session for an agent selection and cleans it up after generation",
+    () =>
+      withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.assistantText = '{"title":"Fix the model picker icon"}';
+
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "The provider icon is missing.",
+            attachments: [IMAGE_ATTACHMENT],
+            modelSelection: {
+              ...DEFAULT_MODEL_SELECTION,
+              options: [{ id: "agent", value: "build" }],
             },
-          },
-        };
+          });
 
-        const result = yield* textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "The provider icon is missing.",
-          attachments: [IMAGE_ATTACHMENT],
-          modelSelection: {
-            ...DEFAULT_MODEL_SELECTION,
-            options: [{ id: "agent", value: "build" }],
-          },
-        });
-
-        expect(result).toEqual({ title: "Fix the model picker icon" });
-        expect(runtimeMock.state.generateRequests).toEqual([]);
-        expect(runtimeMock.state.sessionCreateRequests).toEqual([
-          {
-            model: { providerID: "opencode", id: "big-pickle" },
-            location: { directory: process.cwd() },
-            agent: "build",
-          },
-        ]);
-        expect(runtimeMock.state.sessionGenerateRequests).toHaveLength(1);
-        expect(runtimeMock.state.sessionGenerateRequests[0]).toMatchObject({
-          sessionID: "temporary-session",
-        });
-        expect(runtimeMock.state.sessionGenerateRequests[0]?.prompt).toContain(
-          "Attachment metadata:",
-        );
-        expect(runtimeMock.state.sessionGenerateRequests[0]?.prompt).toContain("picker.png");
-        expect(runtimeMock.state.sessionRemoveRequests).toEqual([
-          { sessionID: "temporary-session" },
-        ]);
-      }),
-    ),
+          expect(result).toEqual({ title: "Fix the model picker icon" });
+          expect(runtimeMock.state.sessionCreateRequests).toEqual([
+            {
+              model: { providerID: "opencode", id: "big-pickle" },
+              location: { directory: process.cwd() },
+              agent: "build",
+            },
+          ]);
+          expect(runtimeMock.state.sessionPromptRequests).toHaveLength(1);
+          expect(runtimeMock.state.sessionPromptRequests[0]).toMatchObject({
+            sessionID: "temporary-session",
+          });
+          const agentPrompt = runtimeMock.state.sessionPromptRequests[0]?.prompt as
+            | { text?: string }
+            | undefined;
+          expect(agentPrompt?.text).toContain("Attachment metadata:");
+          expect(agentPrompt?.text).toContain("picker.png");
+          expect(runtimeMock.state.sessionWaitRequests).toEqual([
+            { sessionID: "temporary-session" },
+          ]);
+          expect(runtimeMock.state.sessionContextRequests).toEqual([
+            { sessionID: "temporary-session" },
+          ]);
+          expect(runtimeMock.state.sessionInterruptRequests).toEqual([
+            { sessionID: "temporary-session" },
+          ]);
+        }),
+      ),
   );
 
-  it.effect("removes a temporary attachment session when generation fails", () =>
+  it.effect("interrupts a temporary session when generation fails", () =>
     withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
         const sdkCause = new Error("generation unavailable");
-        runtimeMock.state.sessionGenerateError = sdkCause;
+        runtimeMock.state.sessionPromptError = sdkCause;
 
         const error = yield* textGeneration
           .generateThreadTitle({
@@ -535,15 +552,15 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
           })
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("session.generate request failed");
+        expect(error.message).toContain("session.prompt request failed");
         expect(error.message).not.toContain(sdkCause.message);
         expect(error.cause).toMatchObject({
           _tag: "OpenCode2RuntimeError",
           category: "sdk-request-failed",
-          operation: "session.generate",
+          operation: "session.prompt",
           cause: sdkCause,
         });
-        expect(runtimeMock.state.sessionRemoveRequests).toEqual([
+        expect(runtimeMock.state.sessionInterruptRequests).toEqual([
           { sessionID: "temporary-session" },
         ]);
       }),
@@ -553,13 +570,7 @@ it.layer(OpenCode2TextGenerationTestLayer)("OpenCode2TextGeneration", (it) => {
   it.effect("rejects blank generation output as a typed error", () =>
     withOpenCode2TextGeneration(DEFAULT_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
-        runtimeMock.state.generateResponse = {
-          data: {
-            data: {
-              text: "   ",
-            },
-          },
-        };
+        runtimeMock.state.assistantText = "   ";
 
         const error = yield* textGeneration
           .generateCommitMessage(DEFAULT_COMMIT_INPUT)
