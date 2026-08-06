@@ -674,6 +674,16 @@ describe("EnvironmentThreads", () => {
           value.data.value.title === "Latest title",
       );
 
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+
+      yield* Queue.offer(harness.wakeups, "application-active-preserved");
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+
       yield* Queue.offer(harness.wakeups, "application-active");
       const synchronizing = yield* awaitThreadState(
         harness.observed,

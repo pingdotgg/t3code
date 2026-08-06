@@ -311,6 +311,16 @@ describe("environment shell synchronization", () => {
         Stream.runHead,
       );
 
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
+      expect(yield* Ref.get(subscriptionCount)).toBe(1);
+
+      yield* Queue.offer(wakeups, "application-active-preserved");
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
+      expect(yield* Ref.get(subscriptionCount)).toBe(1);
+
       yield* Queue.offer(wakeups, "application-active");
       yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter(
