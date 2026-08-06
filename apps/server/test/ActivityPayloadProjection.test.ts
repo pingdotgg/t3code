@@ -117,9 +117,9 @@ const fixtures = [
       server: "repository",
       tool: "search",
       arguments: { query: "activity projection" },
-      aggregatedOutput: "mcp payload remains available",
+      aggregatedOutput: "mcp bulk is dropped",
     },
-    ignored: "MCP data is rendered verbatim",
+    ignored: "top-level bulk",
   }),
   makeActivity("search", "web_search", {
     rawOutput: {
@@ -184,13 +184,37 @@ describe("projectActivityPayload", () => {
     });
   });
 
-  it("passes MCP tool data through unchanged", () => {
-    expect(projectActivityPayload(fixtures[4]!)).toBe(fixtures[4]);
+  it("slims MCP tool data to the fields the expanded row renders", () => {
+    expect(projectActivityPayload(fixtures[4]!).payload).toEqual({
+      itemType: "mcp_tool_call",
+      title: "mcp_tool_call",
+      detail: "mcp_tool_call detail",
+      status: "completed",
+      requestKind: "command",
+      data: {
+        item: {
+          server: "repository",
+          tool: "search",
+          arguments: { query: "activity projection" },
+        },
+      },
+    });
   });
 
   it("keeps current web and mobile derived output identical for every tool item type", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);
+      if (activity === fixtures[4]) {
+        // MCP is the one deliberate difference: the expanded row's toolData
+        // loses result bulk but keeps the rendered identity fields.
+        const [entry] = deriveWorkLogEntries([projected]);
+        expect(entry?.toolData).toEqual({
+          server: "repository",
+          tool: "search",
+          arguments: { query: "activity projection" },
+        });
+        continue;
+      }
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
       expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
     }
@@ -328,12 +352,12 @@ describe("context-window snapshot dedup", () => {
     );
   });
 
-  it("leaves snapshots without context-window activities untouched", () => {
+  it("applies only payload slimming when there are no context-window activities", () => {
     const projected = projectThreadDetailSnapshot({
       snapshotSequence: 7,
       thread: makeThread([fixtures[4]!]),
     });
-    expect(projected.thread.activities).toEqual([fixtures[4]]);
+    expect(projected.thread.activities).toEqual([projectActivityPayload(fixtures[4]!)]);
   });
 
   it("does not filter live activity-appended events", () => {

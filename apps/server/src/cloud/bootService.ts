@@ -21,6 +21,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   parseServiceState,
+  serviceStateHasPendingUpdate,
   type ServiceState,
 } from "./serviceProtocol.ts";
 
@@ -110,10 +111,20 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
   }
 }
 
+export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootServiceUpdatePendingError>()(
+  "BootServiceUpdatePendingError",
+  {},
+) {
+  override get message(): string {
+    return "A remote server update is still pending. Wait for it to finish, then retry.";
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
-  | BootServiceInstallError;
+  | BootServiceInstallError
+  | BootServiceUpdatePendingError;
 
 export interface BootServiceStatus {
   readonly supported: boolean;
@@ -288,6 +299,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     }
 
     yield* Effect.gen(function* () {
+      if (installed) {
+        const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+        if (
+          Option.isSome(previousStateText) &&
+          serviceStateHasPendingUpdate(previousStateText.value)
+        ) {
+          return yield* new BootServiceUpdatePendingError();
+        }
+      }
       yield* fs
         .makeDirectory(unitDir, { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));

@@ -62,6 +62,11 @@ function scrollAndFocusSettingsTarget(target: HTMLElement): void {
   });
 }
 
+/** The row id a settings-search jump is currently trying to reach, if any. */
+export function useSettingsSearchTargetId(): string | null {
+  return useContext(SettingsSearchTargetContext).targetId;
+}
+
 function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
   const { targetId, onTargetHandled } = useContext(SettingsSearchTargetContext);
   const isSearchTarget = id !== undefined && id === targetId;

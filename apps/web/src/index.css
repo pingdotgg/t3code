@@ -130,6 +130,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
 }
 
+/* The font tokens are declared outside the inline theme so utilities reference
+   the variables and Settings -> Appearance can override them at runtime. The
+   default stacks are mirrored in `appearanceFonts.ts`. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 @theme inline {
   --color-zinc-25: oklch(99.2% 0 0);
   --animate-skeleton: skeleton 2s -1s infinite linear;
@@ -138,11 +147,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
   --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
-  --font-sans:
-    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
-  --font-mono:
-    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -404,6 +408,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .surface-subheader {
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+
+  [data-preview-panel-mode="inline"] [data-right-panel-surface-content] [data-surface-subheader] {
+    height: calc(var(--spacing) * 7);
+    min-height: calc(var(--spacing) * 7);
+    margin-bottom: calc(var(--spacing) * 3);
+    border-bottom-color: transparent;
   }
 
   .chat-composer-horizontal-inset {
@@ -672,11 +683,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background: color-mix(in srgb, var(--background) 64%, transparent);
   }
 
-  .glass-opacity-slider {
-    --glass-slider-progress: 0%;
-    --glass-slider-fill-offset: 0.5rem;
-    --glass-slider-fill-position: calc(
-      var(--glass-slider-progress) + var(--glass-slider-fill-offset)
+  .settings-slider {
+    --settings-slider-progress: 0%;
+    --settings-slider-fill-offset: 0.5rem;
+    --settings-slider-fill-position: calc(
+      var(--settings-slider-progress) + var(--settings-slider-fill-offset)
     );
     appearance: none;
     height: 1.5rem;
@@ -684,32 +695,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     cursor: pointer;
   }
 
-  .glass-opacity-slider::-webkit-slider-runnable-track {
+  .settings-slider::-webkit-slider-runnable-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: linear-gradient(
       to right,
-      var(--primary) 0 var(--glass-slider-fill-position),
-      color-mix(in srgb, var(--muted-foreground) 22%, transparent) var(--glass-slider-fill-position)
-        100%
+      var(--primary) 0 var(--settings-slider-fill-position),
+      color-mix(in srgb, var(--muted-foreground) 22%, transparent)
+        var(--settings-slider-fill-position) 100%
     );
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   }
 
-  .glass-opacity-slider::-moz-range-track {
+  .settings-slider::-moz-range-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   }
 
-  .glass-opacity-slider::-moz-range-progress {
+  .settings-slider::-moz-range-progress {
     height: 0.375rem;
     border-radius: 9999px;
     background: var(--primary);
   }
 
-  .glass-opacity-slider::-webkit-slider-thumb {
+  .settings-slider::-webkit-slider-thumb {
     appearance: none;
     width: 1rem;
     height: 1rem;
@@ -723,7 +734,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       box-shadow 120ms ease;
   }
 
-  .glass-opacity-slider::-moz-range-thumb {
+  .settings-slider::-moz-range-thumb {
     width: 1rem;
     height: 1rem;
     border: 2px solid var(--primary);
@@ -735,54 +746,54 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       box-shadow 120ms ease;
   }
 
-  .glass-opacity-slider:hover::-webkit-slider-thumb {
+  .settings-slider:hover::-webkit-slider-thumb {
     transform: scale(1.08);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
   }
 
-  .glass-opacity-slider:hover::-moz-range-thumb {
+  .settings-slider:hover::-moz-range-thumb {
     transform: scale(1.08);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
   }
 
-  .glass-opacity-slider:active::-webkit-slider-thumb {
+  .settings-slider:active::-webkit-slider-thumb {
     transform: scale(0.94);
   }
 
-  .glass-opacity-slider:active::-moz-range-thumb {
+  .settings-slider:active::-moz-range-thumb {
     transform: scale(0.94);
   }
 
-  .glass-opacity-slider:focus-visible {
+  .settings-slider:focus-visible {
     outline: none;
   }
 
-  .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
+  .settings-slider:focus-visible::-webkit-slider-thumb {
     box-shadow:
       0 0 0 3px var(--background),
       0 0 0 5px var(--ring);
   }
 
-  .glass-opacity-slider:focus-visible::-moz-range-thumb {
+  .settings-slider:focus-visible::-moz-range-thumb {
     box-shadow:
       0 0 0 3px var(--background),
       0 0 0 5px var(--ring);
   }
 
   @media (forced-colors: active) {
-    .glass-opacity-slider {
+    .settings-slider {
       appearance: auto;
       accent-color: Highlight;
     }
 
-    .glass-opacity-slider::-webkit-slider-runnable-track,
-    .glass-opacity-slider::-webkit-slider-thumb {
+    .settings-slider::-webkit-slider-runnable-track,
+    .settings-slider::-webkit-slider-thumb {
       all: revert;
     }
 
-    .glass-opacity-slider::-moz-range-track,
-    .glass-opacity-slider::-moz-range-progress,
-    .glass-opacity-slider::-moz-range-thumb {
+    .settings-slider::-moz-range-track,
+    .settings-slider::-moz-range-progress,
+    .settings-slider::-moz-range-thumb {
       all: revert;
     }
   }
@@ -990,14 +1001,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 body {
-  font-family:
-    "DM Sans Variable",
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  /* Reference the theme token (not a literal stack) so the Settings ->
+     Appearance runtime override of --font-sans reaches all interface text. */
+  font-family: var(--font-sans);
   margin: 0;
   padding: 0;
 }
@@ -1048,8 +1054,27 @@ body {
 
 pre,
 code {
-  font-family:
-    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(--font-mono);
+}
+
+/* Code blocks in chat carry the size preference. Scoped to chat markdown
+   rather than every pre: a global rule would beat text-size utilities and
+   inherited sizes on unrelated pre surfaces (terminal previews, approvals).
+   Inline code stays relative to its sentence so it never towers over prose;
+   diffs and file previews take the size through --diffs-font-size. */
+.chat-markdown .chat-markdown-shiki .shiki,
+.chat-markdown pre code {
+  font-size: var(--font-size-code, inherit);
+}
+
+/* @pierre/diffs surfaces (diffs, file previews, annotatable code, search
+   lines) render inside shadow roots but consult these hooks with their own
+   literal stacks as fallback. Custom properties inherit across the shadow
+   boundary, so defining them once here routes every code surface through the
+   appearance font tokens. */
+:root {
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--font-sans);
 }
 
 /* Window drag region (frameless titlebar) */
@@ -1081,6 +1106,24 @@ code {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
+}
+
+/* Settings -> Appearance can point the composer at its own face (for example a
+   mono font); default follows the sans stack. Applied on the surface wrapper so
+   the editor and its placeholder inherit together. */
+.composer-editor-surface {
+  font-family: var(--font-composer, var(--font-sans));
+  font-size: var(--font-size-prompt, 0.875rem);
+}
+
+/* Touch browsers zoom the page when a focused field is under 16px, so keep
+   the floor there regardless of the preference. Gated on a coarse pointer:
+   the zoom quirk does not exist on desktop, where a narrow window must not
+   silently override a smaller chosen prompt size. */
+@media (max-width: 39.999rem) and (pointer: coarse) {
+  .composer-editor-surface {
+    font-size: max(var(--font-size-prompt, 1rem), 16px);
+  }
 }
 
 .t3-ghostty-canvas {
@@ -1415,9 +1458,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown .chat-markdown-codeblock {
   margin: 0.65rem 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+  border-radius: var(--radius);
 }
 
 .chat-markdown .chat-markdown-codeblock-header {
@@ -1425,10 +1466,8 @@ label:has(> select#reasoning-effort) select {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--muted);
-  padding: 0.25rem 0.375rem 0.25rem 0.7rem;
-  color: var(--muted-foreground);
+  padding: 0.375rem 0.375rem 0 0.75rem;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock-title {
@@ -1441,7 +1480,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-chrome-action {
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
 .chat-markdown .chat-markdown-chrome-action:hover {
