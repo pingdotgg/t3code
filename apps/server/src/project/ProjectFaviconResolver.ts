@@ -55,10 +55,12 @@ const ICON_SOURCE_FILES = [
 ] as const;
 
 // Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
+// Both patterns stay anchored on a literal opening delimiter (`<link` / `{`) so the scan starts
+// only at real candidates and each attempt is bounded by the enclosing tag or object.
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
-const LINK_ICON_OBJ_RE =
-  /(?=[^}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/i;
+const LINK_ICON_OBJ_RE = /\{[^{}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'][^{}]*\}/i;
+const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
 export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
@@ -99,7 +101,8 @@ function extractIconHref(source: string): string | null {
   const htmlMatch = source.match(LINK_ICON_HTML_RE);
   if (htmlMatch?.[1]) return htmlMatch[1];
   const objMatch = source.match(LINK_ICON_OBJ_RE);
-  if (objMatch?.[1]) return objMatch[1];
+  const objHref = objMatch?.[0].match(ICON_HREF_RE);
+  if (objHref?.[1]) return objHref[1];
   return null;
 }
 
