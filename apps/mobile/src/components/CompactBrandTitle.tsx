@@ -94,7 +94,7 @@ export function CompactBrandTitle(
 }
 
 export function renderCompactBrandTitle() {
-  return <CompactBrandTitle />;
+  return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
 }
 
 export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {
