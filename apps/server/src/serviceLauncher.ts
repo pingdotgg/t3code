@@ -5,6 +5,7 @@
 // `t3 service update`. Keep runtime imports limited to Node built-ins.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -268,6 +269,7 @@ export class Launcher {
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
+  #stopRequested = false;
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
@@ -312,22 +314,26 @@ export class Launcher {
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    if (this.#stopping) {
+    // This must happen synchronously at signal receipt. A queued update
+    // transition may already be terminating the active child, and that child
+    // needs to see the marker in its shutdown finalizer. KillMode=mixed also
+    // ensures systemd signals the launcher before the rest of the cgroup.
+    try {
+      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
+    } catch {
+      // Err toward keeping the tunnel; the next link or unlink reconciles it.
+    }
+    if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
     }
-    this.#stopping = true;
+    this.#stopRequested = true;
     this.#clearTimer();
     this.#enqueue(async () => {
-      // An explicit stop is the service going away, not an update handoff.
-      // The marker lets the child's shutdown release the managed tunnel even
-      // while an update is recorded as pending; the next launcher start
-      // clears it. Written before the child is signalled so the child sees
-      // it during teardown. Best-effort: if the write fails the child errs
-      // toward keeping the tunnel, and the next link or unlink reconciles it.
-      await NodeFSP.writeFile(stopMarkerPath(this.#baseDir), "", { mode: 0o600 }).catch(
-        () => undefined,
-      );
+      // Let an update transition already in progress start its replacement
+      // before this queued stop tears it down. That replacement owns the
+      // pre-activation tunnel cleanup path and observes the marker above.
+      this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
