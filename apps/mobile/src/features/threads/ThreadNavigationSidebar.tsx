@@ -1322,7 +1322,12 @@ function ThreadNavigationSidebarPane(
         collapsable={false}
         onLayout={handleStickyHeaderLayout}
         pointerEvents="box-none"
-        style={{ paddingTop: insets.top, backgroundColor: headerBackgroundColor, elevation: 100 }}
+        style={{
+          paddingTop: insets.top,
+          backgroundColor: headerBackgroundColor,
+          elevation: 100,
+          shadowColor: "transparent",
+        }}
       >
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
           {/* Title slot doubles as the connection status surface: while an
