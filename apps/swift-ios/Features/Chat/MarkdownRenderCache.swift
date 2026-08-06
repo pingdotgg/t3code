@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// An exact content revision with a cheap, deterministic hash for SwiftUI task identity.
 /// Source equality remains the final check, so a fingerprint collision cannot return stale text.
@@ -74,18 +75,52 @@ final class MarkdownRenderedInline: @unchecked Sendable {
     }
 }
 
-struct MarkdownRenderedListItem: @unchecked Sendable {
+extension MarkdownRenderedInline: Equatable {
+    /// Streaming revisions share unchanged runs by reference (see the inline
+    /// cache), so identity comparison is both cheap and effective: unchanged
+    /// paragraphs compare equal without touching their attributed text.
+    static func == (lhs: MarkdownRenderedInline, rhs: MarkdownRenderedInline) -> Bool {
+        lhs === rhs
+    }
+}
+
+struct MarkdownRenderedListItem: Equatable, @unchecked Sendable {
     let task: MarkdownTaskState?
     let blocks: [MarkdownRenderedBlock]
 }
 
-struct MarkdownRenderedTable: @unchecked Sendable {
+struct MarkdownRenderedTable: Equatable, @unchecked Sendable {
     let header: [MarkdownRenderedInline]
     let alignments: [MarkdownTableAlignment]
     let rows: [[MarkdownRenderedInline]]
+    /// Estimated per-column widths, computed once on the render task so the
+    /// table view never measures cell text on the main thread.
+    let columnWidths: [CGFloat]
+
+    static func estimatedColumnWidths(
+        header: [MarkdownRenderedInline],
+        rows: [[MarkdownRenderedInline]]
+    ) -> [CGFloat] {
+        let cells = [header] + rows
+        return header.indices.map { columnIndex in
+            let longestLine = cells
+                .compactMap { row -> Int? in
+                    guard row.indices.contains(columnIndex) else { return nil }
+                    return String(row[columnIndex].attributedText.characters)
+                        .split(separator: "\n", omittingEmptySubsequences: false)
+                        .map(\.count)
+                        .max()
+                }
+                .max() ?? 0
+
+            // Deliberately an estimate rather than text measurement. Exact
+            // widths would require laying every cell out twice.
+            return min(300, max(140, CGFloat(longestLine) * 8.25))
+        }
+    }
 }
 
-indirect enum MarkdownRenderedBlock: @unchecked Sendable {
+indirect enum MarkdownRenderedBlock: Equatable, @unchecked Sendable {
     case paragraph(MarkdownRenderedInline)
     case heading(level: Int, inline: MarkdownRenderedInline)
     case unorderedList([MarkdownRenderedListItem])
@@ -119,7 +154,19 @@ private final class MarkdownRenderedInlineBox: NSObject {
 /// unchanged messages. Cache misses are rendered by a detached task and duplicate requests
 /// for the same revision share one in-flight render.
 final class MarkdownRenderCache: @unchecked Sendable {
-    static let shared = MarkdownRenderCache()
+    static let shared: MarkdownRenderCache = {
+        let cache = MarkdownRenderCache()
+        // NSCache only sheds objects; in-flight renders and their waiters are
+        // ours to drop when the system is under pressure.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            cache.removeAll()
+        }
+        return cache
+    }()
 
     private let documents = NSCache<NSString, MarkdownRenderedDocument>()
     private let inlineRuns = NSCache<NSString, MarkdownRenderedInlineBox>()
@@ -348,7 +395,11 @@ final class MarkdownRenderCache: @unchecked Sendable {
         return MarkdownRenderedTable(
             header: header,
             alignments: table.alignments,
-            rows: rows
+            rows: rows,
+            columnWidths: MarkdownRenderedTable.estimatedColumnWidths(
+                header: header,
+                rows: rows
+            )
         )
     }
 

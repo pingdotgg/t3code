@@ -178,8 +178,17 @@ public struct ThreadDetailView: View {
 
                 Spacer(minLength: 6)
 
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    headerStatus(at: context.date)
+                // The per-second timeline only exists for the live working
+                // duration; idle threads render a static status instead of
+                // waking every second forever.
+                Group {
+                    if currentThread.homeStatus == .working {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            headerStatus(at: context.date)
+                        }
+                    } else {
+                        headerStatus(at: .now)
+                    }
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
@@ -1147,6 +1156,55 @@ private struct FeatureRemoteAttachmentThumbnail: View {
     }
 }
 
+/// Local preview bytes routed through the shared thumbnail cache so streaming
+/// reconfigures of a message with attachments never re-allocate UIImages in
+/// body. Decode happens once, off the main thread.
+private struct FeatureLocalAttachmentThumbnail: View {
+    let attachmentID: String
+    let previewData: Data
+
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    private var cacheKey: NSString { "local:\(attachmentID)" as NSString }
+
+    var body: some View {
+        Group {
+            if let image = image ?? FeatureAttachmentThumbnailCache.shared.image(for: cacheKey) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if failed {
+                placeholder(systemImage: "exclamationmark.triangle")
+            } else {
+                placeholder(systemImage: "photo")
+            }
+        }
+        .accessibilityHidden(true)
+        .task(id: attachmentID) {
+            guard FeatureAttachmentThumbnailCache.shared.image(for: cacheKey) == nil else { return }
+            let data = previewData
+            let decoded = await Task.detached(priority: .utility) {
+                UIImage(data: data)
+            }.value
+            guard !Task.isCancelled else { return }
+            if let decoded {
+                FeatureAttachmentThumbnailCache.shared.insert(decoded, for: cacheKey)
+                image = decoded
+            } else {
+                failed = true
+            }
+        }
+    }
+
+    private func placeholder(systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 private enum FeatureAttachmentThumbnailLoader {
     static func image(for url: URL, maximumPixelSize: Int) async throws -> UIImage {
         let cacheKey = "\(url.absoluteString)#\(maximumPixelSize)" as NSString
@@ -1324,11 +1382,11 @@ private struct FeatureMessageAttachmentsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         if attachment.mimeType.hasPrefix("image/") {
                             Group {
-                                if let previewData = attachment.previewData,
-                                   let image = UIImage(data: previewData) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .scaledToFit()
+                                if let previewData = attachment.previewData {
+                                    FeatureLocalAttachmentThumbnail(
+                                        attachmentID: attachment.id,
+                                        previewData: previewData
+                                    )
                                 } else if let url = attachment.url {
                                     FeatureRemoteAttachmentThumbnail(url: url)
                                 } else {

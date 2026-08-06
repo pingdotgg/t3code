@@ -139,13 +139,17 @@ private struct MarkdownBlocksView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
             ForEach(blocks.indices, id: \.self) { index in
+                // Unchanged blocks share inline runs by reference across
+                // streaming revisions, so equatable comparison skips their
+                // body and layout entirely; only the changed tail re-renders.
                 MarkdownBlockView(block: blocks[index])
+                    .equatable()
             }
         }
     }
 }
 
-private struct MarkdownBlockView: View {
+private struct MarkdownBlockView: View, Equatable {
     let block: MarkdownRenderedBlock
 
     @ViewBuilder
@@ -193,12 +197,8 @@ private struct MarkdownBlockView: View {
 
 private struct MarkdownTableView: View {
     let table: MarkdownRenderedTable
-    private let columnWidths: [CGFloat]
 
-    init(table: MarkdownRenderedTable) {
-        self.table = table
-        columnWidths = Self.measureColumnWidths(table)
-    }
+    private var columnWidths: [CGFloat] { table.columnWidths }
 
     var body: some View {
         ScrollView(.horizontal) {
@@ -266,24 +266,6 @@ private struct MarkdownTableView: View {
         }
     }
 
-    private static func measureColumnWidths(_ table: MarkdownRenderedTable) -> [CGFloat] {
-        let cells = [table.header] + table.rows
-        return table.header.indices.map { columnIndex in
-            let longestLine = cells
-                .compactMap { row -> Int? in
-                    guard row.indices.contains(columnIndex) else { return nil }
-                    return String(row[columnIndex].attributedText.characters)
-                        .split(separator: "\n", omittingEmptySubsequences: false)
-                        .map(\.count)
-                        .max()
-                }
-                .max() ?? 0
-
-            // This is deliberately an estimate rather than text measurement. Exact widths
-            // would require laying every cell out twice, which is expensive in long threads.
-            return min(300, max(140, CGFloat(longestLine) * 8.25))
-        }
-    }
 }
 
 private struct MarkdownListView: View {

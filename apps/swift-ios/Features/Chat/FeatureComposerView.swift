@@ -315,8 +315,22 @@ struct FeatureComposerView: View {
         DailyUXModelOptions.supportsImages(selection: selection, providers: providers)
     }
 
+    /// Trigger detection walks the whole draft with character indices and is
+    /// read from several computed properties per body evaluation, so one parse
+    /// per keystroke is memoized instead of four.
+    private final class TriggerMemo {
+        var text: String?
+        var trigger: FeatureComposerTrigger?
+    }
+
+    @State private var triggerMemo = TriggerMemo()
+
     private var composerTrigger: FeatureComposerTrigger? {
-        FeatureComposerTriggerParser.detect(in: text)
+        if triggerMemo.text == text { return triggerMemo.trigger }
+        let trigger = FeatureComposerTriggerParser.detect(in: text)
+        triggerMemo.text = text
+        triggerMemo.trigger = trigger
+        return trigger
     }
 
     private var commandMenuItems: [FeatureComposerMenuItem] {

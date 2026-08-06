@@ -658,9 +658,22 @@ enum FeatureFullDiffHydrator {
             guard let oldLine = line.oldLine, let newLine = line.newLine else { return nil }
             return (newLine, oldLine - newLine)
         }
+        // Anchors ascend by new-line number; binary search keeps hydration
+        // linear instead of scanning every anchor per emitted context line.
         func oldLine(for newLine: Int) -> Int? {
-            let anchor = anchors.last(where: { $0.new <= newLine }) ?? anchors.first
-            return anchor.map { newLine + $0.offset }
+            guard !anchors.isEmpty else { return nil }
+            var low = 0
+            var high = anchors.count
+            while low < high {
+                let mid = (low + high) / 2
+                if anchors[mid].new <= newLine {
+                    low = mid + 1
+                } else {
+                    high = mid
+                }
+            }
+            let anchor = low > 0 ? anchors[low - 1] : anchors[0]
+            return newLine + anchor.offset
         }
 
         var output: [FeatureDiffLine] = []

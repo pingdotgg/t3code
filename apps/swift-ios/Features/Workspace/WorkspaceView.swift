@@ -170,6 +170,12 @@ public struct WorkspaceView: View {
         .onChange(of: navigationRequest?.id, initial: true) { _, _ in
             consumeNavigationRequest()
         }
+        // A request that arrives before its thread or project exists in the
+        // snapshot stays pending; retry it as data lands so cold-start deep
+        // links are not silently stranded.
+        .onChange(of: model.homePresentationRevision) { _, _ in
+            if navigationRequest != nil { consumeNavigationRequest() }
+        }
         .task(id: nextSidebarBoundary) {
             guard let boundary = nextSidebarBoundary else { return }
             do {

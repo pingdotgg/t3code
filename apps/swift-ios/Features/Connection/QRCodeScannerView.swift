@@ -213,6 +213,25 @@ private final class QRScannerViewController: UIViewController {
         view.backgroundColor = .black
     }
 
+    // SwiftUI does not reliably dismantle a representable the moment its
+    // fullScreenCover dismisses, and backgrounding never dismantles it, so
+    // stop the camera on disappear and resume it when the view returns.
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        stop()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        guard previewLayer != nil else { return }
+        let session = captureSession
+        sessionQueue.async {
+            if !session.isRunning {
+                session.startRunning()
+            }
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         previewLayer?.frame = view.bounds

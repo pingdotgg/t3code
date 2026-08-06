@@ -471,7 +471,10 @@ public final class FeatureRootModel {
         await perform {
             try await client.resolveApproval(id: id, decision: decision)
             guard currentEnvironmentIdentity == environment else { return }
-            for key in Array(details.keys) {
+            // Only touch details that actually hold the request; mutateDetail
+            // deep-compares each mutated detail and the cache never shrinks.
+            for key in Array(details.keys)
+                where details[key]?.approvals.contains(where: { $0.id == id }) == true {
                 mutateDetail(
                     id: key,
                     change: .delta(FeatureDetailDelta(changedMessages: []))
@@ -487,7 +490,8 @@ public final class FeatureRootModel {
         await perform {
             try await client.resolveUserInput(id: id, answers: answers)
             guard currentEnvironmentIdentity == environment else { return }
-            for key in Array(details.keys) {
+            for key in Array(details.keys)
+                where details[key]?.userInputs.contains(where: { $0.id == id }) == true {
                 mutateDetail(
                     id: key,
                     change: .delta(FeatureDetailDelta(changedMessages: []))
