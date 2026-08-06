@@ -267,6 +267,8 @@ export const ServerConfig = Schema.Struct({
   availableEditors: Schema.Array(EditorId),
   observability: ServerObservability,
   settings: ServerSettings,
+  shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

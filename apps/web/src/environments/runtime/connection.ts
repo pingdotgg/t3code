@@ -194,6 +194,16 @@ export function createEnvironmentConnection(
         bootstrapGate.resolve();
         return;
       }
+      if (item.kind === "synchronized") {
+        if (item.sequence !== undefined) {
+          latestShellStreamSequence =
+            latestShellStreamSequence === null
+              ? item.sequence
+              : Math.max(latestShellStreamSequence, item.sequence);
+        }
+        bootstrapGate.resolve();
+        return;
+      }
       latestShellStreamSequence =
         latestShellStreamSequence === null
           ? item.sequence

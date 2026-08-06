@@ -176,6 +176,10 @@ export function createEnvironmentConnection(
         bootstrapGate.resolve();
         return;
       }
+      if (item.kind === "synchronized") {
+        bootstrapGate.resolve();
+        return;
+      }
 
       input.applyShellEvent(item, environmentId);
     },

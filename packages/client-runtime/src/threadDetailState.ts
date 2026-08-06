@@ -252,6 +252,9 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
       setData(targetKey, item.snapshot.thread);
       return;
     }
+    if (item.kind === "synchronized") {
+      return;
+    }
 
     const current = getSnapshot({
       environmentId: entries.get(targetKey)?.target.environmentId ?? null,

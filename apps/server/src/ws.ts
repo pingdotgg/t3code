@@ -114,6 +114,7 @@ import { OrchestrationEngineService } from "./orchestration/Services/Orchestrati
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { WorkflowCoordinatorReactor } from "./orchestration/Services/WorkflowCoordinatorReactor.ts";
 import {
+  filterArchivedShellSnapshot,
   filterActiveShellSnapshot,
   toShellStreamEvent as projectShellStreamEvent,
 } from "./orchestration/shellStream.ts";
@@ -185,6 +186,8 @@ async function writeThreadMarkdownExportFile(input: {
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const SHELL_RESUME_MAX_GAP = 1_000;
+const THREAD_RESUME_MAX_GAP = 1_000;
 
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
@@ -351,6 +354,8 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             otlpMetricsEnabled: config.otlpMetricsUrl !== undefined,
           },
           settings,
+          shellResumeCompletionMarker: true,
+          threadResumeCompletionMarker: true,
         };
       });
 
@@ -1123,7 +1128,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input) =>
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
@@ -1141,6 +1146,56 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                 liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
               );
 
+              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+              const synchronizedThenLive =
+                input.requestCompletionMarker === true
+                  ? Stream.concat(
+                      Stream.fromEffect(
+                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                      ).pipe(Stream.drain),
+                      bufferedLiveStream,
+                    )
+                  : bufferedLiveStream;
+
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                const headSequence = (yield* orchestrationEngine.getReadModel()).snapshotSequence;
+                const replayGap = headSequence - afterSequence;
+                if (replayGap >= 0 && replayGap <= SHELL_RESUME_MAX_GAP) {
+                  const catchUpStream = orchestrationEngine.readEvents(afterSequence).pipe(
+                    Stream.take(replayGap),
+                    Stream.mapEffect(toShellStreamEvent),
+                    Stream.flatMap((event) =>
+                      Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                    ),
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to replay orchestration shell events",
+                          cause,
+                        }),
+                    ),
+                  );
+                  const liveAfterHead = bufferedLiveStream.pipe(
+                    Stream.filter(
+                      (item) => item.kind !== "snapshot" && item.sequence > headSequence,
+                    ),
+                  );
+                  return Stream.concat(
+                    catchUpStream,
+                    input.requestCompletionMarker === true
+                      ? Stream.concat(
+                          Stream.make({
+                            kind: "synchronized" as const,
+                            sequence: headSequence,
+                          }),
+                          liveAfterHead,
+                        )
+                      : liveAfterHead,
+                  );
+                }
+              }
+
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.map(filterActiveShellSnapshot),
                 Effect.mapError(
@@ -1151,14 +1206,17 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                     }),
                 ),
               );
-
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
                   snapshot,
                 }),
-                Stream.fromQueue(liveBuffer).pipe(
-                  Stream.filter((item) => item.sequence > snapshot.snapshotSequence),
+                synchronizedThenLive.pipe(
+                  Stream.filter(
+                    (item) =>
+                      item.kind === "synchronized" ||
+                      (item.kind !== "snapshot" && item.sequence > snapshot.snapshotSequence),
+                  ),
                 ),
               );
             }),
@@ -1187,6 +1245,52 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               yield* Effect.forkScoped(
                 liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
               );
+              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                const headSequence = (yield* orchestrationEngine.getReadModel()).snapshotSequence;
+                const replayGap = headSequence - afterSequence;
+                if (replayGap >= 0 && replayGap <= THREAD_RESUME_MAX_GAP) {
+                  const catchUpStream = orchestrationEngine.readEvents(afterSequence).pipe(
+                    Stream.take(replayGap),
+                    Stream.filter(
+                      (event) =>
+                        event.aggregateKind === "thread" &&
+                        event.aggregateId === input.threadId &&
+                        isThreadDetailEvent(event),
+                    ),
+                    Stream.map((event) => ({
+                      kind: "event" as const,
+                      event: projectActivityEvent(event),
+                    })),
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to replay thread ${input.threadId} events`,
+                          cause,
+                        }),
+                    ),
+                  );
+                  const liveAfterHead = bufferedLiveStream.pipe(
+                    Stream.filter(
+                      (item) => item.kind === "event" && item.event.sequence > headSequence,
+                    ),
+                  );
+                  return Stream.concat(
+                    catchUpStream,
+                    input.requestCompletionMarker === true
+                      ? Stream.concat(
+                          Stream.make({
+                            kind: "synchronized" as const,
+                            sequence: headSequence,
+                          }),
+                          liveAfterHead,
+                        )
+                      : liveAfterHead,
+                  );
+                }
+              }
 
               const threadSnapshot = yield* projectionSnapshotQuery
                 .getThreadDetailSnapshotById(input.threadId)
@@ -1207,6 +1311,15 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                 });
               }
               const { snapshotSequence, thread } = threadSnapshot.value;
+              const synchronizedThenLive =
+                input.requestCompletionMarker === true
+                  ? Stream.concat(
+                      Stream.fromEffect(
+                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                      ).pipe(Stream.drain),
+                      bufferedLiveStream,
+                    )
+                  : bufferedLiveStream;
 
               return Stream.concat(
                 Stream.make({
@@ -1216,9 +1329,11 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                     thread,
                   }),
                 }),
-                Stream.fromQueue(liveBuffer).pipe(
+                synchronizedThenLive.pipe(
                   Stream.filter(
-                    (item) => item.kind === "event" && item.event.sequence > snapshotSequence,
+                    (item) =>
+                      item.kind === "synchronized" ||
+                      (item.kind === "event" && item.event.sequence > snapshotSequence),
                   ),
                 ),
               );
@@ -1831,6 +1946,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
             projectionSnapshotQuery.getShellSnapshot().pipe(
+              Effect.map(filterArchivedShellSnapshot),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationGetSnapshotError({

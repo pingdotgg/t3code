@@ -1763,6 +1763,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("consumes an official websocket ticket exactly once", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const bearerToken = yield* getAuthenticatedBearerSessionToken();
+      const ticketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
+      const ticketResponse = yield* Effect.promise(() =>
+        fetch(ticketUrl, {
+          method: "POST",
+          headers: {
+            authorization: "Bearer " + bearerToken,
+          },
+        }),
+      );
+      const ticketBody = (yield* Effect.promise(() => ticketResponse.json())) as {
+        readonly ticket: string;
+      };
+      const wsUrl = `${yield* getWsServerUrl("/ws", {
+        authenticated: false,
+      })}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`;
+      const legacyParameterUrl = `${yield* getWsServerUrl("/ws", {
+        authenticated: false,
+      })}?wsToken=${encodeURIComponent(ticketBody.ticket)}`;
+
+      const legacyParameterConnected = yield* Effect.scoped(
+        connectNodeWebSocket(legacyParameterUrl),
+      ).pipe(Effect.exit, Effect.map(Exit.isSuccess));
+      const firstConnected = yield* Effect.scoped(connectNodeWebSocket(wsUrl)).pipe(
+        Effect.exit,
+        Effect.map(Exit.isSuccess),
+      );
+      const replayConnected = yield* Effect.scoped(connectNodeWebSocket(wsUrl)).pipe(
+        Effect.exit,
+        Effect.map(Exit.isSuccess),
+      );
+
+      assert.equal(ticketResponse.status, 200);
+      assert.isFalse(legacyParameterConnected);
+      assert.isTrue(firstConnected);
+      assert.isFalse(replayConnected);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("loads a large CLI shell snapshot without reading the full projection", () =>
     Effect.gen(function* () {
       const now = new Date().toISOString();
@@ -1912,7 +1955,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           updatedAt: "2026-01-01T00:00:02.000Z",
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
-
       yield* buildAppUnderTest({
         layers: {
           orchestrationEngine: {
@@ -1977,6 +2019,226 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(items[1]?.kind, "event");
       assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 3);
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("resumes a thread subscription from a cursor and marks catch-up complete", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const messageEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-thread-resume"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: defaultThreadId,
+          messageId: MessageId.make("message-thread-resume"),
+          role: "assistant",
+          text: "Caught up",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+      const liveMessageEvent = {
+        ...messageEvent,
+        sequence: 3,
+        eventId: EventId.make("event-thread-live"),
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        payload: {
+          ...messageEvent.payload,
+          messageId: MessageId.make("message-thread-live"),
+          text: "Live",
+          createdAt: "2026-01-01T00:00:02.000Z",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: () =>
+              PubSub.publish(liveEvents, messageEvent).pipe(
+                Effect.as({ ...makeDefaultOrchestrationReadModel(), snapshotSequence: 2 }),
+              ),
+            readEvents: () => Stream.make(messageEvent),
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshotById: () =>
+              Effect.die("A valid resume cursor must not reload the thread snapshot"),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 1,
+            requestCompletionMarker: true,
+          }).pipe(
+            Stream.tap((item) =>
+              item.kind === "synchronized"
+                ? PubSub.publish(liveEvents, liveMessageEvent)
+                : Effect.void,
+            ),
+            Stream.take(3),
+            Stream.runCollect,
+          ),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "event");
+      assert.equal(items[0]?.kind === "event" ? items[0].event.sequence : null, 2);
+      assert.equal(items[1]?.kind, "synchronized");
+      assert.equal(items[1]?.kind === "synchronized" ? items[1].sequence : null, 2);
+      assert.equal(items[2]?.kind, "event");
+      assert.equal(items[2]?.kind === "event" ? items[2].event.sequence : null, 3);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("advances a thread cursor past unrelated replay events", () =>
+    Effect.gen(function* () {
+      const otherThreadId = ThreadId.make("thread-other");
+      const unrelatedEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-unrelated-thread"),
+        aggregateKind: "thread",
+        aggregateId: otherThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.deleted",
+        payload: {
+          threadId: otherThreadId,
+          deletedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: () =>
+              Effect.succeed({ ...makeDefaultOrchestrationReadModel(), snapshotSequence: 2 }),
+            readEvents: () => Stream.make(unrelatedEvent),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshotById: () =>
+              Effect.die("A valid resume cursor must not reload the thread snapshot"),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const item = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 1,
+            requestCompletionMarker: true,
+          }).pipe(Stream.runHead),
+        ),
+      ).pipe(Effect.timeout("2 seconds"), Effect.map(Option.getOrThrow));
+
+      assert.equal(item.kind, "synchronized");
+      assert.equal(item.kind === "synchronized" ? item.sequence : null, 2);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("resumes the shell subscription from a cursor and marks catch-up complete", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const thread = makeDefaultOrchestrationThreadShell();
+      const createdEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-shell-resume"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.created",
+        payload: {
+          threadId: defaultThreadId,
+          projectId: defaultProjectId,
+          parentThreadId: null,
+          title: thread.title,
+          modelSelection: thread.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          pendingRuntimeMode: null,
+          interactionMode: thread.interactionMode,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          createdAt: thread.createdAt,
+          updatedAt: thread.updatedAt,
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.created" }>;
+      const liveCreatedEvent = {
+        ...createdEvent,
+        sequence: 3,
+        eventId: EventId.make("event-shell-live"),
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        payload: {
+          ...createdEvent.payload,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.created" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: () =>
+              PubSub.publish(liveEvents, createdEvent).pipe(
+                Effect.as({ ...makeDefaultOrchestrationReadModel(), snapshotSequence: 2 }),
+              ),
+            readEvents: () => Stream.make(createdEvent),
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.die("A valid resume cursor must not reload the shell snapshot"),
+            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            afterSequence: 1,
+            requestCompletionMarker: true,
+          }).pipe(
+            Stream.tap((item) =>
+              item.kind === "synchronized"
+                ? PubSub.publish(liveEvents, liveCreatedEvent)
+                : Effect.void,
+            ),
+            Stream.take(3),
+            Stream.runCollect,
+          ),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "thread-upserted");
+      assert.equal(items[0]?.kind === "thread-upserted" ? items[0].sequence : null, 2);
+      assert.equal(items[1]?.kind, "synchronized");
+      assert.equal(items[1]?.kind === "synchronized" ? items[1].sequence : null, 2);
+      assert.equal(items[2]?.kind, "thread-upserted");
+      assert.equal(items[2]?.kind === "thread-upserted" ? items[2].sequence : null, 3);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("buffers shell events published while the initial snapshot loads", () =>

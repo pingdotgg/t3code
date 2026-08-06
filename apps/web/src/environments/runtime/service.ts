@@ -294,6 +294,9 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
         return;
       }
+      if (item.kind === "synchronized") {
+        return;
+      }
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
     },
   );

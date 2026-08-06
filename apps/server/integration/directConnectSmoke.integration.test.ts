@@ -338,6 +338,12 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
           ),
           (activeTransport) => Effect.promise(() => activeTransport.dispose()),
         );
+        const serverConfig = yield* Effect.promise(() =>
+          transport.request((client) => client[WS_METHODS.serverGetConfig]({})),
+        );
+        expect(serverConfig.environment.capabilities.connectionProbe).toBeUndefined();
+        expect(serverConfig.shellResumeCompletionMarker).toBe(true);
+        expect(serverConfig.threadResumeCompletionMarker).toBe(true);
         const unsubscribeLifecycle = transport.subscribe(
           (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
           (event) => {
@@ -349,7 +355,10 @@ it("runs production direct pairing, browser bootstrap, live sync, and involuntar
         );
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribeLifecycle));
         const unsubscribeShell = transport.subscribe(
-          (client) => client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
+          (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+              requestCompletionMarker: true,
+            }),
           (item) => {
             if (item.kind === "project-upserted" && item.project.id === projectId) {
               liveProjectSequences.push(item.sequence);

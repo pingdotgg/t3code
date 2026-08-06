@@ -20,6 +20,15 @@ export function filterActiveShellSnapshot(
   return threads.length === snapshot.threads.length ? snapshot : { ...snapshot, threads };
 }
 
+export function filterArchivedShellSnapshot(
+  snapshot: OrchestrationShellSnapshot,
+): OrchestrationShellSnapshot {
+  const threads = snapshot.threads.filter((thread) => thread.archivedAt !== null);
+  const projectIds = new Set(threads.map((thread) => thread.projectId));
+  const projects = snapshot.projects.filter((project) => projectIds.has(project.id));
+  return { ...snapshot, projects, threads };
+}
+
 export function toShellStreamEvent(
   projectionSnapshotQuery: ShellStreamProjectionQuery,
   event: OrchestrationEvent,

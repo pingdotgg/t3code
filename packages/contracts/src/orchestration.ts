@@ -535,8 +535,16 @@ export const OrchestrationShellSnapshot = Schema.Struct({
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
 
+export const OrchestrationSubscribeShellInput = Schema.Struct({
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
+
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
@@ -1687,6 +1695,10 @@ export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent
 
 export const OrchestrationShellStreamItem = Schema.Union([
   Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+    sequence: Schema.optionalKey(NonNegativeInt),
+  }),
+  Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationShellSnapshot,
   }),
@@ -1695,6 +1707,10 @@ export const OrchestrationShellStreamItem = Schema.Union([
 export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.Type;
 
 export const OrchestrationThreadStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+    sequence: Schema.optionalKey(NonNegativeInt),
+  }),
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationThreadDetailSnapshot,
@@ -2082,7 +2098,7 @@ export const OrchestrationRpcSchemas = {
     output: OrchestrationThreadStreamItem,
   },
   subscribeShell: {
-    input: Schema.Struct({}),
+    input: OrchestrationSubscribeShellInput,
     output: OrchestrationShellStreamItem,
   },
 } as const;

@@ -38,6 +38,30 @@ type BootstrapExchangeResult = {
 const AUTHORIZATION_PREFIX = "Bearer ";
 const WEBSOCKET_TOKEN_QUERY_PARAM = "wsToken";
 const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
+const WEBSOCKET_TICKET_TTL_MS = 5 * 60 * 1_000;
+const MAX_ISSUED_WEBSOCKET_TICKETS = 10_000;
+const issuedWebSocketTickets = new Map<
+  string,
+  { readonly token: string; readonly expiresAt: number }
+>();
+
+function pruneExpiredWebSocketTickets(now: number): void {
+  for (const [issuedTicket, credential] of issuedWebSocketTickets) {
+    if (credential.expiresAt <= now) {
+      issuedWebSocketTickets.delete(issuedTicket);
+    }
+  }
+}
+
+function consumeWebSocketTicket(ticket: string): string | null {
+  pruneExpiredWebSocketTickets(Date.now());
+  const credential = issuedWebSocketTickets.get(ticket);
+  if (credential === undefined) {
+    return null;
+  }
+  issuedWebSocketTickets.delete(ticket);
+  return credential.token;
+}
 
 export function toBootstrapExchangeAuthError(cause: BootstrapCredentialError): AuthError {
   if (cause.status === 500) {
@@ -422,19 +446,39 @@ export const makeServerAuth = Effect.gen(function* () {
 
   const issueWebSocketTicket: ServerAuthShape["issueWebSocketTicket"] = (session) =>
     issueWebSocketToken(session).pipe(
-      Effect.map((issued) => ({
-        ticket: issued.token,
-        expiresAt: issued.expiresAt,
-      })),
+      Effect.map((issued) => {
+        const now = Date.now();
+        pruneExpiredWebSocketTickets(now);
+        if (issuedWebSocketTickets.size >= MAX_ISSUED_WEBSOCKET_TICKETS) {
+          const oldestTicket = issuedWebSocketTickets.keys().next().value;
+          if (oldestTicket !== undefined) {
+            issuedWebSocketTickets.delete(oldestTicket);
+          }
+        }
+        const ticket = crypto.randomUUID();
+        issuedWebSocketTickets.set(ticket, {
+          token: issued.token,
+          expiresAt: now + WEBSOCKET_TICKET_TTL_MS,
+        });
+        return { ticket, expiresAt: issued.expiresAt };
+      }),
     );
 
   const authenticateWebSocketUpgrade: ServerAuthShape["authenticateWebSocketUpgrade"] = (request) =>
     Effect.gen(function* () {
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
+        const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
         const websocketToken =
-          requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM) ??
-          requestUrl.value.searchParams.get(WEBSOCKET_TOKEN_QUERY_PARAM);
+          websocketTicket === null
+            ? requestUrl.value.searchParams.get(WEBSOCKET_TOKEN_QUERY_PARAM)
+            : consumeWebSocketTicket(websocketTicket);
+        if (websocketTicket !== null && websocketToken === null) {
+          return yield* new AuthError({
+            message: "Unauthorized request.",
+            status: 401,
+          });
+        }
         if (websocketToken && websocketToken.trim().length > 0) {
           return yield* sessions.verifyWebSocketToken(websocketToken).pipe(
             Effect.map((session) => ({

@@ -1,9 +1,73 @@
-import { CommandId, EventId, type OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  type OrchestrationEvent,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "./Services/ProjectionSnapshotQuery.ts";
-import { toShellStreamEvent } from "./shellStream.ts";
+import { filterArchivedShellSnapshot, toShellStreamEvent } from "./shellStream.ts";
+
+describe("filterArchivedShellSnapshot", () => {
+  it("keeps only archived threads and their projects", () => {
+    const archivedProjectId = ProjectId.make("project-archived");
+    const activeProjectId = ProjectId.make("project-active");
+    const createdAt = "2026-08-03T00:00:00.000Z";
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-test",
+    };
+    const makeProject = (id: ProjectId, title: string) => ({
+      id,
+      title,
+      workspaceRoot: `/tmp/${id}`,
+      defaultModelSelection: modelSelection,
+      scripts: [],
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const makeThread = (id: ThreadId, projectId: ProjectId, archivedAt: string | null) => ({
+      id,
+      projectId,
+      title: String(id),
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt,
+      updatedAt: createdAt,
+      archivedAt,
+      session: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    });
+    const snapshot = {
+      snapshotSequence: 3,
+      projects: [
+        makeProject(archivedProjectId, "Archived"),
+        makeProject(activeProjectId, "Active"),
+      ],
+      threads: [
+        makeThread(ThreadId.make("thread-archived"), archivedProjectId, "2026-08-03T00:00:00.000Z"),
+        makeThread(ThreadId.make("thread-active"), activeProjectId, null),
+      ],
+      updatedAt: createdAt,
+    };
+
+    const archived = filterArchivedShellSnapshot(snapshot);
+
+    expect(archived.projects.map((project) => project.id)).toEqual([archivedProjectId]);
+    expect(archived.threads.map((thread) => thread.id)).toEqual([ThreadId.make("thread-archived")]);
+  });
+});
 
 describe("toShellStreamEvent", () => {
   it("removes every archived nested thread without reading the active shell", async () => {
