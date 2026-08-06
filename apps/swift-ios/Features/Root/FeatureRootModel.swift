@@ -900,6 +900,9 @@ public final class FeatureRootModel {
     }
 
     private func acknowledgeDeliveredMessages(_ messages: [FeatureMessage]) {
+        // Runs on every detail publish; skip the full message-ID scan in the
+        // common case where nothing is waiting in the outbox.
+        guard !pendingSubmissionsByID.isEmpty else { return }
         // Local optimistic rows reuse the final message ID but are not proof
         // that the server accepted the turn. Only authoritative, non-queued
         // rows can retire a durable outbox entry.

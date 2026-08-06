@@ -142,8 +142,15 @@ final class MarkdownRenderCache: @unchecked Sendable {
         inlineRuns.totalCostLimit = inlineCostLimit
     }
 
+    /// Keys use the precomputed fingerprint instead of the full source so each
+    /// lookup avoids bridging and hashing the entire message body. The stored
+    /// document's revision equality check below makes collisions safe.
+    private func cacheKey(for revision: MarkdownContentRevision) -> NSString {
+        "\(revision.fingerprint):\(revision.utf8Count)" as NSString
+    }
+
     func cachedDocument(for revision: MarkdownContentRevision) -> MarkdownRenderedDocument? {
-        let document = documents.object(forKey: revision.source as NSString)
+        let document = documents.object(forKey: cacheKey(for: revision))
         return document?.revision == revision ? document : nil
     }
 
@@ -159,13 +166,20 @@ final class MarkdownRenderCache: @unchecked Sendable {
         guard let document = renderDocument(revision) else { return nil }
         documents.setObject(
             document,
-            forKey: revision.source as NSString,
+            forKey: cacheKey(for: revision),
             cost: documentCost(document)
         )
         return document
     }
 
-    func document(for revision: MarkdownContentRevision) async -> MarkdownRenderedDocument? {
+    /// Set `isIntermediate` for in-progress streaming revisions: they are
+    /// superseded within milliseconds, and inserting each one would churn
+    /// completed messages out of the bounded document cache. Unchanged inline
+    /// runs are still shared through the inline cache either way.
+    func document(
+        for revision: MarkdownContentRevision,
+        isIntermediate: Bool = false
+    ) async -> MarkdownRenderedDocument? {
         guard !Task.isCancelled else { return nil }
         if let cached = cachedDocument(for: revision) {
             return cached
@@ -181,12 +195,26 @@ final class MarkdownRenderCache: @unchecked Sendable {
             releaseWaiter(for: revision, waiterID: waiterID, cancelIfLast: true)
         }
         guard !Task.isCancelled, let document else { return nil }
+        if !isIntermediate {
+            documents.setObject(
+                document,
+                forKey: cacheKey(for: revision),
+                cost: documentCost(document)
+            )
+        }
+        return document
+    }
+
+    /// Adopts a document that was rendered as a streaming intermediate. Called
+    /// when its message completes so the final revision becomes a durable
+    /// cache entry without reparsing on the main thread.
+    func promote(_ document: MarkdownRenderedDocument) {
+        guard cachedDocument(for: document.revision) == nil else { return }
         documents.setObject(
             document,
-            forKey: revision.source as NSString,
+            forKey: cacheKey(for: document.revision),
             cost: documentCost(document)
         )
-        return document
     }
 
     func removeAll() {

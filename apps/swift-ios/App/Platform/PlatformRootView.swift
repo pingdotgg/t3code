@@ -6,7 +6,7 @@ struct PlatformRootView: View {
 
     @State private var navigationRequest: FeatureWorkspaceNavigationRequest?
     @State private var pendingRoute: PlatformRoute?
-    @State private var previousThreads: [String: FeatureThread]?
+    @State private var previousThreadStates: [String: FeatureThreadState]?
     @State private var lastNotificationPreference: Bool?
     @State private var incomingShareCoordinator = PlatformIncomingShareCoordinator()
     @State private var incomingShareNeedsProject = false
@@ -310,12 +310,14 @@ struct PlatformRootView: View {
     /// Home revisions are coalesced by FeatureRootModel, so this performs one
     /// bounded scan per meaningful snapshot change rather than on every render.
     private func processThreadChanges() {
-        let current = Dictionary(uniqueKeysWithValues: model.snapshot.threads.map { ($0.id, $0) })
+        let current = model.snapshot.threads.reduce(into: [String: FeatureThreadState]()) {
+            $0[$1.id] = $1.state
+        }
         let signals = PlatformThreadTransitionClassifier.signals(
-            previous: previousThreads,
+            previous: previousThreadStates,
             current: model.snapshot.threads
         )
-        previousThreads = current
+        previousThreadStates = current
         PlatformRecentThreadStore.shared.update(from: model.snapshot.threads)
         synchronizeAgentAwareness()
 

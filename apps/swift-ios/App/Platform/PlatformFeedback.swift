@@ -12,20 +12,22 @@ struct PlatformThreadSignal: Equatable, Sendable {
 }
 
 enum PlatformThreadTransitionClassifier {
+    /// Previous states are kept as a bare `[id: state]` map so each home
+    /// revision retains a dictionary of enums, not a copy of every thread.
     static func signals(
-        previous: [String: FeatureThread]?,
+        previous: [String: FeatureThreadState]?,
         current: [FeatureThread]
     ) -> [PlatformThreadSignal] {
         guard let previous else { return [] }
 
         return current.compactMap { thread in
-            guard let old = previous[thread.id], old.state != thread.state else { return nil }
+            guard let oldState = previous[thread.id], oldState != thread.state else { return nil }
             let kind: PlatformFeedbackKind? = switch thread.state {
             case .waitingForApproval, .waitingForInput:
                 .warning
             case .failed:
                 .error
-            case .completed where old.state == .working || old.state == .queued:
+            case .completed where oldState == .working || oldState == .queued:
                 .success
             default:
                 nil

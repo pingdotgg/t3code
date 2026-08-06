@@ -87,12 +87,24 @@ public actor T3ConnectDPoPSigner {
         account = "in-memory"
     }
 
+    /// The signing key never rotates (see type docs), so the derived JWK and
+    /// its SHA-256 thumbprint are stable and cached. Both are recomputed on
+    /// every managed request otherwise.
+    private var cachedJWK: T3ConnectDPoPPublicJWK?
+    private var cachedThumbprint: String?
+
     public func publicJWK() throws -> T3ConnectDPoPPublicJWK {
-        try T3ConnectDPoPPublicJWK(publicKey: try loadPrivateKey().publicKey)
+        if let cachedJWK { return cachedJWK }
+        let jwk = try T3ConnectDPoPPublicJWK(publicKey: try loadPrivateKey().publicKey)
+        cachedJWK = jwk
+        return jwk
     }
 
     public func thumbprint() throws -> String {
-        try publicJWK().thumbprint
+        if let cachedThumbprint { return cachedThumbprint }
+        let thumbprint = try publicJWK().thumbprint
+        cachedThumbprint = thumbprint
+        return thumbprint
     }
 
     public func proof(
@@ -107,7 +119,7 @@ public actor T3ConnectDPoPSigner {
         }
 
         let key = try loadPrivateKey()
-        let jwk = try T3ConnectDPoPPublicJWK(publicKey: key.publicKey)
+        let jwk = try publicJWK()
         let header = Header(typ: "dpop+jwt", alg: "ES256", jwk: jwk)
         let payload = Payload(
             htm: method.uppercased(),
@@ -116,11 +128,9 @@ public actor T3ConnectDPoPSigner {
             iat: Int(issuedAt.timeIntervalSince1970.rounded(.down)),
             ath: accessToken.map(Self.accessTokenHash)
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard
-            let headerPart = try? encoder.encode(header).base64URLEncodedString(),
-            let payloadPart = try? encoder.encode(payload).base64URLEncodedString()
+            let headerPart = try? Self.proofEncoder.encode(header).base64URLEncodedString(),
+            let payloadPart = try? Self.proofEncoder.encode(payload).base64URLEncodedString()
         else {
             throw T3ConnectDPoPError.encoding
         }
@@ -217,6 +227,12 @@ public actor T3ConnectDPoPSigner {
             throw T3ConnectDPoPError.invalidStoredKey
         }
     }
+
+    private static let proofEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }()
 
     private struct Header: Encodable {
         let typ: String

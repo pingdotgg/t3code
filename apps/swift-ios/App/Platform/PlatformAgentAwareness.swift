@@ -16,7 +16,11 @@ enum PlatformAgentAwarenessProjection {
         snapshot: FeatureSnapshot,
         now: Date = .now
     ) -> T3RelayAgentActivityAggregateState {
-        let projects = Dictionary(uniqueKeysWithValues: snapshot.projects.map { ($0.id, $0) })
+        // Defensive against duplicate project IDs in aggregate snapshots; this
+        // runs on every snapshot revision, so it must never trap.
+        let projects = snapshot.projects.reduce(into: [String: FeatureProject]()) {
+            $0[$1.id] = $0[$1.id] ?? $1
+        }
         let eligible = snapshot.threads.filter { thread in
             guard !thread.isArchived else { return false }
             if isActive(thread.state) { return true }

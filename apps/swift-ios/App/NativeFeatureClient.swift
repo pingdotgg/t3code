@@ -365,6 +365,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environmentClients.removeAll()
             shellsByEnvironmentID.removeAll()
             serverConfigsByEnvironmentID.removeAll()
+            providerCatalogCache.removeAll()
             archivedThreadsByEnvironmentID.removeAll()
             archivedShellThreadsByEnvironmentID.removeAll()
             projectEnvironmentIDs.removeAll()
@@ -1840,6 +1841,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if let coreSnapshot = event.snapshot {
             var snapshot = NativeWorkspaceMapper.terminal(coreSnapshot)
             snapshot.threadID = threadID
+            snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
             terminalIDs[threadID] = coreSnapshot.terminalId
             terminalSnapshots[threadID] = snapshot
             return snapshot
@@ -1850,6 +1852,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         switch event.type {
         case "output":
             snapshot.buffer.append(NativeWorkspaceMapper.terminalText(event.data ?? ""))
+            snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
         case "exited":
             snapshot.state = .exited
             snapshot.exitCode = event.exitCode
@@ -1867,6 +1870,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         terminalSnapshots[threadID] = snapshot
         return snapshot
+    }
+
+    /// A verbose command can stream megabytes; the viewer only ever shows the
+    /// tail, so cap retained history to keep layout and memory bounded.
+    private static let terminalBufferLimit = 256 * 1024
+
+    private static func cappedTerminalBuffer(_ buffer: String) -> String {
+        guard buffer.utf8.count > terminalBufferLimit else { return buffer }
+        let tail = buffer.suffix(terminalBufferLimit)
+        // Trim to the next line boundary so the top of the view isn't a torn line.
+        if let newline = tail.firstIndex(of: "\n") {
+            return String(tail[tail.index(after: newline)...])
+        }
+        return String(tail)
     }
 
     private func publishTerminal(
@@ -1895,13 +1912,19 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask = Task { [weak self] in
             do {
                 await activeClient.connect()
-                guard let self,
-                      self.isCurrentSession(client: activeClient, generation: generation) else {
+                guard self?.isCurrentSession(
+                    client: activeClient,
+                    generation: generation
+                ) == true else {
                     return
                 }
-                let sequence = self.latestShell?.snapshotSequence
-                for try await item in await activeClient.shellEvents(after: sequence) {
+                let sequence = self?.latestShell?.snapshotSequence
+                let events = await activeClient.shellEvents(after: sequence)
+                // Re-bind self per event instead of holding it strongly across
+                // the indefinite stream, so the client can deinit mid-stream.
+                for try await item in events {
                     guard !Task.isCancelled,
+                          let self,
                           self.isCurrentSession(
                               client: activeClient,
                               generation: generation
@@ -2015,7 +2038,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     switch event {
                     case let .snapshot(config):
                         self.latestServerConfig = config
-                        self.serverConfigsByEnvironmentID[activeClient.environment.id] = config
+                        self.setServerConfig(config, environmentID: activeClient.environment.id)
                     case let .providerStatuses(providers):
                         let settings = self.serverConfigsByEnvironmentID[
                             activeClient.environment.id
@@ -2025,7 +2048,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             settings: settings
                         )
                         self.latestServerConfig = config
-                        self.serverConfigsByEnvironmentID[activeClient.environment.id] = config
+                        self.setServerConfig(config, environmentID: activeClient.environment.id)
                     case let .settingsUpdated(settings):
                         let providers = self.serverConfigsByEnvironmentID[
                             activeClient.environment.id
@@ -2035,7 +2058,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             settings: settings
                         )
                         self.latestServerConfig = config
-                        self.serverConfigsByEnvironmentID[activeClient.environment.id] = config
+                        self.setServerConfig(config, environmentID: activeClient.environment.id)
                     case .unrelated:
                         continue
                     }
@@ -2598,6 +2621,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         serverConfigsByEnvironmentID = serverConfigsByEnvironmentID.filter {
             savedIDs.contains($0.key)
         }
+        providerCatalogCache = providerCatalogCache.filter {
+            savedIDs.contains($0.key)
+        }
         archivedThreadsByEnvironmentID = archivedThreadsByEnvironmentID.filter {
             savedIDs.contains($0.key)
         }
@@ -2614,7 +2640,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         for load in loads {
             environmentClients[load.environment.id] = load.client
             if let config = load.config {
-                serverConfigsByEnvironmentID[load.environment.id] = config
+                setServerConfig(config, environmentID: load.environment.id)
                 if load.environment.id == activeEnvironment?.id {
                     latestServerConfig = config
                 }
@@ -3041,6 +3067,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detail: String? = nil
     ) {
         guard let environment = activeEnvironment else { return }
+        // Shell event loops call this per event; only publish real transitions.
+        guard environmentConnectionStates[environment.id] != state
+            || environmentConnectionDetails[environment.id] != detail else { return }
         environmentConnectionStates[environment.id] = state
         environmentConnectionDetails[environment.id] = detail
         let connection = FeatureConnection(
@@ -3103,7 +3132,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         ) { catalogues, environment in
             guard let shell = shellsByEnvironmentID[environment.id] else { return }
             catalogues[environment.id] = mapProviders(
-                shell,
+                environmentID: environment.id,
+                shell: shell,
                 config: serverConfigsByEnvironmentID[environment.id]
             )
         }
@@ -3393,13 +3423,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         upsertMergedMessage(message, cache: cache)
     }
 
+    /// Wire timestamps are fixed-width ISO8601 UTC, so lexicographic order is
+    /// chronological order. Comparing raw strings avoids running the date
+    /// formatter O(n log n) times over a long activity log.
+    private func sortedByCreation(
+        _ activities: [OrchestrationActivity]
+    ) -> [OrchestrationActivity] {
+        activities.sorted { $0.createdAt < $1.createdAt }
+    }
+
     private func seedWorkLogs(
         _ activities: [OrchestrationActivity],
         cache: NativeDetailRenderCache
     ) {
         cache.workLogsByGroupID.removeAll(keepingCapacity: true)
         cache.workLogActivityIDs.removeAll(keepingCapacity: true)
-        for activity in activities.sorted(by: { $0.createdAt < $1.createdAt })
+        for activity in sortedByCreation(activities)
         where NativeWorkLogAccumulator.accepts(activity) {
             cache.workLogActivityIDs.insert(activity.id)
             let groupID = activity.turnId ?? "unscoped"
@@ -3587,9 +3626,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environmentID: environment.id,
             wireID: thread.id
         )
-        for activity in thread.activities.sorted(by: {
-            parseDate($0.createdAt) < parseDate($1.createdAt)
-        }) {
+        for activity in sortedByCreation(thread.activities) {
             let requestID = activity.payload["requestId"]?.stringValue
             let uiRequestID = requestID.map {
                 FeatureScopedID.approval(environmentID: environment.id, wireID: $0)
@@ -3642,9 +3679,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environmentID: environment.id,
             wireID: thread.id
         )
-        for activity in thread.activities.sorted(by: {
-            parseDate($0.createdAt) < parseDate($1.createdAt)
-        }) {
+        for activity in sortedByCreation(thread.activities) {
             let requestID = activity.payload["requestId"]?.stringValue
             let uiRequestID = requestID.map {
                 FeatureScopedID.input(environmentID: environment.id, wireID: $0)
@@ -3769,12 +3804,38 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         .default
     }
 
+    /// The mapped catalog for the config-driven branch of mapProviders. Every
+    /// publish rebuilds the snapshot, but the catalog only changes when a new
+    /// server config arrives, so mapping hundreds of models per publish is
+    /// wasted work. Entries are invalidated wherever
+    /// serverConfigsByEnvironmentID is written.
+    private var providerCatalogCache: [String: [FeatureProvider]] = [:]
+
+    /// Single write path for server configs so the provider catalog cache can
+    /// never go stale against the config that feeds it.
+    private func setServerConfig(_ config: ServerConfigSnapshot, environmentID: String) {
+        serverConfigsByEnvironmentID[environmentID] = config
+        providerCatalogCache[environmentID] = nil
+    }
+
     private func mapProviders(
-        _ shell: OrchestrationShellSnapshot,
+        environmentID: String,
+        shell: OrchestrationShellSnapshot,
         config: ServerConfigSnapshot?
     ) -> [FeatureProvider] {
         if let providers = config?.providers, !providers.isEmpty {
-            return Self.normalizedProviders(providers.map { provider in
+            if let cached = providerCatalogCache[environmentID] { return cached }
+            let mapped = mapConfigProviders(providers)
+            providerCatalogCache[environmentID] = mapped
+            return mapped
+        }
+        return mapShellFallbackProviders(shell)
+    }
+
+    private func mapConfigProviders(
+        _ providers: [ServerProviderSnapshot]
+    ) -> [FeatureProvider] {
+        Self.normalizedProviders(providers.map { provider in
                 FeatureProvider(
                     id: provider.instanceId,
                     name: provider.displayName ?? providerDisplayName(provider.driver),
@@ -3825,8 +3886,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     }
                 )
             })
-        }
+    }
 
+    /// Without a server config the catalog is inferred from selections in the
+    /// shell, which is cheap enough to rebuild per publish.
+    private func mapShellFallbackProviders(
+        _ shell: OrchestrationShellSnapshot
+    ) -> [FeatureProvider] {
         var modelsByProvider: [String: Set<String>] = [:]
         for selection in shell.projects.compactMap(\.defaultModelSelection)
             + shell.threads.map(\.modelSelection) {
@@ -4163,6 +4229,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 .filter { $0.mimeType.hasPrefix("image/") }
                 .map(\.id)
         )
+        // Text-only threads refresh every couple of seconds; skip the resolve
+        // pass and the full message walk when there is nothing to hydrate.
+        guard !imageIDs.isEmpty else { return detail }
         let missingIDs = Array(imageIDs.filter {
             cachedAttachmentURL(for: $0, environmentID: environmentID) == nil
         })
@@ -4346,10 +4415,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         parseValidDate(value) ?? .distantPast
     }
 
+    /// Every publish re-maps every thread, and most timestamps are unchanged
+    /// between publishes, so parsed dates are memoized. ISO8601DateFormatter
+    /// costs microseconds per call, which adds up to milliseconds per publish
+    /// across hundreds of threads during streaming.
     private func parseValidDate(_ value: String) -> Date? {
-        Self.fractionalDateFormatter.date(from: value)
-            ?? Self.dateFormatter.date(from: value)
+        if let cached = parsedDates[value] { return cached }
+        guard let parsed = Self.fractionalDateFormatter.date(from: value)
+            ?? Self.dateFormatter.date(from: value) else { return nil }
+        if parsedDates.count >= 4096 { parsedDates.removeAll(keepingCapacity: true) }
+        parsedDates[value] = parsed
+        return parsed
     }
+
+    private var parsedDates: [String: Date] = [:]
 
     private static let settingsKey = "swift-ios.feature-settings.v1"
     private static let fractionalDateFormatter: ISO8601DateFormatter = {

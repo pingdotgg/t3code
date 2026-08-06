@@ -166,6 +166,9 @@ public actor WebSocketRPCClient {
         let payload: JSONValue
         let reconnect: Bool
         var requestID: Int?
+        /// The connection that assigned `requestID`. Request IDs are reissued
+        /// after reconnects, so an Interrupt is only valid on this connection.
+        var requestConnectionID: UUID?
         let yield: @Sendable (JSONValue) -> Void
         let finish: @Sendable (Error?) -> Void
     }
@@ -207,7 +210,9 @@ public actor WebSocketRPCClient {
         guard loopTask == nil else { return }
         let id = UUID()
         loopID = id
-        loopTask = Task { await self.connectionLoop(id: id) }
+        // Weak: the loop must not keep a released client (and its socket plus
+        // keepalive heartbeat) alive forever; deinit cancels it as a backstop.
+        loopTask = Task { [weak self] in await self?.connectionLoop(id: id) }
     }
 
     public func isConnected() -> Bool {
@@ -352,7 +357,10 @@ public actor WebSocketRPCClient {
                 }
                 guard isCurrentConnectionLoop(loopID), !Task.isCancelled else { break }
                 retry += 1
-                let delay = min(5.0, 0.35 * pow(1.7, Double(retry - 1)))
+                // Jitter desynchronizes reconnects across environments so a
+                // server restart doesn't trigger simultaneous ticket mints.
+                let backoff = min(5.0, 0.35 * pow(1.7, Double(retry - 1)))
+                let delay = backoff * Double.random(in: 0.5...1.0)
                 try? await Task.sleep(for: .seconds(delay))
             }
         }
@@ -368,12 +376,14 @@ public actor WebSocketRPCClient {
 
     private func connected() async {
         keepaliveTask?.cancel()
-        keepaliveTask = Task { await self.keepaliveLoop() }
-        for id in unary.keys {
+        keepaliveTask = Task { [weak self] in await self?.keepaliveLoop() }
+        // Snapshot the keys: the sends suspend, and reentrant completions or
+        // failures mutate these dictionaries mid-iteration.
+        for id in Array(unary.keys) {
             await sendUnary(id)
         }
         subscriptionByRequestID.removeAll()
-        for id in subscriptions.keys {
+        for id in Array(subscriptions.keys) {
             await sendSubscription(id)
         }
     }
@@ -394,8 +404,9 @@ public actor WebSocketRPCClient {
             subscriptions.removeValue(forKey: id)
             subscription.finish(RPCError.disconnected)
         }
-        for id in subscriptions.keys {
+        for id in Array(subscriptions.keys) {
             subscriptions[id]?.requestID = nil
+            subscriptions[id]?.requestConnectionID = nil
         }
         await closingConnection?.close()
     }
@@ -478,6 +489,7 @@ public actor WebSocketRPCClient {
         do {
             try await connection.send(JSONEncoder.t3.encode(envelope))
             subscription.requestID = requestID
+            subscription.requestConnectionID = connectionID
             subscriptions[subscriptionID] = subscription
             subscriptionByRequestID[requestID] = subscriptionID
         } catch {
@@ -491,7 +503,11 @@ public actor WebSocketRPCClient {
         guard let subscription = subscriptions.removeValue(forKey: id) else { return }
         if let requestID = subscription.requestID {
             subscriptionByRequestID.removeValue(forKey: requestID)
-            try? await sendControl("Interrupt", requestID: requestID)
+            // A termination racing a reconnect must not interrupt whichever
+            // subscription now owns this request ID on the new connection.
+            if subscription.requestConnectionID == connectionID {
+                try? await sendControl("Interrupt", requestID: requestID)
+            }
         }
     }
 

@@ -13,13 +13,12 @@ struct PlatformFeedbackTests {
 
     @Test
     func classifiesAttentionFailureAndCompletionTransitions() {
-        let previousThreads = [
-            thread(id: "approval", state: .working),
-            thread(id: "failure", state: .working),
-            thread(id: "complete", state: .working),
-            thread(id: "idle-complete", state: .idle),
+        let previous: [String: FeatureThreadState] = [
+            "approval": .working,
+            "failure": .working,
+            "complete": .working,
+            "idle-complete": .idle,
         ]
-        let previous = Dictionary(uniqueKeysWithValues: previousThreads.map { ($0.id, $0) })
         let current = [
             thread(id: "approval", state: .waitingForApproval),
             thread(id: "failure", state: .failed),

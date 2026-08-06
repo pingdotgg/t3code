@@ -523,7 +523,11 @@ struct DailyUXModelCatalog {
         all = matches
         favorites = matches.filter { favoriteIDs.contains($0.id) }
 
-        let byID = Dictionary(uniqueKeysWithValues: matches.map { ($0.id, $0) })
+        // Provider catalogs can repeat an ID (see matchingThreads above); keep
+        // the first occurrence instead of trapping on duplicate keys.
+        let byID = matches.reduce(into: [String: DailyUXModelOption]()) {
+            $0[$1.id] = $0[$1.id] ?? $1
+        }
         recents = recentIDs.compactMap { byID[$0] }.filter { !favoriteIDs.contains($0.id) }
 
         providerGroups = available.compactMap { provider in

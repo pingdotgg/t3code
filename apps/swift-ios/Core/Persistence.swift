@@ -125,6 +125,10 @@ public actor EnvironmentStore {
 
     public let fileURL: URL
 
+    /// Snapshot publishes read the catalog several times a second, so the
+    /// decoded document is cached and invalidated by writes on this actor.
+    private var cached: Document?
+
     public init(fileURL: URL? = nil) {
         if let fileURL {
             self.fileURL = fileURL
@@ -187,11 +191,14 @@ public actor EnvironmentStore {
     }
 
     private func loadDocument() throws -> Document {
+        if let cached { return cached }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return Document(version: 1, environments: [], activeEnvironmentID: nil)
         }
         let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder.t3.decode(Document.self, from: data)
+        let document = try JSONDecoder.t3.decode(Document.self, from: data)
+        cached = document
+        return document
     }
 
     private func save(_ document: Document) throws {
@@ -200,5 +207,6 @@ public actor EnvironmentStore {
             withIntermediateDirectories: true
         )
         try JSONEncoder.t3.encode(document).write(to: fileURL, options: .atomic)
+        cached = document
     }
 }

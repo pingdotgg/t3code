@@ -81,20 +81,31 @@ public enum JSONValue: Codable, Equatable, Sendable {
         _ type: T.Type,
         decoder: JSONDecoder = .t3
     ) throws -> T {
-        try decoder.decode(type, from: JSONEncoder.t3.encode(self))
+        // The intermediate bytes are discarded immediately, so skip the
+        // deterministic-output formatting the wire encoder pays for.
+        try decoder.decode(type, from: JSONEncoder.t3Intermediate.encode(self))
     }
 }
 
+// Encoders and decoders are configured once and never mutated afterwards, so
+// shared instances are safe for concurrent use and avoid rebuilding coder
+// state on every RPC message.
 extension JSONEncoder {
-    public static var t3: JSONEncoder {
+    /// Deterministic output for wire payloads.
+    public static let t3: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return encoder
-    }
+    }()
+
+    /// Throwaway intermediate encoding (JSONValue -> concrete type bridging).
+    static let t3Intermediate: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return encoder
+    }()
 }
 
 extension JSONDecoder {
-    public static var t3: JSONDecoder {
-        JSONDecoder()
-    }
+    public static let t3 = JSONDecoder()
 }

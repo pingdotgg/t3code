@@ -12,6 +12,7 @@ struct MarkdownMessageView: View {
     private let revision: MarkdownContentRevision
     private let isStreaming: Bool
     @State private var renderedDocument: MarkdownRenderedDocument?
+    @State private var lastStreamRenderAt: Date?
     @State private var isSelectingText = false
 
     init(_ source: String, isStreaming: Bool = false) {
@@ -63,6 +64,12 @@ struct MarkdownMessageView: View {
         }
         .task(id: RenderRequest(revision: revision, isStreaming: isStreaming)) {
             if !isStreaming {
+                // Streaming -> complete usually keeps the final text; promote
+                // the last streamed render instead of reparsing synchronously.
+                if let renderedDocument, renderedDocument.revision == revision {
+                    MarkdownRenderCache.shared.promote(renderedDocument)
+                    return
+                }
                 renderedDocument = MarkdownRenderCache.shared.documentImmediately(for: revision)
                 return
             }
@@ -72,18 +79,33 @@ struct MarkdownMessageView: View {
                 return
             }
 
-            do {
-                try await Task.sleep(for: .milliseconds(200))
-            } catch {
-                return
+            // Streamed revisions arrive faster than a trailing debounce could
+            // ever fire, so throttle instead: render right away when the last
+            // render is old enough, otherwise wait out the remainder. The
+            // message stays live markdown while streaming instead of falling
+            // back to plain text for the whole turn.
+            let throttle: Duration = .milliseconds(150)
+            if let lastStreamRenderAt {
+                let elapsed = Duration.seconds(-lastStreamRenderAt.timeIntervalSinceNow)
+                if elapsed < throttle {
+                    do {
+                        try await Task.sleep(for: throttle - elapsed)
+                    } catch {
+                        return
+                    }
+                }
             }
             guard !Task.isCancelled else { return }
 
-            guard let rendered = await MarkdownRenderCache.shared.document(for: revision),
+            guard let rendered = await MarkdownRenderCache.shared.document(
+                for: revision,
+                isIntermediate: true
+            ),
                   !Task.isCancelled,
                   rendered.revision == revision else {
                 return
             }
+            lastStreamRenderAt = .now
             renderedDocument = rendered
         }
     }

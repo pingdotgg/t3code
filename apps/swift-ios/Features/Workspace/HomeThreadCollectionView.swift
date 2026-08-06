@@ -75,6 +75,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private weak var collectionView: UICollectionView?
         private var timer: Timer?
         private var timerTick = 0
+        private var timerInterval: TimeInterval = 0
 
         init(parent: HomeThreadCollectionView) {
             self.parent = parent
@@ -427,20 +428,34 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             return actions
         }
 
+        /// Working rows show a live per-second duration, so they need a 1 Hz
+        /// tick. Without any, relative ages only change by the minute, and the
+        /// timer idles down to match instead of waking the main thread every
+        /// second for the lifetime of the sidebar.
         private func startTimer() {
+            let interval: TimeInterval = itemsByID.values.contains {
+                if case let .thread(thread, _, _, _, _) = $0 {
+                    return thread.homeStatus == .working
+                }
+                return false
+            } ? 1 : 60
+
+            if timer != nil, timerInterval == interval { return }
             invalidateTimer()
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            timerInterval = interval
+            timerTick = 0
+            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.refreshVisibleTimes()
                 }
             }
-            timer?.tolerance = 0.12
+            timer?.tolerance = interval * 0.12
         }
 
         private func refreshVisibleTimes() {
             guard let collectionView, let dataSource else { return }
             timerTick = (timerTick + 1) % 60
-            let refreshRelativeAges = timerTick == 0
+            let refreshRelativeAges = timerInterval >= 60 || timerTick == 0
             let now = Date.now
 
             for indexPath in collectionView.indexPathsForVisibleItems {
