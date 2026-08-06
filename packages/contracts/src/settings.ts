@@ -14,7 +14,7 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
-export const UiFont = Schema.Literals(["dm-sans", "geist"]);
+export const UiFont = Schema.Literals(["dm-sans", "geist", "system-ui"]);
 export type UiFont = typeof UiFont.Type;
 export const DEFAULT_UI_FONT: UiFont = "dm-sans";
 

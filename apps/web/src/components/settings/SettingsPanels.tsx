@@ -310,7 +310,15 @@ const UI_FONT_OPTIONS: ReadonlyArray<{ value: UiFont; label: string }> = [
     value: "geist",
     label: "Geist",
   },
+  {
+    value: "system-ui",
+    label: "San Francisco",
+  },
 ];
+
+function isUiFont(value: unknown): value is UiFont {
+  return UI_FONT_OPTIONS.some((option) => option.value === value);
+}
 
 const CODE_FONT_OPTIONS: ReadonlyArray<{ value: CodeFont; label: string }> = [
   {
@@ -1433,7 +1441,7 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.uiFont}
               onValueChange={(value) => {
-                if (value === "dm-sans" || value === "geist") {
+                if (isUiFont(value)) {
                   updateSettings({ uiFont: value });
                 }
               }}

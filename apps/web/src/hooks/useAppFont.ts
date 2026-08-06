@@ -44,7 +44,9 @@ export const CODE_FONT_STACKS: Record<CodeFont, string> = {
 };
 
 function normalizeUiFont(value: unknown): UiFont {
-  return value === "geist" || value === "dm-sans" ? value : DEFAULT_UI_FONT;
+  return value === "geist" || value === "dm-sans" || value === "system-ui"
+    ? value
+    : DEFAULT_UI_FONT;
 }
 
 function normalizeCodeFont(value: unknown): CodeFont {

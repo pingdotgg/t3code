@@ -67,6 +67,22 @@ describe("ClientSettings.codeFont", () => {
   });
 });
 
+describe("ClientSettings.uiFont", () => {
+  it("defaults to DM Sans", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.uiFont).toBe("dm-sans");
+    expect(decodeClientSettings({}).uiFont).toBe("dm-sans");
+  });
+
+  it("accepts known interface font options in patches", () => {
+    expect(decodeClientSettingsPatch({ uiFont: "geist" }).uiFont).toBe("geist");
+    expect(decodeClientSettingsPatch({ uiFont: "system-ui" }).uiFont).toBe("system-ui");
+  });
+
+  it("rejects unknown interface font options in patches", () => {
+    expect(() => decodeClientSettingsPatch({ uiFont: "not-a-font" })).toThrow();
+  });
+});
+
 describe("ClientSettings.sidebarFontSize", () => {
   it("defaults to the sidebar title font size", () => {
     expect(DEFAULT_CLIENT_SETTINGS.sidebarFontSize).toBe(DEFAULT_SIDEBAR_FONT_SIZE);
