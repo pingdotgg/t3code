@@ -71,7 +71,7 @@ authenticated.
 - `vp run dist:desktop:deb`: Builds a Debian/Ubuntu `.deb` into `./release`. Architecture defaults to
   the host; `:arm64` and `:x64` variants exist.
 - `vp run dist:desktop:rpm`: Builds a Fedora/RHEL `.rpm` into `./release`. `:arm64` and `:x64`
-  variants exist. Needs `rpmbuild` on the host; the release workflow therefore ships the `.deb` only.
+  variants exist. Needs `rpmbuild` on the host (`apt install rpm` on Debian/Ubuntu).
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.
 

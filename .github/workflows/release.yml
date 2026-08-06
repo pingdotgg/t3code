@@ -355,7 +355,7 @@ jobs:
           - label: Linux x64
             runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
-            target: AppImage,deb
+            target: AppImage,deb,rpm
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
             resource_key: linux-x64
@@ -515,6 +515,20 @@ jobs:
             Select-Object -Unique
           "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
 
+      # electron-builder's rpm target shells out to rpmbuild. The Ubuntu image
+      # ships it via the `rpm` package, but installing it here keeps the target
+      # working if the runner image ever drops it, and costs nothing when the
+      # binary is already present.
+      - name: Ensure rpmbuild is available
+        if: matrix.platform == 'linux' && contains(matrix.target, 'rpm')
+        shell: bash
+        run: |
+          if ! command -v rpmbuild >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y rpm
+          fi
+          rpmbuild --version
+
       - name: Build desktop artifact
         shell: bash
         env:
@@ -609,6 +623,7 @@ jobs:
             "release/*.zip" \
             "release/*.AppImage" \
             "release/*.deb" \
+            "release/*.rpm" \
             "release/*.exe" \
             "release/*.blockmap" \
             "release/*.yml"; do
@@ -832,6 +847,7 @@ jobs:
             release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.deb
+            release-assets/*.rpm
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
@@ -853,6 +869,7 @@ jobs:
             release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.deb
+            release-assets/*.rpm
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
