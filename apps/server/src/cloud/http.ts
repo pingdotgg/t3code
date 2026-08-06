@@ -645,7 +645,7 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
 // the pending window also tears this server down, with nothing starting
 // afterwards. The launcher marks that case with a stop-marker file just
 // before it signals the child, so pending + no marker is the update handoff.
-const pendingUpdateHandoffExists = Effect.gen(function* () {
+export const pendingUpdateHandoffExists = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

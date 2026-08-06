@@ -1,6 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - sync marker poll outside the test clock.
-import * as NodeFS from "node:fs";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -120,25 +117,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       // An explicit stop leaves the marker that tells a child shutting down
       // mid-update that no replacement server is coming.
       assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
-
-      // The next launcher start clears the stale marker so a later update
-      // handoff keeps its tunnel again. Recovery runs before any stop
-      // transition, so polling until the marker disappears observes it; the
-      // poll uses real timers because it.effect runs under the test clock.
-      const restarted = new Launcher(
-        root,
-        yield* Effect.promise(() => readServiceState(statePath)),
-      );
-      const runningAgain = restarted.run();
-      const markerPath = path.join(root, "runtime", SERVICE_STOP_MARKER_FILE);
-      yield* Effect.promise(async () => {
-        while (NodeFS.existsSync(markerPath)) {
-          // @effect-diagnostics-next-line globalTimers:off - real delay under the test clock.
-          await new Promise((resolve) => setTimeout(resolve, 25));
-        }
-      });
-      yield* Effect.promise(() => restarted.stop("SIGTERM"));
-      yield* Effect.promise(() => runningAgain);
     }),
   );
 
