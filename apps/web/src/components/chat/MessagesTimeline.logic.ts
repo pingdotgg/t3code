@@ -15,6 +15,7 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+export const TIMELINE_OVERLAY_SCROLLBAR_HIT_WIDTH = 16;
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
@@ -23,6 +24,31 @@ export interface TimelineEndState {
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
   return state?.isNearEnd ?? state?.isAtEnd;
+}
+
+export function isTimelineScrollbarPointerDown(input: {
+  readonly pointerType: string;
+  readonly targetIsCurrentTarget: boolean;
+  readonly clientX: number;
+  readonly viewportRight: number;
+  readonly offsetWidth: number;
+  readonly clientWidth: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+}): boolean {
+  if (
+    input.pointerType !== "mouse" ||
+    !input.targetIsCurrentTarget ||
+    input.scrollHeight <= input.clientHeight ||
+    !Number.isFinite(input.clientX) ||
+    !Number.isFinite(input.viewportRight)
+  ) {
+    return false;
+  }
+
+  const measuredScrollbarWidth = Math.max(0, input.offsetWidth - input.clientWidth);
+  const hitWidth = Math.max(TIMELINE_OVERLAY_SCROLLBAR_HIT_WIDTH, measuredScrollbarWidth);
+  return input.clientX >= input.viewportRight - hitWidth && input.clientX <= input.viewportRight;
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {

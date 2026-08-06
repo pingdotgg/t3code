@@ -39,6 +39,9 @@ vi.mock("@legendapp/list/react", async () => {
           size?: boolean;
           shouldRestorePosition?: (item: { id: string }) => boolean;
         };
+    onWheel?: () => void;
+    onTouchMove?: () => void;
+    onPointerDown?: () => void;
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
@@ -90,6 +93,9 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainVisibleContentPosition.size
             : undefined
         }
+        data-manual-navigation-wheel={Boolean(props.onWheel)}
+        data-manual-navigation-touch={Boolean(props.onTouchMove)}
+        data-manual-navigation-pointer={Boolean(props.onPointerDown)}
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
@@ -194,6 +200,7 @@ function buildProps() {
     onAnchorReady: () => {},
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
+    maintainScrollAtEndOnLayout: true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
   };
@@ -357,6 +364,35 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
+  it("only treats a press on the vertical scrollbar as pointer navigation", async () => {
+    const { isTimelineScrollbarPointerDown } = await import("./MessagesTimeline.logic");
+    const scrollbarPointer = {
+      pointerType: "mouse",
+      targetIsCurrentTarget: true,
+      clientX: 994,
+      viewportRight: 1000,
+      offsetWidth: 800,
+      clientWidth: 800,
+      scrollHeight: 1200,
+      clientHeight: 600,
+    };
+
+    expect(isTimelineScrollbarPointerDown(scrollbarPointer)).toBe(true);
+    expect(
+      isTimelineScrollbarPointerDown({ ...scrollbarPointer, targetIsCurrentTarget: false }),
+    ).toBe(false);
+    expect(isTimelineScrollbarPointerDown({ ...scrollbarPointer, clientX: 900 })).toBe(false);
+    expect(isTimelineScrollbarPointerDown({ ...scrollbarPointer, pointerType: "touch" })).toBe(
+      false,
+    );
+    expect(
+      isTimelineScrollbarPointerDown({
+        ...scrollbarPointer,
+        scrollHeight: scrollbarPointer.clientHeight,
+      }),
+    ).toBe(false);
+  });
+
   it("anchors a sent attachment message using its measured height", () => {
     const onAnchorReady = vi.fn();
     const onAnchorSizeChanged = vi.fn();
@@ -422,6 +458,24 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
+  });
+
+  it("preserves the reader's position when the composer resizes away from the live edge", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        maintainScrollAtEndOnLayout={false}
+        timelineEntries={[buildUserTimelineEntry("Earlier message.")]}
+      />,
+    );
+
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-layout="false"');
+    expect(markup).toContain('data-manual-navigation-wheel="true"');
+    expect(markup).toContain('data-manual-navigation-touch="true"');
+    expect(markup).toContain('data-manual-navigation-pointer="true"');
   });
 
   it("does not render collapse controls for short user messages", () => {

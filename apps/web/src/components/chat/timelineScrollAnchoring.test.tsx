@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getAnchoredTurnMetrics, getRowBottom } from "./timelineScrollAnchoring";
+import {
+  getAnchoredTurnMetrics,
+  getRowBottom,
+  isTimelineLayoutFollowEnabled,
+  reduceTimelineLayoutFollowState,
+} from "./timelineScrollAnchoring";
 
 function buildState({
   positions,
@@ -22,6 +27,51 @@ function buildState({
 }
 
 describe("timeline scroll anchoring", () => {
+  it("hands layout following off across scroll-away and return-to-end actions", () => {
+    const threadKey = "environment-local:thread-1";
+    let state = { threadKey, enabled: true };
+
+    state = reduceTimelineLayoutFollowState(state, threadKey, {
+      type: "manual-navigation",
+      isAtEnd: true,
+    });
+    expect(isTimelineLayoutFollowEnabled(state, threadKey)).toBe(true);
+
+    state = reduceTimelineLayoutFollowState(state, threadKey, {
+      type: "at-end-change",
+      isAtEnd: false,
+    });
+    expect(isTimelineLayoutFollowEnabled(state, threadKey)).toBe(false);
+
+    state = reduceTimelineLayoutFollowState(state, threadKey, {
+      type: "at-end-change",
+      isAtEnd: true,
+    });
+    expect(isTimelineLayoutFollowEnabled(state, threadKey)).toBe(true);
+
+    state = reduceTimelineLayoutFollowState(state, threadKey, {
+      type: "at-end-change",
+      isAtEnd: false,
+    });
+    state = reduceTimelineLayoutFollowState(state, threadKey, { type: "return-to-end" });
+    expect(isTimelineLayoutFollowEnabled(state, threadKey)).toBe(true);
+  });
+
+  it("starts a different thread at the live edge on its first render", () => {
+    const previousThreadState = {
+      threadKey: "environment-local:thread-1",
+      enabled: false,
+    };
+    const nextThreadKey = "environment-local:thread-2";
+
+    expect(isTimelineLayoutFollowEnabled(previousThreadState, nextThreadKey)).toBe(true);
+    expect(
+      reduceTimelineLayoutFollowState(previousThreadState, nextThreadKey, {
+        type: "return-to-end",
+      }),
+    ).toEqual({ threadKey: nextThreadKey, enabled: true });
+  });
+
   it("measures row bottoms from LegendList row position and size", () => {
     const state = buildState({
       positions: [0, 120],

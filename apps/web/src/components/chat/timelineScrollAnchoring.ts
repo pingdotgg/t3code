@@ -1,5 +1,41 @@
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
+export interface TimelineLayoutFollowState {
+  readonly threadKey: string;
+  readonly enabled: boolean;
+}
+
+export type TimelineLayoutFollowAction =
+  | { readonly type: "manual-navigation"; readonly isAtEnd: boolean }
+  | { readonly type: "at-end-change"; readonly isAtEnd: boolean }
+  | { readonly type: "return-to-end" };
+
+export function isTimelineLayoutFollowEnabled(
+  state: TimelineLayoutFollowState,
+  threadKey: string,
+): boolean {
+  return state.threadKey === threadKey ? state.enabled : true;
+}
+
+export function reduceTimelineLayoutFollowState(
+  state: TimelineLayoutFollowState,
+  threadKey: string,
+  action: TimelineLayoutFollowAction,
+): TimelineLayoutFollowState {
+  const enabled =
+    action.type === "manual-navigation"
+      ? action.isAtEnd
+        ? isTimelineLayoutFollowEnabled(state, threadKey)
+        : false
+      : action.type === "at-end-change"
+        ? action.isAtEnd
+        : true;
+
+  return state.threadKey === threadKey && state.enabled === enabled
+    ? state
+    : { threadKey, enabled };
+}
+
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
   readonly scroll: number;
