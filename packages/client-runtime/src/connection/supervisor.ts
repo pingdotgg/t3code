@@ -33,6 +33,7 @@ const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+const FOREGROUND_PROBE_TIMEOUTS_BEFORE_RECONNECT = 2;
 const BACKOFF_RESET_AFTER_MS = 30_000;
 
 interface SupervisorIntent {
@@ -392,6 +393,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const monitorConnectedLease = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
+    let foregroundProbeTimeoutCount = 0;
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
@@ -415,19 +417,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             return true;
           }
           if (next.reason === "application-active" || next.reason === "application-active-probe") {
+            const tolerateProbeTimeout = next.reason === "application-active";
             const probe = yield* lease.session.probe.pipe(
+              Effect.as(true),
               Effect.timeoutOrElse({
                 duration:
                   next.reason === "application-active-probe"
                     ? MOBILE_CONNECTION_PROBE_TIMEOUT
                     : CONNECTION_PROBE_TIMEOUT,
                 orElse: () =>
-                  Effect.fail(
-                    new ConnectionTransientError({
-                      reason: "timeout",
-                      detail: `${target.label} did not respond to a connection health check.`,
-                    }),
-                  ),
+                  tolerateProbeTimeout
+                    ? Effect.succeed(false)
+                    : Effect.fail(
+                        new ConnectionTransientError({
+                          reason: "timeout",
+                          detail: `${target.label} did not respond to a connection health check.`,
+                        }),
+                      ),
               }),
               Effect.forkChild,
             );
@@ -441,7 +447,26 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                 ),
               );
               if (probeEvent._tag === "ProbeCompleted") {
-                yield* probeEvent.exit;
+                const responded = yield* probeEvent.exit;
+                if (responded) {
+                  foregroundProbeTimeoutCount = 0;
+                  break;
+                }
+                foregroundProbeTimeoutCount += 1;
+                if (foregroundProbeTimeoutCount >= FOREGROUND_PROBE_TIMEOUTS_BEFORE_RECONNECT) {
+                  return yield* new ConnectionTransientError({
+                    reason: "timeout",
+                    detail: `${target.label} did not respond to a connection health check.`,
+                  });
+                }
+                yield* Effect.logWarning(
+                  "Foreground connection health check timed out; keeping the existing session.",
+                ).pipe(
+                  Effect.annotateLogs({
+                    "environment.id": target.environmentId,
+                    "environment.label": target.label,
+                  }),
+                );
                 break;
               }
               switch (probeEvent.signal._tag) {
