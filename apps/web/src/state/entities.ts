@@ -20,6 +20,7 @@ import type {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -146,12 +147,11 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
-export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
-  return useAtomValue(
-    ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
-  );
-}
-
+/**
+ * Returns the detail ref unless the caller is waiting for a server shell that
+ * has not appeared yet. This is the canonical detail-subscription gate; local
+ * draft callers adapt their draft and shell readiness into these options.
+ */
 export function resolveThreadDetailRef(
   ref: ScopedThreadRef | null,
   options: {
@@ -160,6 +160,41 @@ export function resolveThreadDetailRef(
   },
 ): ScopedThreadRef | null {
   return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
+}
+
+type ThreadDetailReadiness = {
+  readonly hasLocalDraft: boolean;
+  readonly hasServerShell: boolean;
+};
+
+function resolveReadyThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  input: ThreadDetailReadiness,
+): ScopedThreadRef | null {
+  return resolveThreadDetailRef(ref, {
+    shellExists: input.hasServerShell,
+    waitForShell: input.hasLocalDraft,
+  });
+}
+
+export function useThreadDetailWhenReady(
+  ref: ScopedThreadRef | null,
+  input: ThreadDetailReadiness,
+): EnvironmentThread | null {
+  return useThreadDetail(resolveReadyThreadDetailRef(ref, input));
+}
+
+export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
+  );
+}
+
+export function useThreadStatusWhenReady(
+  ref: ScopedThreadRef | null,
+  input: ThreadDetailReadiness,
+): EnvironmentThreadStatus {
+  return useThreadStatus(resolveReadyThreadDetailRef(ref, input));
 }
 
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
@@ -175,10 +210,13 @@ export function useThread(
   },
 ): EnvironmentThread | null {
   const shell = useThreadShell(ref);
+  const hasLocalDraft = useComposerDraftStore((store) =>
+    ref === null ? false : store.getDraftThreadByRef(ref) !== null,
+  );
   const detail = useThreadDetail(
     resolveThreadDetailRef(ref, {
       shellExists: shell !== null,
-      waitForShell: options?.waitForShell === true,
+      waitForShell: hasLocalDraft || options?.waitForShell === true,
     }),
   );
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
