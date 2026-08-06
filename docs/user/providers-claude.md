@@ -34,6 +34,13 @@ When you set this field, T3 Code points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+## Where Claude Skills Are Loaded
+
+T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then
+`<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
+
+If the same skill name exists in more than one folder, the later folder wins.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.
