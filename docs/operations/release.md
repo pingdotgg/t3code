@@ -28,13 +28,15 @@ This document covers the unified release workflow for stable, nightly, and canar
 
 ## Required release credentials
 
-The release workflow requires these GitHub Actions secrets in addition to the platform and deployment
+Stable releases require these GitHub Actions secrets in addition to the platform and deployment
 credentials documented below:
 
 - `RELEASE_APP_ID`
 - `RELEASE_APP_PRIVATE_KEY`
 
-The GitHub Release job uses them to mint the token that publishes release assets.
+The fork's release PR and pnpm dependency repair jobs use them to commit and push changes as the
+Release App. GitHub Release publication uses the repository-scoped workflow token so it has a
+rate-limit quota independent from the shared Release App installation.
 
 ## T3 Connect relay deployment
 
