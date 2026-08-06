@@ -54,6 +54,11 @@ describe("parseIntegratedBrowserUrlPattern", () => {
       "gist*.github.com",
       "*.gist*.github.com",
       "www.*.example.com",
+      "example..com",
+      ".example.com",
+      "example.com.",
+      "-example.com",
+      "example-.com",
       "*",
       "*.",
     ]) {

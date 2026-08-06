@@ -62,6 +62,13 @@ export function parseIntegratedBrowserUrlPattern(raw: string): IntegratedBrowser
   if (host.length === 0) {
     return null;
   }
+  // Reject structurally invalid hosts (`example..com`, `.example.com`,
+  // `-example.com`, `example.com.`) — they pass the character check but can
+  // never match a real link hostname, so the pattern would be silently dead.
+  const labels = (host.startsWith("*.") ? host.slice(2) : host).split(".");
+  if (labels.some((label) => label.length === 0 || label.startsWith("-") || label.endsWith("-"))) {
+    return null;
+  }
 
   if (rawPath === null || rawPath === "/") {
     return { host, pathPrefix: null };
