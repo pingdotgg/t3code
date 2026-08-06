@@ -227,4 +227,82 @@ describe("reduceThreadSettlementEvent", () => {
     expect(next.settledOverride).toBe("active");
     expect(next.settledAt).toBeNull();
   });
+
+  it("clears pinnedAt on explicit settle when the patch carries it", () => {
+    const pinned: ThreadFixture & { pinnedAt: string | null } = {
+      ...base,
+      settledOverride: null,
+      settledAt: null,
+      pinnedAt: "2026-07-01T11:00:00.000Z",
+    };
+    const next = reduceThreadSettlementEvent({
+      current: pinned,
+      eventType: "thread.settled",
+      settlement: {
+        settledOverride: "settled",
+        settledAt: "2026-07-01T12:00:00.000Z",
+        updatedAt: "2026-07-01T12:00:00.000Z",
+        pinnedAt: null,
+      },
+      activityAtMs: T2,
+      currentTimestamps: {
+        settledOverride: null,
+        settledAtMs: null,
+        updatedAtMs: T1,
+      },
+    });
+    expect(next.settledOverride).toBe("settled");
+    expect(next.pinnedAt).toBeNull();
+  });
+
+  it("does not touch pinnedAt on activity unsettle", () => {
+    const pinned = {
+      ...base,
+      pinnedAt: "2026-07-01T11:00:00.000Z",
+    };
+    const next = reduceThreadSettlementEvent({
+      current: pinned,
+      eventType: "thread.unsettled",
+      settlement: {
+        settledOverride: null,
+        settledAt: null,
+        updatedAt: "2026-07-01T12:00:00.000Z",
+      },
+      activityAtMs: T2,
+      currentTimestamps: {
+        settledOverride: "settled",
+        settledAtMs: T2,
+        updatedAtMs: T2,
+      },
+    });
+    expect(next.settledOverride).toBeNull();
+    expect(next.pinnedAt).toBe("2026-07-01T11:00:00.000Z");
+  });
+
+  it("does not rewind updatedAt when activity is older than current metadata", () => {
+    const renamed: ThreadFixture = {
+      ...base,
+      settledOverride: "settled",
+      settledAt: "2026-07-01T11:00:00.000Z",
+      updatedAt: "2026-07-01T13:00:00.000Z",
+    };
+    const T3 = Date.parse("2026-07-01T13:00:00.000Z");
+    const next = reduceThreadSettlementEvent({
+      current: renamed,
+      eventType: "thread.unsettled",
+      settlement: {
+        settledOverride: null,
+        settledAt: null,
+        updatedAt: "2026-07-01T12:00:00.000Z",
+      },
+      activityAtMs: T2,
+      currentTimestamps: {
+        settledOverride: "settled",
+        settledAtMs: T1,
+        updatedAtMs: T3,
+      },
+    });
+    expect(next.settledOverride).toBeNull();
+    expect(next.updatedAt).toBe("2026-07-01T13:00:00.000Z");
+  });
 });

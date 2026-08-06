@@ -13,6 +13,8 @@ import * as ProjectEnrichment from "../../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 
 const encodeModelSelectionJson = Schema.encodeUnknownEffect(Schema.fromJsonString(ModelSelection));
@@ -39,6 +41,8 @@ it.effect(
         }),
       );
       const testLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+        Layer.provideMerge(ThreadBackgroundLiveness.layer),
+        Layer.provideMerge(ThreadPlanProgress.layer),
         Layer.provideMerge(ProjectEnrichment.layer),
         Layer.provideMerge(metadataLayer),
         Layer.provideMerge(SqlitePersistenceMemory),

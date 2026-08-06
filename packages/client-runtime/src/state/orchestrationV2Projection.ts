@@ -184,6 +184,7 @@ export function applyOrchestrationV2ProjectionEvent(
           settledOverride: event.payload.settledOverride,
           settledAt: event.payload.settledAt,
           updatedAt: event.payload.updatedAt,
+          ...(event.type === "thread.settled" ? { pinnedAt: event.payload.pinnedAt ?? null } : {}),
         },
         activityAtMs: DateTime.toEpochMillis(event.occurredAt),
         currentTimestamps: {
