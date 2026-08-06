@@ -26,7 +26,11 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -117,6 +121,11 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import {
+  clearPlanSidebarDismissal,
+  dismissPlanSidebarForTurn,
+  isPlanSidebarDismissedForTurn,
+} from "../planSidebarDismissal";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
   selectActiveRightPanel,
@@ -155,7 +164,6 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
-  TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -1227,9 +1235,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const activeServerThread = serverThread ?? loadingServerThread;
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLastVisitedAt = useUiStateStore(
-    (store) => store.threadLastVisitedAtById[routeThreadKey],
-  );
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1310,8 +1315,6 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  // Tracks whether the user explicitly dismissed the sidebar for the active turn.
-  const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
@@ -1848,25 +1851,6 @@ function ChatViewContent(props: ChatViewProps) {
     [openOrReuseProjectDraftThread],
   );
 
-  useEffect(() => {
-    if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
-    if (Number.isNaN(threadUpdatedAt)) return;
-    const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
-
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      serverThread.updatedAt,
-    );
-  }, [
-    activeThreadLastVisitedAt,
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.updatedAt,
-  ]);
-
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -1983,31 +1967,41 @@ function ChatViewContent(props: ChatViewProps) {
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
-        variant: updateFailed ? "error" : updateInProgress ? "default" : "warning",
-        icon: updateInProgress ? (
-          <span
-            className="size-1.5 animate-status-pulse rounded-full bg-foreground"
-            aria-hidden="true"
-          />
-        ) : (
-          <TriangleAlertIcon />
-        ),
+        variant: updateFailed ? "error" : "default",
+        // In-flight and failed states carry their own status dot inside
+        // ServerUpdateProgress; only the idle offer needs an icon.
+        icon:
+          updateInProgress || updateFailed ? null : (
+            <span
+              className="size-1.5 rounded-full border border-muted-foreground/40"
+              aria-hidden="true"
+            />
+          ),
         title:
-          updateInProgress || updateFailed
-            ? `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
-            : "Client and server versions differ",
+          updateInProgress || updateFailed ? (
+            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
+          ) : versionMismatch ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button type="button" className="cursor-help rounded-sm text-left">
+                    Server update available
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">
+                {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
+                <span aria-hidden="true">→</span> {versionMismatch.clientVersion}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            "Server update available"
+          ),
         description:
           updateInProgress || updateFailed ? (
-            <ServerUpdateProgress
-              fromVersion={serverUpdateState.fromVersion}
-              state={serverUpdateState}
-            />
-          ) : versionMismatch ? (
-            <>
-              Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
-              {versionMismatch.serverVersion}.{" "}
-              {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
-            </>
+            <ServerUpdateProgress state={serverUpdateState} />
+          ) : versionMismatchSelfUpdate === "desktop-managed" ? (
+            serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)
           ) : null,
         // The desktop-managed guidance is already the description; the action
         // slot would only repeat it.
@@ -2020,13 +2014,13 @@ function ChatViewContent(props: ChatViewProps) {
               serverLabel={versionMismatchServerLabel}
               selfUpdate={versionMismatchSelfUpdate}
               targetVersion={versionMismatch.clientVersion}
-              {...(updateFailed ? { label: "Retry update" } : {})}
+              label={updateFailed ? "Retry" : "Update"}
             />
           ),
         ...(updateInProgress || updateFailed || !versionMismatchDismissKey
           ? {}
           : {
-              dismissLabel: "Dismiss version mismatch warning",
+              dismissLabel: "Dismiss update notice",
               onDismiss: () => {
                 dismissVersionMismatch(versionMismatchDismissKey);
                 setDismissedVersionMismatchKey(versionMismatchDismissKey);
@@ -3110,18 +3104,21 @@ function ChatViewContent(props: ChatViewProps) {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
   const dismissPlanSidebarForCurrentTurn = useCallback(() => {
-    planSidebarDismissedForTurnRef.current =
-      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+    if (!activeThreadKey) return;
+    dismissPlanSidebarForTurn(
+      activeThreadKey,
+      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__",
+    );
+  }, [activeThreadKey, activePlan?.turnId, sidebarProposedPlan?.turnId]);
   const togglePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     if (planSidebarOpen) {
       dismissPlanSidebarForCurrentTurn();
-    } else {
-      planSidebarDismissedForTurnRef.current = null;
+    } else if (activeThreadKey) {
+      clearPlanSidebarDismissal(activeThreadKey);
     }
     useRightPanelStore.getState().toggle(activeThreadRef, "plan");
-  }, [activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
+  }, [activeThreadKey, activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
   const closePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     setMaximizedRightPanelThreadKey(null);
@@ -3283,7 +3280,7 @@ function ChatViewContent(props: ChatViewProps) {
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       if (surface.kind === "plan") {
-        planSidebarDismissedForTurnRef.current = null;
+        clearPlanSidebarDismissal(scopedThreadKey(activeThreadRef));
       } else if (planSidebarOpen) {
         dismissPlanSidebarForCurrentTurn();
       }
@@ -3852,10 +3849,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       if (activeThreadRef) {
+        clearPlanSidebarDismissal(scopedThreadKey(activeThreadRef));
         useRightPanelStore.getState().open(activeThreadRef, "plan");
       }
     }
-    planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
   }, [activeThread?.id]);
 
@@ -3868,10 +3865,9 @@ function ChatViewContent(props: ChatViewProps) {
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-    if (planSidebarDismissedForTurnRef.current === turnKey) return;
-    if (activeThreadRef) {
-      useRightPanelStore.getState().open(activeThreadRef, "plan");
-    }
+    if (!activeThreadRef) return;
+    if (isPlanSidebarDismissedForTurn(scopedThreadKey(activeThreadRef), turnKey)) return;
+    useRightPanelStore.getState().open(activeThreadRef, "plan");
   }, [
     activePlan,
     activeLatestTurn?.turnId,
@@ -3992,13 +3988,18 @@ function ChatViewContent(props: ChatViewProps) {
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const nowMinute = useNowMinute();
+  const snoozeNow = new Date().toISOString();
   const activeThreadSnoozed =
     activeThreadShell !== null &&
     supportsSnooze &&
-    effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
+    effectiveSnoozed(activeThreadShell, { now: snoozeNow });
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+  void snoozeWakeTick;
+  const activeThreadWokeAt =
+    activeThreadShell !== null && supportsSnooze
+      ? threadWokeAt(activeThreadShell, { now: snoozeNow })
+      : null;
   useEffect(() => {
-    void snoozeWakeTick;
     if (!activeThreadSnoozed) return;
     const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
     if (!Number.isFinite(wakeAtMs)) return;
@@ -4008,6 +4009,10 @@ function ChatViewContent(props: ChatViewProps) {
     );
     return () => window.clearTimeout(id);
   }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
+  const acknowledgeActiveThreadWoke = useCallback(() => {
+    if (activeThreadRef === null || activeThreadWokeAt === null) return;
+    markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
+  }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
   const activeThreadSettled = useMemo(() => {
     if (activeThreadShell === null || !supportsSettlement) return false;
     return effectiveSettled(activeThreadShell, {
@@ -5049,6 +5054,7 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        acknowledgeActiveThreadWoke();
       }
     }
 
@@ -5408,12 +5414,13 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        acknowledgeActiveThreadWoke();
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
         if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
-          planSidebarDismissedForTurnRef.current = null;
           if (activeThreadRef) {
+            clearPlanSidebarDismissal(scopedThreadKey(activeThreadRef));
             useRightPanelStore.getState().open(activeThreadRef, "plan");
           }
         }
@@ -5437,6 +5444,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       activeThread,
       activeProposedPlan,
+      acknowledgeActiveThreadWoke,
       beginLocalDispatch,
       isConnecting,
       isSendBusy,
