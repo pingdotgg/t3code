@@ -938,6 +938,8 @@ export function HomeScreen(props: HomeScreenProps) {
       pinningEnvironmentIds,
       pinReorderingEnvironmentIds,
       orderedPinnedThreads,
+      pinnedOrderingFullyVisible,
+      pinnedReorderInFlight,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,

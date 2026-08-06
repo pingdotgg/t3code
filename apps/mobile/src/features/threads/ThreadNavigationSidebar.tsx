@@ -1191,6 +1191,8 @@ function ThreadNavigationSidebarPane(
       pinReorderingEnvironmentIds,
       movePinnedThread,
       orderedPinnedThreads,
+      pinnedOrderingFullyVisible,
+      pinnedReorderInFlight,
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey,
