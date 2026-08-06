@@ -2,6 +2,8 @@ import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contract
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { DetectedProjectScript } from "~/hooks/usePackageManagerScripts";
+
 import ProjectScriptsControl from "./ProjectScriptsControl";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -13,10 +15,14 @@ const PRIMARY_SCRIPT: ProjectScript = {
   runOnWorktreeCreate: false,
 };
 
-function renderControl(scripts: ReadonlyArray<ProjectScript>) {
+function renderControl(
+  scripts: ReadonlyArray<ProjectScript>,
+  packageScripts: ReadonlyArray<DetectedProjectScript> = [],
+) {
   return renderToStaticMarkup(
     <ProjectScriptsControl
       scripts={scripts}
+      packageScripts={packageScripts}
       keybindings={EMPTY_KEYBINDINGS}
       onRunScript={() => {}}
       onAddScript={async () => undefined as never}
@@ -61,5 +67,15 @@ describe("ProjectScriptsControl compact controls", () => {
     expect(html).toContain(
       'class="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"',
     );
+  });
+
+  it("offers a dropdown with detected package scripts even without any actions or t3.json scripts", () => {
+    const html = renderControl([], [{ name: "test", command: "npm run test", source: "npm" }]);
+
+    // With no actions and no t3.json scripts but a detected package.json
+    // script, the standalone "Add action" button must become a dropdown
+    // trigger ("Project actions") so the detected script is reachable.
+    expect(buttonTag(html, "Project actions")).toBeDefined();
+    expect(buttonTag(html, "Add action")).toBeUndefined();
   });
 });
