@@ -668,11 +668,27 @@ export function HomeScreen(props: HomeScreenProps) {
       ),
     [props.threads],
   );
+  const pinnedOrderingFullyVisible = useMemo(() => {
+    const visible = threadListV2Layout.items
+      .filter((item) => item.pinned)
+      .map((item) => scopedThreadKey(item.thread.environmentId, item.thread.id));
+    return (
+      visible.length === orderedPinnedThreads.length &&
+      visible.every(
+        (threadKey, index) =>
+          threadKey ===
+          scopedThreadKey(
+            orderedPinnedThreads[index]!.environmentId,
+            orderedPinnedThreads[index]!.id,
+          ),
+      )
+    );
+  }, [orderedPinnedThreads, threadListV2Layout.items]);
   const pinnedReorderInFlightRef = useRef(false);
   const [pinnedReorderInFlight, setPinnedReorderInFlight] = useState(false);
   const handleMovePinnedThread = useCallback(
     (thread: EnvironmentThreadShell, direction: "up" | "down") => {
-      if (pinnedReorderInFlightRef.current) return;
+      if (pinnedReorderInFlightRef.current || !pinnedOrderingFullyVisible) return;
       const index = orderedPinnedThreads.findIndex(
         (candidate) =>
           candidate.environmentId === thread.environmentId && candidate.id === thread.id,
@@ -713,7 +729,8 @@ export function HomeScreen(props: HomeScreenProps) {
               request.update.pinnedOrder,
             );
             if (!succeeded) {
-              for (const applied of completed.toReversed()) {
+              for (let index = completed.length - 1; index >= 0; index -= 1) {
+                const applied = completed[index]!;
                 await props.onReorderPinnedThread(
                   applied.thread,
                   applied.update.previousPinnedOrder,
@@ -729,7 +746,12 @@ export function HomeScreen(props: HomeScreenProps) {
         }
       })();
     },
-    [orderedPinnedThreads, pinReorderingEnvironmentIds, props.onReorderPinnedThread],
+    [
+      orderedPinnedThreads,
+      pinnedOrderingFullyVisible,
+      pinReorderingEnvironmentIds,
+      props.onReorderPinnedThread,
+    ],
   );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -879,8 +901,9 @@ export function HomeScreen(props: HomeScreenProps) {
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           pinReorderingSupported={pinReorderingEnvironmentIds.has(thread.environmentId)}
-          canMovePinnedUp={!pinnedReorderInFlight && pinnedIndex > 0}
+          canMovePinnedUp={pinnedOrderingFullyVisible && !pinnedReorderInFlight && pinnedIndex > 0}
           canMovePinnedDown={
+            pinnedOrderingFullyVisible &&
             !pinnedReorderInFlight &&
             pinnedIndex >= 0 &&
             pinnedIndex < orderedPinnedThreads.length - 1

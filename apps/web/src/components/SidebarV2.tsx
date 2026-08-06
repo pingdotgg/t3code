@@ -1953,15 +1953,17 @@ export default function SidebarV2() {
             }),
           );
         }
-        setPendingPinnedOrderByKey((current) => {
-          const next = new Map(current);
-          for (const { request } of results) {
-            if (next.get(request.threadId) === request.pinnedOrder) {
-              next.delete(request.threadId);
+        if (anyFailure) {
+          setPendingPinnedOrderByKey((current) => {
+            const next = new Map(current);
+            for (const { request } of results) {
+              if (next.get(request.threadId) === request.pinnedOrder) {
+                next.delete(request.threadId);
+              }
             }
-          }
-          return next;
-        });
+            return next;
+          });
+        }
       })();
     },
     [pinnedThreads, reorderPinnedThread, serverConfigs],
