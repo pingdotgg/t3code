@@ -374,7 +374,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           "workspace-topbar gap-1 pl-2",
           props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
           props.mode === "inline" ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          ownsDesktopTitleBar &&
+            "drag-region wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -383,7 +384,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           ref={tabListRef}
           hideScrollbars
           scrollFade
-          className={cn("min-w-0 flex-1 rounded-none", ownsDesktopTitleBar && "drag-region")}
+          className={cn(
+            "min-w-0 flex-1 rounded-none",
+            ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
+          )}
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
