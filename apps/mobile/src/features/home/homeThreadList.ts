@@ -13,6 +13,7 @@ import {
   toSortableTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { threadSubtitleMatches } from "@t3tools/client-runtime/state/thread-subtitle";
 import type {
   EnvironmentId,
   ScopedProjectRef,
@@ -310,6 +311,7 @@ export function buildHomeThreadGroups(input: {
       : group.threads.filter(
           (thread) =>
             thread.title.toLocaleLowerCase().includes(query) ||
+            threadSubtitleMatches(thread, query) ||
             input.matchedThreadKeys?.has(
               threadSearchMatchKey({
                 environmentId: thread.environmentId,

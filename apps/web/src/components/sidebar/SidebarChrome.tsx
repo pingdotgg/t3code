@@ -22,6 +22,7 @@ import {
 } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SessionGridSidebarLink } from "../sessionGrid/SessionGridSidebarLink";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -123,6 +124,8 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        {/* fork: project session grid — shared by both sidebar generations. */}
+        <SessionGridSidebarLink />
         <SidebarMenuItem>
           <SidebarMenuButton onClick={handleSettingsClick}>
             <SettingsIcon />

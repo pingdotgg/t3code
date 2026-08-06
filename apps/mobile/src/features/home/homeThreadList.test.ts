@@ -695,6 +695,26 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.threads.map((candidate) => candidate.id)).toEqual(["thread-content"]);
   });
 
+  it("includes a thread matched by its generated subtitle", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const thread = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-subtitle"),
+      projectId: project.id,
+      title: "Unrelated title",
+      subtitle: "Validating reconnect recovery",
+    });
+
+    const groups = buildGroups([project], [thread], { searchQuery: "reconnect recovery" });
+
+    expect(groups[0]?.threads.map((candidate) => candidate.id)).toEqual(["thread-subtitle"]);
+  });
+
   it("targets quick new threads at the group member with the newest thread", () => {
     const laptopEnv = EnvironmentId.make("environment-laptop");
     const desktopEnv = EnvironmentId.make("environment-desktop");

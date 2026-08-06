@@ -21,6 +21,8 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    generateThreadSubtitle: () =>
+      Effect.die("generateThreadSubtitle stub not configured for this test"),
     ...overrides,
   });
 
@@ -116,6 +118,33 @@ describe("makeTextGenerationFromRegistry", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+
+  it.effect("routes subtitle generation through the selected provider instance", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claude_work");
+      const tg = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([
+          makeStubInstance(
+            instanceId,
+            makeStubTextGeneration({
+              generateThreadSubtitle: (input) =>
+                Effect.succeed({ subtitle: `${input.phase}: focused tests` }),
+            }),
+          ),
+        ]),
+      );
+
+      const result = yield* tg.generateThreadSubtitle({
+        cwd: process.cwd(),
+        missionTitle: "Session grid",
+        context: "Running focused tests",
+        phase: "completed",
+        modelSelection: createModelSelection(instanceId, "claude-sonnet"),
+      });
+
+      expect(result.subtitle).toBe("completed: focused tests");
     }),
   );
 });

@@ -352,6 +352,9 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  // Optional for wire compatibility with servers predating generated thread
+  // subtitles. Null means the thread has no current activity summary yet.
+  subtitle: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -414,6 +417,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  subtitle: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -643,6 +647,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  subtitle: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   regenerateTitle: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1059,6 +1064,7 @@ export const ThreadUnpinnedPayload = Schema.Struct({
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  subtitle: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Intent marker consumed by the title-generation reactor. Keeping this on
       the existing event lets older clients safely ignore the new field. */
   regenerateTitle: Schema.optional(Schema.Literal(true)),

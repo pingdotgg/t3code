@@ -625,6 +625,22 @@ describe("buildThreadListV2Items", () => {
     expect(items.map((item) => item.thread.id)).toEqual(["content-match"]);
   });
 
+  it("includes a thread matched by its generated subtitle", () => {
+    const thread = makeThread({
+      id: ThreadId.make("subtitle-match"),
+      title: "Unrelated title",
+      subtitle: "Validating reconnect recovery",
+    });
+    const { items } = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "reconnect recovery",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["subtitle-match"]);
+  });
+
   it("scopes the flat list to one project", () => {
     const otherProjectId = ProjectId.make("project-2");
     const { items } = buildThreadListV2Items({

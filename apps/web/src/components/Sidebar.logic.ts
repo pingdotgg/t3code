@@ -12,6 +12,7 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { threadSubtitleMatches } from "@t3tools/client-runtime/state/thread-subtitle";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -495,17 +496,21 @@ export function sortThreadsForSidebarV2<
 }
 
 /**
- * Search the already-ordered sidebar thread collection by title only.
+ * Search the already-ordered sidebar thread collection by title or generated
+ * live subtitle.
  * Keeping the input order means lifecycle ordering (active, snoozed, settled)
  * remains stable while the user narrows the list.
  */
-export function searchSidebarThreadsByTitle<T extends { readonly title: string }>(
-  threads: readonly T[],
-  query: string,
-): T[] {
+export function searchSidebarThreadsByTitle<
+  T extends { readonly title: string; readonly subtitle?: string | null | undefined },
+>(threads: readonly T[], query: string): T[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return [];
-  return threads.filter((thread) => thread.title.toLowerCase().includes(normalizedQuery));
+  return threads.filter(
+    (thread) =>
+      thread.title.toLowerCase().includes(normalizedQuery) ||
+      threadSubtitleMatches(thread, normalizedQuery),
+  );
 }
 
 type SettledTimestampInput = Pick<

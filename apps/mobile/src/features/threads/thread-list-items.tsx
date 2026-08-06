@@ -4,6 +4,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
@@ -456,7 +457,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
-  const threadAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
+  const generatedSubtitle = displayThreadSubtitle(thread);
+  const accessibleThreadName = generatedSubtitle
+    ? `${thread.title}, ${generatedSubtitle}`
+    : thread.title;
+  const threadAccessibilityLabel = pr
+    ? `${accessibleThreadName}, ${pr.accessibilityLabel}`
+    : accessibleThreadName;
   const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -531,6 +538,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </View>
     ) : null;
 
+  const generatedSubtitleRow = generatedSubtitle ? (
+    <Text
+      className={cn(
+        compact ? "text-sm" : "text-xs",
+        selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+      )}
+      numberOfLines={1}
+    >
+      {generatedSubtitle}
+    </Text>
+  ) : null;
+
   const rowContent = (close: () => void) =>
     compact ? (
       <Pressable
@@ -581,6 +600,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 query={props.searchQuery ?? ""}
               />
             ) : null}
+            {generatedSubtitleRow}
             {subtitleRow}
           </View>
         </View>
@@ -642,6 +662,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               selected={selected}
             />
           ) : null}
+          {generatedSubtitleRow}
           {subtitleRow}
         </View>
       </Pressable>

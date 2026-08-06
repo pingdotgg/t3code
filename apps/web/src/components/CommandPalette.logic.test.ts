@@ -264,6 +264,19 @@ describe("buildThreadActionItems", () => {
     expect(item?.description).toBe("T3 Code · #feat/search");
   });
 
+  it("shows and searches the current generated subtitle", () => {
+    const [item] = buildThreadActionItems({
+      threads: [makeThread({ subtitle: "Validating reconnect recovery" })],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    expect(item?.searchTerms).toContain("Validating reconnect recovery");
+    expect(item?.description).toBe("Validating reconnect recovery · T3 Code");
+  });
+
   it("filters archived threads out of thread search items", () => {
     const items = buildThreadActionItems({
       threads: [

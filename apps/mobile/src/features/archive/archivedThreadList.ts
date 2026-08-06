@@ -1,4 +1,5 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import { threadSubtitleMatches } from "@t3tools/client-runtime/state/thread-subtitle";
 import {
   scopeProject,
   scopeThreadShell,
@@ -65,7 +66,7 @@ export function buildArchivedThreadGroups(input: {
       const matchingThreads = groupMatches
         ? projectThreads
         : projectThreads.filter(
-            (thread) => matchesQuery(thread.title, query) || matchesQuery(thread.branch, query),
+            (thread) => threadSubtitleMatches(thread, query) || matchesQuery(thread.branch, query),
           );
 
       if (matchingThreads.length === 0) {

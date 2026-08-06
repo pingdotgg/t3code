@@ -2,6 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import { LegendList } from "@legendapp/list/react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -405,7 +406,8 @@ function ArchivedThreadRow(props: {
   const iconColor = useThemeColor("--color-icon-subtle");
   const separatorColor = useThemeColor("--color-separator");
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
-  const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
+  const generatedSubtitle = displayThreadSubtitle(props.thread);
+  const metadata = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
   return (
@@ -457,7 +459,12 @@ function ArchivedThreadRow(props: {
                 {timestamp}
               </Text>
             </View>
-            {subtitle.length > 0 ? (
+            {generatedSubtitle ? (
+              <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                {generatedSubtitle}
+              </Text>
+            ) : null}
+            {metadata.length > 0 ? (
               <View className="flex-row items-center gap-1.5">
                 <SymbolView
                   name="arrow.triangle.branch"
@@ -469,7 +476,7 @@ function ArchivedThreadRow(props: {
                   className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
                   numberOfLines={1}
                 >
-                  {subtitle.join(" · ")}
+                  {metadata.join(" · ")}
                 </Text>
               </View>
             ) : null}

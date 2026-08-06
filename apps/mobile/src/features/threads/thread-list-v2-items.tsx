@@ -3,6 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
@@ -405,6 +406,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
   const timeLabel = threadTimeLabel(thread);
+  const subtitle = displayThreadSubtitle(thread);
+  const accessibilityLabel = subtitle ? `${thread.title}, ${subtitle}` : thread.title;
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
@@ -631,6 +634,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
+      {subtitle ? (
+        <Text
+          className={cn(
+            "mt-1 text-xs",
+            selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+          )}
+          numberOfLines={1}
+        >
+          {subtitle}
+        </Text>
+      ) : null}
       <View className="mt-1 flex-row items-center gap-2">
         {status === "failed" && thread.session?.lastError ? (
           <Text
@@ -703,7 +717,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant === "card" ? (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -743,7 +757,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={sidebarPane ? undefined : "bg-screen"}
@@ -797,6 +811,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 query={props.searchQuery ?? ""}
                 selected={selected}
               />
+            ) : null}
+            {subtitle ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
+                )}
+                numberOfLines={1}
+              >
+                {subtitle}
+              </Text>
             ) : null}
           </View>
           <Text

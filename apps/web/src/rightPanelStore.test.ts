@@ -14,7 +14,7 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {} });
+  useRightPanelStore.setState({ workspaceOpen: false, byThreadKey: {} });
 });
 
 describe("rightPanelStore", () => {
@@ -30,6 +30,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      workspaceOpen: false,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -54,6 +55,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      workspaceOpen: false,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -76,6 +78,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      workspaceOpen: true,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -106,6 +109,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      workspaceOpen: true,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -126,6 +130,7 @@ describe("rightPanelStore", () => {
 
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
+    expect(useRightPanelStore.getState().workspaceOpen).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBeNull();
   });
@@ -252,6 +257,7 @@ describe("rightPanelStore", () => {
   it("close hides the panel without clearing its selected surface", () => {
     useRightPanelStore.getState().open(refA, "plan");
     useRightPanelStore.getState().close(refA);
+    expect(useRightPanelStore.getState().workspaceOpen).toBe(false);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: false,
@@ -262,6 +268,7 @@ describe("rightPanelStore", () => {
 
   it("toggles empty panel visibility without creating a surface", () => {
     useRightPanelStore.getState().toggleVisibility(refA);
+    expect(useRightPanelStore.getState().workspaceOpen).toBe(true);
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
       activeSurfaceId: null,
@@ -269,7 +276,26 @@ describe("rightPanelStore", () => {
     });
 
     useRightPanelStore.getState().toggleVisibility(refA);
+    expect(useRightPanelStore.getState().workspaceOpen).toBe(false);
     expect(useRightPanelStore.getState().byThreadKey).toEqual({});
+  });
+
+  it("keeps workspace visibility open while the active thread context changes", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+
+    expect(useRightPanelStore.getState().workspaceOpen).toBe(true);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+
+    useRightPanelStore.getState().show(refB);
+
+    expect(useRightPanelStore.getState().workspaceOpen).toBe(true);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).isOpen,
+    ).toBe(true);
   });
 
   it("toggle hides the panel without discarding the active surface", () => {

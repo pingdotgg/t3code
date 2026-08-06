@@ -281,7 +281,7 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.meta-updated", () => {
-    it("patches title and branch", () => {
+    it("patches title, subtitle, and branch", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
         sequence: 5,
@@ -292,6 +292,7 @@ describe("applyThreadDetailEvent", () => {
         payload: {
           threadId: ThreadId.make("thread-1"),
           title: "Updated Title",
+          subtitle: "Validating the reconnect fix",
           branch: "feature/demo",
           updatedAt: "2026-04-01T05:00:00.000Z",
         },
@@ -300,6 +301,7 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.title).toBe("Updated Title");
+        expect(result.thread.subtitle).toBe("Validating the reconnect fix");
         expect(result.thread.branch).toBe("feature/demo");
         // Model selection should be unchanged since it wasn't in the payload
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);

@@ -31,6 +31,10 @@ import {
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
+import {
+  buildThreadSubtitlePrompt,
+  sanitizeThreadSubtitle,
+} from "../threadSubtitles/ThreadSubtitleGeneration.ts"; // fork: generated thread subtitles
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
 
@@ -39,6 +43,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generatePrContent",
   "generateBranchName",
   "generateThreadTitle",
+  "generateThreadSubtitle",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -253,7 +258,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadSubtitle";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -615,10 +621,24 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       };
     });
 
+  const generateThreadSubtitle: TextGeneration.TextGeneration["Service"]["generateThreadSubtitle"] =
+    Effect.fn("OpenCodeTextGeneration.generateThreadSubtitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadSubtitlePrompt(input);
+      const generated = yield* runOpenCodeJson({
+        operation: "generateThreadSubtitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { subtitle: sanitizeThreadSubtitle(generated.subtitle) };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadSubtitle,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

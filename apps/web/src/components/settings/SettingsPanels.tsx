@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -2081,7 +2082,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("text-generation-model")}
-          description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
+          description="Default model for generated text like thread titles, live thread subtitles, and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
             isTextGenerationModelDirty ? (
               <SettingResetButton
@@ -2872,11 +2873,18 @@ export function ArchivedThreadsPanel() {
                 }}
                 title={thread.title}
                 description={
-                  <>
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </>
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    {displayThreadSubtitle(thread) ? (
+                      <span className="truncate text-foreground/75">
+                        {displayThreadSubtitle(thread)}
+                      </span>
+                    ) : null}
+                    <span>
+                      Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                      {" \u00b7 Created "}
+                      {formatRelativeTimeLabel(thread.createdAt)}
+                    </span>
+                  </span>
                 }
                 control={
                   <Button

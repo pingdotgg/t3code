@@ -194,6 +194,7 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+          ...(event.payload.subtitle !== undefined ? { subtitle: event.payload.subtitle } : {}),
           ...(event.payload.titleRegeneration !== undefined
             ? { titleRegeneration: event.payload.titleRegeneration }
             : {}),

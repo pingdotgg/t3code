@@ -54,8 +54,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -484,27 +485,42 @@ function formatOutgoingPrompt(params: {
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
-type ChatViewProps =
-  | {
-      environmentId: EnvironmentId;
-      threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
-      forceExpandedMobileComposer?: boolean;
-      threadSyncPhase?: ThreadSyncPhase | null;
-      routeKind: "server";
-      draftId?: never;
-    }
-  | {
-      environmentId: EnvironmentId;
-      threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
-      forceExpandedMobileComposer?: boolean;
-      threadSyncPhase?: never;
-      routeKind: "draft";
-      draftId: DraftId;
-    };
+interface ChatViewSurfaceProps {
+  /** fork: project session grid — embed the complete chat without another workspace shell. */
+  surfaceMode?: "workspace" | "grid-pane";
+  /** Only the focused grid pane owns global shortcuts, focus, and thread-scoped inspectors. */
+  isActiveSurface?: boolean;
+  /** Grid-owned title/status/actions rendered in the pane header. */
+  gridHeader?: ReactNode;
+  /** Global grid-header target for the focused pane's workspace controls. */
+  panelControlsPortalTarget?: HTMLElement | null;
+  /** Fixed third-column target for the focused pane's global right-side workspace panels. */
+  rightPanelPortalTarget?: HTMLElement | null;
+}
+
+type ChatViewProps = ChatViewSurfaceProps &
+  (
+    | {
+        environmentId: EnvironmentId;
+        threadId: ThreadId;
+        onDiffPanelOpen?: () => void;
+        reserveTitleBarControlInset?: boolean;
+        forceExpandedMobileComposer?: boolean;
+        threadSyncPhase?: ThreadSyncPhase | null;
+        routeKind: "server";
+        draftId?: never;
+      }
+    | {
+        environmentId: EnvironmentId;
+        threadId: ThreadId;
+        onDiffPanelOpen?: () => void;
+        reserveTitleBarControlInset?: boolean;
+        forceExpandedMobileComposer?: boolean;
+        threadSyncPhase?: never;
+        routeKind: "draft";
+        draftId: DraftId;
+      }
+  );
 
 interface TerminalLaunchContext {
   threadId: ThreadId;
@@ -1171,7 +1187,14 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
+    surfaceMode = "workspace",
+    isActiveSurface = true,
+    gridHeader,
+    panelControlsPortalTarget,
+    rightPanelPortalTarget,
   } = props;
+  const isGridPane = surfaceMode === "grid-pane";
+  const ownsGlobalInteraction = !isGridPane || isActiveSurface;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
@@ -1298,7 +1321,8 @@ function ChatViewContent(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const sharedComposerRef = useComposerHandleContext();
+  const composerRef = isGridPane ? localComposerRef : (sharedComposerRef ?? localComposerRef);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -1324,7 +1348,8 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
-  const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const narrowViewportUsesRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const shouldUsePlanSidebarSheet = !isGridPane && narrowViewportUsesRightPanelSheet;
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -1537,17 +1562,21 @@ function ChatViewContent(props: ChatViewProps) {
     setTimelineAnchor({ threadKey: activeThreadKey, messageId: null });
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
-  const activeRightPanelKind = useRightPanelStore((state) =>
+  const workspaceRightPanelOpen = useRightPanelStore((state) => state.workspaceOpen);
+  const selectedRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
-  const sourceControlOpen = useSourceControlStore((state) => state.isOpen);
+  const activeRightPanelKind = workspaceRightPanelOpen ? selectedRightPanelKind : null;
+  const storedSourceControlOpen = useSourceControlStore((state) => state.isOpen);
+  const sourceControlOpen = ownsGlobalInteraction && storedSourceControlOpen;
   const diffOpen = activeRightPanelKind === "diff";
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
-  const activeRightPanelSurface = useRightPanelStore((state) =>
+  const selectedRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
+  const activeRightPanelSurface = workspaceRightPanelOpen ? selectedRightPanelSurface : null;
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
@@ -1568,12 +1597,26 @@ function ChatViewContent(props: ChatViewProps) {
     [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const rightPanelOpen = rightPanelState.isOpen;
+  const rightPanelOpen = ownsGlobalInteraction && workspaceRightPanelOpen;
   const workspacePanelOpen = sourceControlOpen || rightPanelOpen;
-  const canMaximizeRightPanel = workspacePanelOpen && !shouldUsePlanSidebarSheet;
+  const canMaximizeRightPanel = !isGridPane && workspacePanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = workspacePanelOpen && !shouldUsePlanSidebarSheet;
+
+  useEffect(() => {
+    if (
+      !ownsGlobalInteraction ||
+      !workspaceRightPanelOpen ||
+      !activeThreadRef ||
+      rightPanelState.isOpen
+    ) {
+      return;
+    }
+    // fork: project session grid — visibility is workspace-global while panel
+    // surfaces remain thread-scoped, so the newly focused chat inherits open.
+    useRightPanelStore.getState().show(activeThreadRef);
+  }, [activeThreadRef, ownsGlobalInteraction, rightPanelState.isOpen, workspaceRightPanelOpen]);
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -1884,6 +1927,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
+    if (!ownsGlobalInteraction) return;
     if (!serverThread?.id) return;
     const threadUpdatedAt = Date.parse(serverThread.updatedAt);
     if (Number.isNaN(threadUpdatedAt)) return;
@@ -1897,6 +1941,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeThreadLastVisitedAt,
     markThreadVisited,
+    ownsGlobalInteraction,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.updatedAt,
@@ -3927,6 +3972,7 @@ function ChatViewContent(props: ChatViewProps) {
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
   useEffect(() => {
+    if (!ownsGlobalInteraction) return;
     if (!autoOpenPlanSidebar) return;
     if (!activePlan) return;
     if (planSidebarOpen) return;
@@ -3942,6 +3988,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeLatestTurn?.turnId,
     activeThreadRef,
     autoOpenPlanSidebar,
+    ownsGlobalInteraction,
     planSidebarOpen,
     sidebarProposedPlan?.turnId,
   ]);
@@ -3951,14 +3998,14 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (!ownsGlobalInteraction || !activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, ownsGlobalInteraction, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -4419,7 +4466,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadId, terminalUiState.terminalOpen]);
 
   useEffect(() => {
-    if (!activeThreadKey) return;
+    if (!ownsGlobalInteraction || !activeThreadKey) return;
     const previous = terminalUiOpenByThreadRef.current[activeThreadKey] ?? false;
     const current = Boolean(terminalUiState.terminalOpen);
 
@@ -4438,9 +4485,10 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThreadKey, focusComposer, ownsGlobalInteraction, terminalUiState.terminalOpen]);
 
   useEffect(() => {
+    if (!ownsGlobalInteraction) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
@@ -4584,6 +4632,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
+    ownsGlobalInteraction,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -5807,7 +5856,16 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Empty state: no active thread
   if (!activeThread) {
-    return <NoActiveThreadState />;
+    return isGridPane ? (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <header className="flex min-h-11 shrink-0 items-center gap-1 border-border/70 border-b bg-muted/15 px-2.5 py-1.5">
+          <div className="min-w-0 flex-1">{gridHeader}</div>
+        </header>
+        <NoActiveThreadState />
+      </div>
+    ) : (
+      <NoActiveThreadState />
+    );
   }
 
   const panelToggleControls = (
@@ -5947,7 +6005,47 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {workspacePanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
+      {isGridPane && ownsGlobalInteraction && panelControlsPortalTarget
+        ? createPortal(panelToggleControls, panelControlsPortalTarget)
+        : null}
+      {isGridPane && ownsGlobalInteraction && rightPanelPortalTarget
+        ? createPortal(
+            <>
+              {sourceControlOpen ? (
+                <SourceControlPanelShell mode="inline">
+                  {sourceControlContent}
+                </SourceControlPanelShell>
+              ) : null}
+              {rightPanelOpen && activeThreadRef ? (
+                <RightPanelTabs
+                  mode="inline"
+                  surfaces={rightPanelState.surfaces}
+                  activeSurfaceId={activeRightPanelSurface?.id ?? null}
+                  pendingSurfaceIds={pendingFileSurfaceIds}
+                  previewSessions={activePreviewState.sessions}
+                  terminalLabelsById={activeTerminalLabelsById}
+                  onActivate={activateRightPanelSurface}
+                  onCloseSurface={closeRightPanelSurface}
+                  onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
+                  onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+                  onCloseAllSurfaces={closeAllRightPanelSurfaces}
+                  onCopyFilePath={copyRightPanelFilePath}
+                  onAddBrowser={createBrowserSurface}
+                  onAddTerminal={addTerminalSurface}
+                  onAddDiff={addDiffSurface}
+                  onAddFiles={addFilesSurface}
+                  browserAvailable={isPreviewSupportedInRuntime()}
+                  diffAvailable={isServerThread && isGitRepo}
+                  filesAvailable={activeProject !== null}
+                >
+                  {rightPanelContent}
+                </RightPanelTabs>
+              ) : null}
+            </>,
+            rightPanelPortalTarget,
+          )
+        : null}
+      {!isGridPane && workspacePanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -5956,47 +6054,57 @@ function ChatViewContent(props: ChatViewProps) {
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
         {/* Top bar */}
-        <header
-          data-chat-header
-          className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
-            isElectron
-              ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
-                  reserveTitleBarControlInset &&
-                    !inlineRightPanelOwnsTitleBar &&
-                    "wco:pr-[var(--workspace-native-controls-inset)]",
-                )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
-        >
-          {!workspacePanelOpen ? panelLayoutControls : null}
-          <ChatHeader
-            activeThreadEnvironmentId={activeThread.environmentId}
-            activeThreadId={activeThread.id}
-            {...(routeKind === "draft" && draftId ? { draftId } : {})}
-            activeThreadTitle={activeThread.title}
-            activeProjectName={activeProject?.title}
-            activeProjectCwd={activeProject?.workspaceRoot ?? null}
-            openInCwd={gitCwd}
-            activeProjectScripts={activeProject?.scripts}
-            preferredScriptId={
-              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-            }
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            rightPanelOpen={workspacePanelOpen}
-            gitCwd={gitCwd}
-            agentRuns={agentRunsState.runs /* fork: f3 agent-run visibility */}
-            onJumpToAgentRun={onJumpToAgentRun /* fork: f3 agent-run visibility */}
-            onNewThreadInProject={handleNewThreadInActiveProject}
-            onRunProjectScript={runProjectScript}
-            onAddProjectScript={saveProjectScript}
-            onUpdateProjectScript={updateProjectScript}
-            onDeleteProjectScript={deleteProjectScript}
-          />
-        </header>
+        {isGridPane ? (
+          <header
+            className="flex min-h-11 shrink-0 items-center gap-1 border-border/70 border-b bg-muted/15 px-2.5 py-1.5"
+            data-chat-header
+          >
+            <div className="min-w-0 flex-1">{gridHeader}</div>
+          </header>
+        ) : (
+          <header
+            data-chat-header
+            className={cn(
+              "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+              isElectron
+                ? cn(
+                    "workspace-topbar drag-region relative px-3 sm:px-5",
+                    reserveTitleBarControlInset &&
+                      !inlineRightPanelOwnsTitleBar &&
+                      "wco:pr-[var(--workspace-native-controls-inset)]",
+                  )
+                : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            )}
+          >
+            {!workspacePanelOpen ? panelLayoutControls : null}
+            <ChatHeader
+              activeThreadEnvironmentId={activeThread.environmentId}
+              activeThreadId={activeThread.id}
+              {...(routeKind === "draft" && draftId ? { draftId } : {})}
+              activeThreadTitle={activeThread.title}
+              activeThreadSubtitle={isServerThread ? (activeThread.subtitle ?? null) : null}
+              activeProjectName={activeProject?.title}
+              activeProjectCwd={activeProject?.workspaceRoot ?? null}
+              openInCwd={gitCwd}
+              activeProjectScripts={activeProject?.scripts}
+              preferredScriptId={
+                activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+              }
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              rightPanelOpen={workspacePanelOpen}
+              gitCwd={gitCwd}
+              agentRuns={agentRunsState.runs /* fork: f3 agent-run visibility */}
+              onJumpToAgentRun={onJumpToAgentRun /* fork: f3 agent-run visibility */}
+              onNewThreadInProject={handleNewThreadInActiveProject}
+              onRunProjectScript={runProjectScript}
+              onAddProjectScript={saveProjectScript}
+              onUpdateProjectScript={updateProjectScript}
+              onDeleteProjectScript={deleteProjectScript}
+            />
+          </header>
+        )}
 
         <ThreadErrorBanner
           error={threadError}
@@ -6106,6 +6214,7 @@ function ChatViewContent(props: ChatViewProps) {
                         <DraftHeroHeadline
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
+                          allowProjectChange={!isGridPane}
                         />
                       </div>
                       <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
@@ -6318,32 +6427,37 @@ function ChatViewContent(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {mountedTerminalThreadRefs
+          .filter(
+            ({ key: mountedThreadKey }) =>
+              !isGridPane || (ownsGlobalInteraction && mountedThreadKey === activeThreadKey),
+          )
+          .map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+            <PersistentThreadTerminalDrawer
+              key={mountedThreadKey}
+              threadRef={mountedThreadRef}
+              threadId={mountedThreadRef.threadId}
+              visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+              launchContext={
+                mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
+              }
+              focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              keybindings={keybindings}
+              onAddTerminalContext={addTerminalContextToDraft}
+            />
+          ))}
       </div>
 
-      {!shouldUsePlanSidebarSheet && sourceControlOpen ? (
+      {!isGridPane && !shouldUsePlanSidebarSheet && sourceControlOpen ? (
         <SourceControlPanelShell mode="inline" maximized={rightPanelMaximized}>
           {sourceControlContent}
         </SourceControlPanelShell>
       ) : null}
-      {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
+      {!isGridPane && !shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
@@ -6416,6 +6530,9 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
+  if (props.surfaceMode === "grid-pane") {
+    return <ChatViewContent {...props} />;
+  }
   return (
     <DiffWorkerPoolProvider>
       <ChatViewContent {...props} />

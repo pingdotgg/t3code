@@ -44,6 +44,10 @@ import {
   resolveClaudeEffort,
 } from "../provider/Layers/ClaudeProvider.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
+import {
+  buildThreadSubtitlePrompt,
+  sanitizeThreadSubtitle,
+} from "../threadSubtitles/ThreadSubtitleGeneration.ts"; // fork: generated thread subtitles
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 
@@ -85,7 +89,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadSubtitle",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -115,7 +120,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadSubtitle";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -359,10 +365,24 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
+  const generateThreadSubtitle: TextGeneration.TextGeneration["Service"]["generateThreadSubtitle"] =
+    Effect.fn("ClaudeTextGeneration.generateThreadSubtitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadSubtitlePrompt(input);
+      const generated = yield* runClaudeJson({
+        operation: "generateThreadSubtitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { subtitle: sanitizeThreadSubtitle(generated.subtitle) };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadSubtitle,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

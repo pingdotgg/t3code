@@ -36,6 +36,10 @@ import {
 } from "./TextGenerationUtils.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import {
+  buildThreadSubtitlePrompt,
+  sanitizeThreadSubtitle,
+} from "../threadSubtitles/ThreadSubtitleGeneration.ts"; // fork: generated thread subtitles
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -101,7 +105,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadSubtitle",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -120,7 +125,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadSubtitle",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -162,7 +168,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadSubtitle";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -405,10 +412,24 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadSubtitle: TextGeneration.TextGeneration["Service"]["generateThreadSubtitle"] =
+    Effect.fn("CodexTextGeneration.generateThreadSubtitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadSubtitlePrompt(input);
+      const generated = yield* runCodexJson({
+        operation: "generateThreadSubtitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { subtitle: sanitizeThreadSubtitle(generated.subtitle) };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadSubtitle,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -7,6 +7,7 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import {
   scopeProjectRef,
   scopeThreadRef,
@@ -84,6 +85,7 @@ import {
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useSessionGridFocusStore } from "../sessionGridFocusStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -256,6 +258,7 @@ function SidebarV2ThreadTooltip({
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
 }) {
+  const subtitle = displayThreadSubtitle(thread);
   return (
     <TooltipPopup
       side="right"
@@ -268,6 +271,11 @@ function SidebarV2ThreadTooltip({
         <div className="min-w-0 truncate text-xs leading-none font-medium text-foreground">
           {thread.title}
         </div>
+        {subtitle ? (
+          <div className="-mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
+            {subtitle}
+          </div>
+        ) : null}
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
           {projectTitle ? (
             <div className="flex min-w-0 items-center gap-2">
@@ -452,6 +460,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const isRegeneratingTitle = thread.titleRegeneration != null;
+  const subtitle = displayThreadSubtitle(thread);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
@@ -1037,8 +1046,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+              {subtitle || thread.branch ? (
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate whitespace-nowrap",
+                    subtitle && "text-muted-foreground/85",
+                  )}
+                  title={subtitle ?? thread.branch ?? undefined}
+                >
+                  {subtitle ?? thread.branch}
+                </span>
               ) : (
                 <span className="flex-1" />
               )}
@@ -1283,6 +1300,8 @@ export default function SidebarV2() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const gridFocusedThreadKey = useSessionGridFocusStore((state) => state.focusedThreadKey);
+  const highlightedThreadKey = routeThreadKey ?? gridFocusedThreadKey;
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
@@ -1763,13 +1782,13 @@ export default function SidebarV2() {
     // snoozed thread reached by route (deep link, open before snoozing
     // elsewhere) keeps its row — with highlight and wake affordance — same
     // exception the settled tail's "Show more" makes.
-    if (routeThreadKey === null) return [];
+    if (highlightedThreadKey === null) return [];
     const routeThread = snoozedThreads.find(
       (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === highlightedThreadKey,
     );
     return routeThread === undefined ? [] : [routeThread];
-  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  }, [highlightedThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
     () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
@@ -2894,7 +2913,7 @@ export default function SidebarV2() {
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         isHighlighted={activeSearchResultIndex === index}
-                        isRouteActive={routeThreadKey === threadKey}
+                        isRouteActive={highlightedThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
@@ -2976,7 +2995,7 @@ export default function SidebarV2() {
                         // the wake signal must survive the trip. Still-snoozed
                         // rows resolve to null on their own.
                         wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                        isActive={routeThreadKey === threadKey}
+                        isActive={highlightedThreadKey === threadKey}
                         jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                         currentEnvironmentId={primaryEnvironmentId}
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}

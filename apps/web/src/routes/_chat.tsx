@@ -1,13 +1,16 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
+import { Outlet, createFileRoute, redirect, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { resolveSessionGridProject } from "../components/sessionGrid/sessionGrid.logic";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useSidebarV2Enabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
-import { selectProjectGroupingSettings } from "../logicalProject";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -20,6 +23,7 @@ import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useSourceControlStore } from "../sourceControlStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -34,18 +38,46 @@ function ChatRouteGlobalShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const sidebarV2Enabled = useSidebarV2Enabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projects = useProjects();
+  const projectOrder = useUiStateStore((state) => state.projectOrder);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupCount = useMemo(
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects,
+        projects: projectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
-      }).length,
-    [primaryEnvironmentId, projectGroupingSettings, projects],
+      }),
+    [orderedProjects, primaryEnvironmentId, projectGroupingSettings, projectSortOrder, projects],
   );
+  // fork: project session grid — global new-thread shortcuts inherit a
+  // focused grid project just as they inherit a project from a thread route.
+  const gridProjectKey =
+    useSearch({
+      from: "/_chat/grid",
+      shouldThrow: false,
+      select: (search) => search.project ?? null,
+    }) ?? null;
+  const gridProjectRef = useMemo(() => {
+    const project = resolveSessionGridProject(projectGroups, gridProjectKey);
+    return project ? scopeProjectRef(project.environmentId, project.id) : null;
+  }, [gridProjectKey, projectGroups]);
+  const shortcutProjectRef = gridProjectRef ?? defaultProjectRef;
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -104,10 +136,14 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
+        if (gridProjectRef) {
+          void handleNewThread(gridProjectRef, { navigate: false });
+          return;
+        }
         void startNewThreadFromContext({
           activeDraftThread,
           activeThread: activeThread ?? undefined,
-          defaultProjectRef,
+          defaultProjectRef: shortcutProjectRef,
           handleNewThread,
         });
         return;
@@ -116,17 +152,21 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
+        if (gridProjectRef) {
+          void handleNewThread(gridProjectRef, { navigate: false });
+          return;
+        }
         // Sidebar v2 routes creation through the command palette whenever
         // there is a real choice to make; v1 (and single-project setups)
         // keep the immediate contextual create.
-        if (sidebarV2Enabled && projectGroupCount > 1) {
+        if (gridProjectRef === null && sidebarV2Enabled && projectGroups.length > 1) {
           openCommandPalette({ open: "new-thread-in" });
           return;
         }
         void startNewThreadFromContext({
           activeDraftThread,
           activeThread: activeThread ?? undefined,
-          defaultProjectRef,
+          defaultProjectRef: shortcutProjectRef,
           handleNewThread,
         });
         return;
@@ -186,12 +226,13 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     keybindings,
-    defaultProjectRef,
+    gridProjectRef,
     previewOpen,
-    projectGroupCount,
+    projectGroups.length,
     routeThreadRef,
     selectedThreadKeysSize,
     sidebarV2Enabled,
+    shortcutProjectRef,
     terminalOpen,
   ]);
 

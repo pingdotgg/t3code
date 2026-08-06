@@ -33,6 +33,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  LayoutGridIcon,
   LinkIcon,
   MessageSquareIcon,
   SettingsIcon,
@@ -1391,6 +1392,18 @@ function OpenCommandPaletteDialog(props: {
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
+
+  actionItems.push({
+    // fork: project session grid — the palette mirrors the persistent sidebar entry.
+    kind: "action",
+    value: "action:session-grid",
+    searchTerms: ["session grid", "active threads", "projects", "live chats", "panes"],
+    title: "Open session grid",
+    icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/grid", search: {} });
+    },
+  });
 
   actionItems.push({
     kind: "action",

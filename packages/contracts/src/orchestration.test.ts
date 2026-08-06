@@ -322,6 +322,7 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
       threadId: "thread-1",
       regenerateTitle: true,
       previousTitle: "Previous title",
+      subtitle: "Reviewing reconnect behavior",
       titleRegeneration: {
         requestId: "cmd-title-regenerate",
         startedAt: "2026-01-01T00:00:00.000Z",
@@ -333,6 +334,7 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.previousTitle, "Previous title");
+    assert.strictEqual(parsed.subtitle, "Reviewing reconnect behavior");
     assert.strictEqual(parsed.titleRegeneration?.requestId, "cmd-title-regenerate");
     assert.strictEqual(parsed.modelSelection?.instanceId, "claudeAgent");
   }),

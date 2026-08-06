@@ -7,6 +7,7 @@ import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
@@ -154,7 +155,14 @@ export function buildProjectActionItems(input: {
 
 export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
-  "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
+  | "archivedAt"
+  | "branch"
+  | "createdAt"
+  | "environmentId"
+  | "id"
+  | "projectId"
+  | "subtitle"
+  | "title"
 > & {
   updatedAt: string;
   latestUserMessageAt?: string | null;
@@ -183,8 +191,12 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 
   return visibleThreads.map((thread) => {
     const projectTitle = input.projectTitleById.get(thread.projectId);
+    const subtitle = displayThreadSubtitle(thread);
     const descriptionParts: string[] = [];
 
+    if (subtitle) {
+      descriptionParts.push(subtitle);
+    }
     if (projectTitle) {
       descriptionParts.push(projectTitle);
     }
@@ -205,6 +217,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         value: `thread:${thread.id}`,
         searchTerms: [
           thread.title,
+          subtitle ?? ``,
           projectTitle ?? ``,
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,

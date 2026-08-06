@@ -3,6 +3,7 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
+  type VcsStatusStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -36,6 +37,46 @@ const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
   ),
 );
+
+/** fork: project session grid — expose remote readiness without changing the wire contract.
+ *
+ * Client-only status metadata. The wire stream deliberately sends local Git
+ * state before its slower remote/PR state, so a merged `pr: null` value is not
+ * sufficient to distinguish "not loaded yet" from "loaded, no PR".
+ */
+export type VcsStatusQueryResult = VcsStatusResult & {
+  readonly remoteStatusResolved: boolean;
+};
+
+function sourceControlProviderMatches(
+  left: VcsStatusResult["sourceControlProvider"],
+  right: VcsStatusResult["sourceControlProvider"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.kind === right.kind && left.name === right.name && left.baseUrl === right.baseUrl;
+}
+
+export function applyVcsStatusQueryEvent(
+  current: VcsStatusQueryResult | null,
+  event: VcsStatusStreamEvent,
+): VcsStatusQueryResult {
+  const status = applyGitStatusStreamEvent(current, event);
+  const localStatusStillMatchesRemote =
+    event._tag === "localUpdated" &&
+    current !== null &&
+    current.isRepo === event.local.isRepo &&
+    current.hasPrimaryRemote === event.local.hasPrimaryRemote &&
+    current.isDefaultRef === event.local.isDefaultRef &&
+    current.refName === event.local.refName &&
+    sourceControlProviderMatches(current.sourceControlProvider, event.local.sourceControlProvider);
+  const remoteStatusResolved =
+    event._tag === "remoteUpdated"
+      ? true
+      : event._tag === "snapshot"
+        ? event.remote !== null || !event.local.isRepo
+        : !event.local.isRepo || (localStatusStillMatchesRemote && current.remoteStatusResolved);
+  return { ...status, remoteStatusResolved };
+}
 
 function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
   return (
@@ -236,6 +277,21 @@ export function cachedVcsRefsChanges(
 export function createVcsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
 ) {
+  const statusSubscription = (label: string, idleTtlMs?: number) =>
+    createEnvironmentSubscriptionAtomFamily(runtime, {
+      label,
+      ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
+        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+          Stream.mapAccum(
+            () => null as VcsStatusQueryResult | null,
+            (current, event) => {
+              const next = applyVcsStatusQueryEvent(current, event);
+              return [next, [next]] as const;
+            },
+          ),
+        ),
+    });
   const listRefsByEnvironment = Atom.family((environmentId: EnvironmentId) =>
     Atom.family((inputKey: string) => {
       const input = JSON.parse(inputKey) as VcsListRefsInput;
@@ -270,19 +326,10 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
-        ),
-    }),
+    status: statusSubscription("environment-data:vcs:status"),
+    // fork: project session grid — historical batches must release their
+    // server pollers immediately instead of inheriting the UI cache's 5m TTL.
+    reconciliationStatus: statusSubscription("environment-data:vcs:reconciliation-status", 0),
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
       tag: WS_METHODS.vcsPull,

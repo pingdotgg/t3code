@@ -13,6 +13,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   ApprovalRequestId,
+  CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
@@ -296,6 +297,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const generateThreadSubtitle = vi.fn<TextGenerationShape["generateThreadSubtitle"]>((_) =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadSubtitle",
+          detail: "disabled in test harness",
+        }),
+      ),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -406,6 +415,7 @@ describe("ProviderCommandReactor", () => {
         Layer.mock(TextGeneration, {
           generateBranchName,
           generateThreadTitle,
+          generateThreadSubtitle,
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -498,6 +508,7 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      generateThreadSubtitle,
       runtimeSessions,
       stateDir,
       drain,
@@ -706,6 +717,173 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+  });
+
+  it("generates a current subtitle when a turn starts", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadSubtitle.mockReturnValue(
+      Effect.succeed({ subtitle: "Tracing reconnect state" }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-subtitle"),
+          role: "user",
+          text: "Please trace the stale reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadSubtitle.mock.calls.length === 1);
+    expect(harness.generateThreadSubtitle.mock.calls[0]?.[0]).toMatchObject({
+      missionTitle: "Thread",
+      phase: "working",
+    });
+    expect(harness.generateThreadSubtitle.mock.calls[0]?.[0].context).toContain(
+      "Please trace the stale reconnect state.",
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.subtitle ===
+        "Tracing reconnect state"
+      );
+    });
+  });
+
+  it("clears the previous outcome before generating the next working subtitle", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-seed-previous-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        subtitle: "Reconnect state verified",
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-clear-previous-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-clear-previous-subtitle"),
+          role: "user",
+          text: "Check one more reconnect path.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadSubtitle.mock.calls.length === 1);
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.subtitle === null;
+    });
+  });
+
+  it("replaces the working subtitle with the latest completed outcome", async () => {
+    const harness = await createHarness();
+    const startedAt = "2026-01-01T00:00:00.000Z";
+    const completedAt = "2026-01-01T00:00:02.000Z";
+    harness.generateThreadSubtitle
+      .mockReturnValueOnce(Effect.succeed({ subtitle: "Tracing reconnect state" }))
+      .mockReturnValueOnce(Effect.succeed({ subtitle: "Reconnect state verified" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-completed-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-completed-subtitle"),
+          role: "user",
+          text: "Trace and verify the reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: startedAt,
+      }),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.subtitle === "Tracing reconnect state";
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running-completed-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-subtitle"),
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-ready-completed-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: completedAt,
+        },
+        createdAt: completedAt,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-diff-completed-subtitle"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-subtitle"),
+        completedAt,
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1"),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt: completedAt,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.subtitle === "Reconnect state verified";
+    });
+    expect(harness.generateThreadSubtitle.mock.calls[1]?.[0]).toMatchObject({
+      phase: "completed",
+      missionTitle: "Thread",
+    });
   });
 
   it("regenerates a thread title from the current conversation", async () => {

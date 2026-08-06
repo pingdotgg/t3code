@@ -57,6 +57,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -104,6 +105,7 @@ import {
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
+import { useSessionGridFocusStore } from "../sessionGridFocusStore";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -367,6 +369,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const subtitle = displayThreadSubtitle(thread);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -671,7 +674,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate`}
+        })} relative isolate ${subtitle && renamingThreadKey !== threadKey ? "h-auto min-h-10 py-1" : ""}`}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
@@ -710,21 +713,29 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               onDoubleClick={handleRenameInputClick}
             />
           ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className="min-w-0 flex-1 truncate text-sm"
-                    data-testid={`thread-title-${thread.id}`}
-                  >
-                    {thread.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
-                {thread.title}
-              </TooltipPopup>
-            </Tooltip>
+            <div className="flex min-w-0 flex-1 flex-col justify-center leading-tight">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="min-w-0 truncate text-sm"
+                      data-testid={`thread-title-${thread.id}`}
+                    >
+                      {thread.title}
+                    </span>
+                  }
+                />
+                <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
+                  <div>{thread.title}</div>
+                  {subtitle ? <div className="mt-1 text-muted-foreground">{subtitle}</div> : null}
+                </TooltipPopup>
+              </Tooltip>
+              {subtitle ? (
+                <span className="mt-0.5 truncate text-[11px] text-sidebar-muted-foreground/70">
+                  {subtitle}
+                </span>
+              ) : null}
+            </div>
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -3015,6 +3026,8 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const gridFocusedThreadKey = useSessionGridFocusStore((state) => state.focusedThreadKey);
+  const highlightedThreadKey = routeThreadKey ?? gridFocusedThreadKey;
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -3121,17 +3134,22 @@ export default function Sidebar() {
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
   const activeRouteProjectKey = useMemo(() => {
-    if (!routeThreadKey) {
+    if (!highlightedThreadKey) {
       return null;
     }
-    const activeThread = sidebarThreadByKey.get(routeThreadKey);
+    const activeThread = sidebarThreadByKey.get(highlightedThreadKey);
     if (!activeThread) return null;
     const physicalKey =
       projectPhysicalKeyByScopedRef.get(
         scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId)),
       ) ?? scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId));
     return physicalToLogicalKey.get(physicalKey) ?? physicalKey;
-  }, [routeThreadKey, sidebarThreadByKey, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  }, [
+    highlightedThreadKey,
+    sidebarThreadByKey,
+    physicalToLogicalKey,
+    projectPhysicalKeyByScopedRef,
+  ]);
 
   // Group threads by logical project key so all threads from grouped projects
   // are displayed together.
@@ -3617,7 +3635,7 @@ export default function Sidebar() {
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
-            routeThreadKey={routeThreadKey}
+            routeThreadKey={highlightedThreadKey}
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}

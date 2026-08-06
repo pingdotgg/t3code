@@ -45,6 +45,7 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { formatThreadSubtitleContext } from "../../threadSubtitles/threadSubtitleContext.ts"; // fork: generated thread subtitles
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -53,6 +54,7 @@ type ProviderIntentEvent = Extract<
   {
     type:
       | "thread.meta-updated"
+      | "thread.turn-diff-completed"
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
@@ -898,6 +900,93 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // fork: generated thread subtitles — one best-effort status at turn start
+  // and one at completion. A post-generation freshness check prevents a slow
+  // text model from painting an older turn over the current one.
+  const maybeGenerateThreadSubtitle = Effect.fn("maybeGenerateThreadSubtitle")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly phase: "working" | "completed";
+    readonly sourceMessageId?: string;
+    readonly sourceTurnId?: TurnId;
+  }) {
+    yield* Effect.gen(function* () {
+      const thread = yield* resolveThread(input.threadId);
+      if (!thread) return;
+      const context = formatThreadSubtitleContext(thread);
+      if (!context) return;
+
+      const project = yield* resolveProject(thread.projectId);
+      const cwd =
+        resolveThreadWorkspaceCwd({
+          thread,
+          projects: project ? [project] : [],
+        }) ?? process.cwd();
+      const { textGenerationModelSelection: modelSelection } =
+        yield* serverSettingsService.getSettings;
+      const generated = yield* textGeneration.generateThreadSubtitle({
+        cwd,
+        missionTitle: thread.title,
+        context,
+        phase: input.phase,
+        modelSelection,
+      });
+      const subtitle = generated.subtitle.trim();
+      if (
+        !subtitle ||
+        subtitle.localeCompare(thread.title, undefined, { sensitivity: "accent" }) === 0
+      ) {
+        return;
+      }
+
+      const latestThread = yield* resolveThread(input.threadId);
+      if (!latestThread || latestThread.archivedAt !== null || latestThread.deletedAt !== null)
+        return;
+      const latestTurn = latestThread.latestTurn;
+      if (input.phase === "working") {
+        const latestUserMessage = latestThread.messages.findLast(
+          (message) => message.role === "user",
+        );
+        if (!latestUserMessage || latestUserMessage.id !== input.sourceMessageId) {
+          return;
+        }
+        const sourceMessageAt = Date.parse(latestUserMessage.createdAt);
+        const adoptedByRunningTurn =
+          latestTurn?.state === "running" &&
+          !Number.isNaN(sourceMessageAt) &&
+          Date.parse(latestTurn.requestedAt) >= sourceMessageAt;
+        const stillQueued =
+          !Number.isNaN(sourceMessageAt) &&
+          (latestTurn === null ||
+            [latestTurn.requestedAt, latestTurn.startedAt, latestTurn.completedAt].every(
+              (candidate) => candidate === null || Date.parse(candidate) < sourceMessageAt,
+            ));
+        if (!adoptedByRunningTurn && !stillQueued) return;
+      } else if (
+        !latestTurn ||
+        latestTurn.turnId !== input.sourceTurnId ||
+        latestTurn.state === "running"
+      ) {
+        return;
+      }
+      if (latestThread.subtitle === subtitle) return;
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId(`thread-subtitle-${input.phase}`),
+        threadId: input.threadId,
+        subtitle,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to generate thread subtitle", {
+          threadId: input.threadId,
+          phase: input.phase,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+  });
+
   const regenerateThreadTitle = Effect.fn("regenerateThreadTitle")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>,
     requestId: CommandId,
@@ -1094,6 +1183,18 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // The previous subtitle describes the last completed turn. Clear it as
+    // soon as new work is accepted so a failed/slow writer can never present
+    // an old outcome as the current activity.
+    if (thread.subtitle != null) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("thread-subtitle-clear"),
+        threadId: event.payload.threadId,
+        subtitle: null,
+      });
+    }
+
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
@@ -1179,9 +1280,17 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap(() =>
+        maybeGenerateThreadSubtitle({
+          threadId: event.payload.threadId,
+          phase: "working",
+          sourceMessageId: message.id,
+        }),
+      ),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1341,6 +1450,13 @@ const make = Effect.gen(function* () {
       case "thread.meta-updated":
         yield* threadTitleRegenerationWorker.enqueue(event);
         return;
+      case "thread.turn-diff-completed":
+        yield* maybeGenerateThreadSubtitle({
+          threadId: event.payload.threadId,
+          phase: "completed",
+          sourceTurnId: event.payload.turnId,
+        }).pipe(Effect.forkScoped);
+        return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
         if (!thread?.session || thread.session.status === "stopped") {
@@ -1402,6 +1518,7 @@ const make = Effect.gen(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
+        event.type === "thread.turn-diff-completed" ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||

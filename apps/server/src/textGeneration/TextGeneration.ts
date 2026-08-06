@@ -73,6 +73,19 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ThreadSubtitleGenerationInput {
+  cwd: string;
+  missionTitle: string;
+  context: string;
+  phase: "working" | "completed";
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadSubtitleGenerationResult {
+  subtitle: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -80,6 +93,9 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateThreadSubtitle(
+    input: ThreadSubtitleGenerationInput,
+  ): Promise<ThreadSubtitleGenerationResult>;
 }
 
 /**
@@ -113,6 +129,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Generate a concise, current activity subtitle for a thread. */
+    readonly generateThreadSubtitle: (
+      input: ThreadSubtitleGenerationInput,
+    ) => Effect.Effect<ThreadSubtitleGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -123,7 +144,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateThreadSubtitle";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -162,6 +184,10 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    generateThreadSubtitle: (input) =>
+      resolveInstance(registry, "generateThreadSubtitle", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateThreadSubtitle(input)),
       ),
   });
 

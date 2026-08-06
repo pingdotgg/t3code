@@ -9,6 +9,7 @@ import {
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { threadSubtitleMatches } from "@t3tools/client-runtime/state/thread-subtitle";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -368,6 +369,7 @@ export function buildThreadListV2Items(input: {
     if (
       query.length > 0 &&
       !thread.title.toLocaleLowerCase().includes(query) &&
+      !threadSubtitleMatches(thread, query) &&
       input.matchedThreadKeys?.has(
         threadSearchMatchKey({
           environmentId: thread.environmentId,

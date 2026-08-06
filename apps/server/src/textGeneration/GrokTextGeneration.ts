@@ -29,6 +29,10 @@ import {
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../provider/acp/GrokAcpSupport.ts";
+import {
+  buildThreadSubtitlePrompt,
+  sanitizeThreadSubtitle,
+} from "../threadSubtitles/ThreadSubtitleGeneration.ts"; // fork: generated thread subtitles
 
 const GROK_TIMEOUT_MS = 180_000;
 
@@ -52,7 +56,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadSubtitle";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -251,10 +256,24 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadSubtitle: TextGeneration.TextGeneration["Service"]["generateThreadSubtitle"] =
+    Effect.fn("GrokTextGeneration.generateThreadSubtitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadSubtitlePrompt(input);
+      const generated = yield* runGrokJson({
+        operation: "generateThreadSubtitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { subtitle: sanitizeThreadSubtitle(generated.subtitle) };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadSubtitle,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

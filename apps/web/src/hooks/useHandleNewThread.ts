@@ -51,6 +51,8 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        /** Create or reuse the draft without leaving the current workspace surface. */
+        navigate?: boolean;
       },
     ): Promise<void> => {
       const {
@@ -201,6 +203,9 @@ export function useNewThreadHandler() {
           ) {
             return;
           }
+          if (options?.navigate === false) {
+            return;
+          }
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: reusableStoredDraftThread.draftId },
@@ -271,6 +276,9 @@ export function useNewThreadHandler() {
           setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
         }
 
+        if (options?.navigate === false) {
+          return;
+        }
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },

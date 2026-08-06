@@ -3,6 +3,8 @@ import {
   WS_METHODS,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsStatusLocalResult,
+  type VcsStatusRemoteResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -29,6 +31,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 
 import {
+  applyVcsStatusQueryEvent,
   commitVcsRefsRefresh,
   createVcsEnvironmentAtoms,
   makeCachedVcsRefsChanges,
@@ -81,6 +84,108 @@ const LIVE_REFS: VcsListRefsResult = {
     },
   ],
 };
+
+const LOCAL_STATUS = {
+  isRepo: true,
+  sourceControlProvider: {
+    kind: "github",
+    name: "GitHub",
+    baseUrl: "https://github.com",
+  },
+  hasPrimaryRemote: true,
+  isDefaultRef: false,
+  refName: "feature/grid",
+  hasWorkingTreeChanges: false,
+  workingTree: { files: [], insertions: 0, deletions: 0 },
+} satisfies VcsStatusLocalResult;
+
+const REMOTE_STATUS = {
+  hasUpstream: true,
+  aheadCount: 1,
+  behindCount: 0,
+  aheadOfDefaultCount: 1,
+  pr: null,
+} satisfies VcsStatusRemoteResult;
+
+describe("applyVcsStatusQueryEvent", () => {
+  it("distinguishes the local-first snapshot from a resolved no-PR result", () => {
+    const localOnly = applyVcsStatusQueryEvent(null, {
+      _tag: "snapshot",
+      local: LOCAL_STATUS,
+      remote: null,
+    });
+    expect(localOnly.pr).toBeNull();
+    expect(localOnly.remoteStatusResolved).toBe(false);
+
+    const resolved = applyVcsStatusQueryEvent(localOnly, {
+      _tag: "remoteUpdated",
+      remote: REMOTE_STATUS,
+    });
+    expect(resolved.pr).toBeNull();
+    expect(resolved.remoteStatusResolved).toBe(true);
+  });
+
+  it("resolves immediately when the local snapshot proves there is no repository", () => {
+    const status = applyVcsStatusQueryEvent(null, {
+      _tag: "snapshot",
+      local: { ...LOCAL_STATUS, isRepo: false, refName: null },
+      remote: null,
+    });
+    expect(status.remoteStatusResolved).toBe(true);
+  });
+
+  it("invalidates remote readiness when the checkout changes branch", () => {
+    const resolved = applyVcsStatusQueryEvent(null, {
+      _tag: "snapshot",
+      local: LOCAL_STATUS,
+      remote: REMOTE_STATUS,
+    });
+    const changedBranch = applyVcsStatusQueryEvent(resolved, {
+      _tag: "localUpdated",
+      local: { ...LOCAL_STATUS, refName: "feature/other" },
+    });
+    expect(changedBranch.remoteStatusResolved).toBe(false);
+  });
+
+  it("invalidates remote readiness when default-branch or provider identity changes", () => {
+    const resolved = applyVcsStatusQueryEvent(null, {
+      _tag: "snapshot",
+      local: LOCAL_STATUS,
+      remote: REMOTE_STATUS,
+    });
+    const changedScopes: ReadonlyArray<VcsStatusLocalResult> = [
+      { ...LOCAL_STATUS, isDefaultRef: true },
+      {
+        ...LOCAL_STATUS,
+        sourceControlProvider: {
+          ...LOCAL_STATUS.sourceControlProvider,
+          baseUrl: "https://github.example.test",
+        },
+      },
+    ];
+
+    for (const local of changedScopes) {
+      const changed = applyVcsStatusQueryEvent(resolved, {
+        _tag: "localUpdated",
+        local,
+      });
+      expect(changed.remoteStatusResolved).toBe(false);
+    }
+  });
+
+  it("preserves remote readiness for working-tree-only local updates", () => {
+    const resolved = applyVcsStatusQueryEvent(null, {
+      _tag: "snapshot",
+      local: LOCAL_STATUS,
+      remote: REMOTE_STATUS,
+    });
+    const changed = applyVcsStatusQueryEvent(resolved, {
+      _tag: "localUpdated",
+      local: { ...LOCAL_STATUS, hasWorkingTreeChanges: true },
+    });
+    expect(changed.remoteStatusResolved).toBe(true);
+  });
+});
 
 function session(client: WsRpcProtocolClient): RpcSession {
   return {

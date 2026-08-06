@@ -143,4 +143,24 @@ describe("buildArchivedThreadGroups", () => {
 
     expect(result).toEqual([]);
   });
+
+  it("matches archived threads by their generated subtitle", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const thread = makeThread({
+      id: ThreadId.make("thread-subtitle"),
+      projectId: project.id,
+      title: "Unrelated title",
+      subtitle: "Reconnect recovery verified",
+    });
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([project], [thread])],
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery: "recovery verified",
+      sortOrder: "newest",
+    });
+
+    expect(result[0]?.threads.map((candidate) => candidate.id)).toEqual(["thread-subtitle"]);
+  });
 });

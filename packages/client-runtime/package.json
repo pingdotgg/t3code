@@ -143,6 +143,10 @@
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
     },
+    "./state/thread-subtitle": {
+      "types": "./src/state/threadSubtitle.ts",
+      "default": "./src/state/threadSubtitle.ts"
+    },
     "./state/thread-search": {
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"

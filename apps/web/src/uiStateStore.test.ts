@@ -13,6 +13,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSessionGridThreadOrder,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -23,12 +24,30 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    sessionGridThreadOrderByProjectKey: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
 }
 
 describe("uiStateStore pure functions", () => {
+  it("keeps a stable per-project session grid order", () => {
+    const initialState = makeUiState();
+    const ordered = setSessionGridThreadOrder(initialState, "project-a", [
+      "env:thread-b",
+      "env:thread-a",
+      "env:thread-b",
+      "",
+    ]);
+
+    expect(ordered.sessionGridThreadOrderByProjectKey).toEqual({
+      "project-a": ["env:thread-b", "env:thread-a"],
+    });
+    expect(setSessionGridThreadOrder(ordered, "project-a", ["env:thread-b", "env:thread-a"])).toBe(
+      ordered,
+    );
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -166,6 +185,9 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      sessionGridThreadOrderByProjectKey: {
+        "project-a": ["env:thread-b", "", "env:thread-a", "env:thread-b"],
+      },
     });
 
     expect(parsed).toEqual({
@@ -182,6 +204,9 @@ describe("parsePersistedState", () => {
           "turn-1": false,
           "turn-2": true,
         },
+      },
+      sessionGridThreadOrderByProjectKey: {
+        "project-a": ["env:thread-b", "env:thread-a"],
       },
     });
   });
@@ -280,6 +305,9 @@ describe("uiStateStore persistence", () => {
         },
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      sessionGridThreadOrderByProjectKey: {
+        "project-a": ["env:thread-b", "env:thread-a"],
+      },
     });
 
     persistState(state);
@@ -302,6 +330,9 @@ describe("uiStateStore persistence", () => {
           "turn-1": false,
           "turn-2": true,
         },
+      },
+      sessionGridThreadOrderByProjectKey: {
+        "project-a": ["env:thread-b", "env:thread-a"],
       },
     });
     expect(parsePersistedState(persisted)).toEqual({

@@ -27,6 +27,7 @@ export interface PersistedUiState {
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpansionVersion?: typeof THREAD_CHANGED_FILES_EXPANSION_VERSION;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  sessionGridThreadOrderByProjectKey?: Record<string, string[]>; // fork: project session grid
 }
 
 export interface UiProjectState {
@@ -37,6 +38,7 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  sessionGridThreadOrderByProjectKey: Record<string, string[]>; // fork: project session grid
 }
 
 export interface UiEndpointState {
@@ -50,6 +52,7 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  sessionGridThreadOrderByProjectKey: {}, // fork: project session grid
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -98,6 +101,20 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+// fork: project session grid
+function sanitizeStringArrayRecord(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entries]) => {
+      if (key.length === 0 || !Array.isArray(entries)) return [];
+      const sanitized = sanitizeStringArray(entries);
+      return sanitized.length > 0 ? [[key, sanitized] as const] : [];
+    }),
+  );
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -130,6 +147,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
+    sessionGridThreadOrderByProjectKey: sanitizeStringArrayRecord(
+      parsed.sessionGridThreadOrderByProjectKey,
+    ), // fork: project session grid
     defaultAdvertisedEndpointKey:
       typeof parsed.defaultAdvertisedEndpointKey === "string" &&
       parsed.defaultAdvertisedEndpointKey.length > 0
@@ -207,6 +227,7 @@ export function persistState(state: UiState): void {
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+        sessionGridThreadOrderByProjectKey: state.sessionGridThreadOrderByProjectKey, // fork: project session grid
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -304,6 +325,30 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+// fork: project session grid
+export function setSessionGridThreadOrder(
+  state: UiState,
+  projectKey: string,
+  threadKeys: readonly string[],
+): UiState {
+  if (projectKey.length === 0) return state;
+  const nextOrder = sanitizeStringArray(threadKeys);
+  const previousOrder = state.sessionGridThreadOrderByProjectKey[projectKey] ?? [];
+  if (
+    previousOrder.length === nextOrder.length &&
+    previousOrder.every((threadKey, index) => threadKey === nextOrder[index])
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    sessionGridThreadOrderByProjectKey: {
+      ...state.sessionGridThreadOrderByProjectKey,
+      [projectKey]: nextOrder,
+    },
+  };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -386,6 +431,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setSessionGridThreadOrder: (projectKey: string, threadKeys: readonly string[]) => void; // fork: project session grid
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -404,6 +450,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  // fork: project session grid
+  setSessionGridThreadOrder: (projectKey, threadKeys) =>
+    set((state) => setSessionGridThreadOrder(state, projectKey, threadKeys)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

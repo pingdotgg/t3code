@@ -26,6 +26,10 @@ import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
 } from "../provider/acp/CursorAcpSupport.ts";
+import {
+  buildThreadSubtitlePrompt,
+  sanitizeThreadSubtitle,
+} from "../threadSubtitles/ThreadSubtitleGeneration.ts"; // fork: generated thread subtitles
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
@@ -54,7 +58,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadSubtitle";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -259,10 +264,24 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadSubtitle: TextGeneration.TextGeneration["Service"]["generateThreadSubtitle"] =
+    Effect.fn("CursorTextGeneration.generateThreadSubtitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadSubtitlePrompt(input);
+      const generated = yield* runCursorJson({
+        operation: "generateThreadSubtitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { subtitle: sanitizeThreadSubtitle(generated.subtitle) };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadSubtitle,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -7,6 +7,8 @@
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Remote access](./user/remote-access.md)
 - [Keeping app and server in sync](./user/updating.md)
+- [Session grid](./user/session-grid.md)
+- [Thread subtitles](./user/thread-subtitles.md)
 - [Source control integrations](./user/source-control.md)
 - [Background service (Linux)](./user/background-service.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)

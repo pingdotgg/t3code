@@ -6,6 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { displayThreadSubtitle } from "@t3tools/client-runtime/state/thread-subtitle";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -28,6 +29,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
+  activeThreadSubtitle?: string | null;
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   openInCwd: string | null;
@@ -67,6 +69,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
+  activeThreadSubtitle,
   activeProjectName,
   activeProjectCwd,
   openInCwd,
@@ -93,6 +96,10 @@ export const ChatHeader = memo(function ChatHeader({
     activeProjectName,
     activeThreadEnvironmentId,
     primaryEnvironmentId,
+  });
+  const subtitle = displayThreadSubtitle({
+    title: activeThreadTitle,
+    subtitle: activeThreadSubtitle,
   });
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
@@ -130,15 +137,25 @@ export const ChatHeader = memo(function ChatHeader({
         <Tooltip>
           <TooltipTrigger
             render={
-              <h2
-                aria-label={activeThreadTitle}
-                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+              <div
+                aria-label={subtitle ? `${activeThreadTitle}, ${subtitle}` : activeThreadTitle}
+                className="flex min-w-0 flex-1 flex-col justify-center overflow-hidden"
               >
-                {activeThreadTitle}
-              </h2>
+                <h2 className="truncate text-sm leading-4 font-medium text-foreground">
+                  {activeThreadTitle}
+                </h2>
+                {subtitle ? (
+                  <div className="truncate text-[11px] leading-3.5 text-muted-foreground/75">
+                    {subtitle}
+                  </div>
+                ) : null}
+              </div>
             }
           />
-          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+          <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
+            <div>{activeThreadTitle}</div>
+            {subtitle ? <div className="mt-1 text-muted-foreground">{subtitle}</div> : null}
+          </TooltipPopup>
         </Tooltip>
       </div>
       <div

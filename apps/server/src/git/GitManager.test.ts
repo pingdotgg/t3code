@@ -292,6 +292,10 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateThreadSubtitle: () =>
+      Effect.succeed({
+        subtitle: "Updating workflow",
+      }),
     ...overrides,
   };
 
@@ -335,6 +339,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateThreadSubtitle: (input) =>
+      implementation.generateThreadSubtitle(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateThreadSubtitle",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),
