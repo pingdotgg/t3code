@@ -454,8 +454,14 @@ function rateLimitWindow(
 
 /**
  * Normalizes a Codex rate-limit snapshot onto the canonical payload. Codex
- * reports two windows at once and signals exhaustion out of band, via
- * `rateLimitReachedType`, rather than as a status on the windows themselves.
+ * reports two windows at once and signals exhaustion out of band, through
+ * `rateLimitReachedType` and `spendControlReached`, rather than as a status on
+ * the windows themselves.
+ *
+ * These notifications are sparse: an omitted field means "unknown", not
+ * "recovered" — the generated schema says as much on `spendControlReached`.
+ * So a status is claimed only on positive evidence of exhaustion, and left
+ * absent otherwise rather than asserting `allowed` the snapshot never stated.
  */
 function rateLimitsPayloadFromNotification(
   snapshot: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitSnapshot,
@@ -464,9 +470,10 @@ function rateLimitsPayloadFromNotification(
     rateLimitWindow("primary", snapshot.primary ?? null),
     rateLimitWindow("secondary", snapshot.secondary ?? null),
   ].filter((window) => window !== undefined);
+  const exhausted = snapshot.rateLimitReachedType != null || snapshot.spendControlReached === true;
 
   return {
-    status: snapshot.rateLimitReachedType != null ? "rejected" : "allowed",
+    ...(exhausted ? { status: "rejected" as const } : {}),
     windows,
   };
 }

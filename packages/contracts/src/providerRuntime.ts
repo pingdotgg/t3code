@@ -701,7 +701,9 @@ export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
 /**
  * Whether the account may currently send work. `warning` means the provider
- * accepted this turn but flagged the window as close to exhausted.
+ * accepted this turn but flagged the window as close to exhausted. Absent
+ * means the update did not report one — providers send sparse snapshots, and
+ * silence is not recovery.
  */
 const RateLimitStatus = Schema.Literals(["allowed", "warning", "rejected"]);
 export type RateLimitStatus = typeof RateLimitStatus.Type;
@@ -725,7 +727,11 @@ export type RateLimitWindow = typeof RateLimitWindow.Type;
 
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
   status: Schema.optional(RateLimitStatus),
-  /** Empty when the provider reported a status but no usage figures. */
+  /**
+   * The windows this update reported, empty when it carried none. Updates are
+   * sparse, so a window missing here is unchanged rather than cleared — merge
+   * by `kind` instead of replacing wholesale.
+   */
   windows: Schema.Array(RateLimitWindow),
 });
 export type AccountRateLimitsUpdatedPayload = typeof AccountRateLimitsUpdatedPayload.Type;
