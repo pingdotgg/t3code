@@ -389,17 +389,7 @@ import {
   }
 
   .download-stage-art--latest {
-    background:
-      radial-gradient(circle at 50% 25%, rgba(255, 255, 255, 0.055), transparent 35%),
-      linear-gradient(180deg, #030304, #090a0d);
-  }
-
-  .download-stage-art--latest::after {
-    position: absolute;
-    inset: -35% 12%;
-    background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.04), transparent 70%);
-    content: "";
-    transform: rotate(-8deg);
+    background: #050506;
   }
 
   .download-stage-art--nightly {
@@ -758,13 +748,13 @@ import {
   .releases-link {
     margin-top: 3rem;
     font-size: 0.875rem;
-    color: var(--fg-dim);
+    color: rgba(255, 255, 255, 0.68);
     opacity: 0;
     animation: fade-in 1s ease-out 0.35s forwards;
   }
 
   .releases-link a {
-    color: var(--fg-muted);
+    color: rgba(255, 255, 255, 0.84);
     text-decoration: underline;
     text-decoration-color: rgba(161, 161, 170, 0.4);
     text-underline-offset: 3px;
