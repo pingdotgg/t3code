@@ -603,13 +603,20 @@ export function openCode2IsCancelledPostSettleWake(event: any): boolean {
   );
 }
 
-export function openCode2EventEndsExecution(event: { readonly type: string }): boolean {
+export function openCode2EventEndsExecution(event: {
+  readonly type: string;
+  readonly data?: unknown;
+}): boolean {
   const type = normalizeOpenCode2WireType(event.type);
-  return (
-    type === "session.execution.succeeded" ||
-    type === "session.execution.failed" ||
-    type === "session.idle"
-  );
+  if (type === "session.execution.failed" || type === "session.idle") {
+    return true;
+  }
+  if (type !== "session.execution.succeeded") {
+    return false;
+  }
+  // session.step.ended / session.next.step.ended alias to succeeded. Intermediate
+  // tool-call steps must not clear activeExecution or settle wakes.
+  return openCode2StepFinishSettlesTurn(openCode2WireData(event).finish);
 }
 
 /**

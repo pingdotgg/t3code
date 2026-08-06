@@ -408,6 +408,22 @@ describe("OpenCode 2 post-settle wake classification", () => {
         v2Event({ type: "session.next.step.started", data: { sessionID: "ses_root" } }),
       ),
     );
+    assert.isFalse(
+      openCode2EventEndsExecution(
+        v2Event({
+          type: "session.next.step.ended",
+          data: { sessionID: "ses_root", finish: "tool-calls" },
+        }),
+      ),
+    );
+    assert.isFalse(
+      openCode2EventEndsExecution(
+        v2Event({
+          type: "session.step.ended",
+          data: { sessionID: "ses_root", finish: "tool_calls" },
+        }),
+      ),
+    );
     for (const type of [
       "session.next.step.ended",
       "session.next.step.failed",
@@ -417,6 +433,14 @@ describe("OpenCode 2 post-settle wake classification", () => {
         openCode2EventEndsExecution(v2Event({ type, data: { sessionID: "ses_root" } })),
       );
     }
+    assert.isTrue(
+      openCode2EventEndsExecution(
+        v2Event({
+          type: "session.next.step.ended",
+          data: { sessionID: "ses_root", finish: "stop" },
+        }),
+      ),
+    );
   });
 });
 

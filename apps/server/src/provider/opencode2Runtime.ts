@@ -460,11 +460,18 @@ export const make = Effect.gen(function* () {
         platform: hostPlatform === "win32" ? "win32" : "posix",
       });
       const startupOutputRef = yield* Ref.make<{
+        readonly lastStream: "stdout" | "stderr" | null;
         readonly output: string | null;
         readonly password: string | null;
         readonly url: string | null;
         readonly failureCategory: OpenCode2RuntimeErrorCategory | null;
-      }>({ output: "", password: null, url: null, failureCategory: null });
+      }>({
+        failureCategory: null,
+        lastStream: null,
+        output: "",
+        password: null,
+        url: null,
+      });
       const readyDeferred = yield* Deferred.make<
         OpenCode2ServerCredentials,
         OpenCode2RuntimeError
@@ -474,11 +481,18 @@ export const make = Effect.gen(function* () {
       // separate lines (and can land in separate chunks); retain each fact on
       // the ref so a rolling buffer cannot drop them. Ready when both facts are
       // known. Password may be the empty string after OPENCODE2_PASSWORD_GRACE
-      // when the binary never prints one (beta lildax).
-      const absorb = (chunk: string) =>
+      // when the binary never prints one (beta lildax). stdout and stderr share
+      // the buffer, so a stream switch inserts a newline boundary when the prior
+      // chunk did not end one; otherwise `(?:^|\n)` misses a mid-chunk banner.
+      const absorb = (stream: "stdout" | "stderr") => (chunk: string) =>
         Ref.modify(startupOutputRef, (previous) => {
           if (previous.output === null) return [null, previous] as const;
-          const combined = `${previous.output}${chunk}`;
+          const needsBoundary =
+            previous.output.length > 0 &&
+            !previous.output.endsWith("\n") &&
+            previous.lastStream !== null &&
+            previous.lastStream !== stream;
+          const combined = `${previous.output}${needsBoundary ? "\n" : ""}${chunk}`;
           const url =
             previous.url ??
             combined.match(/(?:^|\n)server listening on\s+(https?:\/\/\S+)/)?.[1] ??
@@ -491,11 +505,12 @@ export const make = Effect.gen(function* () {
           return [
             ready,
             {
+              failureCategory:
+                category === "server-spawn-failed" ? previous.failureCategory : category,
+              lastStream: stream,
               output: ready === null ? output : null,
               password,
               url,
-              failureCategory:
-                category === "server-spawn-failed" ? previous.failureCategory : category,
             },
           ] as const;
         }).pipe(
@@ -551,14 +566,14 @@ export const make = Effect.gen(function* () {
 
       const stdoutFiber = yield* child.stdout.pipe(
         Stream.decodeText(),
-        Stream.runForEach(absorb),
+        Stream.runForEach(absorb("stdout")),
         Effect.ignore,
         Effect.forkIn(processScope),
       );
       // 2.x has printed the banner to stderr across builds, so watch both.
       const stderrFiber = yield* child.stderr.pipe(
         Stream.decodeText(),
-        Stream.runForEach(absorb),
+        Stream.runForEach(absorb("stderr")),
         Effect.ignore,
         Effect.forkIn(processScope),
       );

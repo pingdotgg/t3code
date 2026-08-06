@@ -47,9 +47,15 @@ export function openCode2HostDataHome(environment: NodeJS.ProcessEnv = process.e
   );
 }
 
+function sqlQuoteLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 /**
  * Copy host auth files and seed a private DB copy that retains credentials but
  * drops host sessions. Safe to call repeatedly: existing managed DB is kept.
+ * Auth files and credential rows that disappear on the host are removed from
+ * the managed tree so logout revokes authority for the isolated instance too.
  *
  * @internal exported for tests
  */
@@ -64,7 +70,14 @@ export function seedOpenCode2ManagedDataHome(
   for (const name of OPENCODE2_AUTH_FILES) {
     const source = NodePath.join(hostOpenCode, name);
     const target = NodePath.join(managedOpenCode, name);
-    if (!NodeFS.existsSync(source)) continue;
+    if (!NodeFS.existsSync(source)) {
+      try {
+        if (NodeFS.existsSync(target)) NodeFS.unlinkSync(target);
+      } catch {
+        // Best-effort revoke: a locked managed auth file should not block spawn.
+      }
+      continue;
+    }
     try {
       NodeFS.copyFileSync(source, target);
     } catch {
@@ -78,9 +91,15 @@ export function seedOpenCode2ManagedDataHome(
 
   try {
     if (!NodeFS.existsSync(managedDb)) {
-      // First managed spawn: copy host DB, then prune sessions so we keep
-      // credentials without replaying host chats.
-      NodeFS.copyFileSync(hostDb, managedDb);
+      // First managed spawn: take a transactionally consistent host snapshot
+      // (VACUUM INTO, not a live main-db file copy without WAL companions),
+      // then prune sessions so we keep credentials without replaying host chats.
+      const hostSnapshot = new NodeSqlite.DatabaseSync(hostDb, { readOnly: true });
+      try {
+        hostSnapshot.exec(`VACUUM INTO ${sqlQuoteLiteral(managedDb)}`);
+      } finally {
+        hostSnapshot.close();
+      }
       const db = new NodeSqlite.DatabaseSync(managedDb);
       try {
         for (const table of OPENCODE2_SESSION_TABLES) {
@@ -102,23 +121,35 @@ export function seedOpenCode2ManagedDataHome(
     }
 
     // Subsequent spawns: refresh credential rows from the host DB so new API
-    // keys / oauth tokens land without wiping managed sessions.
+    // keys / oauth tokens land without wiping managed sessions. Empty host
+    // rows clear managed credentials so host logout revokes them.
     const host = new NodeSqlite.DatabaseSync(hostDb, { readOnly: true });
     const managed = new NodeSqlite.DatabaseSync(managedDb);
     try {
       const rows = host.prepare("SELECT * FROM credential").all() as Array<
         Record<string, NodeSqlite.SQLInputValue>
       >;
-      if (rows.length === 0) return;
-      managed.exec("DELETE FROM credential");
-      const columns = Object.keys(rows[0] ?? {});
-      if (columns.length === 0) return;
-      const placeholders = columns.map(() => "?").join(", ");
-      const insert = managed.prepare(
-        `INSERT INTO credential (${columns.join(", ")}) VALUES (${placeholders})`,
-      );
-      for (const row of rows) {
-        insert.run(...columns.map((column) => row[column] ?? null));
+      const columns = rows.length > 0 ? Object.keys(rows[0] ?? {}) : [];
+      managed.exec("BEGIN IMMEDIATE");
+      try {
+        managed.exec("DELETE FROM credential");
+        if (rows.length > 0 && columns.length > 0) {
+          const placeholders = columns.map(() => "?").join(", ");
+          const insert = managed.prepare(
+            `INSERT INTO credential (${columns.join(", ")}) VALUES (${placeholders})`,
+          );
+          for (const row of rows) {
+            insert.run(...columns.map((column) => row[column] ?? null));
+          }
+        }
+        managed.exec("COMMIT");
+      } catch (error) {
+        try {
+          managed.exec("ROLLBACK");
+        } catch {
+          // Connection may already be aborted.
+        }
+        throw error;
       }
     } finally {
       host.close();
