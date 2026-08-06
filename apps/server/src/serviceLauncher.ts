@@ -24,6 +24,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
@@ -257,6 +258,9 @@ async function terminateChild(
   }
 }
 
+const stopMarkerPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
@@ -315,6 +319,15 @@ export class Launcher {
     this.#stopping = true;
     this.#clearTimer();
     this.#enqueue(async () => {
+      // An explicit stop is the service going away, not an update handoff.
+      // The marker lets the child's shutdown release the managed tunnel even
+      // while an update is recorded as pending; the next launcher start
+      // clears it. Written before the child is signalled so the child sees
+      // it during teardown. Best-effort: if the write fails the child errs
+      // toward keeping the tunnel, and the next link or unlink reconciles it.
+      await NodeFSP.writeFile(stopMarkerPath(this.#baseDir), "", { mode: 0o600 }).catch(
+        () => undefined,
+      );
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
@@ -330,6 +343,10 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
+    // A fresh launcher means servers are running again: any stop marker from
+    // a previous explicit stop is stale and must not make a future update
+    // handoff release its tunnel.
+    await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
