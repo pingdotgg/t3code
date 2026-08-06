@@ -408,41 +408,47 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const mergeOlderPage = Effect.fn("EnvironmentThreadState.mergeOlderPage")(function* (
     snapshot: OrchestrationThreadDetailSnapshot,
   ) {
-    const current = yield* SubscriptionRef.get(state);
-    if (Option.isNone(current.data)) {
-      return;
-    }
-    const loaded = current.data.value;
-    const older = snapshot.thread;
-    const mergeById = <T extends { readonly id: string }>(
-      olderRows: ReadonlyArray<T>,
-      loadedRows: ReadonlyArray<T>,
-    ): ReadonlyArray<T> => {
-      const seen = new Set(loadedRows.map((row) => row.id));
-      return [...olderRows.filter((row) => !seen.has(row.id)), ...loadedRows];
-    };
-    const seenCheckpoints = new Set(loaded.checkpoints.map((row) => row.turnId));
-    const merged: OrchestrationThread = {
-      // Thread metadata stays the loaded (newer) snapshot's; only the
-      // windowed collections gain rows from the older page.
-      ...loaded,
-      messages: mergeById(older.messages, loaded.messages),
-      activities: mergeById(older.activities, loaded.activities),
-      proposedPlans: mergeById(older.proposedPlans, loaded.proposedPlans),
-      checkpoints: [
-        ...older.checkpoints.filter((row) => !seenCheckpoints.has(row.turnId)),
-        ...loaded.checkpoints,
-      ],
-    };
-    yield* SubscriptionRef.update(state, (value) => ({
-      ...value,
-      data: Option.some(merged),
-      page: pageStateFromSnapshot(snapshot.page),
-    }));
+    // The merge is built inside the update callback so it composes with
+    // whatever thread value is current at commit time. The applyLock already
+    // serializes this against event application; the atomic build is defense
+    // in depth against future callers outside the lock.
+    let merged: OrchestrationThread | null = null;
+    yield* SubscriptionRef.update(state, (value) => {
+      if (Option.isNone(value.data)) {
+        return value;
+      }
+      const loaded = value.data.value;
+      const older = snapshot.thread;
+      const mergeById = <T extends { readonly id: string }>(
+        olderRows: ReadonlyArray<T>,
+        loadedRows: ReadonlyArray<T>,
+      ): ReadonlyArray<T> => {
+        const seen = new Set(loadedRows.map((row) => row.id));
+        return [...olderRows.filter((row) => !seen.has(row.id)), ...loadedRows];
+      };
+      const seenCheckpoints = new Set(loaded.checkpoints.map((row) => row.turnId));
+      merged = {
+        // Thread metadata stays the loaded (newer) snapshot's; only the
+        // windowed collections gain rows from the older page.
+        ...loaded,
+        messages: mergeById(older.messages, loaded.messages),
+        activities: mergeById(older.activities, loaded.activities),
+        proposedPlans: mergeById(older.proposedPlans, loaded.proposedPlans),
+        checkpoints: [
+          ...older.checkpoints.filter((row) => !seenCheckpoints.has(row.turnId)),
+          ...loaded.checkpoints,
+        ],
+      };
+      return {
+        ...value,
+        data: Option.some(merged),
+        page: pageStateFromSnapshot(snapshot.page),
+      };
+    });
     // Persist the widened window under the *loaded* watermark: the merged
     // content is only known consistent with the state it merged into, not
     // with the page's own (possibly newer) sequence.
-    if (shouldPersistThread(merged)) {
+    if (merged !== null && shouldPersistThread(merged)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* Queue.offer(persistence, {
         snapshotSequence,
