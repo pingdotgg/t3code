@@ -6,10 +6,12 @@ const mocks = vi.hoisted(() => {
   const commands = {
     archive: {},
     delete: {},
+    pin: {},
     settle: {},
     snooze: {},
     unarchive: {},
     unsnooze: {},
+    unpin: {},
     unsettle: {},
   };
 
@@ -21,12 +23,14 @@ const mocks = vi.hoisted(() => {
     commands,
     deleteMutation: vi.fn(),
     impactAsync: vi.fn(),
+    pinMutation: vi.fn(),
     refreshArchivedThreadsForEnvironment: vi.fn(),
     serverConfigs: new Map<string, unknown>(),
     settleMutation: vi.fn(),
     snoozeMutation: vi.fn(),
     unarchiveMutation: vi.fn(),
     unsnoozeMutation: vi.fn(),
+    unpinMutation: vi.fn(),
     unsettleMutation: vi.fn(),
   };
 });
@@ -77,10 +81,12 @@ vi.mock("../../state/use-atom-command", () => ({
     if (command === mocks.commands.archive) return mocks.archiveMutation;
     if (command === mocks.commands.unarchive) return mocks.unarchiveMutation;
     if (command === mocks.commands.delete) return mocks.deleteMutation;
+    if (command === mocks.commands.pin) return mocks.pinMutation;
     if (command === mocks.commands.settle) return mocks.settleMutation;
     if (command === mocks.commands.snooze) return mocks.snoozeMutation;
     if (command === mocks.commands.unsettle) return mocks.unsettleMutation;
     if (command === mocks.commands.unsnooze) return mocks.unsnoozeMutation;
+    if (command === mocks.commands.unpin) return mocks.unpinMutation;
     throw new Error("Unexpected thread command");
   },
 }));
@@ -110,10 +116,12 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     mocks.archiveMutation.mockResolvedValue(success);
     mocks.unarchiveMutation.mockResolvedValue(success);
     mocks.deleteMutation.mockResolvedValue(success);
+    mocks.pinMutation.mockResolvedValue(success);
     mocks.settleMutation.mockResolvedValue(success);
     mocks.snoozeMutation.mockResolvedValue(success);
     mocks.unsettleMutation.mockResolvedValue(success);
     mocks.unsnoozeMutation.mockResolvedValue(success);
+    mocks.unpinMutation.mockResolvedValue(success);
     mocks.canSettle.mockReturnValue(true);
     mocks.canSnooze.mockReturnValue(true);
     mocks.impactAsync.mockResolvedValue(undefined);
