@@ -28,12 +28,20 @@ interface QueuedThreadShell {
   readonly runtime?: SettlementRuntimeLike | null;
 }
 
-interface SettlementThreadShell extends QueuedThreadShell {
+export interface SettledThreadView extends QueuedThreadShell {
   readonly settledOverride: "settled" | "active" | null;
   readonly settledAt: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /**
+   * Provider background work that outlived the latest terminal run (V2 shell
+   * roster). Waiting threads are in motion and must not settle.
+   */
+  readonly pendingBackgroundTasks?: ReadonlyArray<{ readonly taskId: string }> | null;
 }
+
+/** @deprecated Prefer SettledThreadView. */
+type SettlementThreadShell = SettledThreadView;
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
@@ -100,9 +108,9 @@ export function hasQueuedTurnStart(
     return true;
   }
   if (shell.latestUserMessageAt == null) return false;
-  // A failed session start clears the queued state: the failure is already
-  // visible (status edge / error).
-  if (shell.session?.status === "error") return false;
+  // A failed session/start clears the queued state: the failure is already
+  // visible (status edge / error). CTM shells report this on runtime.status.
+  if (shell.session?.status === "error" || shell.runtime?.status === "failed") return false;
   const messageAt = Date.parse(shell.latestUserMessageAt);
   if (Number.isNaN(messageAt)) return false;
   const nowMs = Date.parse(options.now);
@@ -126,6 +134,17 @@ export function hasQueuedTurnStart(
  * The server enforces its own invariants; this client-side twin exists so
  * the UI can disable/reject before a round trip.
  */
+/**
+ * A shell waiting on provider background tasks (e.g. a Claude background
+ * shell that outlived its turn) is ready/completed on the wire but not done:
+ * the provider wakes it with a follow-up turn when the task finishes.
+ */
+export function hasPendingBackgroundTasks(
+  shell: Pick<SettlementThreadShell, "pendingBackgroundTasks">,
+): boolean {
+  return (shell.pendingBackgroundTasks?.length ?? 0) > 0;
+}
+
 export function canSettle(
   shell: SettlementThreadShell,
   options: { readonly now: string },
@@ -139,6 +158,9 @@ export function canSettle(
   ) {
     return false;
   }
+  // Waiting on provider background tasks is live work even when the shell
+  // status has not yet been parked at idle by the presentation bridge.
+  if (hasPendingBackgroundTasks(shell)) return false;
   // Queued work is as blocked-on-progress as a live session: settling it
   // (or auto-settling it on a closed PR) would hide a just-requested turn.
   if (hasQueuedTurnStart(shell, options)) return false;
@@ -308,6 +330,7 @@ export function effectiveSettled(
   ) {
     return false;
   }
+  if (hasPendingBackgroundTasks(shell)) return false;
   if (hasQueuedTurnStart(shell, { now: options.now })) {
     // The queued-turn blocker alone is forgivable: it is clock-derived, and
     // list callers pass a coarser `now` than the settle action used. When

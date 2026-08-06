@@ -77,7 +77,7 @@ const legacyV1ThreadImporterProvided = legacyV1ThreadImporterLayer.pipe(
 );
 
 const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
-  Layer.provide(Layer.mergeAll(eventSinkProvided, idAllocatorLayer)),
+  Layer.provide(Layer.mergeAll(eventSinkProvided, idAllocatorLayer, projectionStoreLayer)),
 );
 
 const checkpointServiceProvided = checkpointServiceLayer.pipe(Layer.provide(idAllocatorLayer));

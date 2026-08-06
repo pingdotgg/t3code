@@ -1,8 +1,13 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 
 import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
-import { applyShellStreamEvent, mergeShellSnapshotProjects } from "./shellReducer.ts";
+import {
+  applyShellStreamEvent,
+  mergeShellSnapshotProjects,
+  normalizeShellThreadMembership,
+} from "./shellReducer.ts";
 
 const repositoryIdentity = {
   canonicalKey: "github.com/example/repo",
@@ -410,6 +415,18 @@ describe("applyShellStreamEvent", () => {
     expect(active.archivedThreads).toEqual([]);
   });
 
+  it("forces archive membership when archivedAt is set even if location is active", () => {
+    const next = applyShellStreamEvent(v2ShellSnapshot, {
+      kind: "thread.updated",
+      sequence: 3,
+      location: "active",
+      thread: { ...v2ThreadShell, archivedAt: v2ThreadShell.updatedAt },
+    });
+    expect(next.threads).toEqual([]);
+    expect(next.archivedThreads).toHaveLength(1);
+    expect(next.archivedThreads[0]?.id).toBe(v2ThreadShell.id);
+  });
+
   it("removes a thread from either collection", () => {
     const next = applyShellStreamEvent(v2ShellSnapshot, {
       kind: "thread.removed",
@@ -428,5 +445,62 @@ describe("applyShellStreamEvent", () => {
     } as never);
 
     expect(next).toBe(v2ShellSnapshot);
+  });
+});
+
+describe("normalizeShellThreadMembership", () => {
+  it("moves archived threads out of the active list", () => {
+    const archivedThread = { ...v2ThreadShell, archivedAt: v2ThreadShell.updatedAt };
+    const next = normalizeShellThreadMembership({
+      ...v2ShellSnapshot,
+      threads: [archivedThread],
+      archivedThreads: [],
+    });
+    expect(next.threads).toEqual([]);
+    expect(next.archivedThreads).toEqual([archivedThread]);
+  });
+
+  it("returns the same reference when membership is already consistent", () => {
+    expect(normalizeShellThreadMembership(v2ShellSnapshot)).toBe(v2ShellSnapshot);
+  });
+
+  it("prefers the fresher copy when the same id is in both lists", () => {
+    const olderArchived = {
+      ...v2ThreadShell,
+      archivedAt: v2ThreadShell.updatedAt,
+      updatedAt: DateTime.makeUnsafe("2026-06-19T00:00:00.000Z"),
+    };
+    const newerActive = {
+      ...v2ThreadShell,
+      archivedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-06-21T00:00:00.000Z"),
+    };
+    const next = normalizeShellThreadMembership({
+      ...v2ShellSnapshot,
+      threads: [newerActive],
+      archivedThreads: [olderArchived],
+    });
+    expect(next.threads).toEqual([newerActive]);
+    expect(next.archivedThreads).toEqual([]);
+  });
+
+  it("prefers a fresher archive copy over a stale active copy", () => {
+    const staleActive = {
+      ...v2ThreadShell,
+      archivedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-06-19T00:00:00.000Z"),
+    };
+    const fresherArchived = {
+      ...v2ThreadShell,
+      archivedAt: DateTime.makeUnsafe("2026-06-21T00:00:00.000Z"),
+      updatedAt: DateTime.makeUnsafe("2026-06-21T00:00:00.000Z"),
+    };
+    const next = normalizeShellThreadMembership({
+      ...v2ShellSnapshot,
+      threads: [staleActive],
+      archivedThreads: [fresherArchived],
+    });
+    expect(next.threads).toEqual([]);
+    expect(next.archivedThreads).toEqual([fresherArchived]);
   });
 });

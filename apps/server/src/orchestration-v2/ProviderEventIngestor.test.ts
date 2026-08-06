@@ -5,13 +5,16 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
 import {
@@ -27,8 +31,14 @@ import {
   type IdAllocatorV2Error,
   layer as idAllocatorLayer,
 } from "./IdAllocator.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import {
+  applyToProjection,
+  ProjectionStoreV2,
+  layer as projectionStoreLayer,
+} from "./ProjectionStore.ts";
+import {
+  isSettledClearingProviderActivity,
+  providerActivityTimestamp,
   ProviderEventIngestorV2,
   layer as providerEventIngestorLayer,
 } from "./ProviderEventIngestor.ts";
@@ -65,20 +75,27 @@ const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
 function threadCreatedEvent(
   now: DateTime.Utc,
+  options: {
+    readonly fixtureName?: string;
+    readonly settledOverride?: OrchestrationV2AppThread["settledOverride"];
+    readonly settledAt?: DateTime.Utc | null;
+  } = {},
 ): Effect.Effect<OrchestrationV2DomainEvent, IdAllocatorV2Error, IdAllocatorV2> {
   return Effect.gen(function* () {
     const idAllocator = yield* IdAllocatorV2;
+    const fixtureName = options.fixtureName ?? "provider-event-ingestor";
     const projectId = yield* idAllocator.allocate.project({
-      fixtureName: "provider-event-ingestor",
+      fixtureName,
     });
     const threadId = yield* idAllocator.allocate.thread({
-      fixtureName: "provider-event-ingestor",
+      fixtureName,
       projectId,
     });
     const providerThreadId = idAllocator.derive.providerThread({
       driver: CODEX_DRIVER,
-      nativeThreadId: "native-thread",
+      nativeThreadId: `native-thread:${fixtureName}`,
     });
+    const settledOverride = options.settledOverride ?? null;
     const thread: OrchestrationV2AppThread = {
       createdBy: "user",
       creationSource: "web",
@@ -101,10 +118,15 @@ function threadCreatedEvent(
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
       lastVisitedAt: null,
       deletedAt: null,
+      settledOverride,
+      settledAt:
+        options.settledAt !== undefined
+          ? options.settledAt
+          : settledOverride === "settled"
+            ? now
+            : null,
     };
 
     return {
@@ -115,6 +137,48 @@ function threadCreatedEvent(
       payload: thread,
     };
   });
+}
+
+function makeProviderSession(input: {
+  readonly id: OrchestrationV2ProviderSession["id"];
+  readonly status: OrchestrationV2ProviderSession["status"];
+  readonly now: DateTime.Utc;
+}): OrchestrationV2ProviderSession {
+  return {
+    id: input.id,
+    driver: CODEX_DRIVER,
+    providerInstanceId: modelSelection.instanceId,
+    status: input.status,
+    cwd: "/tmp",
+    model: modelSelection.model,
+    capabilities: CodexProviderCapabilitiesV2,
+    createdAt: input.now,
+    updatedAt: input.now,
+    lastError: null,
+  };
+}
+
+function makeRuntimeRequest(input: {
+  readonly id: string;
+  readonly kind: OrchestrationV2RuntimeRequest["kind"];
+  readonly status: OrchestrationV2RuntimeRequest["status"];
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  readonly now: DateTime.Utc;
+}): OrchestrationV2RuntimeRequest {
+  return {
+    id: RuntimeRequestId.make(input.id),
+    nodeId: NodeId.make(`node:${input.id}`),
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind: input.kind,
+    status: input.status,
+    responseCapability: {
+      type: "live",
+      providerSessionId: input.providerSessionId,
+    },
+    createdAt: input.now,
+    resolvedAt: input.status === "pending" ? null : input.now,
+  };
 }
 
 const layer = it.layer(TestLayer);
@@ -650,5 +714,554 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.equal(messageEvents[0]?.type, "message.updated");
       assert.equal(messageEvents[0]?.threadId, childThreadId);
     }),
+  );
+
+  it.effect(
+    "clears an explicit settled pin when a pending approval request arrives via provider ingest",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now, {
+          fixtureName: "provider-event-settle-approval",
+          settledOverride: "settled",
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+        });
+
+        yield* eventSink.write({ events: [threadEvent] });
+        const stored = yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: {
+            type: "runtime_request.updated",
+            driver: CODEX_DRIVER,
+            runtimeRequest: makeRuntimeRequest({
+              id: "approval-wake",
+              kind: "command",
+              status: "pending",
+              providerSessionId,
+              now,
+            }),
+          },
+        });
+
+        assert.equal(stored[0]?.event.type, "thread.unsettled");
+        assert.equal(stored[1]?.event.type, "runtime-request.updated");
+        const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+        assert.isNull(projection.thread.settledOverride);
+        assert.isNull(projection.thread.settledAt);
+      }),
+  );
+
+  it.effect(
+    "clears a keep-active pin when a provider session reactivates via provider ingest",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now, {
+          fixtureName: "provider-event-active-session",
+          settledOverride: "active",
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+        });
+
+        yield* eventSink.write({ events: [threadEvent] });
+        const stored = yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: makeProviderSession({
+              id: providerSessionId,
+              status: "running",
+              now,
+            }),
+          },
+        });
+
+        assert.equal(stored[0]?.event.type, "thread.unsettled");
+        assert.equal(stored[1]?.event.type, "provider-session.updated");
+        const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+        assert.isNull(projection.thread.settledOverride);
+      }),
+  );
+
+  it.effect("does not clear settle pins for non-activity provider updates", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now, {
+        fixtureName: "provider-event-non-activity",
+        settledOverride: "settled",
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThread: OrchestrationV2ProviderThread = {
+        id: idAllocator.derive.providerThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: "native-thread-non-activity",
+        }),
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionId,
+        appThreadId: threadEvent.threadId,
+        ownerNodeId: null,
+        nativeThreadRef: {
+          driver: CODEX_DRIVER,
+          nativeId: "native-thread-non-activity",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      yield* eventSink.write({ events: [threadEvent] });
+
+      // Terminal/status-after-the-fact session write.
+      const readyStored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: makeProviderSession({
+            id: providerSessionId,
+            status: "ready",
+            now,
+          }),
+        },
+      });
+      assert.deepEqual(
+        readyStored.map((stored) => stored.event.type),
+        ["provider-session.updated"],
+      );
+
+      // Request resolution is not activity that wakes a pin.
+      const resolvedStored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "runtime_request.updated",
+          driver: CODEX_DRIVER,
+          runtimeRequest: makeRuntimeRequest({
+            id: "resolved-approval",
+            kind: "command",
+            status: "resolved",
+            providerSessionId,
+            now,
+          }),
+        },
+      });
+      assert.deepEqual(
+        resolvedStored.map((stored) => stored.event.type),
+        ["runtime-request.updated"],
+      );
+
+      // Arbitrary provider thread roster write.
+      const threadStored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread,
+        },
+      });
+      assert.deepEqual(
+        threadStored.map((stored) => stored.event.type),
+        ["provider-thread.updated"],
+      );
+
+      const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      assert.equal(projection.thread.settledOverride, "settled");
+      assert.isNotNull(projection.thread.settledAt);
+    }),
+  );
+
+  it.effect("classifies only pending request and live session events as settle-clearing", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-event-classifier",
+        projectId: yield* idAllocator.allocate.project({
+          fixtureName: "provider-event-classifier",
+        }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const base = {
+        id: yield* idAllocator.allocate.event({ threadId }),
+        threadId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+      } as const;
+
+      assert.isTrue(
+        isSettledClearingProviderActivity({
+          ...base,
+          type: "runtime-request.updated",
+          payload: makeRuntimeRequest({
+            id: "pending-input",
+            kind: "user_input",
+            status: "pending",
+            providerSessionId,
+            now,
+          }),
+        }),
+      );
+      assert.isFalse(
+        isSettledClearingProviderActivity({
+          ...base,
+          type: "runtime-request.updated",
+          payload: makeRuntimeRequest({
+            id: "auth",
+            kind: "auth_refresh",
+            status: "pending",
+            providerSessionId,
+            now,
+          }),
+        }),
+      );
+      assert.isTrue(
+        isSettledClearingProviderActivity({
+          ...base,
+          type: "provider-session.updated",
+          payload: makeProviderSession({ id: providerSessionId, status: "starting", now }),
+        }),
+      );
+      assert.isFalse(
+        isSettledClearingProviderActivity({
+          ...base,
+          type: "provider-session.updated",
+          payload: makeProviderSession({ id: providerSessionId, status: "stopped", now }),
+        }),
+      );
+      assert.isFalse(
+        isSettledClearingProviderActivity({
+          ...base,
+          type: "message.updated",
+          payload: {
+            createdBy: "agent",
+            creationSource: "provider",
+            id: MessageId.make("message:classifier"),
+            threadId,
+            runId: null,
+            nodeId: null,
+            role: "assistant",
+            text: "hi",
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+      const pending = {
+        ...base,
+        type: "runtime-request.updated" as const,
+        payload: makeRuntimeRequest({
+          id: "pending-ts",
+          kind: "command",
+          status: "pending",
+          providerSessionId,
+          now,
+        }),
+      };
+      assert.equal(
+        providerActivityTimestamp(pending) === null
+          ? null
+          : DateTime.formatIso(providerActivityTimestamp(pending)!),
+        DateTime.formatIso(now),
+      );
+    }),
+  );
+
+  it.effect(
+    "clears settlement without restoring concurrent metadata from a stale full-thread payload",
+    () =>
+      Effect.gen(function* () {
+        const pinAt = DateTime.makeUnsafe("2026-07-01T10:00:00.000Z");
+        const activityAt = DateTime.makeUnsafe("2026-07-01T10:05:00.000Z");
+        const renameAt = DateTime.makeUnsafe("2026-07-01T10:10:00.000Z");
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(pinAt, {
+          fixtureName: "provider-event-stale-payload",
+          settledOverride: "settled",
+        });
+        if (threadEvent.type !== "thread.created") {
+          return yield* Effect.die("expected thread.created fixture");
+        }
+        const thread = threadEvent.payload;
+        yield* eventSink.write({ events: [threadEvent] });
+
+        // Concurrent rename after the pin, before delayed unsettle reduction.
+        const renamed: OrchestrationV2AppThread = {
+          ...thread,
+          title: "Concurrent rename",
+          updatedAt: renameAt,
+        };
+        const renameEvent: OrchestrationV2DomainEvent = {
+          id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+          type: "thread.metadata-updated",
+          threadId: threadEvent.threadId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: renameAt,
+          payload: renamed,
+        };
+        yield* eventSink.write({ events: [renameEvent] });
+
+        // Stale full-thread unsettle payload still carries the pre-rename title.
+        const staleUnsettle: OrchestrationV2DomainEvent = {
+          id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+          type: "thread.unsettled",
+          threadId: threadEvent.threadId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: activityAt,
+          payload: {
+            ...thread,
+            title: "Stale pre-rename title",
+            settledOverride: null,
+            settledAt: null,
+            updatedAt: activityAt,
+          },
+        };
+        // applyToProjection is the in-memory reducer used by getProjectionWithPendingEvents.
+        const afterRename = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+        const reduced = applyToProjection(afterRename, staleUnsettle);
+        assert.equal(reduced.thread.title, "Concurrent rename");
+        assert.isNull(reduced.thread.settledOverride);
+
+        // Durable SQL path must agree.
+        yield* eventSink.write({ events: [staleUnsettle] });
+        const durable = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+        assert.equal(durable.thread.title, "Concurrent rename");
+        assert.isNull(durable.thread.settledOverride);
+      }),
+  );
+
+  it.effect("always emits an activity-unsettle candidate even when the thread is neutral", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      // Neutral thread: pre-TX optimistic skip used to omit the candidate
+      // and lose a concurrent settle that lands before write.
+      const threadEvent = yield* threadCreatedEvent(now, {
+        fixtureName: "provider-event-neutral-unsettle",
+        settledOverride: null,
+      });
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+
+      const stored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "runtime_request.updated",
+          driver: CODEX_DRIVER,
+          runtimeRequest: makeRuntimeRequest({
+            id: "neutral-approval",
+            kind: "command",
+            status: "pending",
+            providerSessionId,
+            now,
+          }),
+        },
+      });
+
+      assert.equal(stored[0]?.event.type, "thread.unsettled");
+      assert.equal(stored[1]?.event.type, "runtime-request.updated");
+      // Reducer no-ops when already neutral; pin stays null.
+      const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      assert.isNull(projection.thread.settledOverride);
+    }),
+  );
+
+  it.effect(
+    "does not clear a newer settled or active pin when delayed provider activity is ingested",
+    () =>
+      Effect.gen(function* () {
+        const activityAt = DateTime.makeUnsafe("2026-07-01T09:00:00.000Z");
+        const pinAt = DateTime.makeUnsafe("2026-07-01T10:00:00.000Z");
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocatorV2;
+
+        for (const override of ["settled", "active"] as const) {
+          const threadEvent = yield* threadCreatedEvent(pinAt, {
+            fixtureName: `provider-event-delayed-${override}`,
+            settledOverride: override,
+          });
+          if (threadEvent.type !== "thread.created") {
+            return yield* Effect.die("expected thread.created fixture");
+          }
+          // Pin time is later than the delayed activity.
+          const pinnedEvent: OrchestrationV2DomainEvent = {
+            ...threadEvent,
+            occurredAt: pinAt,
+            payload: {
+              ...threadEvent.payload,
+              settledOverride: override,
+              settledAt: override === "settled" ? pinAt : null,
+              updatedAt: pinAt,
+            },
+          };
+          yield* eventSink.write({ events: [pinnedEvent] });
+
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId: threadEvent.threadId,
+          });
+
+          const stored =
+            override === "settled"
+              ? yield* ingestor.ingestNormalized({
+                  providerSessionId,
+                  providerInstanceId: modelSelection.instanceId,
+                  threadId: threadEvent.threadId,
+                  event: {
+                    type: "runtime_request.updated",
+                    driver: CODEX_DRIVER,
+                    runtimeRequest: makeRuntimeRequest({
+                      id: `delayed-approval-${override}`,
+                      kind: "command",
+                      status: "pending",
+                      providerSessionId,
+                      now: activityAt,
+                    }),
+                  },
+                })
+              : yield* ingestor.ingestNormalized({
+                  providerSessionId,
+                  providerInstanceId: modelSelection.instanceId,
+                  threadId: threadEvent.threadId,
+                  event: {
+                    type: "provider_session.updated",
+                    driver: CODEX_DRIVER,
+                    providerSession: makeProviderSession({
+                      id: providerSessionId,
+                      status: "running",
+                      now: activityAt,
+                    }),
+                  },
+                });
+
+          // Candidate is always included; transactional ordering keeps the pin.
+          const unsettle = stored.find((row) => row.event.type === "thread.unsettled");
+          assert.isDefined(unsettle);
+          if (unsettle !== undefined) {
+            assert.equal(
+              DateTime.formatIso(unsettle.event.occurredAt),
+              DateTime.formatIso(activityAt),
+            );
+          }
+          const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+          assert.equal(projection.thread.settledOverride, override);
+        }
+      }),
+  );
+
+  it.effect(
+    "stamps ordinary provider session/runtime events at ingestion time, not payload history",
+    () =>
+      Effect.gen(function* () {
+        const historicalAt = DateTime.makeUnsafe("2026-07-01T08:00:00.000Z");
+        const threadCreatedAt = yield* DateTime.now;
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(threadCreatedAt, {
+          fixtureName: "provider-event-ingest-time",
+          settledOverride: null,
+        });
+        yield* eventSink.write({ events: [threadEvent] });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+        });
+
+        // Delayed "ready" is not settle-clearing activity, but must not rewrite
+        // occurredAt (and thus thread.updatedAt) to historical payload time.
+        const stored = yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: makeProviderSession({
+              id: providerSessionId,
+              status: "ready",
+              now: historicalAt,
+            }),
+          },
+        });
+
+        assert.equal(stored.length, 1);
+        assert.equal(stored[0]?.event.type, "provider-session.updated");
+        const sessionEvent = stored[0]!.event;
+        // Ingestion stamp, not the delayed payload updatedAt.
+        assert.notEqual(
+          DateTime.formatIso(sessionEvent.occurredAt),
+          DateTime.formatIso(historicalAt),
+        );
+        if (sessionEvent.type === "provider-session.updated") {
+          assert.equal(
+            DateTime.formatIso(sessionEvent.payload.updatedAt),
+            DateTime.formatIso(historicalAt),
+          );
+        }
+        const after = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+        assert.equal(
+          DateTime.formatIso(after.thread.updatedAt),
+          DateTime.formatIso(sessionEvent.occurredAt),
+        );
+        assert.notEqual(
+          DateTime.formatIso(after.thread.updatedAt),
+          DateTime.formatIso(historicalAt),
+        );
+      }),
   );
 });

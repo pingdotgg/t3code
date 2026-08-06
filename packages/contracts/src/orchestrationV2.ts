@@ -1390,6 +1390,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  // Keep decoding default: pre-settle / migration-042 payloads omit settledAt.
   settledAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
