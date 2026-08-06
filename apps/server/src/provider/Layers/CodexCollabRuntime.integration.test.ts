@@ -226,7 +226,6 @@ describe("CodexSessionRuntime collab integration", () => {
       // must continue through B and the parent without failing the command.
       yield* runtime.interruptTurn();
 
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const parseInterruptLine = (line: string) => JSON.parse(line) as { threadId?: string };
       const interrupted = NodeFS.readFileSync(interruptsPath, "utf8")
         .trim()
