@@ -219,13 +219,17 @@ function truncateDetail(value: string, limit = 180): string {
 // ---------------------------------------------------------------------------
 
 const THINKING_PROGRESS_MIN_INTERVAL_MS = 250;
+// Bounds both the in-memory burst state and the size of each persisted
+// progress/completed payload; `chars` keeps counting past the cap so the
+// summary still reflects the real reasoning volume.
+const MAX_THINKING_BURST_TEXT_CHARS = 32_000;
 
 interface ThinkingBurstState {
   burstId: string;
   turnId: TurnId | null;
   startedAt: string;
   chars: number;
-  /** Full accumulated reasoning text for this burst (no cap). */
+  /** Accumulated reasoning text, capped at MAX_THINKING_BURST_TEXT_CHARS. */
   text: string;
   lastEventAt: string;
   lastProgressAtMs: number;
@@ -272,6 +276,7 @@ function eventEndsThinkingBurst(event: ProviderRuntimeEvent): boolean {
     case "user-input.requested":
     case "turn.completed":
     case "turn.aborted":
+    case "runtime.error":
     case "session.exited":
       return true;
     default:
@@ -988,7 +993,6 @@ const make = Effect.gen(function* () {
     if (!burst) {
       return;
     }
-    thinkingBurstByThreadId.delete(threadId);
     const durationMs = Math.max(0, Date.parse(burst.lastEventAt) - Date.parse(burst.startedAt));
     // Flush full text one last time so the live stream is complete before the
     // durable "Thought for Xs" row replaces it.
@@ -1012,6 +1016,10 @@ const make = Effect.gen(function* () {
       },
       turnId: burst.turnId,
     });
+    // Deleted only after both dispatches land so a failed close can be retried
+    // by the next burst-ending event (the stable activity ids make retries
+    // idempotent).
+    thinkingBurstByThreadId.delete(threadId);
   });
 
   const trackThinkingBurst = Effect.fn("trackThinkingBurst")(function* (
@@ -1032,7 +1040,7 @@ const make = Effect.gen(function* () {
           turnId: eventTurnId,
           startedAt: event.createdAt,
           chars: event.payload.delta.length,
-          text: event.payload.delta,
+          text: event.payload.delta.slice(0, MAX_THINKING_BURST_TEXT_CHARS),
           lastEventAt: event.createdAt,
           lastProgressAtMs: Number.isFinite(eventAtMs) ? eventAtMs : 0,
         };
@@ -1052,7 +1060,9 @@ const make = Effect.gen(function* () {
         return;
       }
       burst.chars += event.payload.delta.length;
-      burst.text += event.payload.delta;
+      if (burst.text.length < MAX_THINKING_BURST_TEXT_CHARS) {
+        burst.text = `${burst.text}${event.payload.delta}`.slice(0, MAX_THINKING_BURST_TEXT_CHARS);
+      }
       burst.lastEventAt = event.createdAt;
       if (
         Number.isFinite(eventAtMs) &&
@@ -1065,6 +1075,21 @@ const make = Effect.gen(function* () {
     }
 
     if (eventEndsThinkingBurst(event)) {
+      // Turn lifecycle events only close a burst belonging to that turn — a
+      // stale completion replayed for an earlier turn must not fold the
+      // active turn's reasoning into a premature "Thought for Xs" row.
+      if (event.type === "turn.completed" || event.type === "turn.aborted") {
+        const burst = thinkingBurstByThreadId.get(threadId);
+        const eventTurnId = toTurnId(event.turnId) ?? null;
+        if (
+          burst &&
+          burst.turnId !== null &&
+          eventTurnId !== null &&
+          burst.turnId !== eventTurnId
+        ) {
+          return;
+        }
+      }
       yield* closeThinkingBurst(event, threadId);
     }
   });

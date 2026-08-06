@@ -2754,3 +2754,141 @@ describe("acp tool call normalization", () => {
     expect(entries[0]?.toolName).toBe("shell");
   });
 });
+
+describe("review regressions", () => {
+  it("ignores a stale unstamped open tool from before the running turn", () => {
+    expect(
+      deriveLiveWorkStatus({
+        activities: [
+          makeActivity({
+            id: "stale-tool",
+            createdAt: "2026-02-23T00:00:00.000Z",
+            kind: "tool.started",
+            summary: "Tool",
+            tone: "tool",
+            payload: { itemType: "dynamic_tool_call", data: { toolName: "Read" } },
+          }),
+          makeActivity({
+            id: "turn-signal",
+            createdAt: "2026-02-23T00:00:05.000Z",
+            kind: "thinking.completed",
+            summary: "Thought for 2s",
+            tone: "info",
+            turnId: "turn-1",
+            payload: { burstId: "burst-1", durationMs: 2000 },
+          }),
+        ],
+        runningTurnId: TurnId.make("turn-1"),
+        streamingMessage: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("splits distant ACP edits into separate contextual hunks", () => {
+    const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
+    const newLines = lines.map((line) =>
+      line === "line 3" ? "changed 3" : line === "line 15" ? "changed 15" : line,
+    );
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_split",
+            kind: "edit",
+            content: [
+              {
+                type: "diff",
+                path: "src/app.ts",
+                oldText: lines.join("\n"),
+                newText: newLines.join("\n"),
+              },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/app.ts",
+      truncated: false,
+      hunks: [
+        {
+          oldStart: 1,
+          newStart: 1,
+          lines: [" line 1", " line 2", "-line 3", "+changed 3", " line 4", " line 5", " line 6"],
+        },
+        {
+          oldStart: 12,
+          newStart: 12,
+          lines: [
+            " line 12",
+            " line 13",
+            " line 14",
+            "-line 15",
+            "+changed 15",
+            " line 16",
+            " line 17",
+            " line 18",
+          ],
+        },
+      ],
+    });
+  });
+
+  it("attributes multi-file ACP diff content to the first file only", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_multi",
+            kind: "edit",
+            content: [
+              { type: "diff", path: "src/first.ts", oldText: "a1", newText: "a2" },
+              { type: "diff", path: "src/second.ts", oldText: "b1", newText: "b2" },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/first.ts",
+      truncated: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: ["-a1", "+a2"] }],
+    });
+  });
+
+  it("attributes multi-file Codex fileChange diffs to the first file only", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              type: "fileChange",
+              changes: [
+                { path: "src/first.ts", kind: "edit", diff: "@@ -1 +1 @@\n-a\n+b\n" },
+                { path: "src/second.ts", kind: "edit", diff: "@@ -1 +1 @@\n-c\n+d\n" },
+              ],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolInput).toEqual({ file_path: "src/first.ts (+1 more)" });
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/first.ts",
+      truncated: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: ["-a", "+b"] }],
+    });
+  });
+});

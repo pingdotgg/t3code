@@ -3569,4 +3569,68 @@ describe("ProviderRuntimeIngestion", () => {
     // not the closing event's.
     expect(completed?.createdAt).toBe("2026-01-01T00:00:03.000Z");
   });
+
+  it("does not close a thinking burst on a stale turn.completed for another turn", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-live-reasoning-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-live"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "First half of the thought.",
+      },
+    });
+    // Stale completion replayed for an earlier turn must not split the burst.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stale-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-stale"),
+      status: "completed",
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-live-reasoning-2"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-live"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: " Second half of the thought.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-live-assistant"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-live"),
+      itemId: asItemId("item-live-assistant"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Done.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "thinking.completed"),
+    );
+
+    const completedActivities = thread.activities.filter(
+      (activity) => activity.kind === "thinking.completed",
+    );
+    expect(completedActivities).toHaveLength(1);
+    expect((completedActivities[0]?.payload as { text?: string }).text).toBe(
+      "First half of the thought. Second half of the thought.",
+    );
+  });
 });

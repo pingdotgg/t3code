@@ -848,6 +848,13 @@ export function deriveLiveWorkStatus(input: {
     return null;
   }
   const ordered = [...input.activities].toSorted(compareActivitiesByOrder);
+  // Activities without a turn stamp only count as live signals once the
+  // running turn has started — an open thinking/tool row left behind by an
+  // earlier interrupted turn must not resurface as current status. When no
+  // activity carries the running turn's id (providers that never stamp turn
+  // ids), fall back to accepting unstamped activities.
+  const runningTurnStartAt =
+    ordered.find((activity) => activity.turnId === input.runningTurnId)?.createdAt ?? null;
   let lastTurnSignalAt: string | null = null;
 
   interface OpenThinkingBurst {
@@ -865,6 +872,13 @@ export function deriveLiveWorkStatus(input: {
 
   for (const activity of ordered) {
     if (activity.turnId !== null && activity.turnId !== input.runningTurnId) {
+      continue;
+    }
+    if (
+      activity.turnId === null &&
+      runningTurnStartAt !== null &&
+      activity.createdAt.localeCompare(runningTurnStartAt) < 0
+    ) {
       continue;
     }
     if (
@@ -1869,8 +1883,14 @@ function normalizeCodexToolItem(
       });
       const kinds = changes.map((change) => asTrimmedString(change.kind));
       const firstPath = changes.length > 0 ? asTrimmedString(changes[0]?.path) : null;
+      // The diff is keyed by one file path, so only include hunks from
+      // changes to that file — hunks from the other files would render under
+      // the wrong filename and line numbers. The header still advertises the
+      // remaining files via `(+N more)`.
       const hunks = changes.flatMap((change) =>
-        typeof change.diff === "string" ? parseUnifiedDiffHunks(change.diff) : [],
+        typeof change.diff === "string" && (asTrimmedString(change.path) ?? firstPath) === firstPath
+          ? parseUnifiedDiffHunks(change.diff)
+          : [],
       );
       return {
         toolName: kinds.length > 0 && kinds.every((kind) => kind === "add") ? "Write" : "Edit",
@@ -1969,55 +1989,139 @@ function acpToolResultText(data: Record<string, unknown>): string | null {
 }
 
 const ACP_DIFF_CONTEXT_LINES = 3;
+const MAX_CONTEXTUAL_DIFF_LINES = 5_000;
+const MAX_CONTEXTUAL_DIFF_SPLIT_DEPTH = 100;
+
+interface ContextualDiffBlock {
+  oldIndex: number;
+  newIndex: number;
+  removed: string[];
+  added: string[];
+}
+
+/**
+ * Recursively splits an old/new line range into changed blocks. Trims the
+ * common prefix/suffix, then anchors on a line unique to both sides so two
+ * edits at distant locations become separate blocks instead of one giant
+ * replacement that double-counts every unchanged line between them.
+ */
+function collectContextualDiffBlocks(
+  oldLines: string[],
+  newLines: string[],
+  range: { oldFrom: number; oldTo: number; newFrom: number; newTo: number },
+  out: ContextualDiffBlock[],
+  depth: number,
+): void {
+  let { oldFrom, oldTo, newFrom, newTo } = range;
+  while (oldFrom < oldTo && newFrom < newTo && oldLines[oldFrom] === newLines[newFrom]) {
+    oldFrom += 1;
+    newFrom += 1;
+  }
+  while (oldTo > oldFrom && newTo > newFrom && oldLines[oldTo - 1] === newLines[newTo - 1]) {
+    oldTo -= 1;
+    newTo -= 1;
+  }
+  if (oldFrom === oldTo && newFrom === newTo) {
+    return;
+  }
+  if (oldFrom < oldTo && newFrom < newTo && depth < MAX_CONTEXTUAL_DIFF_SPLIT_DEPTH) {
+    const oldUnique = new Map<string, number>();
+    for (let index = oldFrom; index < oldTo; index += 1) {
+      oldUnique.set(oldLines[index]!, oldUnique.has(oldLines[index]!) ? -1 : index);
+    }
+    const newUnique = new Map<string, number>();
+    for (let index = newFrom; index < newTo; index += 1) {
+      newUnique.set(newLines[index]!, newUnique.has(newLines[index]!) ? -1 : index);
+    }
+    // Prefer the anchor whose relative position matches on both sides — it is
+    // least likely to be a moved line splitting the ranges out of order.
+    let anchorOld = -1;
+    let anchorNew = -1;
+    let anchorSkew = Number.POSITIVE_INFINITY;
+    for (const [line, newIndex] of newUnique) {
+      if (newIndex === -1) {
+        continue;
+      }
+      const oldIndex = oldUnique.get(line);
+      if (oldIndex === undefined || oldIndex === -1) {
+        continue;
+      }
+      const skew = Math.abs(oldIndex - oldFrom - (newIndex - newFrom));
+      if (skew < anchorSkew) {
+        anchorSkew = skew;
+        anchorOld = oldIndex;
+        anchorNew = newIndex;
+      }
+    }
+    if (anchorOld !== -1) {
+      collectContextualDiffBlocks(
+        oldLines,
+        newLines,
+        { oldFrom, oldTo: anchorOld, newFrom, newTo: anchorNew },
+        out,
+        depth + 1,
+      );
+      collectContextualDiffBlocks(
+        oldLines,
+        newLines,
+        { oldFrom: anchorOld + 1, oldTo, newFrom: anchorNew + 1, newTo },
+        out,
+        depth + 1,
+      );
+      return;
+    }
+  }
+  out.push({
+    oldIndex: oldFrom,
+    newIndex: newFrom,
+    removed: oldLines.slice(oldFrom, oldTo),
+    added: newLines.slice(newFrom, newTo),
+  });
+}
 
 /**
  * ACP diff content carries whole old/new text blobs (often the full file).
- * Reduce them to a contextual hunk by trimming the common line prefix/suffix
- * so edits render like Claude's structured patches instead of a full-file
- * remove/add wall.
+ * Reduce them to contextual hunks so edits render like Claude's structured
+ * patches instead of a full-file remove/add wall.
  */
-function contextualDiffHunk(oldText: string, newText: string): WorkLogToolDiffHunk | null {
+function contextualDiffHunks(oldText: string, newText: string): WorkLogToolDiffHunk[] {
   const oldLines = splitDiffContent(oldText);
   const newLines = splitDiffContent(newText);
   if (oldLines.length === 0) {
-    return reconstructedEditHunk(oldText, newText);
+    const hunk = reconstructedEditHunk(oldText, newText);
+    return hunk ? [hunk] : [];
   }
-  let prefix = 0;
-  while (
-    prefix < oldLines.length &&
-    prefix < newLines.length &&
-    oldLines[prefix] === newLines[prefix]
-  ) {
-    prefix += 1;
+  if (oldLines.length + newLines.length > MAX_CONTEXTUAL_DIFF_LINES) {
+    // Too large to split safely; capToolDiff truncates the single block.
+    const hunk = reconstructedEditHunk(oldText, newText);
+    return hunk ? [hunk] : [];
   }
-  let suffix = 0;
-  while (
-    suffix < oldLines.length - prefix &&
-    suffix < newLines.length - prefix &&
-    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) {
-    suffix += 1;
-  }
-  const removed = oldLines.slice(prefix, oldLines.length - suffix);
-  const added = newLines.slice(prefix, newLines.length - suffix);
-  if (removed.length === 0 && added.length === 0) {
-    return null;
-  }
-  const contextStart = Math.max(0, prefix - ACP_DIFF_CONTEXT_LINES);
-  const leadingContext = oldLines.slice(contextStart, prefix).map((line) => ` ${line}`);
-  const trailingContext = oldLines
-    .slice(oldLines.length - suffix, oldLines.length - suffix + ACP_DIFF_CONTEXT_LINES)
-    .map((line) => ` ${line}`);
-  return {
-    oldStart: contextStart + 1,
-    newStart: contextStart + 1,
-    lines: [
-      ...leadingContext,
-      ...removed.map((line) => `-${line}`),
-      ...added.map((line) => `+${line}`),
-      ...trailingContext,
-    ],
-  };
+  const blocks: ContextualDiffBlock[] = [];
+  collectContextualDiffBlocks(
+    oldLines,
+    newLines,
+    { oldFrom: 0, oldTo: oldLines.length, newFrom: 0, newTo: newLines.length },
+    blocks,
+    0,
+  );
+  return blocks.map((block, index) => {
+    const previousEnd =
+      index > 0 ? blocks[index - 1]!.oldIndex + blocks[index - 1]!.removed.length : 0;
+    const nextStart = index + 1 < blocks.length ? blocks[index + 1]!.oldIndex : oldLines.length;
+    const contextStart = Math.max(previousEnd, block.oldIndex - ACP_DIFF_CONTEXT_LINES);
+    const blockOldEnd = block.oldIndex + block.removed.length;
+    const contextEnd = Math.min(nextStart, blockOldEnd + ACP_DIFF_CONTEXT_LINES);
+    return {
+      oldStart: contextStart + 1,
+      newStart: block.newIndex - (block.oldIndex - contextStart) + 1,
+      lines: [
+        ...oldLines.slice(contextStart, block.oldIndex).map((line) => ` ${line}`),
+        ...block.removed.map((line) => `-${line}`),
+        ...block.added.map((line) => `+${line}`),
+        ...oldLines.slice(blockOldEnd, contextEnd).map((line) => ` ${line}`),
+      ],
+    };
+  });
 }
 
 function acpContentDiff(data: Record<string, unknown>): WorkLogToolDiff | null {
@@ -2031,14 +2135,19 @@ function acpContentDiff(data: Record<string, unknown>): WorkLogToolDiff | null {
     if (record?.type !== "diff") {
       continue;
     }
-    filePath ??= asTrimmedString(record.path);
-    const hunk = contextualDiffHunk(
-      typeof record.oldText === "string" ? record.oldText : "",
-      typeof record.newText === "string" ? record.newText : "",
-    );
-    if (hunk) {
-      hunks.push(hunk);
+    const path = asTrimmedString(record.path);
+    filePath ??= path;
+    // A WorkLogToolDiff carries one file path; entries for other files would
+    // render their hunks under the wrong filename, so skip them.
+    if (path !== null && filePath !== null && path !== filePath) {
+      continue;
     }
+    hunks.push(
+      ...contextualDiffHunks(
+        typeof record.oldText === "string" ? record.oldText : "",
+        typeof record.newText === "string" ? record.newText : "",
+      ),
+    );
   }
   return hunks.length > 0 ? capToolDiff(filePath, hunks) : null;
 }

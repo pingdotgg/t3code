@@ -767,6 +767,9 @@ function readClaudeToolUseResult(message: SDKMessage): Record<string, unknown> |
 
 const FILE_EDIT_TOOL_PATTERN = /^(edit|multiedit|write|notebookedit)$/i;
 const MAX_STRUCTURED_PATCH_LINES = 400;
+// A single hunk line from a generated/minified file can be megabytes long;
+// cap each line so the forwarded patch stays bounded in both dimensions.
+const MAX_STRUCTURED_PATCH_LINE_CHARS = 500;
 
 /**
  * File-edit tool results carry a `structuredPatch` (real line numbers) that
@@ -800,7 +803,13 @@ function summarizeToolUseResultForData(
     if (lines.length === 0) {
       return [];
     }
-    const kept = lines.slice(0, remaining);
+    const kept = lines
+      .slice(0, remaining)
+      .map((line) =>
+        line.length > MAX_STRUCTURED_PATCH_LINE_CHARS
+          ? `${line.slice(0, MAX_STRUCTURED_PATCH_LINE_CHARS)}…`
+          : line,
+      );
     remaining -= kept.length;
     return [{ oldStart: hunk.oldStart, newStart: hunk.newStart, lines: kept }];
   });

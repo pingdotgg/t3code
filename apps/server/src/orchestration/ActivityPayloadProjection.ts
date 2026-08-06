@@ -153,10 +153,11 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
 
 // Tool-detail fields the transcript's rich tool rows read when re-hydrating a
 // thread from a snapshot: tool identity + input for the `Tool(arg)` header,
-// result/output for the `⎿ result` line, and diff payloads (Claude
+// result/output for the `⎿ result` line, diff payloads (Claude
 // structuredPatch summaries, Codex native items, ACP content/rawInput) for
-// inline edit diffs. Clamped rather than summarized so the historical
-// transcript renders the same as the live stream did.
+// inline edit diffs, and ACP `locations` for the primary file-path argument.
+// Clamped rather than summarized so the historical transcript renders the
+// same as the live stream did.
 const RETAINED_TOOL_DETAIL_KEYS = [
   "toolName",
   "input",
@@ -165,16 +166,18 @@ const RETAINED_TOOL_DETAIL_KEYS = [
   "item",
   "content",
   "rawInput",
+  "locations",
 ] as const;
 
 const TOOL_DETAIL_MAX_STRING = 4_000;
 const TOOL_DETAIL_MAX_ARRAY = 100;
 const TOOL_DETAIL_MAX_DEPTH = 6;
+const TOOL_DETAIL_MAX_KEYS = 100;
 
 /**
- * Bounds a retained tool-detail value: long strings truncate, arrays cap, and
- * deeply nested structures cut off. Keeps snapshot rows a predictable size
- * without flattening them into one-line summaries.
+ * Bounds a retained tool-detail value: long strings truncate, arrays and
+ * object key counts cap, and deeply nested structures cut off. Keeps snapshot
+ * rows a predictable size without flattening them into one-line summaries.
  */
 function clampToolDetail(value: unknown, depth = 0): unknown {
   if (typeof value === "string") {
@@ -190,10 +193,15 @@ function clampToolDetail(value: unknown, depth = 0): unknown {
   }
   const record = value as Record<string, unknown>;
   const clamped: Record<string, unknown> = {};
+  let keys = 0;
   for (const key of Object.keys(record)) {
+    if (keys >= TOOL_DETAIL_MAX_KEYS) {
+      break;
+    }
     const entry = clampToolDetail(record[key], depth + 1);
     if (entry !== undefined) {
       clamped[key] = entry;
+      keys += 1;
     }
   }
   return clamped;
