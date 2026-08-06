@@ -33,6 +33,13 @@ describe("parseIntegratedBrowserUrlPattern", () => {
     });
   });
 
+  it("canonicalizes path prefixes to the URL.pathname representation", () => {
+    expect(parseIntegratedBrowserUrlPattern("example.com/über")).toEqual({
+      host: "example.com",
+      pathPrefix: "/%C3%BCber",
+    });
+  });
+
   it("rejects schemes, ports, whitespace, malformed hosts, and non-leading wildcards", () => {
     for (const raw of [
       "",
@@ -108,6 +115,16 @@ describe("urlMatchesIntegratedBrowserPatterns", () => {
     );
     expect(urlMatchesIntegratedBrowserPatterns("https://docs.example.com/api-keys", patterns)).toBe(
       false,
+    );
+  });
+
+  it("matches non-ASCII path prefixes against percent-encoded pathnames", () => {
+    const patterns = ["example.com/über"];
+    expect(urlMatchesIntegratedBrowserPatterns("https://example.com/über/docs", patterns)).toBe(
+      true,
+    );
+    expect(urlMatchesIntegratedBrowserPatterns("https://example.com/%C3%BCber", patterns)).toBe(
+      true,
     );
   });
 

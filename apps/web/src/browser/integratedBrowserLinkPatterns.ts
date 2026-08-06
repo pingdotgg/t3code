@@ -52,9 +52,20 @@ export function parseIntegratedBrowserUrlPattern(raw: string): IntegratedBrowser
   if (rawPath === null || rawPath === "/") {
     return { host, pathPrefix: null };
   }
+  // Canonicalize through URL so the prefix uses the same representation as
+  // the `URL.pathname` it is compared against (e.g. `/über` → `/%C3%BCber`).
+  let pathname: string;
+  try {
+    pathname = new URL(`https://h${rawPath}`).pathname;
+  } catch {
+    return null;
+  }
+  if (pathname === "/") {
+    return { host, pathPrefix: null };
+  }
   return {
     host,
-    pathPrefix: rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath,
+    pathPrefix: pathname.endsWith("/") ? pathname.slice(0, -1) : pathname,
   };
 }
 
