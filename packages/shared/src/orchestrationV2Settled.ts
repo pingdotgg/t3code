@@ -12,6 +12,7 @@ export type SettledThreadFields = {
   readonly settledOverride: SettledOverride;
   readonly settledAt: unknown;
   readonly updatedAt: unknown;
+  readonly pinnedAt?: unknown;
 };
 
 /**
@@ -24,6 +25,17 @@ export type SettledThreadTimestamps = {
   readonly settledAtMs: number | null;
   /** Thread updatedAt; used as the active-pin timestamp. */
   readonly updatedAtMs: number;
+};
+
+export type SettlementFieldPatch = {
+  readonly settledOverride: SettledOverride;
+  readonly settledAt: unknown;
+  readonly updatedAt: unknown;
+  /**
+   * When set (including explicit null), replaces current.pinnedAt.
+   * When omitted, the current pin is left alone (activity unsettle path).
+   */
+  readonly pinnedAt?: unknown;
 };
 
 /**
@@ -56,30 +68,37 @@ export function shouldApplyActivityUnsettle(
 /**
  * Merge only settlement fields onto the current thread. Never copies title,
  * archive, model, or other non-settlement state from the event payload.
+ * `pinnedAt` is applied only when the patch includes the key (settle clears it).
  */
 export function applySettlementFieldsToThread<T extends SettledThreadFields>(
   current: T,
-  settlement: Pick<T, "settledOverride" | "settledAt" | "updatedAt">,
+  settlement: SettlementFieldPatch,
 ): T {
-  return {
+  const next = {
     ...current,
     settledOverride: settlement.settledOverride,
     settledAt: settlement.settledAt,
     updatedAt: settlement.updatedAt,
   };
+  if ("pinnedAt" in settlement) {
+    return { ...next, pinnedAt: settlement.pinnedAt };
+  }
+  return next;
 }
 
 /**
  * Reduce a settle/unsettle event against current thread state.
  * - Explicit settle and user keep-active pin always apply settlement fields.
+ * - Explicit settle also clears pinnedAt when the patch carries it.
  * - Activity unsettle (payload.settledOverride === null) applies only when the
- *   activity timestamp wins the ordering guard against the current pin.
+ *   activity timestamp wins the ordering guard against the current pin, and
+ *   never rewinds updatedAt behind a newer metadata bump.
  * Returns the current thread unchanged when the event is a no-op.
  */
 export function reduceThreadSettlementEvent<T extends SettledThreadFields>(input: {
   readonly current: T;
   readonly eventType: "thread.settled" | "thread.unsettled";
-  readonly settlement: Pick<T, "settledOverride" | "settledAt" | "updatedAt">;
+  readonly settlement: SettlementFieldPatch;
   /** Activity/command time as epoch ms (event.occurredAt). */
   readonly activityAtMs: number;
   readonly currentTimestamps: SettledThreadTimestamps;
@@ -89,6 +108,15 @@ export function reduceThreadSettlementEvent<T extends SettledThreadFields>(input
     if (!shouldApplyActivityUnsettle(currentTimestamps, activityAtMs)) {
       return current;
     }
+    // Provider activity stamps may predate a later rename/metadata bump; keep
+    // the newer updatedAt so home-list ordering does not rewind.
+    const updatedAt =
+      activityAtMs < currentTimestamps.updatedAtMs ? current.updatedAt : settlement.updatedAt;
+    return applySettlementFieldsToThread(current, {
+      settledOverride: null,
+      settledAt: null,
+      updatedAt,
+    });
   }
   return applySettlementFieldsToThread(current, settlement);
 }
