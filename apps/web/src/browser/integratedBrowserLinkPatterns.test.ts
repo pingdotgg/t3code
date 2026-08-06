@@ -53,6 +53,7 @@ describe("parseIntegratedBrowserUrlPattern", () => {
       "example.com/docs#anchor",
       "gist*.github.com",
       "*.gist*.github.com",
+      "www.*.example.com",
       "*",
       "*.",
     ]) {
@@ -126,6 +127,12 @@ describe("urlMatchesIntegratedBrowserPatterns", () => {
     expect(urlMatchesIntegratedBrowserPatterns("https://example.com/%C3%BCber", patterns)).toBe(
       true,
     );
+    expect(urlMatchesIntegratedBrowserPatterns("https://example.com/%c3%bcber", patterns)).toBe(
+      true,
+    );
+    expect(
+      urlMatchesIntegratedBrowserPatterns("https://example.com/über", ["example.com/%c3%bcber"]),
+    ).toBe(true);
   });
 
   it("never matches non-http schemes, unparseable hrefs, or invalid patterns", () => {

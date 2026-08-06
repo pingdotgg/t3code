@@ -19,6 +19,15 @@ function stripWww(host: string): string {
 }
 
 /**
+ * Uppercases percent-escape hex digits so equivalent escapes compare equal
+ * (`URL.pathname` preserves the casing it was given, so `/%c3%bcber` and
+ * `/%C3%BCber` would otherwise never prefix-match).
+ */
+function normalizePercentEscapes(pathname: string): string {
+  return pathname.replace(/%[0-9a-f]{2}/giu, (escape) => escape.toUpperCase());
+}
+
+/**
  * Parses a raw user-entered pattern. Returns null when the pattern is invalid
  * (schemes, ports, whitespace, queries, fragments, empty host, or illegal
  * host characters). Matching compares `URL.pathname`, so `?`/`#` in a
@@ -35,18 +44,23 @@ export function parseIntegratedBrowserUrlPattern(raw: string): IntegratedBrowser
   const rawHost = slashIndex === -1 ? trimmed : trimmed.slice(0, slashIndex);
   const rawPath = slashIndex === -1 ? null : trimmed.slice(slashIndex);
 
-  const host = stripWww(rawHost.toLowerCase());
-  if (host.length === 0 || !HOST_PATTERN_CHARS.test(host)) {
+  const lowerHost = rawHost.toLowerCase();
+  if (!HOST_PATTERN_CHARS.test(lowerHost)) {
     return null;
   }
   // `*` is only meaningful as a leading `*.` wildcard with a non-empty apex;
   // reject it anywhere else so a pattern that would silently never match is
-  // flagged at entry.
-  if (host.includes("*")) {
-    const apex = host.startsWith("*.") ? host.slice(2) : "";
+  // flagged at entry. Validated before `www.` stripping — stripping first
+  // would silently widen `www.*.example.com` into a valid `*.example.com`.
+  if (lowerHost.includes("*")) {
+    const apex = lowerHost.startsWith("*.") ? lowerHost.slice(2) : "";
     if (apex.length === 0 || apex.includes("*")) {
       return null;
     }
+  }
+  const host = stripWww(lowerHost);
+  if (host.length === 0) {
+    return null;
   }
 
   if (rawPath === null || rawPath === "/") {
@@ -56,7 +70,7 @@ export function parseIntegratedBrowserUrlPattern(raw: string): IntegratedBrowser
   // the `URL.pathname` it is compared against (e.g. `/über` → `/%C3%BCber`).
   let pathname: string;
   try {
-    pathname = new URL(`https://h${rawPath}`).pathname;
+    pathname = normalizePercentEscapes(new URL(`https://h${rawPath}`).pathname);
   } catch {
     return null;
   }
@@ -137,6 +151,9 @@ export function urlMatchesIntegratedBrowserPatterns(
     if (pattern === null || !hostMatchesPattern(host, pattern.host)) {
       return false;
     }
-    return pattern.pathPrefix === null || pathMatchesPrefix(url.pathname, pattern.pathPrefix);
+    return (
+      pattern.pathPrefix === null ||
+      pathMatchesPrefix(normalizePercentEscapes(url.pathname), pattern.pathPrefix)
+    );
   });
 }
