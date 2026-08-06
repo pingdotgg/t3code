@@ -54,7 +54,7 @@ import {
   SettingsRow,
   SettingsSection,
   useRelativeTimeTick,
-  useSettingsSearchTarget,
+  useSettingsSearchTargetRef,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -134,7 +134,7 @@ function ArchivedThreadsSearch({
   readonly query: string;
   readonly onQueryChange: (query: string) => void;
 }) {
-  const searchTargetRef = useSettingsSearchTarget<HTMLInputElement>(settingId);
+  const searchTargetRef = useSettingsSearchTargetRef<HTMLInputElement>(settingId);
 
   return (
     <Input

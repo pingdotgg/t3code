@@ -3,35 +3,52 @@ import * as Cause from "effect/Cause";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
-  const commands = {
-    archive: {},
-    delete: {},
-    pin: {},
-    settle: {},
-    snooze: {},
-    unarchive: {},
-    unsnooze: {},
-    unpin: {},
-    unsettle: {},
-  };
+  function createCommandMocks<const Names extends readonly string[]>(...names: Names) {
+    type Name = Names[number];
+
+    const commands = {} as Record<Name, object>;
+    const mutations = {} as Record<Name, ReturnType<typeof vi.fn>>;
+    const mutationsByCommand = new Map<object, ReturnType<typeof vi.fn>>();
+
+    for (const name of names as readonly Name[]) {
+      const command = {};
+      const mutation = vi.fn();
+      commands[name] = command;
+      mutations[name] = mutation;
+      mutationsByCommand.set(command, mutation);
+    }
+
+    return {
+      commands,
+      mutations,
+      resolve(command: object) {
+        const mutation = mutationsByCommand.get(command);
+        if (!mutation) throw new Error("Unexpected thread command");
+        return mutation;
+      },
+    };
+  }
+
+  const threadCommands = createCommandMocks(
+    "archive",
+    "delete",
+    "pin",
+    "settle",
+    "snooze",
+    "unarchive",
+    "unsnooze",
+    "unpin",
+    "unsettle",
+  );
 
   return {
     alert: vi.fn(),
-    archiveMutation: vi.fn(),
     canSettle: vi.fn(),
     canSnooze: vi.fn(),
-    commands,
-    deleteMutation: vi.fn(),
     impactAsync: vi.fn(),
-    pinMutation: vi.fn(),
     refreshArchivedThreadsForEnvironment: vi.fn(),
     serverConfigs: new Map<string, unknown>(),
-    settleMutation: vi.fn(),
-    snoozeMutation: vi.fn(),
-    unarchiveMutation: vi.fn(),
-    unsnoozeMutation: vi.fn(),
-    unpinMutation: vi.fn(),
-    unsettleMutation: vi.fn(),
+    threadCommands,
   };
 });
 
@@ -73,22 +90,11 @@ vi.mock("../../state/server", () => ({
 }));
 
 vi.mock("../../state/threads", () => ({
-  threadEnvironment: mocks.commands,
+  threadEnvironment: mocks.threadCommands.commands,
 }));
 
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: object) => {
-    if (command === mocks.commands.archive) return mocks.archiveMutation;
-    if (command === mocks.commands.unarchive) return mocks.unarchiveMutation;
-    if (command === mocks.commands.delete) return mocks.deleteMutation;
-    if (command === mocks.commands.pin) return mocks.pinMutation;
-    if (command === mocks.commands.settle) return mocks.settleMutation;
-    if (command === mocks.commands.snooze) return mocks.snoozeMutation;
-    if (command === mocks.commands.unsettle) return mocks.unsettleMutation;
-    if (command === mocks.commands.unsnooze) return mocks.unsnoozeMutation;
-    if (command === mocks.commands.unpin) return mocks.unpinMutation;
-    throw new Error("Unexpected thread command");
-  },
+  useAtomCommand: (command: object) => mocks.threadCommands.resolve(command),
 }));
 
 import { useArchivedThreadListActions, useThreadListActions } from "./useThreadListActions";
@@ -113,15 +119,9 @@ function makeThread(id = "thread-1", environmentId = "environment-1"): Environme
 describe("useThreadListActions merged archive and settlement contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.archiveMutation.mockResolvedValue(success);
-    mocks.unarchiveMutation.mockResolvedValue(success);
-    mocks.deleteMutation.mockResolvedValue(success);
-    mocks.pinMutation.mockResolvedValue(success);
-    mocks.settleMutation.mockResolvedValue(success);
-    mocks.snoozeMutation.mockResolvedValue(success);
-    mocks.unsettleMutation.mockResolvedValue(success);
-    mocks.unsnoozeMutation.mockResolvedValue(success);
-    mocks.unpinMutation.mockResolvedValue(success);
+    for (const mutation of Object.values(mocks.threadCommands.mutations)) {
+      mutation.mockResolvedValue(success);
+    }
     mocks.canSettle.mockReturnValue(true);
     mocks.canSnooze.mockReturnValue(true);
     mocks.impactAsync.mockResolvedValue(undefined);
@@ -138,7 +138,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     await expect(actions.unarchiveThread(thread)).resolves.toBe("succeeded");
     expect(mocks.refreshArchivedThreadsForEnvironment).toHaveBeenCalledWith("environment-1");
 
-    mocks.deleteMutation.mockResolvedValueOnce(failure("delete denied"));
+    mocks.threadCommands.mutations.delete.mockResolvedValueOnce(failure("delete denied"));
     await expect(actions.deleteThread(thread, { reportFailure: false })).resolves.toBe("failed");
     expect(mocks.alert).not.toHaveBeenCalled();
 
@@ -155,7 +155,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
   it("reports a duplicate archived-thread action as skipped while the first action settles", async () => {
     const thread = makeThread();
     let completeFirst!: (result: typeof success) => void;
-    mocks.unarchiveMutation.mockReturnValueOnce(
+    mocks.threadCommands.mutations.unarchive.mockReturnValueOnce(
       new Promise<typeof success>((resolve) => {
         completeFirst = resolve;
       }),
@@ -166,7 +166,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     await expect(actions.unarchiveThread(thread, { reportFailure: false })).resolves.toBe(
       "skipped",
     );
-    expect(mocks.unarchiveMutation).toHaveBeenCalledOnce();
+    expect(mocks.threadCommands.mutations.unarchive).toHaveBeenCalledOnce();
     expect(mocks.impactAsync).toHaveBeenCalledOnce();
 
     completeFirst(success);
@@ -177,7 +177,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     const firstThread = makeThread("thread", "environment:one");
     const secondThread = makeThread("one:thread", "environment");
     let completeFirst!: (result: typeof success) => void;
-    mocks.unarchiveMutation.mockReturnValueOnce(
+    mocks.threadCommands.mutations.unarchive.mockReturnValueOnce(
       new Promise<typeof success>((resolve) => {
         completeFirst = resolve;
       }),
@@ -188,7 +188,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     await expect(actions.unarchiveThread(secondThread, { reportFailure: false })).resolves.toBe(
       "succeeded",
     );
-    expect(mocks.unarchiveMutation).toHaveBeenCalledTimes(2);
+    expect(mocks.threadCommands.mutations.unarchive).toHaveBeenCalledTimes(2);
 
     completeFirst(success);
     await expect(first).resolves.toBe("succeeded");
@@ -197,7 +197,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
   it("keeps the void archive adapter deduplicated and refreshes after success", async () => {
     const thread = makeThread();
     let completeArchive!: (result: typeof success) => void;
-    mocks.archiveMutation.mockReturnValueOnce(
+    mocks.threadCommands.mutations.archive.mockReturnValueOnce(
       new Promise<typeof success>((resolve) => {
         completeArchive = resolve;
       }),
@@ -206,7 +206,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
 
     actions.archiveThread(thread);
     actions.archiveThread(thread);
-    expect(mocks.archiveMutation).toHaveBeenCalledOnce();
+    expect(mocks.threadCommands.mutations.archive).toHaveBeenCalledOnce();
 
     completeArchive(success);
     await vi.waitFor(() => {
@@ -216,17 +216,17 @@ describe("useThreadListActions merged archive and settlement contract", () => {
 
   it("adapts settlement success and failure to booleans for Thread List v2", async () => {
     const thread = makeThread();
-    mocks.unsettleMutation.mockResolvedValueOnce(failure("unsettle denied"));
+    mocks.threadCommands.mutations.unsettle.mockResolvedValueOnce(failure("unsettle denied"));
     const actions = useThreadListActions();
 
     await expect(actions.settleThread(thread)).resolves.toBe(true);
     await expect(actions.unsettleThread(thread)).resolves.toBe(false);
 
-    expect(mocks.settleMutation).toHaveBeenCalledWith({
+    expect(mocks.threadCommands.mutations.settle).toHaveBeenCalledWith({
       environmentId: "environment-1",
       input: { threadId: "thread-1" },
     });
-    expect(mocks.unsettleMutation).toHaveBeenCalledWith({
+    expect(mocks.threadCommands.mutations.unsettle).toHaveBeenCalledWith({
       environmentId: "environment-1",
       input: { threadId: "thread-1", reason: "user" },
     });
@@ -244,7 +244,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     mocks.serverConfigs.set("environment", {
       environment: { capabilities: { threadSettlement: true, threadSnooze: true } },
     });
-    mocks.snoozeMutation.mockReturnValueOnce(
+    mocks.threadCommands.mutations.snooze.mockReturnValueOnce(
       new Promise<typeof success>((resolve) => {
         completeFirst = resolve;
       }),
@@ -254,7 +254,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     const first = actions.snoozeThread(firstThread, snoozedUntil);
     await expect(actions.snoozeThread(firstThread, snoozedUntil)).resolves.toBe(false);
     await expect(actions.snoozeThread(secondThread, snoozedUntil)).resolves.toBe(true);
-    expect(mocks.snoozeMutation).toHaveBeenCalledTimes(2);
+    expect(mocks.threadCommands.mutations.snooze).toHaveBeenCalledTimes(2);
 
     completeFirst(success);
     await expect(first).resolves.toBe(true);
