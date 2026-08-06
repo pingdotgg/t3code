@@ -28,6 +28,13 @@ function environmentSupportsSnooze(environmentId: EnvironmentThreadShell["enviro
   );
 }
 
+function environmentSupportsPinning(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadPinning === true
+  );
+}
+
 type ThreadListAction = "archive" | "unarchive" | "delete" | "settle" | "unsettle";
 export type ThreadListActionResult = "succeeded" | "failed" | "skipped";
 
@@ -220,10 +227,14 @@ export function useThreadListActions(): {
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
+  const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
+  const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
 
   const archiveThread = useCallback(
@@ -330,6 +341,62 @@ export function useThreadListActions(): {
       (await executeAction("unsettle", thread)) === "succeeded",
     [executeAction],
   );
+  const pinThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      if (!environmentSupportsPinning(thread.environmentId)) {
+        Alert.alert(
+          "Could not pin thread",
+          "This environment's server does not support pinning yet. Update the server to use Pin.",
+        );
+        return false;
+      }
+      selectionHaptic();
+      const result = await pinMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not pin thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be pinned.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [pinMutation],
+  );
+  const unpinThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      if (!environmentSupportsPinning(thread.environmentId)) {
+        Alert.alert(
+          "Could not unpin thread",
+          "This environment's server does not support pinning yet. Update the server to use Pin.",
+        );
+        return false;
+      }
+      selectionHaptic();
+      const result = await unpinMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not unpin thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be unpinned.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [unpinMutation],
+  );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
@@ -340,6 +407,8 @@ export function useThreadListActions(): {
     snoozeThread,
     unsnoozeThread,
     unsettleThread,
+    pinThread,
+    unpinThread,
   };
 }
 

@@ -991,6 +991,61 @@ it.layer(
     }),
   );
 
+  it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("prompt ");
+      // DECRQM/DECRPM, XTVERSION, and kitty-keyboard CSI query/reply traffic.
+      process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
+      // DECRQSS and XTGETTCAP query/reply traffic in 7-bit DCS form.
+      process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
+      process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
+      // The same DCS traffic in 8-bit form.
+      process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
+      process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
+      // Setters and cursor movement share final bytes with query families but
+      // have visible terminal-state value and must survive replay.
+      process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("done\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, 'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n');
+    }),
+  );
+
+  it.effect("handles CSI and DCS query sequences split across output chunks", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("before ");
+      process.emitData("\u001b[?2026$");
+      process.emitData("pafter ");
+      process.emitData("\u001bP$q ");
+      process.emitData("m\u001b");
+      process.emitData("\\after ");
+      process.emitData("\u009b?3");
+      process.emitData("1uafter ");
+      process.emitData("\u0090+q544e");
+      process.emitData("\u009cafter\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "before after after after after\n");
+    }),
+  );
+
   it.effect(
     "preserves clear and style control sequences while dropping chunk-split query traffic",
     () =>
@@ -1345,6 +1400,8 @@ it.layer(
           OWD: "/home/user/project",
           PATH: `${appDir}/usr/bin:${appDir}:/usr/local/bin:/usr/bin:/bin`,
           LD_LIBRARY_PATH: `${appDir}/usr/lib:/home/user/.local/lib`,
+          XDG_DATA_DIRS: `${appDir}/usr/share:/usr/local/share:/usr/share`,
+          GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
           TEST_TERMINAL_KEEP: "keep-me",
         },
       });
@@ -1364,6 +1421,11 @@ it.layer(
       // mount segments that the runtime prepended.
       expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
       expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
+      // XDG_DATA_DIRS keeps the host entries but drops the AppImage share dir.
+      expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
+      // GSETTINGS_SCHEMA_DIR pointed only at the mount, so it is removed and
+      // gsettings falls back to the host schema location.
+      expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
       // Unrelated host vars still pass through untouched.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),

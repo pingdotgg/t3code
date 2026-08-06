@@ -18,6 +18,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -43,7 +44,6 @@ import { isTerminalLinkActivation, resolvePathLinkTarget } from "../terminal-lin
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
-  isTerminalCloseShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
@@ -57,12 +57,16 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
+import { useClientSettings } from "../hooks/useSettings";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import { resolveTerminalFontPreference, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -131,7 +135,13 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
   return value ?? fallback;
 }
 
-function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
+/** The surface treats an omitted family or size as "use the built-in default". */
+function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
+  const trimmed = family.trim();
+  return trimmed.length > 0 ? { family: trimmed, size } : { size };
+}
+
+export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
   const isDark = document.documentElement.classList.contains("dark");
   const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
   const fallbackForeground = isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)";
@@ -234,6 +244,7 @@ export function shouldHandleTerminalExit(
 }
 
 interface TerminalViewportProps {
+  advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   terminalId: string;
@@ -257,6 +268,7 @@ interface TerminalLaunchLocation {
 }
 
 export function TerminalViewport({
+  advancedTypography,
   threadRef,
   threadId,
   terminalId,
@@ -305,6 +317,15 @@ export function TerminalViewport({
     onAddTerminalContext(selection);
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
+  const terminalFontFamily = useClientSettings((settings) =>
+    resolveTerminalFontPreference({
+      advanced: advancedTypography,
+      code: settings.fontFamilyCode,
+      terminal: settings.fontFamilyTerminal,
+    }),
+  );
+  const terminalFontSize = useClientSettings((settings) => settings.fontSizeTerminal);
+  const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
   const terminalSession = useAttachedTerminalSession({
     environmentId,
     terminal: {
@@ -368,6 +389,13 @@ export function TerminalViewport({
   }, [keybindings]);
 
   useEffect(() => {
+    const current = terminalFontRef.current;
+    if (current.family === terminalFontFamily && current.size === terminalFontSize) return;
+    terminalFontRef.current = { family: terminalFontFamily, size: terminalFontSize };
+    void terminalRef.current?.setFont(terminalFontOptions(terminalFontFamily, terminalFontSize));
+  }, [terminalFontFamily, terminalFontSize]);
+
+  useEffect(() => {
     const mount = containerRef.current;
     if (!mount) return;
 
@@ -378,8 +406,10 @@ export function TerminalViewport({
     let setupCleanups: Array<() => void> = [];
 
     const setup = async (): Promise<(() => void) | null> => {
+      const setupFont = terminalFontRef.current;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
+        font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -397,6 +427,13 @@ export function TerminalViewport({
       terminal.setTheme(terminalThemeFromApp(mount));
       setupTerminal = terminal;
       terminalRef.current = terminal;
+      // Client settings hydrate asynchronously; a font preference that landed
+      // while the surface was loading found terminalRef null, so its setFont
+      // was dropped. Re-apply whatever is current once the terminal exists.
+      const currentFont = terminalFontRef.current;
+      if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
+        void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
+      }
       const latestSession = latestSessionRef.current;
       previousSessionRef.current = latestSession;
       if (latestSession.buffer.length > 0) terminal.resetAndWrite(latestSession.buffer);
@@ -527,12 +564,14 @@ export function TerminalViewport({
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = keybindingsRef.current;
         const options = { context: { terminalFocus: true, terminalOpen: true } };
+        if (preventTerminalCloseShortcut(event, currentKeybindings)) {
+          return false;
+        }
         if (
           isTerminalToggleShortcut(event, currentKeybindings, options) ||
           isTerminalSplitShortcut(event, currentKeybindings, options) ||
           isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
           isTerminalNewShortcut(event, currentKeybindings, options) ||
-          isTerminalCloseShortcut(event, currentKeybindings, options) ||
           isDiffToggleShortcut(event, currentKeybindings, options)
         ) {
           return false;
@@ -889,6 +928,11 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  const [advancedTypography] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const controlledDrawerHeight = clampDrawerHeight(height);
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
     threadId,
@@ -1325,6 +1369,7 @@ export default function ThreadTerminalDrawer({
                     >
                       <div className="h-full p-1">
                         <TerminalViewport
+                          advancedTypography={advancedTypography}
                           threadRef={threadRef}
                           threadId={threadId}
                           terminalId={terminalId}
@@ -1352,6 +1397,7 @@ export default function ThreadTerminalDrawer({
             ) : (
               <div className="h-full p-1">
                 <TerminalViewport
+                  advancedTypography={advancedTypography}
                   key={resolvedActiveTerminalId}
                   threadRef={threadRef}
                   threadId={threadId}
