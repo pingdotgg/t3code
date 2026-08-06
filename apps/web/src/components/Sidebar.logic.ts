@@ -188,14 +188,14 @@ export async function withCoordinatedThreadArchiveEntries<
 
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
-  hasRunningThread: boolean;
+  hasArchiveBlockedThread: boolean;
 }): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
   return [
     { id: "mark-unread", label: `Mark unread (${input.count})` },
     {
       id: "archive",
       label: `Archive (${input.count})`,
-      disabled: input.hasRunningThread,
+      disabled: input.hasArchiveBlockedThread,
     },
     { id: "delete", label: `Delete (${input.count})`, destructive: true },
   ];
@@ -212,7 +212,7 @@ export function buildSidebarV2ThreadContextMenuSlots(input: {
   canUseLifecycleActions: boolean;
   supportsSettlement: boolean;
   isSettled: boolean;
-  isRunning: boolean;
+  isArchiveBlocked: boolean;
 }): SidebarV2ThreadContextMenuSlots {
   return {
     lifecycleItems: [
@@ -224,7 +224,7 @@ export function buildSidebarV2ThreadContextMenuSlots(input: {
           ]
         : []),
       ...(input.canUseLifecycleActions
-        ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isRunning }]
+        ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isArchiveBlocked }]
         : []),
     ],
     renameItem: { id: "rename", label: "Rename thread" },
@@ -267,23 +267,35 @@ export function isThreadSessionRunning(
   return session?.status === "running" && session.activeTurnId != null;
 }
 
+type ThreadArchiveState = {
+  readonly session?:
+    | { readonly status: string; readonly activeTurnId?: unknown }
+    | null
+    | undefined;
+  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
+};
+
+export function isThreadArchiveBlocked(thread: ThreadArchiveState | null | undefined): boolean {
+  return (
+    isThreadSessionRunning(thread?.session) ||
+    thread?.backgroundLiveness === "working" ||
+    thread?.backgroundLiveness === "monitoring"
+  );
+}
+
 export function canArchiveSettledSidebarThread(input: {
   readonly threadKey: string;
   readonly settledThreadKeys: ReadonlySet<string>;
   readonly session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined;
+  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
 }): boolean {
-  return input.settledThreadKeys.has(input.threadKey) && !isThreadSessionRunning(input.session);
+  return input.settledThreadKeys.has(input.threadKey) && !isThreadArchiveBlocked(input);
 }
 
-export function filterArchivableSidebarThreads<
-  T extends {
-    readonly session?:
-      | { readonly status: string; readonly activeTurnId?: unknown }
-      | null
-      | undefined;
-  },
->(threads: readonly T[]): T[] {
-  return threads.filter((thread) => !isThreadSessionRunning(thread.session));
+export function filterArchivableSidebarThreads<T extends ThreadArchiveState>(
+  threads: readonly T[],
+): T[] {
+  return threads.filter((thread) => !isThreadArchiveBlocked(thread));
 }
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {

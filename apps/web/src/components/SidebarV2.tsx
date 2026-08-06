@@ -121,7 +121,7 @@ import {
   firstValidTimestampMs,
   getCompletedArchiveThreadKeys,
   hasUnseenCompletion,
-  isThreadSessionRunning,
+  isThreadArchiveBlocked,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
@@ -1028,7 +1028,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : variantAction === "unsettle" ? (
                 <SidebarV2SettledLifecycleControls
                   settlementSupported={props.settlementSupported}
-                  archiveDisabled={isThreadSessionRunning(thread.session)}
+                  archiveDisabled={isThreadArchiveBlocked(thread)}
                   onUnsettle={handleUnsettleClick}
                   onArchive={handleArchiveClick}
                 />
@@ -2360,14 +2360,15 @@ export default function SidebarV2() {
                 threadKey: string;
                 threadRef: ScopedThreadRef;
               }) => {
-                const session = readThreadShell(threadRef)?.session;
+                const thread = readThreadShell(threadRef);
                 if (!options.requireStillSettled) {
-                  return !isThreadSessionRunning(session);
+                  return !isThreadArchiveBlocked(thread);
                 }
                 return canArchiveSettledSidebarThread({
                   threadKey,
                   settledThreadKeys: settledThreadKeysRef.current,
-                  session,
+                  session: thread?.session,
+                  backgroundLiveness: thread?.backgroundLiveness,
                 });
               },
             }
@@ -2494,8 +2495,8 @@ export default function SidebarV2() {
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      const hasRunningThread = threadKeys.some((threadKey) =>
-        isThreadSessionRunning(threadByKeyRef.current.get(threadKey)?.session),
+      const hasArchiveBlockedThread = threadKeys.some((threadKey) =>
+        isThreadArchiveBlocked(threadByKeyRef.current.get(threadKey)),
       );
       // Snooze (N) is offered when every selected thread can actually take
       // it — a mixed selection with blocked-on-you work would half-apply.
@@ -2541,7 +2542,7 @@ export default function SidebarV2() {
             {
               id: "archive",
               label: `Archive (${count})`,
-              disabled: hasRunningThread,
+              disabled: hasArchiveBlockedThread,
             },
             ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
@@ -2742,7 +2743,7 @@ export default function SidebarV2() {
           canUseLifecycleActions: true,
           supportsSettlement,
           isSettled,
-          isRunning: isThreadSessionRunning(thread.session),
+          isArchiveBlocked: isThreadArchiveBlocked(thread),
         });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(

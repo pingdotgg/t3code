@@ -173,6 +173,7 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   getSidebarThreadIdsToPrewarm,
+  isThreadArchiveBlocked,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
@@ -1767,12 +1768,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const thread = threadRef ? readThreadShell(threadRef) : null;
         return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
       });
-      const hasRunningThread = selectedThreadEntries.some(
-        ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
+      const hasArchiveBlockedThread = selectedThreadEntries.some(({ thread }) =>
+        isThreadArchiveBlocked(thread),
       );
 
       const clicked = await api.contextMenu.show(
-        buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),
+        buildMultiSelectThreadContextMenuItems({ count, hasArchiveBlockedThread }),
         position,
       );
 

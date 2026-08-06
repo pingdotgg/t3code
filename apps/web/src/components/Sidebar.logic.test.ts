@@ -18,6 +18,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isThreadArchiveBlocked,
   isThreadSessionRunning,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -497,13 +498,13 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasArchiveBlockedThread: false }),
     ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
   });
 
-  it("disables bulk archive when a selected thread is running", () => {
+  it("disables bulk archive when a selected thread has active work", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+      buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 });
@@ -514,13 +515,13 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
       canUseLifecycleActions: true,
       supportsSettlement: true,
       isSettled: false,
-      isRunning: false,
+      isArchiveBlocked: false,
     });
     const settledSlots = buildSidebarV2ThreadContextMenuSlots({
       canUseLifecycleActions: true,
       supportsSettlement: true,
       isSettled: true,
-      isRunning: false,
+      isArchiveBlocked: false,
     });
 
     expect(activeSlots.lifecycleItems.map((item) => item.id)).toEqual(["settle", "archive"]);
@@ -532,17 +533,23 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
     ]);
   });
 
-  it("keeps archive visible but disabled while a thread is running", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: false,
-      isRunning: true,
-    });
+  it("keeps archive visible but disabled while a thread has active work", () => {
+    for (const thread of [
+      { session: { status: "running", activeTurnId: "turn-running" } },
+      { session: null, backgroundLiveness: "working" as const },
+      { session: null, backgroundLiveness: "monitoring" as const },
+    ]) {
+      const slots = buildSidebarV2ThreadContextMenuSlots({
+        canUseLifecycleActions: true,
+        supportsSettlement: true,
+        isSettled: false,
+        isArchiveBlocked: isThreadArchiveBlocked(thread),
+      });
 
-    expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
-      disabled: true,
-    });
+      expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
+        disabled: true,
+      });
+    }
   });
 
   it("leaves capability-gated slots empty", () => {
@@ -550,7 +557,7 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
       canUseLifecycleActions: false,
       supportsSettlement: false,
       isSettled: false,
-      isRunning: false,
+      isArchiveBlocked: false,
     });
 
     expect(slots.lifecycleItems).toEqual([]);
@@ -559,27 +566,26 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
     expect(slots.destructiveItems).toEqual([]);
   });
 
-  it("composes upstream actions around the fork-owned slots", () => {
+  it("composes pin, snooze, and archive actions around the fork-owned slots", () => {
     const slots = buildSidebarV2ThreadContextMenuSlots({
       canUseLifecycleActions: true,
       supportsSettlement: true,
       isSettled: false,
-      isRunning: false,
+      isArchiveBlocked: false,
     });
 
-    const items = composeSidebarV2ThreadContextMenuItems({
-      slots,
-      leadingItems: [{ id: "new-thread-on-branch", label: "New thread on branch" }],
-      snoozeItems: [{ id: "snooze", label: "Snooze" }],
-      titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
-      copyItems: [
-        { id: "copy-path", label: "Copy path" },
-        { id: "copy-branch", label: "Copy branch" },
-      ],
-    });
-
-    expect(items.map((item) => item.id)).toEqual([
-      "new-thread-on-branch",
+    const compose = (pinItem: { id: "pin" | "unpin"; label: string }) =>
+      composeSidebarV2ThreadContextMenuItems({
+        slots,
+        leadingItems: [{ id: "new-thread-on-branch", label: "New thread on branch" }, pinItem],
+        snoozeItems: [{ id: "snooze", label: "Snooze" }],
+        titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
+        copyItems: [
+          { id: "copy-path", label: "Copy path" },
+          { id: "copy-branch", label: "Copy branch" },
+        ],
+      }).map((item) => item.id);
+    const expectedTail = [
       "settle",
       "archive",
       "snooze",
@@ -589,6 +595,17 @@ describe("buildSidebarV2ThreadContextMenuSlots", () => {
       "copy-path",
       "copy-branch",
       "delete",
+    ];
+
+    expect(compose({ id: "pin", label: "Pin thread" })).toEqual([
+      "new-thread-on-branch",
+      "pin",
+      ...expectedTail,
+    ]);
+    expect(compose({ id: "unpin", label: "Unpin thread" })).toEqual([
+      "new-thread-on-branch",
+      "unpin",
+      ...expectedTail,
     ]);
   });
 });
@@ -614,19 +631,27 @@ describe("shouldRenderSidebarV2ArchiveAll", () => {
 });
 
 describe("archive lifecycle guards", () => {
-  it("filters running threads from archive batches", () => {
+  it("filters active turns and background work from archive batches", () => {
     const ready = { id: "ready", session: null };
     const running = {
       id: "running",
       session: { status: "running", activeTurnId: "turn-running" },
     };
+    const working = { id: "working", session: null, backgroundLiveness: "working" as const };
+    const monitoring = {
+      id: "monitoring",
+      session: null,
+      backgroundLiveness: "monitoring" as const,
+    };
 
     expect(isThreadSessionRunning(running.session)).toBe(true);
-    expect(filterArchivableSidebarThreads([ready, running])).toEqual([ready]);
+    expect(isThreadArchiveBlocked(working)).toBe(true);
+    expect(isThreadArchiveBlocked(monitoring)).toBe(true);
+    expect(filterArchivableSidebarThreads([ready, running, working, monitoring])).toEqual([ready]);
   });
 
-  it("re-checks settled membership before a settled-partition archive", () => {
-    const settledThreadKeys = new Set(["ready", "running"]);
+  it("re-checks settled membership and background work before a settled-partition archive", () => {
+    const settledThreadKeys = new Set(["ready", "running", "working", "monitoring"]);
 
     expect(
       canArchiveSettledSidebarThread({
@@ -649,6 +674,16 @@ describe("archive lifecycle guards", () => {
         session: null,
       }),
     ).toBe(false);
+    for (const backgroundLiveness of ["working", "monitoring"] as const) {
+      expect(
+        canArchiveSettledSidebarThread({
+          threadKey: backgroundLiveness,
+          settledThreadKeys,
+          session: null,
+          backgroundLiveness,
+        }),
+      ).toBe(false);
+    }
   });
 });
 

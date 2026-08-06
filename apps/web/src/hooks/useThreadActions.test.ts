@@ -14,6 +14,6 @@ describe("ThreadArchiveBlockedError", () => {
       environmentId: "environment-1",
       threadId: "thread-1",
     });
-    expect(error.message).toBe("Cannot archive a running thread.");
+    expect(error.message).toBe("Cannot archive a thread while work is still active.");
   });
 });

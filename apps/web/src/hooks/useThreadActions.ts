@@ -14,7 +14,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import {
   getFallbackThreadIdAfterDelete,
-  isThreadSessionRunning,
+  isThreadArchiveBlocked,
 } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
@@ -46,7 +46,7 @@ export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArc
   },
 ) {
   override get message(): string {
-    return "Cannot archive a running thread.";
+    return "Cannot archive a thread while work is still active.";
   }
 }
 
@@ -182,7 +182,7 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
-      if (isThreadSessionRunning(thread.session)) {
+      if (isThreadArchiveBlocked(thread)) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({
