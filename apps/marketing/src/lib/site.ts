@@ -6,5 +6,5 @@ export const GOOGLE_PLAY_STORE_URL =
 
 export const MARKETING_STATS = {
   githubStars: "14k+",
-  users: "100,000",
+  users: "160,000",
 } as const;

@@ -329,22 +329,18 @@ const faqs = [
             </svg>
             <span>Connect</span>
           </h2>
-          <p><code>npx t3</code> · one switch · every screen</p>
+          <p><code>npx t3</code></p>
         </div>
       </div>
 
       <div class="showcase-visual">
         <div class="connect-visual" data-connect-visual>
           <div class="connect-switch">
-            <div class="connect-switch__source">
-              <span class="connect-host__status"></span>
-              <strong>Theo’s Mac Studio</strong>
-              <span class="connect-switch__path">Settings · Connections</span>
-            </div>
             <div class="connect-switch__row">
+              <span class="connect-host__status"></span>
               <div class="connect-switch__copy">
-                <strong>T3 Connect</strong>
-                <p>Securely expose this environment to your other screens.</p>
+                <strong>Theo’s Mac Studio</strong>
+                <span>T3 Connect</span>
               </div>
               <span class="connect-toggle" aria-hidden="true"><i></i></span>
             </div>
@@ -420,7 +416,7 @@ const faqs = [
     <div class="container">
       <div class="endorsements-head">
         <h2 id="endorsements-title">
-          Tolerated by over <span class="endorsements-count"
+          Used by <span class="endorsements-count"
             >{MARKETING_STATS.users}</span
           > devs
         </h2>
@@ -1873,7 +1869,7 @@ const faqs = [
   .connect-switch {
     position: relative;
     z-index: 2;
-    width: 100%;
+    width: min(100%, 420px);
     border: 1px solid rgba(178, 165, 255, 0.24);
     border-radius: 16px;
     background:
@@ -1894,46 +1890,25 @@ const faqs = [
     transform: none;
   }
 
-  .connect-switch__source {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 18px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-    color: rgba(255, 255, 255, 0.82);
-    font-family: var(--font-mono);
-    font-size: 11px;
-  }
-
-  .connect-switch__source strong {
-    font-weight: 600;
-  }
-
-  .connect-switch__path {
-    margin-left: auto;
-    color: rgba(255, 255, 255, 0.34);
-  }
-
   .connect-switch__row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 22px;
-    padding: 18px;
+    gap: 12px;
+    padding: 15px 16px;
   }
 
   .connect-switch__copy strong {
     display: block;
-    margin-bottom: 5px;
     font-size: 14px;
     font-weight: 600;
   }
 
-  .connect-switch__copy p {
-    margin: 0;
+  .connect-switch__copy span {
+    display: block;
+    margin-top: 2px;
     color: rgba(255, 255, 255, 0.5);
-    font-size: 12.5px;
-    line-height: 1.45;
+    font-family: var(--font-mono);
+    font-size: 10px;
   }
 
   /* The switch flips itself on once the visual scrolls into view. */
@@ -1943,6 +1918,7 @@ const faqs = [
     width: 46px;
     height: 27px;
     flex: 0 0 auto;
+    margin-left: auto;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.14);
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -2054,17 +2030,14 @@ const faqs = [
   }
 
   .connect-devices li {
+    position: relative;
     display: inline-flex;
-    min-height: 38px;
+    min-width: 88px;
+    min-height: 42px;
     align-items: center;
+    justify-content: center;
     gap: 8px;
-    padding: 8px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.11);
-    border-radius: 11px;
-    background: rgba(9, 9, 12, 0.8);
-    box-shadow:
-      inset 0 1px rgba(255, 255, 255, 0.06),
-      0 16px 40px rgba(0, 0, 0, 0.4);
+    padding: 8px 4px;
     opacity: 0;
     transform: translateY(14px) scale(0.95);
     transition:
@@ -2098,6 +2071,9 @@ const faqs = [
   }
 
   .connect-device__dot {
+    position: absolute;
+    top: 2px;
+    right: 2px;
     width: 7px;
     height: 7px;
     flex: 0 0 auto;
