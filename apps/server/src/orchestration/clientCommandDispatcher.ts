@@ -223,6 +223,9 @@ export const makeClientCommandDispatcher = ({
             interactionMode: bootstrap.createThread.interactionMode,
             branch: bootstrap.createThread.branch,
             worktreePath: bootstrap.createThread.worktreePath,
+            ...(bootstrap.createThread.pullRequest !== undefined
+              ? { pullRequest: bootstrap.createThread.pullRequest }
+              : {}),
             ...(bootstrap.createThread.reviewSnapshot !== undefined
               ? { reviewSnapshot: bootstrap.createThread.reviewSnapshot }
               : {}),

@@ -315,16 +315,95 @@ export default function GitActionsControl({
     ],
   );
 
-  const syncThreadBranchAfterGitAction = useCallback(
-    (result: GitRunStackedActionResult) => {
-      const branchUpdate = resolveThreadBranchUpdate(result);
-      if (!branchUpdate) {
+  const persistThreadPullRequestAssociation = useCallback(
+    async (result: GitRunStackedActionResult) => {
+      if (result.pr.status !== "created" && result.pr.status !== "opened_existing") {
+        return;
+      }
+      if (
+        result.pr.number === undefined ||
+        result.pr.url === undefined ||
+        result.pr.url.trim().length === 0
+      ) {
+        return;
+      }
+      if (!activeThreadRef) {
         return;
       }
 
-      persistThreadBranchSync(branchUpdate.branch);
+      const headBranch =
+        result.pr.headBranch ??
+        result.push.branch ??
+        result.branch.name ??
+        activeServerThread?.branch ??
+        activeDraftThread?.branch ??
+        null;
+      if (headBranch === null) {
+        return;
+      }
+
+      const pullRequest = {
+        number: result.pr.number,
+        url: result.pr.url,
+        title: result.pr.title ?? `Pull request #${result.pr.number}`,
+        baseBranch: result.pr.baseBranch ?? "main",
+        headBranch,
+        state: "open" as const,
+      };
+
+      if (activeServerThread) {
+        const api = readEnvironmentApi(activeThreadRef.environmentId);
+        if (!api) {
+          return;
+        }
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: activeThreadRef.threadId,
+            pullRequest,
+          });
+        } catch {
+          // Keep local association unset when durable write fails so reload
+          // cannot disagree with optimistic UI.
+          return;
+        }
+        setThreadBranch(
+          activeThreadRef,
+          activeServerThread.branch,
+          activeServerThread.worktreePath,
+          pullRequest,
+        );
+        return;
+      }
+
+      if (activeDraftThread) {
+        setDraftThreadContext(draftId ?? activeThreadRef, {
+          branch: activeDraftThread.branch,
+          worktreePath: activeDraftThread.worktreePath,
+          pullRequest,
+        });
+      }
     },
-    [persistThreadBranchSync],
+    [
+      activeDraftThread,
+      activeServerThread,
+      activeThreadRef,
+      draftId,
+      setDraftThreadContext,
+      setThreadBranch,
+    ],
+  );
+
+  const syncThreadBranchAfterGitAction = useCallback(
+    async (result: GitRunStackedActionResult) => {
+      const branchUpdate = resolveThreadBranchUpdate(result);
+      if (branchUpdate) {
+        persistThreadBranchSync(branchUpdate.branch);
+      }
+      await persistThreadPullRequestAssociation(result);
+    },
+    [persistThreadBranchSync, persistThreadPullRequestAssociation],
   );
 
   const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
@@ -648,7 +727,7 @@ export default function GitActionsControl({
     try {
       const result = await promise;
       activeGitActionProgressRef.current = null;
-      syncThreadBranchAfterGitAction(result);
+      await syncThreadBranchAfterGitAction(result);
       const closeResultToast = () => {
         toastManager.close(resolvedProgressToastId);
       };

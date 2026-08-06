@@ -333,6 +333,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequest: thread.pullRequest ?? null,
     ...(thread.reviewSnapshot !== undefined ? { reviewSnapshot: thread.reviewSnapshot } : {}),
     ...(thread.reviewResult !== undefined ? { reviewResult: thread.reviewResult } : {}),
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
@@ -373,6 +374,7 @@ function mapThreadShell(
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequest: thread.pullRequest ?? null,
   };
   const session = thread.session ? mapSession(thread.session) : null;
   const turnState: ThreadTurnState = {
@@ -397,6 +399,7 @@ function mapThreadShell(
     latestTurn: thread.latestTurn,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequest: thread.pullRequest ?? null,
     latestUserMessageAt: thread.latestUserMessageAt,
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
@@ -433,6 +436,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequest: thread.pullRequest ?? null,
   };
 }
 
@@ -536,11 +540,28 @@ function sidebarThreadSummariesEqual(
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
+    pullRequestsEqual(left.pullRequest, right.pullRequest) &&
     left.latestUserMessageAt === right.latestUserMessageAt &&
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
     left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
     backgroundAgentRunsEqual(left.backgroundAgentRuns, right.backgroundAgentRuns)
+  );
+}
+
+function pullRequestsEqual(
+  left: SidebarThreadSummary["pullRequest"],
+  right: SidebarThreadSummary["pullRequest"],
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return left == null && right == null;
+  return (
+    left.number === right.number &&
+    left.title === right.title &&
+    left.url === right.url &&
+    left.baseBranch === right.baseBranch &&
+    left.headBranch === right.headBranch &&
+    left.state === right.state
   );
 }
 
@@ -568,6 +589,9 @@ function reconcileSidebarActivitySummary(
   thread: Pick<Thread, "id" | "latestTurn" | "session">,
 ): EnvironmentState {
   const summary = state.sidebarThreadSummaryById[thread.id];
+  // Shell stream owns title/branch/worktreePath/pullRequest/updatedAt.
+  // Detail/orchestration paths may only advance activity fields so a lagging
+  // detail Thread cannot clobber fresher shell-authoritative metadata.
   if (
     summary === undefined ||
     (threadSessionsEqual(summary.session, thread.session) &&
@@ -611,7 +635,8 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.snoozedAt === right.snoozedAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
-    left.worktreePath === right.worktreePath
+    left.worktreePath === right.worktreePath &&
+    pullRequestsEqual(left.pullRequest, right.pullRequest)
   );
 }
 
@@ -1859,6 +1884,9 @@ function applyEnvironmentOrchestrationEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          ...(event.payload.pullRequest !== undefined
+            ? { pullRequest: event.payload.pullRequest }
+            : {}),
           ...(event.payload.reviewSnapshot !== undefined
             ? { reviewSnapshot: event.payload.reviewSnapshot }
             : {}),
@@ -1944,6 +1972,9 @@ function applyEnvironmentOrchestrationEvent(
         ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
         ...(event.payload.worktreePath !== undefined
           ? { worktreePath: event.payload.worktreePath }
+          : {}),
+        ...(event.payload.pullRequest !== undefined
+          ? { pullRequest: event.payload.pullRequest }
           : {}),
         updatedAt: event.payload.updatedAt,
       }));
@@ -2689,21 +2720,53 @@ export function setThreadBranch(
   threadRef: ScopedThreadRef,
   branch: string | null,
   worktreePath: string | null,
+  pullRequest?: Thread["pullRequest"],
 ): AppState {
-  const nextEnvironmentState = updateThreadState(
-    getStoredEnvironmentState(state, threadRef.environmentId),
-    threadRef.threadId,
-    (thread) => {
-      if (thread.branch === branch && thread.worktreePath === worktreePath) return thread;
-      const cwdChanged = thread.worktreePath !== worktreePath;
-      return {
-        ...thread,
-        branch,
-        worktreePath,
-        ...(cwdChanged ? { session: null } : {}),
+  const environmentState = getStoredEnvironmentState(state, threadRef.environmentId);
+  let nextEnvironmentState = updateThreadState(environmentState, threadRef.threadId, (thread) => {
+    const nextPullRequest = pullRequest === undefined ? (thread.pullRequest ?? null) : pullRequest;
+    if (
+      thread.branch === branch &&
+      thread.worktreePath === worktreePath &&
+      pullRequestsEqual(thread.pullRequest, nextPullRequest)
+    ) {
+      return thread;
+    }
+    const cwdChanged = thread.worktreePath !== worktreePath;
+    return {
+      ...thread,
+      branch,
+      worktreePath,
+      pullRequest: nextPullRequest,
+      ...(cwdChanged ? { session: null } : {}),
+    };
+  });
+
+  // Optimistic local branch/PR updates are intentional UI commits, not detail
+  // stream lag. Patch shell-owned summary fields here only; activity reconcile
+  // must not copy them from retained detail subscriptions.
+  const summary = nextEnvironmentState.sidebarThreadSummaryById[threadRef.threadId];
+  const shell = nextEnvironmentState.threadShellById[threadRef.threadId];
+  if (summary !== undefined && shell !== undefined) {
+    const nextSession = nextEnvironmentState.threadSessionById[threadRef.threadId] ?? null;
+    const nextSummary: SidebarThreadSummary = {
+      ...summary,
+      branch: shell.branch,
+      worktreePath: shell.worktreePath,
+      pullRequest: shell.pullRequest ?? null,
+      session: nextSession,
+    };
+    if (!sidebarThreadSummariesEqual(summary, nextSummary)) {
+      nextEnvironmentState = {
+        ...nextEnvironmentState,
+        sidebarThreadSummaryById: {
+          ...nextEnvironmentState.sidebarThreadSummaryById,
+          [threadRef.threadId]: nextSummary,
+        },
       };
-    },
-  );
+    }
+  }
+
   return commitEnvironmentState(state, threadRef.environmentId, nextEnvironmentState);
 }
 
@@ -2725,6 +2788,7 @@ interface AppStore extends AppState {
     threadRef: ScopedThreadRef,
     branch: string | null,
     worktreePath: string | null,
+    pullRequest?: Thread["pullRequest"],
   ) => void;
 }
 
@@ -2743,6 +2807,6 @@ export const useStore = create<AppStore>((set) => ({
   applyShellEvent: (event, environmentId) =>
     set((state) => applyShellEvent(state, event, environmentId)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
-  setThreadBranch: (threadRef, branch, worktreePath) =>
-    set((state) => setThreadBranch(state, threadRef, branch, worktreePath)),
+  setThreadBranch: (threadRef, branch, worktreePath, pullRequest) =>
+    set((state) => setThreadBranch(state, threadRef, branch, worktreePath, pullRequest)),
 }));

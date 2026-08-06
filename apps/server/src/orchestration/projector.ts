@@ -321,6 +321,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            ...(payload.pullRequest !== undefined ? { pullRequest: payload.pullRequest } : {}),
             ...(payload.reviewSnapshot !== undefined
               ? { reviewSnapshot: payload.reviewSnapshot }
               : {}),
@@ -455,6 +456,7 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.pullRequest !== undefined ? { pullRequest: payload.pullRequest } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),

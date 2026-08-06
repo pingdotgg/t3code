@@ -108,6 +108,104 @@ describe("orchestration projector", () => {
     ]);
   });
 
+  it("persists explicit pullRequest association and leaves peers without one", async () => {
+    const now = new Date().toISOString();
+    const model = createEmptyReadModel(now);
+    const pullRequest = {
+      number: 42,
+      title: "Durable association",
+      url: "https://example.test/pr/42",
+      baseBranch: "main",
+      headBranch: "feature/shared",
+      state: "open" as const,
+    };
+
+    const withAssociated = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-pr",
+          occurredAt: now,
+          commandId: "cmd-thread-pr",
+          payload: {
+            threadId: "thread-pr",
+            projectId: "project-1",
+            title: "with pr",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: "feature/shared",
+            worktreePath: null,
+            pullRequest,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const withPeer = await Effect.runPromise(
+      projectEvent(
+        withAssociated,
+        makeEvent({
+          sequence: 2,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-peer",
+          occurredAt: now,
+          commandId: "cmd-thread-peer",
+          payload: {
+            threadId: "thread-peer",
+            projectId: "project-1",
+            title: "peer",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: "feature/shared",
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const associated = withPeer.threads.find((thread) => thread.id === "thread-pr");
+    const peer = withPeer.threads.find((thread) => thread.id === "thread-peer");
+    expect(associated?.pullRequest).toEqual(pullRequest);
+    expect(peer?.pullRequest).toBeUndefined();
+
+    const afterBranchOnlyMeta = await Effect.runPromise(
+      projectEvent(
+        withPeer,
+        makeEvent({
+          sequence: 3,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-pr",
+          occurredAt: now,
+          commandId: "cmd-branch-only",
+          payload: {
+            threadId: "thread-pr",
+            branch: "feature/other",
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(
+      afterBranchOnlyMeta.threads.find((thread) => thread.id === "thread-pr")?.pullRequest,
+    ).toEqual(pullRequest);
+  });
+
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = new Date().toISOString();
     const model = createEmptyReadModel(now);

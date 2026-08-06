@@ -14,7 +14,6 @@ import type { useSortable } from "@dnd-kit/sortable";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import { threadRaisedHandWhileSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 
-import { useGitStatus } from "../lib/gitStatusState";
 import { openPullRequestLink } from "../lib/openPullRequestLink";
 import type { ProviderInstanceEntry } from "../providerInstances";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -42,7 +41,6 @@ import {
   ThreadStatusLabel,
   prStatusIndicator,
   resolveTerminalThreadRef,
-  resolveThreadPr,
   terminalStatusFromRunningIds,
 } from "./ThreadStatusIndicators";
 import { Button } from "./ui/button";
@@ -174,16 +172,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   );
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
-  const gitCwd = thread.worktreePath ?? projectCwd;
-  // Gated on the branch, not the worktree: resolveThreadPr yields null without
-  // one, so a branchless worktree row would pay for a status query it can
-  // never render.
-  const gitStatus = useGitStatus({
-    environmentId: thread.environmentId,
-    cwd: thread.branch !== null ? gitCwd : null,
-  });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
-  const prStatus = prStatusIndicator(pr);
+  const prStatus = prStatusIndicator(thread.pullRequest);
 
   const statusLabel = resolveSidebarV2StatusLabel({
     status: displayStatus,
@@ -543,7 +532,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                   <span className="flex-1" />
                 )}
                 {terminalIcon}
-                {prStatus && pr ? (
+                {prStatus ? (
                   <button
                     aria-label={prStatus.tooltip}
                     className={cn(
@@ -553,7 +542,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                     onClick={handlePrClick}
                     type="button"
                   >
-                    #{pr.number}
+                    #{prStatus.number}
                   </button>
                 ) : null}
                 {isRemote ? (

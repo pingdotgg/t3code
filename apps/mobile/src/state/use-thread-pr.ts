@@ -1,11 +1,8 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { GitResolvedPullRequest, VcsStatusResult } from "@t3tools/contracts";
 import { resolveChangeRequestPresentation } from "@t3tools/shared/sourceControl";
 
-import { useEnvironmentQuery } from "./query";
-import { vcsEnvironment } from "./vcs";
-
-export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
+export type ThreadPr = GitResolvedPullRequest;
 
 export interface ThreadPrPresentation {
   readonly number: number;
@@ -37,31 +34,16 @@ export function presentThreadPr(
 }
 
 /**
- * Live PR status for a thread's branch. Subscriptions are deduplicated per
- * (environmentId, cwd) by the atom family, so many rows on the same worktree
- * or project root share one stream — and virtualization means only visible
- * rows subscribe at all.
+ * Durable PR association for a thread. Never inferred from live checkout/branch
+ * equality — only explicit association metadata is shown.
  */
 export function useThreadPr(
   thread: EnvironmentThreadShell,
-  projectCwd: string | null,
+  _projectCwd: string | null,
 ): ThreadPrPresentation | null {
-  const cwd = thread.worktreePath ?? projectCwd;
-  const gitStatus = useEnvironmentQuery(
-    thread.branch !== null && cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: thread.environmentId,
-          input: { cwd },
-        })
-      : null,
-  );
-
-  const status = gitStatus.data;
-  if (status === null || thread.branch === null || status.refName !== thread.branch) {
+  const pullRequest = thread.pullRequest ?? null;
+  if (!pullRequest) {
     return null;
   }
-  if (!status.pr) {
-    return null;
-  }
-  return presentThreadPr(status.pr, status.sourceControlProvider);
+  return presentThreadPr(pullRequest, null);
 }

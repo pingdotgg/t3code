@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  GitResolvedPullRequest,
   ModelSelection,
   OrchestrationLatestTurn,
   OrchestrationBackgroundAgentRunShell,
@@ -128,6 +129,7 @@ export interface Thread {
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
+  pullRequest?: GitResolvedPullRequest | null;
   reviewSnapshot?: ReviewSnapshot | undefined;
   reviewResult?: ReviewResult | null | undefined;
   turnDiffSummaries: TurnDiffSummary[];
@@ -161,6 +163,7 @@ export interface ThreadShell {
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  pullRequest?: GitResolvedPullRequest | null;
 }
 
 export interface ThreadTurnState {
@@ -186,6 +189,7 @@ export interface SidebarThreadSummary {
   latestTurn: OrchestrationLatestTurn | null;
   branch: string | null;
   worktreePath: string | null;
+  pullRequest?: GitResolvedPullRequest | null;
   latestUserMessageAt: string | null;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;

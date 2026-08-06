@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import {
   prStatusIndicator,
-  resolveThreadPr,
   terminalStatusFromRunningIds,
   ThreadBrowserOpenStatus,
   ThreadStatusCornerBadge,
@@ -98,7 +97,6 @@ import {
 } from "../keybindings";
 import { useModelPickerOpen } from "../modelPickerOpenState";
 import { useShortcutModifierState } from "../shortcutModifierState";
-import { useGitStatus } from "../lib/gitStatusState";
 import { openPullRequestLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
@@ -163,7 +161,6 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
-  resolveSidebarThreadGitCwd,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -337,23 +334,17 @@ interface SidebarThreadRowProps {
 }
 
 const SidebarThreadPrStatus = memo(function SidebarThreadPrStatus(props: {
-  environmentId: SidebarThreadSummary["environmentId"];
-  branch: string | null;
-  gitCwd: string | null;
+  pullRequest: SidebarThreadSummary["pullRequest"];
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
 }) {
-  const gitStatus = useGitStatus({
-    environmentId: props.environmentId,
-    cwd: props.branch !== null ? props.gitCwd : null,
-  });
-  const prStatus = prStatusIndicator(resolveThreadPr(props.branch, gitStatus.data));
+  const prStatus = prStatusIndicator(props.pullRequest);
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       if (prStatus) {
         props.openPrLink(event, prStatus.url);
       }
     },
-    [prStatus, props.openPrLink],
+    [prStatus, props],
   );
 
   if (!prStatus) {
@@ -480,11 +471,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     threadId: virtualAgentRun?.parentThreadId ?? thread.id,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
-  const gitCwd = resolveSidebarThreadGitCwd({
-    worktreePath: thread.worktreePath,
-    threadProjectCwd,
-    projectCwd: props.projectCwd,
-  });
   const isHighlighted = isActive || isSelected;
   const projectName =
     threadProjectName ?? (props.projectCwd ? formatWorktreePathForDisplay(props.projectCwd) : null);
@@ -860,12 +846,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 {worktreeLabel}
               </span>
             ) : null}
-            <SidebarThreadPrStatus
-              environmentId={thread.environmentId}
-              branch={thread.branch}
-              gitCwd={gitCwd}
-              openPrLink={openPrLink}
-            />
+            <SidebarThreadPrStatus pullRequest={thread.pullRequest} openPrLink={openPrLink} />
           </div>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">

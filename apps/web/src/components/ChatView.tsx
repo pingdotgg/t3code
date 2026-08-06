@@ -1083,7 +1083,12 @@ function ChatViewBody(
   }, []);
 
   const openOrReuseProjectDraftThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      envMode: DraftThreadEnvMode;
+      pullRequest?: import("@t3tools/contracts").GitResolvedPullRequest | null;
+    }) => {
       if (!activeProject) {
         throw new Error("No active project is available for this pull request.");
       }
@@ -1160,11 +1165,16 @@ function ChatViewBody(
   );
 
   const handlePreparedPullRequestThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      pullRequest: import("@t3tools/contracts").GitResolvedPullRequest;
+    }) => {
       await openOrReuseProjectDraftThread({
         branch: input.branch,
         worktreePath: input.worktreePath,
         envMode: input.worktreePath ? "worktree" : "local",
+        pullRequest: input.pullRequest,
       });
     },
     [openOrReuseProjectDraftThread],
@@ -3484,6 +3494,11 @@ function ChatViewBody(
                       interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      ...(draftThread?.pullRequest
+                        ? { pullRequest: draftThread.pullRequest }
+                        : activeThread && "pullRequest" in activeThread && activeThread.pullRequest
+                          ? { pullRequest: activeThread.pullRequest }
+                          : {}),
                       createdAt: activeThread.createdAt,
                     },
                   }

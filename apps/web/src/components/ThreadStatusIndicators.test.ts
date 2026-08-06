@@ -12,6 +12,15 @@ import type { SidebarThreadSummary } from "../types";
 const environmentId = EnvironmentId.make("env-a");
 const projectId = ProjectId.make("project-a");
 
+const samplePr = {
+  number: 137,
+  title: "Add sidebar filter",
+  url: "https://example.test/pr/137",
+  baseBranch: "main",
+  headBranch: "feat/sidebar-filter",
+  state: "open" as const,
+};
+
 function thread(id: string, input: Partial<SidebarThreadSummary> = {}): SidebarThreadSummary {
   const threadId = ThreadId.make(id);
   return {
@@ -28,6 +37,7 @@ function thread(id: string, input: Partial<SidebarThreadSummary> = {}): SidebarT
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    pullRequest: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -75,17 +85,7 @@ describe("browserStatusIndicator", () => {
 });
 
 describe("prStatusIndicator", () => {
-  const pr = {
-    number: 137,
-    title: "Add sidebar filter",
-    url: "https://example.test/pr/137",
-    baseBranch: "main",
-    headBranch: "feat/sidebar-filter",
-  };
-
   it("exposes the number for each state alongside its own colour", () => {
-    // The sidebar renders `#number` inline instead of an icon, so the number
-    // has to survive on the indicator and stay colour-coded by state.
     const states = [
       { state: "open", colorClass: "text-emerald-600 dark:text-emerald-300/90" },
       { state: "closed", colorClass: "text-zinc-500 dark:text-zinc-400/80" },
@@ -93,12 +93,26 @@ describe("prStatusIndicator", () => {
     ] as const;
 
     for (const { state, colorClass } of states) {
-      const indicator = prStatusIndicator({ ...pr, state });
-      expect(indicator).toMatchObject({ number: 137, colorClass, url: pr.url });
+      const indicator = prStatusIndicator({ ...samplePr, state });
+      expect(indicator).toMatchObject({ number: 137, colorClass, url: samplePr.url });
     }
   });
 
   it("returns null without a pull request", () => {
     expect(prStatusIndicator(null)).toBeNull();
+  });
+
+  it("only surfaces explicitly associated pull requests", () => {
+    const associated = thread("thread-with-pr", {
+      branch: "feat/shared",
+      pullRequest: samplePr,
+    });
+    const peer = thread("thread-without-pr", {
+      branch: "feat/shared",
+      pullRequest: null,
+    });
+
+    expect(prStatusIndicator(associated.pullRequest)?.number).toBe(137);
+    expect(prStatusIndicator(peer.pullRequest)).toBeNull();
   });
 });

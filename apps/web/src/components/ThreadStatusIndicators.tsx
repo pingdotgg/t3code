@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { GitStatusResult, ThreadId } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import type { GitResolvedPullRequest, ThreadId } from "@t3tools/contracts";
 import {
   AppWindowIcon,
   CheckIcon,
@@ -14,9 +14,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import { useGitStatus } from "../lib/gitStatusState";
 import { cn } from "../lib/utils";
-import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadBrowserOpen } from "../rightPanelStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -92,7 +90,7 @@ export function browserStatusIndicator(isOpen: boolean): BrowserStatusIndicator 
   };
 }
 
-export type ThreadPr = GitStatusResult["pr"];
+export type ThreadPr = GitResolvedPullRequest | null | undefined;
 
 export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
@@ -125,17 +123,6 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
     };
   }
   return null;
-}
-
-export function resolveThreadPr(
-  threadBranch: string | null,
-  gitStatus: GitStatusResult | null,
-): ThreadPr | null {
-  if (threadBranch === null || gitStatus === null || gitStatus.branch !== threadBranch) {
-    return null;
-  }
-
-  return gitStatus.pr ?? null;
 }
 
 export function terminalStatusFromRunningIds(
@@ -250,21 +237,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const threadProjectCwd = useStore(
-    useMemo(
-      () => (state: AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
-      [thread.environmentId, thread.projectId],
-    ),
-  );
-  const gitCwd = thread.worktreePath ?? threadProjectCwd;
-  const gitStatus = useGitStatus({
-    environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
-  });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
-  const prStatus = prStatusIndicator(pr);
+  const prStatus = prStatusIndicator(thread.pullRequest);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,

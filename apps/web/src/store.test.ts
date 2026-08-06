@@ -118,6 +118,7 @@ function makeSidebarThreadSummary(
     latestTurn: thread.latestTurn,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequest: thread.pullRequest ?? null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -169,6 +170,7 @@ function makeState(thread: Thread): AppState {
         updatedAt: thread.updatedAt,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        pullRequest: thread.pullRequest ?? null,
       },
     },
     threadSessionById: {
@@ -679,6 +681,38 @@ describe("setThreadBranch", () => {
       environmentStateOf(next, remoteEnvironmentId).threadShellById[sharedThreadId]?.worktreePath,
     ).toBe("/tmp/remote-worktree");
   });
+
+  it("optimistically patches sidebar summary branch and pullRequest", () => {
+    const pullRequest = {
+      number: 150,
+      title: "Durable PR",
+      url: "https://example.test/pr/150",
+      baseBranch: "main",
+      headBranch: "feature/pr",
+      state: "open" as const,
+    };
+    const thread = makeThread({ branch: "old-branch", pullRequest: null });
+    const environmentState = selectEnvironmentState(makeState(thread), localEnvironmentId);
+    const state = withActiveEnvironmentState({
+      ...environmentState,
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarThreadSummary(thread),
+      },
+    });
+
+    const next = setThreadBranch(
+      state,
+      scopeThreadRef(localEnvironmentId, thread.id),
+      "feature/pr",
+      null,
+      pullRequest,
+    );
+
+    expect(selectSidebarThreadsAcrossEnvironments(next)[0]).toMatchObject({
+      branch: "feature/pr",
+      pullRequest,
+    });
+  });
 });
 
 describe("incremental orchestration updates", () => {
@@ -714,6 +748,95 @@ describe("incremental orchestration updates", () => {
     });
     expect(selectSidebarThreadsAcrossEnvironments(next)[0]).toMatchObject({
       latestTurn: { turnId, state: "running", completedAt: null },
+    });
+  });
+
+  it("does not let lagging detail activity overwrite shell-authoritative sidebar metadata", () => {
+    const pullRequest = {
+      number: 150,
+      title: "Shell owns this PR",
+      url: "https://example.test/pr/150",
+      baseBranch: "main",
+      headBranch: "feature/shell",
+      state: "open" as const,
+    };
+    const thread = makeThread({
+      title: "Old title",
+      branch: "old-branch",
+      pullRequest: null,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+    });
+    let state = withActiveEnvironmentState({
+      ...selectEnvironmentState(makeState(thread), localEnvironmentId),
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarThreadSummary(thread),
+      },
+    });
+
+    state = applyShellEvent(
+      state,
+      {
+        kind: "thread-upserted",
+        sequence: 10,
+        thread: {
+          id: thread.id,
+          projectId: thread.projectId,
+          parentThreadId: null,
+          title: "Fresh shell title",
+          modelSelection: thread.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          pendingRuntimeMode: null,
+          interactionMode: thread.interactionMode,
+          branch: "feature/shell",
+          worktreePath: null,
+          pullRequest,
+          latestTurn: null,
+          createdAt: thread.createdAt,
+          updatedAt: "2026-02-27T00:00:10.000Z",
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      },
+      localEnvironmentId,
+    );
+
+    expect(selectSidebarThreadsAcrossEnvironments(state)[0]).toMatchObject({
+      title: "Fresh shell title",
+      branch: "feature/shell",
+      pullRequest,
+      updatedAt: "2026-02-27T00:00:10.000Z",
+    });
+
+    // Detail stream still has the pre-meta thread when an activity event arrives.
+    const afterActivity = applyOrchestrationEvent(
+      state,
+      makeEvent(
+        "thread.message-sent",
+        {
+          threadId: thread.id,
+          messageId: MessageId.make("assistant-lag"),
+          role: "assistant",
+          text: "still streaming",
+          turnId: TurnId.make("turn-lag"),
+          streaming: true,
+          createdAt: "2026-02-27T00:00:11.000Z",
+          updatedAt: "2026-02-27T00:00:11.000Z",
+        },
+        { sequence: 11 },
+      ),
+      localEnvironmentId,
+    );
+
+    expect(selectSidebarThreadsAcrossEnvironments(afterActivity)[0]).toMatchObject({
+      title: "Fresh shell title",
+      branch: "feature/shell",
+      pullRequest,
+      updatedAt: "2026-02-27T00:00:10.000Z",
+      latestTurn: { turnId: TurnId.make("turn-lag"), state: "running" },
     });
   });
 
@@ -2155,5 +2278,73 @@ describe("insights lifecycle retention", () => {
     expect(turnOne).toBeDefined();
     expect(turnOne?.status).toBe("completed");
     expect(turnOne?.durationMs).toBe(1_000);
+  });
+
+  it("keeps durable pullRequest association per thread and ignores peer branch equality", () => {
+    const pullRequest = {
+      number: 99,
+      title: "Only one thread owns this",
+      url: "https://example.test/pr/99",
+      baseBranch: "main",
+      headBranch: "feature/shared",
+      state: "open" as const,
+    };
+    const associatedId = ThreadId.make("thread-associated");
+    const peerId = ThreadId.make("thread-peer");
+    const base = makeState(
+      makeThread({
+        id: associatedId,
+        branch: "feature/shared",
+        pullRequest,
+      }),
+    );
+    const state = applyOrchestrationEvent(
+      base,
+      makeEvent("thread.created", {
+        threadId: peerId,
+        projectId: ProjectId.make("project-1"),
+        title: "Peer",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        branch: "feature/shared",
+        worktreePath: null,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.meta-updated", {
+        threadId: associatedId,
+        branch: "feature/retargeted",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const associated = selectThreadByRef(next, scopeThreadRef(localEnvironmentId, associatedId));
+    const peer = selectThreadByRef(next, scopeThreadRef(localEnvironmentId, peerId));
+    expect(associated?.branch).toBe("feature/retargeted");
+    expect(associated?.pullRequest).toEqual(pullRequest);
+    expect(peer?.pullRequest ?? null).toBeNull();
+
+    const withCreatedPr = applyOrchestrationEvent(
+      next,
+      makeEvent("thread.meta-updated", {
+        threadId: peerId,
+        pullRequest,
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(
+      selectThreadByRef(withCreatedPr, scopeThreadRef(localEnvironmentId, peerId))?.pullRequest,
+    ).toEqual(pullRequest);
   });
 });
