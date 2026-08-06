@@ -176,6 +176,9 @@ const makeWorkflowCoordinatorReactor = Effect.gen(function* () {
       interactionMode: input.workerConfig.interactionMode,
       branch: input.workerConfig.branch,
       worktreePath: input.workerConfig.worktreePath,
+      ...(input.workerConfig.pullRequest !== undefined
+        ? { pullRequest: input.workerConfig.pullRequest }
+        : {}),
       ...(input.workerConfig.reviewSnapshot !== undefined
         ? { reviewSnapshot: input.workerConfig.reviewSnapshot }
         : {}),

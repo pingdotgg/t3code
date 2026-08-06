@@ -206,6 +206,58 @@ describe("orchestration projector", () => {
     ).toEqual(pullRequest);
   });
 
+  it("recovers explicit PR review provenance from legacy thread.created events", async () => {
+    const now = new Date().toISOString();
+    const projected = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-review-pr",
+          occurredAt: now,
+          commandId: "cmd-thread-review-pr",
+          payload: {
+            threadId: "thread-review-pr",
+            projectId: "project-1",
+            title: "Review PR #146",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: "unrelated-live-branch",
+            worktreePath: null,
+            reviewSnapshot: {
+              scope: {
+                kind: "pull-request",
+                number: 146,
+                title: "Explicit review",
+                url: "https://github.com/acme/repo/pull/146",
+                baseBranch: "main",
+                headBranch: "feature/pr-146",
+              },
+              diff: "diff",
+              diffHash: "hash",
+            },
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(projected.threads[0]?.pullRequest).toEqual({
+      number: 146,
+      title: "Explicit review",
+      url: "https://github.com/acme/repo/pull/146",
+      baseBranch: "main",
+      headBranch: "feature/pr-146",
+      state: null,
+    });
+  });
+
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = new Date().toISOString();
     const model = createEmptyReadModel(now);

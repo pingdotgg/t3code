@@ -77,6 +77,7 @@ const TOOL_ALIASES: ReadonlyMap<string, string> = new Map([
   ["switch_workspace", "switch_workspace"],
   ["use_existing_worktree", "switch_workspace"],
   ["create_nested_thread", "create_nested_thread"],
+  ["associate_pull_request", "associate_pull_request"],
 ] as const);
 
 function writeJsonResponse(response: ServerResponse, status: number, payload: unknown): void {
@@ -675,6 +676,31 @@ async function createNestedThreadTool(
   return result.stdout.trim();
 }
 
+async function associatePullRequestTool(
+  options: McpServeOptions,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!options.threadId) {
+    throw new Error("associate_pull_request is only available from a T3 provider session");
+  }
+  const reference = asString(args.reference)?.trim();
+  if (!reference) {
+    throw new Error("associate_pull_request requires a pull request URL or number");
+  }
+
+  const result = await runCommand(options.cwd, options.cliCommand, [
+    ...(options.cliArgsPrefix ?? []),
+    "chat",
+    "associate-pr",
+    options.threadId,
+    reference,
+    "--cwd",
+    options.cwd,
+    ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
+  ]);
+  return result.stdout.trim();
+}
+
 const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "read_file",
@@ -825,6 +851,21 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
       required: ["project", "title", "prompt", "model"],
     },
   },
+  {
+    name: "associate_pull_request",
+    description:
+      "Durably associate a pull request with the authenticated current T3 thread. Call this after successfully creating or explicitly opening a PR for this thread. The URL or number is resolved through GitHub and persisted on the thread; never infer association from the current branch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reference: {
+          type: "string",
+          description: "Pull request URL or number, such as https://github.com/acme/repo/pull/42.",
+        },
+      },
+      required: ["reference"],
+    },
+  },
 ];
 
 function availableTools(toolsets: ReadonlySet<string>): ReadonlyArray<McpTool> {
@@ -863,6 +904,8 @@ async function callTool(options: McpServeOptions, name: string, args: Record<str
       return await switchWorkspaceTool(options, args);
     case "create_nested_thread":
       return await createNestedThreadTool(options, args);
+    case "associate_pull_request":
+      return await associatePullRequestTool(options, args);
     default:
       throw new Error(`Unsupported MCP tool: ${name}`);
   }
@@ -957,6 +1000,7 @@ export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: 
 
 /** Exposed for tests. */
 export const __testing = {
+  associatePullRequestTool,
   availableTools,
   createIsolatedWorkspaceTool,
   createNestedThreadTool,

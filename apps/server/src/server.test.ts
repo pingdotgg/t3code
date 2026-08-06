@@ -3953,6 +3953,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(workflowCommand?.type === "workflow.run.request");
       assert.equal(workflowCommand.workerConfig.branch, "contributor/feature/fork-fix");
       assert.equal(workflowCommand.workerConfig.worktreePath, "/tmp/pr-42-worktree");
+      assert.deepEqual(workflowCommand.workerConfig.pullRequest, {
+        number: 42,
+        title: "Fork contribution",
+        url: "https://github.com/example/repo/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/fork-fix",
+        state: "open",
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

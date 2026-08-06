@@ -825,10 +825,9 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       const customInstructionsDirs = yield* Effect.promise(() =>
         readFile(customInstructionsLogPath, "utf8"),
       ).pipe(Effect.map((contents) => contents.trim().split(",")));
-      const t3InstructionsDir = customInstructionsDirs.find((directory) =>
-        directory.endsWith(path.join("providers", "copilot", "instructions")),
-      );
+      const t3InstructionsDir = customInstructionsDirs.at(-1);
       assert.isDefined(t3InstructionsDir);
+      assert.isTrue(t3InstructionsDir.endsWith(path.join("providers", "copilot", "instructions")));
       assert.equal(
         yield* Effect.promise(() => readFile(path.join(t3InstructionsDir, "AGENTS.md"), "utf8")),
         COPILOT_WORKSPACE_INSTRUCTIONS,
@@ -1568,6 +1567,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
           "create_isolated_workspace",
           "switch_workspace",
           "create_nested_thread",
+          "associate_pull_request",
         ],
       );
       assert.deepEqual(

@@ -68,6 +68,8 @@ import Migration0063 from "./Migrations/063_RepairSkippedProjectionCoreSchema.ts
 import Migration0064 from "./Migrations/064_AuthSessionScopes.ts";
 import Migration0065 from "./Migrations/065_AuthPairingLinkScopes.ts";
 import Migration0066 from "./Migrations/066_ProjectionThreadsPullRequest.ts";
+import Migration0067 from "./Migrations/067_BackfillReviewThreadPullRequests.ts";
+import Migration0068 from "./Migrations/068_RepairReviewThreadPullRequestState.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -135,6 +137,8 @@ export const migrationEntries = [
   [64, "AuthSessionScopes", Migration0064],
   [65, "AuthPairingLinkScopes", Migration0065],
   [66, "ProjectionThreadsPullRequest", Migration0066],
+  [67, "BackfillReviewThreadPullRequests", Migration0067],
+  [68, "RepairReviewThreadPullRequestState", Migration0068],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

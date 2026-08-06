@@ -29,7 +29,12 @@ describe("MCP Streamable HTTP server", () => {
   it("serves authenticated workspace tools over loopback HTTP", async () => {
     const server = await startMcpHttpServer({
       cwd: process.cwd(),
-      toolsets: new Set(["create_isolated_workspace", "switch_workspace", "create_nested_thread"]),
+      toolsets: new Set([
+        "create_isolated_workspace",
+        "switch_workspace",
+        "create_nested_thread",
+        "associate_pull_request",
+      ]),
       threadId: "thread-1",
       cliCommand: "t3-test",
     });
@@ -58,6 +63,7 @@ describe("MCP Streamable HTTP server", () => {
             { name: "create_isolated_workspace" },
             { name: "switch_workspace" },
             { name: "create_nested_thread" },
+            { name: "associate_pull_request" },
           ],
         },
       });
@@ -100,6 +106,69 @@ describe("MCP Streamable HTTP server", () => {
     } finally {
       socket.destroy();
     }
+  });
+});
+
+describe("associate_pull_request MCP tool", () => {
+  it("records an explicit PR association on the authenticated current thread", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-associate-pr-"));
+    const binDir = path.join(root, "bin");
+    const cliPath = path.join(binDir, "t3-test");
+    const argsPath = path.join(root, "cli-args.txt");
+    const originalArgsPath = process.env.T3_MCP_TEST_ARGS;
+
+    try {
+      await mkdir(binDir);
+      await writeFile(cliPath, '#!/bin/sh\nprintf "%s\\n" "$@" > "$T3_MCP_TEST_ARGS"\n');
+      await chmod(cliPath, 0o755);
+      process.env.T3_MCP_TEST_ARGS = argsPath;
+
+      await __testing.associatePullRequestTool(
+        {
+          cwd: root,
+          toolsets: new Set(["associate_pull_request"]),
+          threadId: "thread-1",
+          cliCommand: cliPath,
+          cliArgsPrefix: ["server.mjs"],
+          cliBaseDir: "/tmp/t3-dev",
+        },
+        { reference: "https://github.com/acme/repo/pull/42" },
+      );
+
+      const cliArgs = (await readFile(argsPath, "utf8")).trim().split("\n");
+      expect(cliArgs).toEqual([
+        "server.mjs",
+        "chat",
+        "associate-pr",
+        "thread-1",
+        "https://github.com/acme/repo/pull/42",
+        "--cwd",
+        root,
+        "--base-dir",
+        "/tmp/t3-dev",
+      ]);
+    } finally {
+      if (originalArgsPath === undefined) {
+        delete process.env.T3_MCP_TEST_ARGS;
+      } else {
+        process.env.T3_MCP_TEST_ARGS = originalArgsPath;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects calls without an authenticated current thread", async () => {
+    await expect(
+      __testing.associatePullRequestTool(
+        {
+          cwd: process.cwd(),
+          toolsets: new Set(["associate_pull_request"]),
+          threadId: undefined,
+          cliCommand: "t3-test",
+        },
+        { reference: "#42" },
+      ),
+    ).rejects.toThrow("only available from a T3 provider session");
   });
 });
 

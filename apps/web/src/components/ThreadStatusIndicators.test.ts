@@ -102,6 +102,14 @@ describe("prStatusIndicator", () => {
     expect(prStatusIndicator(null)).toBeNull();
   });
 
+  it("renders a neutral badge when historical state is unknown", () => {
+    expect(prStatusIndicator({ ...samplePr, state: null })).toMatchObject({
+      label: "PR",
+      colorClass: "text-sky-600 dark:text-sky-300/90",
+      tooltip: "#137 PR: Add sidebar filter",
+    });
+  });
+
   it("only surfaces explicitly associated pull requests", () => {
     const associated = thread("thread-with-pr", {
       branch: "feat/shared",

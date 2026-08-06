@@ -95,6 +95,7 @@ describe("buildCopilotAcpSpawnInput", () => {
       );
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`create_isolated_workspace`");
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`switch_workspace`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`associate_pull_request`");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -119,6 +120,7 @@ describe("buildCopilotAcpSpawnInput", () => {
           "create_isolated_workspace",
           "switch_workspace",
           "create_nested_thread",
+          "associate_pull_request",
         ]),
         threadId: "thread-1",
         cliCommand: "/usr/bin/node",
@@ -168,6 +170,7 @@ describe("buildCopilotAcpSpawnInput", () => {
           "create_isolated_workspace",
           "switch_workspace",
           "create_nested_thread",
+          "associate_pull_request",
         ]),
         threadId: "thread-1",
         cliCommand: "t3-dev",

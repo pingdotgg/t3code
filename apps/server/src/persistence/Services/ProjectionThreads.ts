@@ -7,7 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
-  GitResolvedPullRequest,
+  GitPullRequestAssociation,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
@@ -36,7 +36,7 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
-  pullRequest: Schema.NullOr(GitResolvedPullRequest).pipe(
+  pullRequest: Schema.NullOr(GitPullRequestAssociation).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   reviewSnapshot: Schema.optionalKey(Schema.NullOr(ReviewSnapshot)),

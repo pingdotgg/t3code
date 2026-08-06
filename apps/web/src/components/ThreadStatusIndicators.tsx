@@ -1,5 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { GitResolvedPullRequest, ThreadId } from "@t3tools/contracts";
+import type { GitPullRequestAssociation, ThreadId } from "@t3tools/contracts";
 import {
   AppWindowIcon,
   CheckIcon,
@@ -64,7 +64,7 @@ export const WorkingDuration = memo(function WorkingDuration({
 });
 
 export interface PrStatusIndicator {
-  label: "PR open" | "PR closed" | "PR merged";
+  label: "PR" | "PR open" | "PR closed" | "PR merged";
   colorClass: string;
   tooltip: string;
   url: string;
@@ -90,7 +90,7 @@ export function browserStatusIndicator(isOpen: boolean): BrowserStatusIndicator 
   };
 }
 
-export type ThreadPr = GitResolvedPullRequest | null | undefined;
+export type ThreadPr = GitPullRequestAssociation | null | undefined;
 
 export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
@@ -122,7 +122,13 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
       number: pr.number,
     };
   }
-  return null;
+  return {
+    label: "PR",
+    colorClass: "text-sky-600 dark:text-sky-300/90",
+    tooltip: `#${pr.number} PR: ${pr.title}`,
+    url: pr.url,
+    number: pr.number,
+  };
 }
 
 export function terminalStatusFromRunningIds(

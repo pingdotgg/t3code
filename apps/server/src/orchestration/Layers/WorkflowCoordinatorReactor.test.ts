@@ -89,6 +89,14 @@ const run: ProjectionWorkflowRun = {
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: null,
     worktreePath: null,
+    pullRequest: {
+      number: 42,
+      title: "Explicit workflow PR",
+      url: "https://github.com/acme/repo/pull/42",
+      baseBranch: "main",
+      headBranch: "feature/pr-42",
+      state: "open",
+    },
   },
 };
 
@@ -194,6 +202,7 @@ describe("WorkflowCoordinatorReactor", () => {
       interactionMode: run.workerConfig.interactionMode,
       branch: run.workerConfig.branch,
       worktreePath: run.workerConfig.worktreePath,
+      pullRequest: run.workerConfig.pullRequest,
     });
 
     await runtime.runPromise(coordinator.drain);

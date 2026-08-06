@@ -2011,6 +2011,40 @@ const chatSetBranchCommand = Command.make("set-branch", {
   ),
 );
 
+const cwdFlag = Flag.string("cwd").pipe(Flag.withDefault(process.cwd()));
+
+const chatAssociatePrCommand = Command.make("associate-pr", {
+  ...liveTargetFlags,
+  chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
+  reference: Argument.string("reference").pipe(
+    Argument.withDescription("Pull request URL, number, or explicit GitHub reference."),
+  ),
+  cwd: cwdFlag,
+}).pipe(
+  Command.withDescription("Durably associate a pull request with a chat."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const resolved = yield* callWsRpc(flags, (client) =>
+        client[WS_METHODS.gitResolvePullRequest]({
+          cwd: flags.cwd,
+          reference: flags.reference,
+        }),
+      );
+      yield* withThreadDispatch(flags, flags.chat, ({ thread, dispatch }) =>
+        Effect.gen(function* () {
+          const result = yield* dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make(crypto.randomUUID()),
+            threadId: thread.id,
+            pullRequest: resolved.pullRequest,
+          });
+          yield* printJson({ pullRequest: resolved.pullRequest, result });
+        }),
+      );
+    }),
+  ),
+);
+
 const chatHandoffCommand = Command.make("handoff", {
   ...liveTargetFlags,
   chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
@@ -2364,6 +2398,7 @@ const chatCommand = Command.make("chat").pipe(
     chatSetRuntimeCommand,
     chatSetInteractionCommand,
     chatSetBranchCommand,
+    chatAssociatePrCommand,
     chatHandoffCommand,
     chatSendCommand,
     chatNewCommand,
@@ -3212,7 +3247,6 @@ const providerCommand = Command.make("provider").pipe(
   ]),
 );
 
-const cwdFlag = Flag.string("cwd").pipe(Flag.withDefault(process.cwd()));
 const queryFlag = Flag.string("query").pipe(Flag.optional);
 const limitFlag = Flag.integer("limit").pipe(Flag.optional);
 const forceFlag = Flag.boolean("force").pipe(Flag.withDefault(false));

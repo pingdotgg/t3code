@@ -172,6 +172,103 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       }
     }),
   );
+
+  it.effect("distinguishes an explicit null PR from omitted legacy review metadata", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-08-06T19:00:00.000Z";
+      const reviewSnapshot = {
+        scope: {
+          kind: "pull-request" as const,
+          number: 146,
+          title: "Explicit review",
+          url: "https://github.com/acme/repo/pull/146",
+          baseBranch: "main",
+          headBranch: "feature/pr-146",
+        },
+        diff: "diff",
+        diffHash: "hash",
+      };
+
+      yield* projectionPipeline.projectEvent({
+        sequence: 1,
+        type: "project.created",
+        eventId: EventId.make("evt-pr-project"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-pr"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-pr-project"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-pr-project"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-pr"),
+          title: "Project PR",
+          workspaceRoot: "/tmp/project-pr",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const projectThread = (sequence: number, threadId: string, pullRequest: null | undefined) =>
+        projectionPipeline.projectEvent({
+          sequence,
+          type: "thread.created",
+          eventId: EventId.make(`evt-${threadId}`),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make(threadId),
+          occurredAt: now,
+          commandId: CommandId.make(`cmd-${threadId}`),
+          causationEventId: null,
+          correlationId: CommandId.make(`cmd-${threadId}`),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make(threadId),
+            projectId: ProjectId.make("project-pr"),
+            title: threadId,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            branch: "feature/pr-146",
+            worktreePath: null,
+            ...(pullRequest !== undefined ? { pullRequest } : {}),
+            reviewSnapshot,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+      yield* projectThread(2, "thread-explicit-null", null);
+      yield* projectThread(3, "thread-legacy-review", undefined);
+
+      const rows = yield* sql<{ readonly id: string; readonly pr: string }>`
+        SELECT thread_id AS id, pull_request_json AS pr
+        FROM projection_threads
+        WHERE thread_id IN ('thread-explicit-null', 'thread-legacy-review')
+        ORDER BY thread_id
+      `;
+      assert.deepStrictEqual(rows, [
+        { id: "thread-explicit-null", pr: "null" },
+        {
+          id: "thread-legacy-review",
+          pr: JSON.stringify({
+            number: 146,
+            title: "Explicit review",
+            url: "https://github.com/acme/repo/pull/146",
+            baseBranch: "main",
+            headBranch: "feature/pr-146",
+            state: null,
+          }),
+        },
+      ]);
+    }),
+  );
 });
 
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-worktree-cleanup-job-test-"))(

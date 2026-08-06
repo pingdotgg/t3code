@@ -8,6 +8,7 @@ import {
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import { pullRequestFromReviewSnapshot } from "./reviewPullRequest.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -306,6 +307,7 @@ export function projectEvent(
           event.type,
           "payload",
         );
+        const legacyReviewPullRequest = pullRequestFromReviewSnapshot(payload.reviewSnapshot);
         const thread: OrchestrationThread = yield* decodeForEvent(
           OrchestrationThread,
           {
@@ -321,7 +323,11 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
-            ...(payload.pullRequest !== undefined ? { pullRequest: payload.pullRequest } : {}),
+            ...(payload.pullRequest !== undefined
+              ? { pullRequest: payload.pullRequest }
+              : legacyReviewPullRequest !== undefined
+                ? { pullRequest: legacyReviewPullRequest }
+                : {}),
             ...(payload.reviewSnapshot !== undefined
               ? { reviewSnapshot: payload.reviewSnapshot }
               : {}),

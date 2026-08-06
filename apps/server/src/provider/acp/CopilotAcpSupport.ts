@@ -40,13 +40,14 @@ export const COPILOT_LEGACY_AUTOPILOT_MODE_ID =
   "https://github.com/github/copilot-cli/mode#autopilot";
 export const COPILOT_LEGACY_PLAN_MODE_ID = "https://github.com/github/copilot-cli/mode#plan";
 
-export const COPILOT_WORKSPACE_INSTRUCTIONS = `# T3 Code workspace handoff
+export const COPILOT_WORKSPACE_INSTRUCTIONS = `# T3 Code tools
 
 - NEVER run \`git worktree add\`, \`git worktree move\`, or \`git worktree remove\` through a terminal or shell tool.
 - When a task needs a new isolated checkout, call the \`create_isolated_workspace\` tool instead.
 - When a task needs to use an existing worktree, call the \`switch_workspace\` tool instead.
 - After either workspace tool succeeds, end the current turn. T3 Code will restart the provider in the bound workspace and continue the task automatically.
 - Read-only commands such as \`git worktree list\` are allowed.
+- After successfully creating or explicitly opening a pull request for this thread, call \`associate_pull_request\` with its URL or number so the sidebar association is durable.
 `;
 
 export const COPILOT_CLIENT_CAPABILITIES = {
@@ -78,6 +79,7 @@ const COPILOT_MCP_TOOLSETS = [
   "preview_annotate",
   "create_isolated_workspace",
   "switch_workspace",
+  "associate_pull_request",
 ] as const;
 type CopilotAcpRuntimeCopilotSettings = {
   readonly binaryPath: CopilotSettings["binaryPath"];
@@ -190,6 +192,7 @@ export function buildCopilotMcpServerOptions(
   toolsetNames.add("create_isolated_workspace");
   toolsetNames.add("switch_workspace");
   toolsetNames.add("create_nested_thread");
+  toolsetNames.add("associate_pull_request");
   return {
     cwd,
     toolsets: toolsetNames,

@@ -3,6 +3,7 @@ import { Schema } from "effect";
 
 import {
   GitCreateWorktreeInput,
+  GitPullRequestAssociation,
   GitPreparePullRequestThreadInput,
   GitRunStackedActionResult,
   GitRunStackedActionInput,
@@ -17,6 +18,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodePullRequestAssociation = Schema.decodeUnknownSync(GitPullRequestAssociation);
 
 describe("GitCreateWorktreeInput", () => {
   it("accepts omitted newBranch for existing-branch worktrees", () => {
@@ -72,6 +74,21 @@ describe("GitResolvePullRequestResult", () => {
     });
 
     expect(parsed.state).toBe("open");
+  });
+});
+
+describe("GitPullRequestAssociation", () => {
+  it("represents explicit identity when historical state is unknown", () => {
+    const parsed = decodePullRequestAssociation({
+      number: 42,
+      title: "PR threads",
+      url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+      baseBranch: "main",
+      headBranch: "feature/pr-threads",
+      state: null,
+    });
+
+    expect(parsed.state).toBeNull();
   });
 });
 

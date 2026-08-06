@@ -68,7 +68,9 @@ Create a reviewable PR that accurately describes the branch's changes. Use `gh` 
    gh pr create --base "<base>" --title "<title>" --body "<body>"
    ```
 
-   Use `--draft`, `--reviewer`, and `--label` only when requested. Return the PR URL.
+   Use `--draft`, `--reviewer`, and `--label` only when requested.
+
+8. After `gh pr create` succeeds, call the T3 `associate_pull_request` tool with the returned PR URL. This is required so the current thread's sidebar PR badge is durable; do not infer association from the checked-out branch. Return the PR URL after the association succeeds.
 
 ## Safety rules
 

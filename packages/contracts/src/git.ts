@@ -113,6 +113,13 @@ export const GitResolvedPullRequest = Schema.Struct({
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
+/** Durable PR identity; state is null when explicit historical provenance omitted it. */
+export const GitPullRequestAssociation = Schema.Struct({
+  ...GitResolvedPullRequest.fields,
+  state: Schema.NullOr(GitPullRequestState),
+});
+export type GitPullRequestAssociation = typeof GitPullRequestAssociation.Type;
+
 // RPC Inputs
 
 export const GitStatusInput = Schema.Struct({
