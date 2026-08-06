@@ -46,7 +46,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
-import { makeProviderServiceLive } from "./ProviderService.ts";
+import { makeProviderServiceLive, SESSION_ACTIVITY_EVENT_TYPES } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1533,6 +1533,68 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         ),
         true,
       );
+    }),
+  );
+
+  it.effect("refreshes binding lastSeenAt on turn and task lifecycle events", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-last-seen");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const lastSeenAt = directory
+        .listBindings()
+        .pipe(
+          Effect.map(
+            (bindings) => bindings.find((entry) => entry.threadId === threadId)?.lastSeenAt,
+          ),
+        );
+
+      const emitEvent = (type: string, eventId: string) => {
+        fanout.codex.emit({
+          type,
+          eventId: asEventId(eventId),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId: asTurnId("turn-last-seen"),
+        });
+      };
+
+      const initial = yield* lastSeenAt;
+      assert.notEqual(initial, undefined);
+      yield* advanceTestClock(50);
+
+      // A content delta is not a session-activity boundary and must not
+      // write to the binding on every streamed token.
+      emitEvent("content.delta", "evt-seen-delta");
+      yield* advanceTestClock(50);
+      const afterDelta = yield* lastSeenAt;
+      assert.equal(afterDelta, initial);
+
+      let previous = initial as string;
+      for (const [index, type] of [...SESSION_ACTIVITY_EVENT_TYPES].entries()) {
+        yield* advanceTestClock(61_000);
+        emitEvent(type, `evt-seen-${index}`);
+        yield* advanceTestClock(50);
+        const current = yield* lastSeenAt;
+        assert.notEqual(current, undefined);
+        assert.equal(Date.parse(current as string) > Date.parse(previous), true);
+        previous = current as string;
+      }
+
+      // Touches are throttled per thread: a boundary arriving right after
+      // another one must not hit the database again.
+      emitEvent("turn.completed", "evt-seen-throttled");
+      yield* advanceTestClock(50);
+      const afterThrottled = yield* lastSeenAt;
+      assert.equal(afterThrottled, previous);
     }),
   );
 
