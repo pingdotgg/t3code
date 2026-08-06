@@ -21,6 +21,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ThreadLabel } from "./thread.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -377,6 +378,8 @@ export const OrchestrationThread = Schema.Struct({
   // thread renders in the pinned block and never classifies into a shelf.
   // Optional so payloads from pre-pinning servers still decode.
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Optional so snapshots from pre-label servers remain decodable.
+  label: Schema.optional(Schema.NullOr(ThreadLabel)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -432,6 +435,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  label: Schema.optional(Schema.NullOr(ThreadLabel)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
@@ -648,6 +652,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  label: Schema.optional(Schema.NullOr(ThreadLabel)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -903,6 +908,7 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   requestId: CommandId,
   title: Schema.optional(TrimmedNonEmptyString),
+  label: Schema.optional(ThreadLabel),
 });
 
 const InternalOrchestrationCommand = Schema.Union([
@@ -1069,6 +1075,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  label: Schema.optional(Schema.NullOr(ThreadLabel)),
   updatedAt: IsoDateTime,
 });
 

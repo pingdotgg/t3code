@@ -15,6 +15,7 @@ import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
+  ThreadLabel,
 } from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -88,6 +89,7 @@ interface HomeScreenProps {
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly selectedThreadLabel: ThreadLabel | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
@@ -113,6 +115,10 @@ interface HomeScreenProps {
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onSetThreadLabel: (
+    thread: EnvironmentThreadShell,
+    label: ThreadLabel | null,
+  ) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
@@ -344,12 +350,13 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProjectRefKeys === null
-        ? props.threads
-        : props.threads.filter((thread) =>
-            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
-          ),
-    [props.threads, selectedProjectRefKeys],
+      props.threads.filter(
+        (thread) =>
+          (props.selectedThreadLabel === null || thread.label === props.selectedThreadLabel) &&
+          (selectedProjectRefKeys === null ||
+            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId))),
+      ),
+    [props.selectedThreadLabel, props.threads, selectedProjectRefKeys],
   );
   const scopedPendingTasks = useMemo(
     () =>
@@ -598,6 +605,15 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const labelsEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadLabels === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -612,7 +628,7 @@ export function HomeScreen(props: HomeScreenProps) {
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: scopedThreads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -638,7 +654,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeEnvironmentIds,
     props.searchQuery,
     props.selectedEnvironmentId,
-    props.threads,
+    scopedThreads,
     matchedThreadKeys,
     threadListV2Enabled,
     v2ScopedProjectGroup,
@@ -784,6 +800,8 @@ export function HomeScreen(props: HomeScreenProps) {
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+          labelsSupported={labelsEnvironmentIds.has(thread.environmentId)}
+          onSetThreadLabel={props.onSetThreadLabel}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
@@ -810,12 +828,14 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableWillOpen,
       handleUnsettleThread,
       pinningEnvironmentIds,
+      labelsEnvironmentIds,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onSelectPendingTask,
       props.onSelectThread,
+      props.onSetThreadLabel,
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
@@ -844,6 +864,8 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       snoozePresetMinute: nowMinute,
       threadSearchMatchByKey,
+      labelsEnvironmentIds,
+      onSetThreadLabel: props.onSetThreadLabel,
     }),
     [
       projectByKey,
@@ -851,7 +873,9 @@ export function HomeScreen(props: HomeScreenProps) {
       props.searchQuery,
       props.savedConnectionsById,
       serverConfigs,
+      labelsEnvironmentIds,
       nowMinute,
+      props.onSetThreadLabel,
       threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
     ],
@@ -863,8 +887,17 @@ export function HomeScreen(props: HomeScreenProps) {
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
       threadSearchMatchByKey,
+      labelsEnvironmentIds,
+      onSetThreadLabel: props.onSetThreadLabel,
     }),
-    [projectCwdByKey, props.savedConnectionsById, props.searchQuery, threadSearchMatchByKey],
+    [
+      labelsEnvironmentIds,
+      projectCwdByKey,
+      props.onSetThreadLabel,
+      props.savedConnectionsById,
+      props.searchQuery,
+      threadSearchMatchByKey,
+    ],
   );
 
   const renderItem = useCallback(
@@ -927,6 +960,8 @@ export function HomeScreen(props: HomeScreenProps) {
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
               onSelectThread={props.onSelectThread}
+              labelsSupported={labelsEnvironmentIds.has(thread.environmentId)}
+              onSetThreadLabel={props.onSetThreadLabel}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
             />
@@ -954,9 +989,11 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onNewThreadInProject,
       props.onSelectPendingTask,
       props.onSelectThread,
+      props.onSetThreadLabel,
       props.searchQuery,
       props.savedConnectionsById,
       threadSearchMatchByKey,
+      labelsEnvironmentIds,
       updateGroupDisplay,
     ],
   );

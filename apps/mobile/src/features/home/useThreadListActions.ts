@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import type { ThreadLabel } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
@@ -33,6 +34,13 @@ function environmentSupportsPinning(environmentId: EnvironmentThreadShell["envir
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadPinning === true
+  );
+}
+
+function environmentSupportsLabels(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadLabels === true
   );
 }
 
@@ -211,12 +219,19 @@ export function useThreadListActions(): {
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly setThreadLabel: (
+    thread: EnvironmentThreadShell,
+    label: ThreadLabel | null,
+  ) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
+  const updateThreadMetadataMutation = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
 
   const archiveThread = useCallback(
@@ -378,6 +393,35 @@ export function useThreadListActions(): {
     [unpinMutation],
   );
 
+  const setThreadLabel = useCallback(
+    async (thread: EnvironmentThreadShell, label: ThreadLabel | null) => {
+      if (!environmentSupportsLabels(thread.environmentId)) {
+        Alert.alert(
+          "Could not update label",
+          "This environment's server does not support thread labels yet. Update the server to use labels.",
+        );
+        return false;
+      }
+      selectionHaptic();
+      const result = await updateThreadMetadataMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, label },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not update label",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread label could not be updated.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [updateThreadMetadataMutation],
+  );
+
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
   return {
@@ -389,6 +433,7 @@ export function useThreadListActions(): {
     unsettleThread,
     pinThread,
     unpinThread,
+    setThreadLabel,
   };
 }
 

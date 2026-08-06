@@ -94,6 +94,7 @@ export function applyThreadDetailEvent(
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          label: null,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -204,6 +205,7 @@ export function applyThreadDetailEvent(
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
             : {}),
+          ...(event.payload.label !== undefined ? { label: event.payload.label } : {}),
           updatedAt: event.payload.updatedAt,
         },
       };

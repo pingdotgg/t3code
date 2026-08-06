@@ -27,6 +27,7 @@ import {
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
+  sanitizeThreadLabel,
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
@@ -610,8 +611,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         attachments: input.attachments,
       });
 
+      const label = sanitizeThreadLabel(generated.label);
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(label !== undefined ? { label } : {}),
       };
     });
 

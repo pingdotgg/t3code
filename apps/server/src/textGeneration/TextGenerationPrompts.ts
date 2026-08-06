@@ -214,10 +214,18 @@ export interface ThreadTitlePromptInput {
   policy?: TextGenerationPolicy | undefined;
 }
 
+const THREAD_TITLE_LABEL_INSTRUCTIONS = `Choose the label from the durable subject and desired outcome:
+- bug: fixing broken, failing, or regressed behavior.
+- feature: changing or extending an existing product.
+- review: inspecting or auditing existing code, behavior, or a proposed change.
+- new-build: creating a new application, product, or system from scratch.
+Use the canonical label value, not its display name.`;
+
 // Keep shared editorial rules in these two prompts in sync. Regeneration
 // intentionally adds guidance for thread history and the previous title.
 const INITIAL_THREAD_TITLE_PROMPT = `Generate a title that will help the user recognize this T3 Code thread weeks later.
-Return JSON with exactly one key: title.
+Return JSON with exactly two keys: title and label.
+${THREAD_TITLE_LABEL_INSTRUCTIONS}
 
 Before answering, silently reduce the request to:
 - Subject: What system, feature, or problem is this really about?
@@ -243,7 +251,8 @@ Editorial rules:
 function regenerateThreadTitlePrompt(previousTitle: string): string {
   return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
 The previous title was ${JSON.stringify(previousTitle)}.
-Return JSON with exactly one key: title.
+Return JSON with exactly two keys: title and label.
+${THREAD_TITLE_LABEL_INSTRUCTIONS}
 
 Determine the title in this order:
 1. Read the USER messages first. Identify the latest explicit durable goal. The original subject remains the subject until the user clearly changes what the thread is about.
@@ -312,6 +321,9 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   }
   const outputSchema = Schema.Struct({
     title: Schema.String,
+    // Optional so older providers or cached structured-output responses remain
+    // decodable while the updated prompt teaches them to return a label.
+    label: Schema.optional(Schema.String),
   });
 
   return { prompt, outputSchema };

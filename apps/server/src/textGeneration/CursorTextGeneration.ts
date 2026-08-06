@@ -19,6 +19,7 @@ import {
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
+  sanitizeThreadLabel,
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
@@ -254,8 +255,10 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         modelSelection: input.modelSelection,
       });
 
+      const label = sanitizeThreadLabel(generated.label);
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(label !== undefined ? { label } : {}),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 

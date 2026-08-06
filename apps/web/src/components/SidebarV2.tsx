@@ -12,7 +12,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { ScopedThreadRef, SidebarProjectGroupingMode, ThreadLabel } from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -33,6 +33,7 @@ import {
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
+  TagIcon,
   TerminalIcon,
   Trash2Icon,
   Undo2Icon,
@@ -83,6 +84,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { THREAD_LABEL_OPTIONS, threadLabelDisplayName } from "@t3tools/shared/threadLabels";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -228,6 +230,26 @@ function WorkingDuration(props: { startedAt: string | null }) {
 
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
+}
+
+const THREAD_LABEL_CLASS_NAMES: Record<ThreadLabel, string> = {
+  bug: "bg-red-500/10 text-red-700 dark:text-red-300",
+  feature: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  review: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  "new-build": "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+};
+
+function ThreadLabelBadge({ label }: { readonly label: ThreadLabel }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
+        THREAD_LABEL_CLASS_NAMES[label],
+      )}
+    >
+      {threadLabelDisplayName(label)}
+    </span>
+  );
 }
 
 function SidebarV2ThreadTooltip({
@@ -451,6 +473,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const threadLabel = thread.label ?? null;
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -827,6 +850,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               />
             </span>
             {title}
+            {threadLabel ? <ThreadLabelBadge label={threadLabel} /> : null}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -1028,8 +1052,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className="mt-1 flex min-w-0 items-center gap-2">
               {title}
+              {threadLabel ? <ThreadLabelBadge label={threadLabel} /> : null}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1132,6 +1157,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
     threadId: thread.id,
   });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const threadLabel = thread.label ?? null;
   return (
     <li role="presentation" className="list-none">
       <Tooltip>
@@ -1167,6 +1193,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
             fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          {threadLabel ? <ThreadLabelBadge label={threadLabel} /> : null}
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
@@ -1207,6 +1234,7 @@ export default function SidebarV2() {
     pinThread,
     unpinThread,
     deleteThread,
+    setThreadLabel,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -1398,6 +1426,7 @@ export default function SidebarV2() {
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
+  const [labelFilter, setLabelFilter] = useState<ThreadLabel | null>(null);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -1597,7 +1626,8 @@ export default function SidebarV2() {
         (thread) =>
           thread.archivedAt === null &&
           (scopedProjectKeys === null ||
-            scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+            scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)) &&
+          (labelFilter === null || thread.label === labelFilter),
       );
       const pinned: EnvironmentThreadShell[] = [];
       const active: EnvironmentThreadShell[] = [];
@@ -1655,6 +1685,7 @@ export default function SidebarV2() {
     }, [
       autoSettleAfterDays,
       changeRequestStateByKey,
+      labelFilter,
       nowMinute,
       scopedProjectKeys,
       serverConfigs,
@@ -2359,6 +2390,7 @@ export default function SidebarV2() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const threadLabel = thread.label ?? null;
         const threadWorkspacePath =
           thread.worktreePath ??
           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
@@ -2377,6 +2409,8 @@ export default function SidebarV2() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsLabels =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadLabels === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -2426,6 +2460,23 @@ export default function SidebarV2() {
                         },
                   ]
                 : []),
+              ...(supportsLabels
+                ? [
+                    {
+                      id: "label",
+                      label: threadLabel
+                        ? `Label: ${threadLabelDisplayName(threadLabel)}`
+                        : "Add label",
+                      children: [
+                        ...THREAD_LABEL_OPTIONS.map((option) => ({
+                          id: `label:${option.value}`,
+                          label: option.label,
+                        })),
+                        ...(threadLabel ? [{ id: "label:clear", label: "Clear label" }] : []),
+                      ],
+                    },
+                  ]
+                : []),
               { id: "rename", label: "Rename thread" },
               ...(supportsTitleRegeneration
                 ? [
@@ -2450,6 +2501,25 @@ export default function SidebarV2() {
             (candidate) => `snooze:${candidate.id}` === clicked.value,
           );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value?.startsWith("label:")) {
+          const selectedLabel = clicked.value.slice("label:".length);
+          const labelOption = THREAD_LABEL_OPTIONS.find((option) => option.value === selectedLabel);
+          const result = await setThreadLabel(
+            threadRef,
+            selectedLabel === "clear" ? null : (labelOption?.value ?? null),
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to update thread label",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         switch (clicked.value) {
@@ -2579,6 +2649,7 @@ export default function SidebarV2() {
       markThreadUnread,
       projectCwdByKey,
       serverConfigs,
+      setThreadLabel,
       startThreadRename,
       updateThreadMetadata,
     ],
@@ -2832,6 +2903,54 @@ export default function SidebarV2() {
                           </MenuRadioItem>
                         );
                       })}
+                    </MenuRadioGroup>
+                  </MenuPopup>
+                </Menu>
+                <Menu>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <MenuTrigger
+                          render={
+                            <SidebarMenuButton
+                              size="icon"
+                              className={cn(
+                                "relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
+                                labelFilter && "text-sidebar-foreground",
+                              )}
+                              aria-label={
+                                labelFilter
+                                  ? `Filter by label: ${threadLabelDisplayName(labelFilter)}`
+                                  : "Filter threads by label"
+                              }
+                            />
+                          }
+                        />
+                      }
+                    >
+                      <TagIcon />
+                    </TooltipTrigger>
+                    <TooltipPopup side="bottom">
+                      {labelFilter
+                        ? `Label: ${threadLabelDisplayName(labelFilter)}`
+                        : "Filter by label"}
+                    </TooltipPopup>
+                  </Tooltip>
+                  <MenuPopup align="end">
+                    <MenuRadioGroup
+                      value={labelFilter ?? "all"}
+                      onValueChange={(value) =>
+                        setLabelFilter(value === "all" ? null : (value as ThreadLabel))
+                      }
+                    >
+                      <MenuRadioItem value="all" closeOnClick>
+                        <span>All labels</span>
+                      </MenuRadioItem>
+                      {THREAD_LABEL_OPTIONS.map((option) => (
+                        <MenuRadioItem key={option.value} value={option.value} closeOnClick>
+                          <span>{option.label}</span>
+                        </MenuRadioItem>
+                      ))}
                     </MenuRadioGroup>
                   </MenuPopup>
                 </Menu>

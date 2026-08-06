@@ -1,4 +1,5 @@
-import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder, ThreadLabel } from "@t3tools/contracts";
+import { THREAD_LABEL_OPTIONS } from "@t3tools/shared/threadLabels";
 
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-options";
@@ -37,10 +38,12 @@ export function buildHomeListFilterMenu(props: {
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly selectedThreadLabel: ThreadLabel | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  readonly onThreadLabelChange: (label: ThreadLabel | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   /** False hides the sort/group submenus. Thread List v2 uses a fixed
@@ -94,6 +97,26 @@ export function buildHomeListFilterMenu(props: {
       ],
     });
   }
+
+  items.push({
+    type: "submenu",
+    title: "Label",
+    items: [
+      {
+        type: "action",
+        title: "All labels",
+        subtitle: "Show threads with any label",
+        state: props.selectedThreadLabel === null ? "on" : "off",
+        onPress: () => props.onThreadLabelChange(null),
+      },
+      ...THREAD_LABEL_OPTIONS.map((option) => ({
+        type: "action" as const,
+        title: option.label,
+        state: props.selectedThreadLabel === option.value ? ("on" as const) : ("off" as const),
+        onPress: () => props.onThreadLabelChange(option.value),
+      })),
+    ],
+  });
 
   if (props.listOrganization !== false) {
     items.push(

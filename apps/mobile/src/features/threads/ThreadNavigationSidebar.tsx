@@ -10,7 +10,8 @@ import {
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadLabel } from "@t3tools/contracts";
+import { THREAD_LABEL_OPTIONS } from "@t3tools/shared/threadLabels";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
@@ -207,6 +208,7 @@ function ThreadNavigationSidebarPane(
     unsettleThread,
     pinThread,
     unpinThread,
+    setThreadLabel,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
@@ -257,6 +259,7 @@ function ThreadNavigationSidebarPane(
     [threadSearch.matches],
   );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const [selectedThreadLabel, setSelectedThreadLabel] = useState<ThreadLabel | null>(null);
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -326,12 +329,13 @@ function ThreadNavigationSidebarPane(
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProjectRefs === null
-        ? threads
-        : threads.filter((thread) =>
-            selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
-          ),
-    [selectedProjectRefs, threads],
+      threads.filter(
+        (thread) =>
+          (selectedThreadLabel === null || thread.label === selectedThreadLabel) &&
+          (selectedProjectRefs === null ||
+            selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId))),
+      ),
+    [selectedProjectRefs, selectedThreadLabel, threads],
   );
   const scopedPendingTasks = useMemo(
     () =>
@@ -431,7 +435,7 @@ function ThreadNavigationSidebarPane(
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${selectedThreadLabel ?? "all"}:${props.searchQuery.trim()}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -492,6 +496,15 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const labelsEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadLabels === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -504,7 +517,7 @@ function ThreadNavigationSidebarPane(
         nextSnoozeWakeAt: null,
       };
     return buildThreadListV2Items({
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: scopedThreads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
@@ -533,7 +546,7 @@ function ThreadNavigationSidebarPane(
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     threadListV2Enabled,
-    threads,
+    scopedThreads,
     selectedProjectScope,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
@@ -644,6 +657,23 @@ function ThreadNavigationSidebarPane(
               ],
             },
           ] satisfies MenuAction[])),
+      {
+        id: "label",
+        title: "Label",
+        subactions: [
+          {
+            id: "label:all",
+            title: "All labels",
+            subtitle: "Show threads with any label",
+            state: selectedThreadLabel === null ? "on" : "off",
+          },
+          ...THREAD_LABEL_OPTIONS.map((option) => ({
+            id: `label:${option.value}`,
+            title: option.label,
+            state: selectedThreadLabel === option.value ? ("on" as const) : ("off" as const),
+          })),
+        ],
+      },
       // v2 lays the list out in fixed creation order — offering sort/group
       // controls it silently ignores would be a lie. Environment still
       // scopes the v2 partition, so it stays.
@@ -670,7 +700,14 @@ function ThreadNavigationSidebarPane(
             },
           ] satisfies MenuAction[])),
     ],
-    [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
+    [
+      environments,
+      options,
+      projectFilterOptions,
+      selectedProjectKey,
+      selectedThreadLabel,
+      threadListV2Enabled,
+    ],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -697,6 +734,17 @@ function ThreadNavigationSidebarPane(
         }
         return;
       }
+      if (event === "label:all") {
+        setSelectedThreadLabel(null);
+        return;
+      }
+      if (event.startsWith("label:")) {
+        const label = THREAD_LABEL_OPTIONS.find(
+          (option) => option.value === event.slice("label:".length),
+        );
+        if (label) setSelectedThreadLabel(label.value);
+        return;
+      }
       const projectSort = PROJECT_SORT_OPTIONS.find(
         (option) => `project-sort:${option.value}` === event,
       );
@@ -717,6 +765,7 @@ function ThreadNavigationSidebarPane(
       projectFilterOptions,
       setProjectSortOrder,
       setSelectedEnvironmentId,
+      setSelectedThreadLabel,
       setThreadSortOrder,
     ],
   );
@@ -776,6 +825,7 @@ function ThreadNavigationSidebarPane(
   const listExtraData = useMemo(
     () => ({
       selectedThreadKey: props.selectedThreadKey ?? "",
+      selectedThreadLabel: selectedThreadLabel ?? "",
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey,
@@ -786,6 +836,7 @@ function ThreadNavigationSidebarPane(
     }),
     [
       props.selectedThreadKey,
+      selectedThreadLabel,
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey,
@@ -929,11 +980,13 @@ function ThreadNavigationSidebarPane(
               onSettleThread={settleThread}
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+              labelsSupported={labelsEnvironmentIds.has(thread.environmentId)}
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
+              onSetThreadLabel={setThreadLabel}
               onChangeRequestState={handleChangeRequestState}
               projectCwd={projectCwdByKey.get(scopeKey) ?? null}
               onSwipeableClose={handleSwipeableClose}
@@ -1034,6 +1087,8 @@ function ThreadNavigationSidebarPane(
               onArchiveThread={archiveThread}
               onDeleteThread={confirmDeleteThread}
               onSelectThread={handleSelectThread}
+              labelsSupported={labelsEnvironmentIds.has(thread.environmentId)}
+              onSetThreadLabel={setThreadLabel}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
               simultaneousSwipeGesture={sidebarScrollGesture}
@@ -1063,6 +1118,7 @@ function ThreadNavigationSidebarPane(
       openPendingTask,
       pinThread,
       pinningEnvironmentIds,
+      labelsEnvironmentIds,
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey,
@@ -1085,14 +1141,17 @@ function ThreadNavigationSidebarPane(
       unpinThread,
       unsettleThread,
       unsnoozeThread,
+      setThreadLabel,
       updateGroupDisplay,
     ],
   );
-  // v2 ignores the sort/group options, so only the environment filter can
-  // light the "customized" state while the beta is on.
+  // v2 ignores the sort/group options, so only the environment and label
+  // filters can light the "customized" state while the beta is on.
   const filterCustomized = threadListV2Enabled
-    ? options.selectedEnvironmentId !== null || selectedProjectKey !== null
-    : hasCustomHomeListOptions({ ...options, selectedProjectKey });
+    ? options.selectedEnvironmentId !== null ||
+      selectedProjectKey !== null ||
+      selectedThreadLabel !== null
+    : hasCustomHomeListOptions({ ...options, selectedProjectKey }) || selectedThreadLabel !== null;
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
@@ -1103,10 +1162,12 @@ function ThreadNavigationSidebarPane(
         projects: projectFilterOptions,
         selectedEnvironmentId: options.selectedEnvironmentId,
         selectedProjectKey,
+        selectedThreadLabel,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
+        onThreadLabelChange: setSelectedThreadLabel,
         onProjectSortOrderChange: setProjectSortOrder,
         onThreadSortOrderChange: setThreadSortOrder,
         listOrganization: !threadListV2Enabled,
@@ -1116,8 +1177,10 @@ function ThreadNavigationSidebarPane(
       options,
       projectFilterOptions,
       selectedProjectKey,
+      selectedThreadLabel,
       setProjectSortOrder,
       setSelectedEnvironmentId,
+      setSelectedThreadLabel,
       setThreadSortOrder,
       threadListV2Enabled,
     ],

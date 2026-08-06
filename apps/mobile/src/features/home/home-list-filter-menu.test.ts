@@ -5,6 +5,7 @@ import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 describe("buildHomeListFilterMenu", () => {
   it("adds a project scope submenu that selects and clears the same scope as the chips", () => {
     const onProjectChange = vi.fn();
+    const onThreadLabelChange = vi.fn();
     const menu = buildHomeListFilterMenu({
       environments: [],
       projects: [
@@ -13,10 +14,12 @@ describe("buildHomeListFilterMenu", () => {
       ],
       selectedEnvironmentId: null,
       selectedProjectKey: "environment-1:project-1",
+      selectedThreadLabel: null,
       projectSortOrder: "updated_at",
       threadSortOrder: "updated_at",
       onEnvironmentChange: vi.fn(),
       onProjectChange,
+      onThreadLabelChange,
       onProjectSortOrderChange: vi.fn(),
       onThreadSortOrderChange: vi.fn(),
     });
@@ -39,5 +42,20 @@ describe("buildHomeListFilterMenu", () => {
     projectMenu.items[2]?.onPress();
     expect(onProjectChange).toHaveBeenNthCalledWith(1, null);
     expect(onProjectChange).toHaveBeenNthCalledWith(2, "environment-1:project-2");
+
+    const labelMenu = menu.items.find((item) => item.type === "submenu" && item.title === "Label");
+    expect(labelMenu).toMatchObject({
+      type: "submenu",
+      items: [
+        { title: "All labels", state: "on" },
+        { title: "Bug", state: "off" },
+        { title: "Feature", state: "off" },
+        { title: "Review", state: "off" },
+        { title: "New Build", state: "off" },
+      ],
+    });
+    if (labelMenu?.type !== "submenu") throw new Error("Expected label submenu");
+    labelMenu.items[1]?.onPress();
+    expect(onThreadLabelChange).toHaveBeenCalledWith("bug");
   });
 });

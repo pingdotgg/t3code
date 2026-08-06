@@ -9,6 +9,7 @@ import {
   LoaderIcon,
   SearchIcon,
   SquarePenIcon,
+  TagIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -47,8 +48,10 @@ import {
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
   type SidebarProjectGroupingMode,
+  type ThreadLabel,
   ThreadId,
 } from "@t3tools/contracts";
+import { THREAD_LABEL_OPTIONS, threadLabelDisplayName } from "@t3tools/shared/threadLabels";
 import {
   parseScopedThreadKey,
   scopedProjectKey,
@@ -78,6 +81,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import {
   readThreadShell,
+  readEnvironmentSupportsLabels,
   useProject,
   useProjects,
   useThreadShells,
@@ -710,21 +714,31 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               onDoubleClick={handleRenameInputClick}
             />
           ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className="min-w-0 flex-1 truncate text-sm"
-                    data-testid={`thread-title-${thread.id}`}
-                  >
-                    {thread.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
-                {thread.title}
-              </TooltipPopup>
-            </Tooltip>
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="min-w-0 flex-1 truncate text-sm"
+                      data-testid={`thread-title-${thread.id}`}
+                    >
+                      {thread.title}
+                    </span>
+                  }
+                />
+                <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
+                  {thread.title}
+                </TooltipPopup>
+              </Tooltip>
+              {thread.label ? (
+                <span
+                  className="shrink-0 rounded-full border border-border/70 bg-muted/55 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground"
+                  title={`Label: ${threadLabelDisplayName(thread.label)}`}
+                >
+                  {threadLabelDisplayName(thread.label)}
+                </span>
+              ) : null}
+            </>
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -1054,6 +1068,8 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 
 interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
+  threadLabelFilter: ThreadLabel | null;
+  setThreadLabel: ReturnType<typeof useThreadActions>["setThreadLabel"];
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
@@ -1074,6 +1090,8 @@ interface SidebarProjectItemProps {
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
   const {
     project,
+    threadLabelFilter,
+    setThreadLabel,
     isThreadListExpanded,
     activeRouteThreadKey,
     newThreadShortcutLabel,
@@ -1254,7 +1272,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      projectThreads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          (threadLabelFilter === null || thread.label === threadLabelFilter),
+      ),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -1267,7 +1289,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [projectThreads, threadLabelFilter, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -2111,10 +2133,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const supportsLabels = readEnvironmentSupportsLabels(thread.environmentId);
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
+            : []),
+          ...(supportsLabels
+            ? [
+                {
+                  id: "label",
+                  label: thread.label
+                    ? `Label: ${threadLabelDisplayName(thread.label)}`
+                    : "Add label",
+                  children: [
+                    ...THREAD_LABEL_OPTIONS.map((option) => ({
+                      id: `label:${option.value}`,
+                      label: option.label,
+                    })),
+                    ...(thread.label ? [{ id: "label:clear", label: "Clear label" }] : []),
+                  ],
+                },
+              ]
             : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
@@ -2176,6 +2216,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         copyThreadIdToClipboard(thread.id, { threadId: thread.id });
         return;
       }
+      if (clicked?.startsWith("label:")) {
+        const selectedLabel = clicked.slice("label:".length);
+        const labelOption = THREAD_LABEL_OPTIONS.find((option) => option.value === selectedLabel);
+        const result = await setThreadLabel(
+          threadRef,
+          selectedLabel === "clear" ? null : (labelOption?.value ?? null),
+        );
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to update thread label",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -2209,6 +2268,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       memberProjectByScopedKey,
       project.workspaceRoot,
+      setThreadLabel,
       startThreadRename,
     ],
   );
@@ -2744,6 +2804,9 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  setThreadLabel: ReturnType<typeof useThreadActions>["setThreadLabel"];
+  threadLabelFilter: ThreadLabel | null;
+  setThreadLabelFilter: (label: ThreadLabel | null) => void;
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
@@ -2784,6 +2847,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    setThreadLabel,
+    threadLabelFilter,
+    setThreadLabelFilter,
     sortedProjects,
     expandedThreadListsByProject,
     activeRouteProjectKey,
@@ -2884,6 +2950,51 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               onThreadSortOrderChange={handleThreadSortOrderChange}
               onThreadPreviewCountChange={handleThreadPreviewCountChange}
             />
+            <Menu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      className={`inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] transition-colors hover:bg-accent hover:text-foreground ${threadLabelFilter ? "text-foreground" : "text-muted-foreground/60"}`}
+                      aria-label={
+                        threadLabelFilter
+                          ? `Filter by label: ${threadLabelDisplayName(threadLabelFilter)}`
+                          : "Filter threads by label"
+                      }
+                    />
+                  }
+                >
+                  <TagIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  {threadLabelFilter
+                    ? `Label: ${threadLabelDisplayName(threadLabelFilter)}`
+                    : "Filter by label"}
+                </TooltipPopup>
+              </Tooltip>
+              <MenuPopup align="end" side="bottom">
+                <MenuRadioGroup
+                  value={threadLabelFilter ?? "all"}
+                  onValueChange={(value) =>
+                    setThreadLabelFilter(value === "all" ? null : (value as ThreadLabel))
+                  }
+                >
+                  <MenuRadioItem value="all" closeOnClick className="min-h-7 py-1 sm:text-xs">
+                    All labels
+                  </MenuRadioItem>
+                  {THREAD_LABEL_OPTIONS.map((option) => (
+                    <MenuRadioItem
+                      key={option.value}
+                      value={option.value}
+                      closeOnClick
+                      className="min-h-7 py-1 sm:text-xs"
+                    >
+                      {option.label}
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuPopup>
+            </Menu>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -2922,6 +3033,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     {(dragHandleProps) => (
                       <SidebarProjectItem
                         project={project}
+                        threadLabelFilter={threadLabelFilter}
+                        setThreadLabel={setThreadLabel}
                         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -2954,6 +3067,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <SidebarProjectListRow
                 key={project.projectKey}
                 project={project}
+                threadLabelFilter={threadLabelFilter}
+                setThreadLabel={setThreadLabel}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -3001,7 +3116,8 @@ export default function Sidebar() {
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, deleteThread, setThreadLabel } = useThreadActions();
+  const [threadLabelFilter, setThreadLabelFilter] = useState<ThreadLabel | null>(null);
   const { isMobile, setOpenMobile } = useSidebar();
   const routeTarget = useParams({
     strict: false,
@@ -3260,8 +3376,13 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
-    [sidebarThreads],
+    () =>
+      sidebarThreads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          (threadLabelFilter === null || thread.label === threadLabelFilter),
+      ),
+    [sidebarThreads, threadLabelFilter],
   );
   const sortedProjects = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
@@ -3300,7 +3421,9 @@ export default function Sidebar() {
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
           (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
+            (thread) =>
+              thread.archivedAt === null &&
+              (threadLabelFilter === null || thread.label === threadLabelFilter),
           ),
           sidebarThreadSortOrder,
         );
@@ -3339,6 +3462,7 @@ export default function Sidebar() {
       projectExpandedById,
       routeThreadKey,
       sortedProjects,
+      threadLabelFilter,
       threadsByProjectKey,
     ],
   );
@@ -3614,6 +3738,9 @@ export default function Sidebar() {
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
+            setThreadLabel={setThreadLabel}
+            threadLabelFilter={threadLabelFilter}
+            setThreadLabelFilter={setThreadLabelFilter}
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}

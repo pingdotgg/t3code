@@ -1,4 +1,4 @@
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError, type ThreadLabel } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -61,6 +61,31 @@ export function sanitizeThreadTitle(raw: string): string {
   }
 
   return `${normalized.slice(0, 47).trimEnd()}...`;
+}
+
+/** Normalize the model's thread label to one of the built-in label values. */
+export function sanitizeThreadLabel(raw: unknown): ThreadLabel | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  switch (normalized) {
+    case "bug":
+      return "bug";
+    case "feature":
+      return "feature";
+    case "review":
+      return "review";
+    case "new-build":
+    case "newbuild":
+      return "new-build";
+    default:
+      return undefined;
+  }
 }
 
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */

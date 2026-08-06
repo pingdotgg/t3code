@@ -5,6 +5,8 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { ThreadLabel } from "@t3tools/contracts";
+import { THREAD_LABEL_OPTIONS, threadLabelDisplayName } from "@t3tools/shared/threadLabels";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
@@ -414,6 +416,26 @@ const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
+function ThreadLabelPill(props: { readonly label: ThreadLabel; readonly selected?: boolean }) {
+  return (
+    <View
+      className={cn(
+        "shrink-0 rounded-full px-1.5 py-0.5",
+        props.selected ? "bg-white/20" : "bg-subtle",
+      )}
+    >
+      <Text
+        className={cn(
+          "text-3xs font-t3-bold",
+          props.selected ? "text-white" : "text-foreground-muted",
+        )}
+      >
+        {threadLabelDisplayName(props.label)}
+      </Text>
+    </View>
+  );
+}
+
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
@@ -429,6 +451,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSetThreadLabel: (
+    thread: EnvironmentThreadShell,
+    label: ThreadLabel | null,
+  ) => Promise<boolean>;
+  readonly labelsSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -470,6 +497,32 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleSetLabel = useCallback(
+    (label: ThreadLabel | null) => {
+      void props.onSetThreadLabel(thread, label);
+    },
+    [props.onSetThreadLabel, thread],
+  );
+  const labelMenuActions = useMemo<MenuAction[]>(
+    () =>
+      props.labelsSupported
+        ? [
+            {
+              id: "label",
+              title: thread.label ? `Label: ${threadLabelDisplayName(thread.label)}` : "Add label",
+              image: "tag",
+              subactions: [
+                ...THREAD_LABEL_OPTIONS.map((option) => ({
+                  id: `label:${option.value}`,
+                  title: option.label,
+                })),
+                ...(thread.label ? [{ id: "label:clear", title: "Clear label" }] : []),
+              ],
+            },
+          ]
+        : [],
+    [props.labelsSupported, thread.label],
+  );
   const primaryAction = useMemo(
     () => ({
       accessibilityLabel: `Archive ${thread.title}`,
@@ -483,8 +536,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event.startsWith("label:")) {
+        const selectedLabel = nativeEvent.event.slice("label:".length);
+        const option = THREAD_LABEL_OPTIONS.find((candidate) => candidate.value === selectedLabel);
+        handleSetLabel(selectedLabel === "clear" ? null : (option?.value ?? null));
+      }
     },
-    [handleArchive, handleDelete],
+    [handleArchive, handleDelete, handleSetLabel],
   );
 
   const statusPill = effectiveStatus ? (
@@ -560,9 +618,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             }}
           >
             <View className="flex-row items-center justify-between gap-2">
-              <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
-                {thread.title}
-              </Text>
+              <View className="flex-1 flex-row items-center gap-2">
+                <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
+                  {thread.title}
+                </Text>
+                {thread.label ? <ThreadLabelPill label={thread.label} /> : null}
+              </View>
               <View className="flex-row items-center gap-2">
                 {statusPill}
                 <Text className="text-base tabular-nums text-foreground-tertiary">{timestamp}</Text>
@@ -613,15 +674,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       >
         <View className="gap-[3px]">
           <View className="flex-row items-center justify-between gap-2">
-            <Text
-              className={cn(
-                "flex-1 text-base font-t3-medium",
-                selected ? "text-user-bubble-foreground" : "text-foreground",
-              )}
-              numberOfLines={1}
-            >
-              {thread.title}
-            </Text>
+            <View className="flex-1 flex-row items-center gap-2">
+              <Text
+                className={cn(
+                  "flex-1 text-base font-t3-medium",
+                  selected ? "text-user-bubble-foreground" : "text-foreground",
+                )}
+                numberOfLines={1}
+              >
+                {thread.title}
+              </Text>
+              {thread.label ? <ThreadLabelPill label={thread.label} selected={selected} /> : null}
+            </View>
             <View className="flex-row items-center gap-2">
               {statusPill}
               <Text
@@ -673,7 +737,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         // ControlPillMenu injects onLongPress into the row and anchors the
         // token-styled dropdown to it; taps and swipes are untouched.
         <ControlPillMenu
-          actions={THREAD_ROW_MENU_ACTIONS}
+          actions={[...THREAD_ROW_MENU_ACTIONS, ...labelMenuActions]}
           onPressAction={handleMenuAction}
           shouldOpenOnLongPress
         >

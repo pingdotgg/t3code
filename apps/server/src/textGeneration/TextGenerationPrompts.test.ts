@@ -6,7 +6,11 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import {
+  normalizeCliError,
+  sanitizeThreadLabel,
+  sanitizeThreadTitle,
+} from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -157,6 +161,10 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain(
       "Generate a title that will help the user recognize this T3 Code thread weeks later.",
     );
+    expect(result.prompt).toContain("Return JSON with exactly two keys: title and label.");
+    expect(result.prompt).toContain(
+      "- new-build: creating a new application, product, or system from scratch.",
+    );
     expect(result.prompt).toContain(
       "Title the subject and outcome. Discard incidental instructions.",
     );
@@ -243,6 +251,23 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
+  });
+});
+
+describe("sanitizeThreadLabel", () => {
+  it.each([
+    ["bug", "bug"],
+    ["Feature", "feature"],
+    ["review", "review"],
+    ["New Build", "new-build"],
+    ["new_build", "new-build"],
+  ] as const)("normalizes %s", (raw, expected) => {
+    expect(sanitizeThreadLabel(raw)).toBe(expected);
+  });
+
+  it("rejects labels outside the built-in set", () => {
+    expect(sanitizeThreadLabel("question")).toBeUndefined();
+    expect(sanitizeThreadLabel(null)).toBeUndefined();
   });
 });
 

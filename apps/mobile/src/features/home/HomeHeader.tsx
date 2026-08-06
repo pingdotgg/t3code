@@ -1,4 +1,4 @@
-import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder, ThreadLabel } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import Constants from "expo-constants";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
+import { THREAD_LABEL_OPTIONS } from "@t3tools/shared/threadLabels";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../../lib/mobileBranding";
@@ -40,11 +41,13 @@ export function HomeHeader(props: {
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly selectedThreadLabel: ThreadLabel | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  readonly onThreadLabelChange: (label: ThreadLabel | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onOpenSettings: () => void;
@@ -70,11 +73,13 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   // Thread List v2 lays the list out in fixed creation order, so the
   // sort/group filter controls would be silently ignored — hide them and
-  // key the "customized" icon state off the environment filter alone.
+  // key the "customized" icon state off the environment and label filters.
   const threadListV2Enabled = useThreadListV2Enabled();
   const hasCustomListOptions = threadListV2Enabled
-    ? props.selectedEnvironmentId !== null || props.selectedProjectKey !== null
-    : hasCustomHomeListOptions(props);
+    ? props.selectedEnvironmentId !== null ||
+      props.selectedProjectKey !== null ||
+      props.selectedThreadLabel !== null
+    : hasCustomHomeListOptions(props) || props.selectedThreadLabel !== null;
   const menuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -113,6 +118,22 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               ],
             },
           ] satisfies MenuAction[])),
+      {
+        id: "label",
+        title: "Label",
+        subactions: [
+          {
+            id: "label:all",
+            title: "All labels",
+            state: checkedMenuState(props.selectedThreadLabel === null),
+          },
+          ...THREAD_LABEL_OPTIONS.map((option) => ({
+            id: `label:${option.value}`,
+            title: option.label,
+            state: checkedMenuState(props.selectedThreadLabel === option.value),
+          })),
+        ],
+      },
       ...(threadListV2Enabled
         ? []
         : ([
@@ -142,6 +163,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       props.projects,
       props.selectedEnvironmentId,
       props.selectedProjectKey,
+      props.selectedThreadLabel,
       props.threadSortOrder,
       threadListV2Enabled,
     ],
@@ -175,6 +197,18 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         if (props.projects.some((project) => project.key === projectKey)) {
           props.onProjectChange(projectKey);
         }
+        return;
+      }
+
+      if (id === "label:all") {
+        props.onThreadLabelChange(null);
+        return;
+      }
+      if (id.startsWith("label:")) {
+        const label = THREAD_LABEL_OPTIONS.find(
+          (option) => option.value === id.slice("label:".length),
+        );
+        if (label) props.onThreadLabelChange(label.value);
         return;
       }
 
@@ -292,11 +326,13 @@ function IosHomeHeader(props: HomeHeaderProps) {
   const iconColor = useThemeColor("--color-icon");
   // Thread List v2 lays the list out in fixed creation order, so the
   // sort/group filter controls would be silently ignored — hide them and
-  // key the "customized" icon state off the environment filter alone.
+  // key the "customized" icon state off the environment and label filters.
   const threadListV2Enabled = useThreadListV2Enabled();
   const hasCustomListOptions = threadListV2Enabled
-    ? props.selectedEnvironmentId !== null || props.selectedProjectKey !== null
-    : hasCustomHomeListOptions(props);
+    ? props.selectedEnvironmentId !== null ||
+      props.selectedProjectKey !== null ||
+      props.selectedThreadLabel !== null
+    : hasCustomHomeListOptions(props) || props.selectedThreadLabel !== null;
   const focusSearch = useCallback(() => {
     searchBarRef.current?.focus();
     return searchBarRef.current !== null;
@@ -420,6 +456,26 @@ function IosHomeHeader(props: HomeHeaderProps) {
                 ))}
               </NativeHeaderToolbar.Menu>
             ) : null}
+
+            <NativeHeaderToolbar.Menu title="Label">
+              <NativeHeaderToolbar.Label>Label</NativeHeaderToolbar.Label>
+              <NativeHeaderToolbar.MenuAction
+                isOn={props.selectedThreadLabel === null}
+                onPress={() => props.onThreadLabelChange(null)}
+                subtitle="Show threads with any label"
+              >
+                <NativeHeaderToolbar.Label>All labels</NativeHeaderToolbar.Label>
+              </NativeHeaderToolbar.MenuAction>
+              {THREAD_LABEL_OPTIONS.map((option) => (
+                <NativeHeaderToolbar.MenuAction
+                  key={option.value}
+                  isOn={props.selectedThreadLabel === option.value}
+                  onPress={() => props.onThreadLabelChange(option.value)}
+                >
+                  <NativeHeaderToolbar.Label>{option.label}</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+              ))}
+            </NativeHeaderToolbar.Menu>
 
             {threadListV2Enabled ? null : (
               <NativeHeaderToolbar.Menu title="Sort projects">

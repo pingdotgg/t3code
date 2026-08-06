@@ -1,6 +1,7 @@
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
+import type { ThreadLabel } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 
 import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
@@ -45,6 +46,7 @@ export function HomeRouteScreen() {
     pinThread,
     unpinThread,
     unsettleThread,
+    setThreadLabel,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
@@ -76,6 +78,7 @@ export function HomeRouteScreen() {
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const [selectedThreadLabel, setSelectedThreadLabel] = useState<ThreadLabel | null>(null);
   const projectFilterOptions = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -134,10 +137,12 @@ export function HomeRouteScreen() {
           searchQuery={searchQuery}
           selectedEnvironmentId={selectedEnvironmentId}
           selectedProjectKey={selectedProjectKey}
+          selectedThreadLabel={selectedThreadLabel}
           projectSortOrder={listOptions.projectSortOrder}
           threadSortOrder={listOptions.threadSortOrder}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          onThreadLabelChange={setSelectedThreadLabel}
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
@@ -159,6 +164,7 @@ export function HomeRouteScreen() {
           onUnsettleThread={unsettleThread}
           onPinThread={pinThread}
           onUnpinThread={unpinThread}
+          onSetThreadLabel={setThreadLabel}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onOpenEnvironments={() =>
@@ -197,6 +203,7 @@ export function HomeRouteScreen() {
           searchQuery={searchQuery}
           selectedEnvironmentId={selectedEnvironmentId}
           selectedProjectKey={selectedProjectKey}
+          selectedThreadLabel={selectedThreadLabel}
           threads={threads}
           threadSortOrder={listOptions.threadSortOrder}
         />

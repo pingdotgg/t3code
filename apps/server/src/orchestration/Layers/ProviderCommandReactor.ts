@@ -3,6 +3,7 @@ import {
   CommandId,
   EventId,
   type ModelSelection,
+  type ThreadLabel,
   type OrchestrationEvent,
   ProviderDriverKind,
   type ProjectId,
@@ -885,6 +886,9 @@ const make = Effect.gen(function* () {
           commandId: yield* serverCommandId("thread-title-rename"),
           threadId: input.threadId,
           title: generated.title,
+          ...(thread.label == null && generated.label !== undefined
+            ? { label: generated.label }
+            : {}),
         });
       }).pipe(
         Effect.catchCause((cause) =>
@@ -913,7 +917,7 @@ const make = Effect.gen(function* () {
 
     const { message, attachments } = formatThreadTitleContext(thread.messages);
     if (message.length === 0) {
-      return { _tag: "Completed", title: undefined } as const;
+      return { _tag: "Completed", title: undefined, label: undefined } as const;
     }
 
     const previousTitle = event.payload.previousTitle ?? thread.title;
@@ -936,7 +940,7 @@ const make = Effect.gen(function* () {
       modelSelection,
     });
     if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
-      return { _tag: "Completed", title: undefined } as const;
+      return { _tag: "Completed", title: undefined, label: undefined } as const;
     }
 
     const latestThread = yield* resolveThread(event.payload.threadId);
@@ -948,7 +952,11 @@ const make = Effect.gen(function* () {
       return { _tag: "Superseded" } as const;
     }
 
-    return { _tag: "Completed", title: generated.title } as const;
+    return {
+      _tag: "Completed",
+      title: generated.title,
+      label: latestThread.label == null ? generated.label : undefined,
+    } as const;
   });
   const dispatchThreadTitleRegenerationCompletion = Effect.fn(
     "dispatchThreadTitleRegenerationCompletion",
@@ -956,6 +964,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly title?: string;
+    readonly label?: ThreadLabel;
   }) {
     yield* orchestrationEngine.dispatch({
       type: "thread.title.regeneration.complete",
@@ -963,6 +972,7 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       requestId: input.requestId,
       ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.label !== undefined ? { label: input.label } : {}),
     });
   });
   const findInterruptedThreadTitleRegenerations = Effect.fn(
@@ -1021,7 +1031,7 @@ const make = Effect.gen(function* () {
           return Effect.logWarning("provider command reactor failed to regenerate thread title", {
             threadId: event.payload.threadId,
             cause: Cause.pretty(cause),
-          }).pipe(Effect.as({ _tag: "Completed", title: undefined } as const));
+          }).pipe(Effect.as({ _tag: "Completed", title: undefined, label: undefined } as const));
         }),
       );
       if (result._tag === "Superseded") {
@@ -1032,6 +1042,7 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         requestId,
         ...(result.title !== undefined ? { title: result.title } : {}),
+        ...(result.label !== undefined ? { label: result.label } : {}),
       };
       yield* dispatchThreadTitleRegenerationCompletion(completion).pipe(
         Effect.catchCause((cause) => {

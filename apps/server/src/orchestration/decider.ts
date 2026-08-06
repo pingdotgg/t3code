@@ -787,6 +787,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.label !== undefined ? { label: command.label } : {}),
           updatedAt: occurredAt,
         },
       };
@@ -811,6 +812,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(requestIsCurrent && command.title !== undefined ? { title: command.title } : {}),
+          ...(requestIsCurrent && command.label !== undefined && thread.label == null
+            ? { label: command.label }
+            : {}),
           ...(requestIsCurrent ? { titleRegeneration: null } : {}),
           updatedAt: requestIsCurrent ? occurredAt : thread.updatedAt,
         },

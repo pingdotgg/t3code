@@ -5,6 +5,8 @@ import type {
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { ThreadLabel } from "@t3tools/contracts";
+import { THREAD_LABEL_OPTIONS, threadLabelDisplayName } from "@t3tools/shared/threadLabels";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import {
   Alert,
@@ -90,6 +92,26 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
+
+function ThreadLabelPill(props: { readonly label: ThreadLabel; readonly selected?: boolean }) {
+  return (
+    <View
+      className={cn(
+        "shrink-0 rounded-full px-1.5 py-0.5",
+        props.selected ? "bg-white/20" : "bg-subtle",
+      )}
+    >
+      <Text
+        className={cn(
+          "text-3xs font-t3-bold",
+          props.selected ? "text-white" : "text-foreground-muted",
+        )}
+      >
+        {threadLabelDisplayName(props.label)}
+      </Text>
+    </View>
+  );
+}
 
 /** Section label + rule: the only structure in an otherwise flat list. */
 export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
@@ -347,6 +369,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSetThreadLabel: (
+    thread: EnvironmentThreadShell,
+    label: ThreadLabel | null,
+  ) => Promise<boolean>;
   /** False on environments whose server predates thread.settle/unsettle:
       swipe + menu fall back to Archive instead of failing on use. */
   readonly settlementSupported: boolean;
@@ -354,6 +380,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozeSupported: boolean;
   /** False on servers that predate thread.pin/unpin. */
   readonly pinningSupported: boolean;
+  /** False on servers that predate thread label metadata. */
+  readonly labelsSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   /** Reports this row's live PR state up so the partition can auto-settle
@@ -382,6 +410,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onArchiveThread,
     onPinThread,
     onUnpinThread,
+    onSetThreadLabel,
     onChangeRequestState,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -417,6 +446,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
   const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleSetLabel = useCallback(
+    (label: ThreadLabel | null) => {
+      void onSetThreadLabel(thread, label);
+    },
+    [onSetThreadLabel, thread],
+  );
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
   // row can un-settle — explicit settles clear the override, auto-settled
@@ -484,6 +519,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => [CARD_MENU_ACTIONS[0]!, ...pinMenuItem, ...CARD_MENU_ACTIONS.slice(1)],
     [pinMenuItem],
   );
+  const labelMenuActions = useMemo<MenuAction[]>(
+    () =>
+      props.labelsSupported
+        ? [
+            {
+              id: "label",
+              title: thread.label ? `Label: ${threadLabelDisplayName(thread.label)}` : "Add label",
+              image: "tag",
+              subactions: [
+                ...THREAD_LABEL_OPTIONS.map((option) => ({
+                  id: `label:${option.value}`,
+                  title: option.label,
+                })),
+                ...(thread.label ? [{ id: "label:clear", title: "Clear label" }] : []),
+              ],
+            },
+          ]
+        : [],
+    [props.labelsSupported, thread.label],
+  );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "settle") handleSettle();
@@ -493,6 +548,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event.startsWith("label:")) {
+        const selectedLabel = nativeEvent.event.slice("label:".length);
+        const option = THREAD_LABEL_OPTIONS.find((candidate) => candidate.value === selectedLabel);
+        handleSetLabel(selectedLabel === "clear" ? null : (option?.value ?? null));
+      }
       const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
         event: nativeEvent.event,
         displayedPresets: snoozePresets,
@@ -509,6 +569,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleDelete,
       handlePin,
       handleSettle,
+      handleSetLabel,
       handleSnooze,
       handleUnpin,
       handleUnsettle,
@@ -613,15 +674,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {statusLabel?.label ?? timeLabel}
         </Text>
       </View>
-      <Text
-        className={cn(
-          "mt-1 text-base font-t3-medium",
-          selected ? "text-user-bubble-foreground" : "text-foreground",
-        )}
-        numberOfLines={2}
-      >
-        {thread.title}
-      </Text>
+      <View className="mt-1 flex-row items-center gap-2">
+        <Text
+          className={cn(
+            "flex-1 text-base font-t3-medium",
+            selected ? "text-user-bubble-foreground" : "text-foreground",
+          )}
+          numberOfLines={2}
+        >
+          {thread.title}
+        </Text>
+        {thread.label ? <ThreadLabelPill label={thread.label} selected={selected} /> : null}
+      </View>
       {props.searchMatch ? (
         <View className="mt-1">
           <ThreadSearchMatchExcerpt
@@ -782,15 +846,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </View>
           ) : null}
           <View className="min-w-0 flex-1">
-            <Text
-              className={cn(
-                "text-base",
-                selected ? "text-user-bubble-foreground" : "text-foreground-muted",
-              )}
-              numberOfLines={1}
-            >
-              {thread.title}
-            </Text>
+            <View className="flex-row items-center gap-2">
+              <Text
+                className={cn(
+                  "flex-1 text-base",
+                  selected ? "text-user-bubble-foreground" : "text-foreground-muted",
+                )}
+                numberOfLines={1}
+              >
+                {thread.title}
+              </Text>
+              {thread.label ? <ThreadLabelPill label={thread.label} selected={selected} /> : null}
+            </View>
             {props.searchMatch ? (
               <ThreadSearchMatchExcerpt
                 match={props.searchMatch}
@@ -842,8 +909,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {(close) => (
           <ControlPillMenu
-            actions={
-              snoozedRow
+            actions={[
+              ...(snoozedRow
                 ? SNOOZED_MENU_ACTIONS
                 : !props.settlementSupported
                   ? LEGACY_MENU_ACTIONS
@@ -851,8 +918,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     ? SLIM_MENU_ACTIONS
                     : swipeActions.secondary === "snooze"
                       ? snoozableCardMenuActions
-                      : cardMenuActions
-            }
+                      : cardMenuActions),
+              ...labelMenuActions,
+            ]}
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

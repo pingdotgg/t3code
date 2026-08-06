@@ -30,6 +30,7 @@ import {
 import {
   normalizeCliError,
   sanitizeCommitSubject,
+  sanitizeThreadLabel,
   sanitizePrTitle,
   sanitizeThreadTitle,
   toJsonSchemaObject,
@@ -400,8 +401,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         modelSelection: input.modelSelection,
       });
 
+      const label = sanitizeThreadLabel(generated.label);
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(label !== undefined ? { label } : {}),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 

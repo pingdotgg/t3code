@@ -5,7 +5,12 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settled";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ScopedThreadRef,
+  ThreadId,
+  type ThreadLabel,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -22,6 +27,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
+  readEnvironmentSupportsLabels,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentThreadRefs,
@@ -107,6 +113,18 @@ export class ThreadPinningUnsupportedError extends Schema.TaggedErrorClass<Threa
   }
 }
 
+export class ThreadLabelsUnsupportedError extends Schema.TaggedErrorClass<ThreadLabelsUnsupportedError>()(
+  "ThreadLabelsUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support thread labels yet. Update the server to use labels.";
+  }
+}
+
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
@@ -128,6 +146,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unpinThreadMutation = useAtomCommand(threadEnvironment.unpin, {
+    reportFailure: false,
+  });
+  const updateThreadMetadataMutation = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const snoozeThreadMutation = useAtomCommand(threadEnvironment.snooze, {
@@ -532,6 +553,26 @@ export function useThreadActions() {
     [unpinThreadMutation],
   );
 
+  const setThreadLabel = useCallback(
+    async (target: ScopedThreadRef, label: ThreadLabel | null) => {
+      if (!readEnvironmentSupportsLabels(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadLabelsUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return updateThreadMetadataMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, label },
+      });
+    },
+    [updateThreadMetadataMutation],
+  );
+
   const snoozeThread = useCallback(
     async (target: ScopedThreadRef, snoozedUntil: string) => {
       // Version skew: never send the command to a server that predates it.
@@ -627,6 +668,7 @@ export function useThreadActions() {
       unsnoozeThread,
       pinThread,
       unpinThread,
+      setThreadLabel,
     }),
     [
       archiveThread,
@@ -639,6 +681,8 @@ export function useThreadActions() {
       unpinThread,
       unsettleThread,
       unsnoozeThread,
+      setThreadLabel,
+      updateThreadMetadataMutation,
     ],
   );
 }

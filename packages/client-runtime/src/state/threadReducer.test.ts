@@ -305,6 +305,45 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
       }
     });
+
+    it("sets and clears a thread label", () => {
+      const labeled = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          label: "bug",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(labeled.kind).toBe("updated");
+      if (labeled.kind !== "updated") return;
+      expect(labeled.thread.label).toBe("bug");
+
+      const cleared = applyThreadDetailEvent(labeled.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          label: null,
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(cleared.kind).toBe("updated");
+      if (cleared.kind === "updated") {
+        expect(cleared.thread.label).toBeNull();
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

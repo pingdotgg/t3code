@@ -167,6 +167,10 @@
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
     },
+    "./threadLabels": {
+      "types": "./src/threadLabels.ts",
+      "import": "./src/threadLabels.ts"
+    },
     "./relayClient": {
       "types": "./src/relayClient.ts",
       "import": "./src/relayClient.ts"

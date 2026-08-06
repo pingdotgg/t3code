@@ -660,7 +660,9 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
-    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Generated title", label: "feature" }),
+    );
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -704,13 +706,62 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+    expect(thread?.label).toBe("feature");
+  });
+
+  it("preserves a manual label when generating a first-turn title", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const seededTitle = "Please investigate reconnect failures after restar...";
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Generated title", label: "feature" }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-seed-manual-label"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+        label: "bug",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-title-manual-label"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-title-manual-label"),
+          role: "user",
+          text: "Please investigate reconnect failures after restarting the session.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+        "Generated title"
+      );
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.label).toBe("bug");
   });
 
   it("regenerates a thread title from the current conversation", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     harness.generateThreadTitle.mockReturnValue(
-      Effect.succeed({ title: "Resolve stale reconnect state" }),
+      Effect.succeed({ title: "Resolve stale reconnect state", label: "bug" }),
     );
 
     await harness.runEffect(
@@ -782,6 +833,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Resolve stale reconnect state");
+    expect(thread?.label).toBe("bug");
     expect(thread?.titleRegeneration).toBeNull();
   });
 

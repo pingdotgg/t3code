@@ -82,6 +82,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          label,
           created_at,
           updated_at,
           deleted_at
@@ -100,6 +101,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           1,
           0,
           0,
+          'bug',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
@@ -313,6 +315,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: null,
+          label: "bug",
           titleRegeneration: null,
           deletedAt: null,
           messages: [
@@ -429,6 +432,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: null,
+          label: "bug",
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),
