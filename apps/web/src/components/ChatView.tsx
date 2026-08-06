@@ -1153,7 +1153,13 @@ type LocalThreadErrorEntry = {
 };
 
 // Module state survives route changes but resets when the client reloads.
-const timelineScrollOffsetByThreadKey = new Map<string, number>();
+const timelineScrollPositionByThreadKey = new Map<
+  string,
+  {
+    readonly offset: number;
+    readonly manuallyPositionedTurnId: TurnId | null;
+  }
+>();
 
 function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
@@ -1177,8 +1183,8 @@ function ChatViewContent(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const restoredTimelineScrollOffset = useMemo(
-    () => timelineScrollOffsetByThreadKey.get(routeThreadKey),
+  const restoredTimelineScrollPosition = useMemo(
+    () => timelineScrollPositionByThreadKey.get(routeThreadKey),
     [routeThreadKey],
   );
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
@@ -1518,6 +1524,34 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const activeRunningTurnId =
+    activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null;
+  const responseTurnOnEntryRef = useRef<{
+    readonly captured: boolean;
+    readonly threadKey: string | null;
+    readonly turnId: TurnId | null;
+  }>({
+    captured: !threadDetailLoading,
+    threadKey: activeThreadKey,
+    turnId: threadDetailLoading ? null : activeRunningTurnId,
+  });
+  if (
+    responseTurnOnEntryRef.current.threadKey !== activeThreadKey ||
+    (!responseTurnOnEntryRef.current.captured && !threadDetailLoading)
+  ) {
+    responseTurnOnEntryRef.current = {
+      captured: !threadDetailLoading,
+      threadKey: activeThreadKey,
+      turnId: threadDetailLoading ? null : activeRunningTurnId,
+    };
+  }
+  const responseTurnOnEntry = responseTurnOnEntryRef.current.turnId;
+  const restoreTimelinePositionOnEntry =
+    restoredTimelineScrollPosition !== undefined &&
+    (responseTurnOnEntry === null ||
+      restoredTimelineScrollPosition.manuallyPositionedTurnId === responseTurnOnEntry);
+  const focusWorkingResponseOnEntry =
+    responseTurnOnEntry !== null && !restoreTimelinePositionOnEntry;
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -2406,6 +2440,18 @@ function ChatViewContent(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const workingResponseAnchorMessageId = useMemo(() => {
+    if (!focusWorkingResponseOnEntry) {
+      return null;
+    }
+    for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
+      const entry = timelineEntries[index];
+      if (entry?.kind === "message" && entry.message.role === "user") {
+        return entry.message.id;
+      }
+    }
+    return null;
+  }, [focusWorkingResponseOnEntry, timelineEntries]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -3536,6 +3582,7 @@ function ChatViewContent(props: ChatViewProps) {
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
+  const preserveInitialResponsePositionRef = useRef(false);
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -3551,6 +3598,14 @@ function ChatViewContent(props: ChatViewProps) {
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
+    preserveInitialResponsePositionRef.current = false;
+    const currentOffset = legendListRef.current?.getState().scroll;
+    if (typeof currentOffset === "number" && Number.isFinite(currentOffset)) {
+      timelineScrollPositionByThreadKey.set(routeThreadKey, {
+        offset: currentOffset,
+        manuallyPositionedTurnId: activeRunningTurnId,
+      });
+    }
     liveFollowUserScrollGenerationRef.current = null;
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
@@ -3561,7 +3616,7 @@ function ChatViewContent(props: ChatViewProps) {
       cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
       anchorScrollRestoreFrameRef.current = null;
     }
-  }, []);
+  }, [activeRunningTurnId, routeThreadKey]);
   const cancelTimelineLiveFollowForUserNavigationRef = useRef(
     cancelTimelineLiveFollowForUserNavigation,
   );
@@ -3622,6 +3677,7 @@ function ChatViewContent(props: ChatViewProps) {
   const scrollToEnd = useCallback((animated = false) => {
     isAtEndRef.current = true;
     timelineScrollModeRef.current = "following-end";
+    preserveInitialResponsePositionRef.current = false;
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     pendingTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
@@ -3765,6 +3821,13 @@ function ChatViewContent(props: ChatViewProps) {
     if (isAtEndRef.current === isAtEnd) return;
     isAtEndRef.current = isAtEnd;
     if (isAtEnd) {
+      if (preserveInitialResponsePositionRef.current) {
+        timelineScrollModeRef.current = "free-scrolling";
+        liveFollowUserScrollGenerationRef.current = null;
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+        return;
+      }
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       showScrollDebouncer.current.cancel();
@@ -3778,7 +3841,11 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onTimelineScrollOffsetChange = useCallback(
     (offset: number) => {
-      timelineScrollOffsetByThreadKey.set(routeThreadKey, offset);
+      const existing = timelineScrollPositionByThreadKey.get(routeThreadKey);
+      timelineScrollPositionByThreadKey.set(routeThreadKey, {
+        offset,
+        manuallyPositionedTurnId: existing?.manuallyPositionedTurnId ?? null,
+      });
     },
     [routeThreadKey],
   );
@@ -3852,10 +3919,15 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
+    preserveInitialResponsePositionRef.current = focusWorkingResponseOnEntry;
     timelineScrollModeRef.current =
-      restoredTimelineScrollOffset === undefined ? "following-end" : "free-scrolling";
+      !restoreTimelinePositionOnEntry && !focusWorkingResponseOnEntry
+        ? "following-end"
+        : "free-scrolling";
     liveFollowUserScrollGenerationRef.current =
-      restoredTimelineScrollOffset === undefined ? anchorUserScrollGenerationRef.current : null;
+      !restoreTimelinePositionOnEntry && !focusWorkingResponseOnEntry
+        ? anchorUserScrollGenerationRef.current
+        : null;
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
@@ -3870,7 +3942,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id, restoredTimelineScrollOffset]);
+  }, [activeThread?.id, focusWorkingResponseOnEntry, restoreTimelinePositionOnEntry]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -4913,6 +4985,7 @@ function ChatViewContent(props: ChatViewProps) {
     // streams into the reserved space below it.
     isAtEndRef.current = true;
     timelineScrollModeRef.current = "anchoring-new-turn";
+    preserveInitialResponsePositionRef.current = false;
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     pendingTimelineAnchorRef.current = messageIdForSend;
     activeTimelineAnchorIndexRef.current = null;
@@ -5357,6 +5430,7 @@ function ChatViewContent(props: ChatViewProps) {
       // Position this sent row once LegendList has measured the anchored tail.
       isAtEndRef.current = true;
       timelineScrollModeRef.current = "anchoring-new-turn";
+      preserveInitialResponsePositionRef.current = false;
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       pendingTimelineAnchorRef.current = messageIdForSend;
       activeTimelineAnchorIndexRef.current = null;
@@ -6020,11 +6094,15 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
-                anchorMessageId={timelineAnchorMessageId}
+                anchorMessageId={timelineAnchorMessageId ?? workingResponseAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
-                initialScrollOffset={restoredTimelineScrollOffset}
+                initialScrollOffset={
+                  restoreTimelinePositionOnEntry
+                    ? restoredTimelineScrollPosition?.offset
+                    : undefined
+                }
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 onScrollOffsetChange={onTimelineScrollOffsetChange}
