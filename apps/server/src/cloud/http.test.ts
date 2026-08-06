@@ -35,6 +35,7 @@ import {
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
+  pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
   releaseManagedTunnelOnShutdown,
 } from "./http.ts";
@@ -474,6 +475,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const config = yield* ServerConfigModule.ServerConfig;
       yield* fs.writeFileString(path.join(config.baseDir, "runtime", SERVICE_STOP_MARKER_FILE), "");
 
+      expect(yield* pendingServiceUpdateExists).toBe(true);
       const released = yield* releaseManagedTunnelOnShutdown();
 
       expect(released).toBe(true);
