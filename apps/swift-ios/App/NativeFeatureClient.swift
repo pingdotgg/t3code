@@ -1877,8 +1877,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private static let terminalBufferLimit = 256 * 1024
 
     private static func cappedTerminalBuffer(_ buffer: String) -> String {
-        guard buffer.utf8.count > terminalBufferLimit else { return buffer }
-        let tail = buffer.suffix(terminalBufferLimit)
+        let utf8 = buffer.utf8
+        guard utf8.count > terminalBufferLimit else { return buffer }
+        // Slice in UTF-8 bytes (the unit the limit is defined in), then snap
+        // forward to a character boundary so multibyte output cannot blow
+        // past the cap or tear a scalar.
+        let byteStart = utf8.index(utf8.endIndex, offsetBy: -terminalBufferLimit)
+        var start = byteStart.samePosition(in: buffer)
+        if start == nil {
+            var probe = byteStart
+            while probe < utf8.endIndex, start == nil {
+                probe = utf8.index(after: probe)
+                start = probe.samePosition(in: buffer)
+            }
+        }
+        guard let start else { return buffer }
+        let tail = buffer[start...]
         // Trim to the next line boundary so the top of the view isn't a torn line.
         if let newline = tail.firstIndex(of: "\n") {
             return String(tail[tail.index(after: newline)...])
@@ -3423,13 +3437,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         upsertMergedMessage(message, cache: cache)
     }
 
-    /// Wire timestamps are fixed-width ISO8601 UTC, so lexicographic order is
-    /// chronological order. Comparing raw strings avoids running the date
-    /// formatter O(n log n) times over a long activity log.
+    /// Decorate-sort so each timestamp is parsed once (via the memoized date
+    /// cache) instead of inside an O(n log n) comparator. Raw string order is
+    /// not safe here: the wire can mix fractional and non-fractional ISO8601
+    /// representations, which sort lexicographically wrong. Ties keep wire
+    /// order so a request and its resolution never swap.
     private func sortedByCreation(
         _ activities: [OrchestrationActivity]
     ) -> [OrchestrationActivity] {
-        activities.sorted { $0.createdAt < $1.createdAt }
+        activities.enumerated()
+            .map { (index: $0.offset, date: parseDate($0.element.createdAt), activity: $0.element) }
+            .sorted { lhs, rhs in
+                lhs.date != rhs.date ? lhs.date < rhs.date : lhs.index < rhs.index
+            }
+            .map(\.activity)
     }
 
     private func seedWorkLogs(

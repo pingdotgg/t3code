@@ -102,7 +102,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 )
             }
 
-            startTimer()
             update(parent: parent, collectionView: collectionView)
         }
 
@@ -117,6 +116,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 seenIdentifiers.insert(item.id).inserted
             }
             itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+            // After items land: picks 1 Hz when a working thread is present,
+            // 60s otherwise, and is a no-op when the interval is unchanged.
+            startTimer()
 
             guard let dataSource else { return }
             let currentIdentifiers = dataSource.snapshot().itemIdentifiers

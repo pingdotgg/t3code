@@ -12,7 +12,7 @@ struct MarkdownMessageView: View {
     private let revision: MarkdownContentRevision
     private let isStreaming: Bool
     @State private var renderedDocument: MarkdownRenderedDocument?
-    @State private var lastStreamRenderAt: Date?
+    @State private var streamingRenderer = StreamingMarkdownRenderer()
     @State private var isSelectingText = false
 
     init(_ source: String, isStreaming: Bool = false) {
@@ -79,34 +79,15 @@ struct MarkdownMessageView: View {
                 return
             }
 
-            // Streamed revisions arrive faster than a trailing debounce could
-            // ever fire, so throttle instead: render right away when the last
-            // render is old enough, otherwise wait out the remainder. The
-            // message stays live markdown while streaming instead of falling
-            // back to plain text for the whole turn.
-            let throttle: Duration = .milliseconds(150)
-            if let lastStreamRenderAt {
-                let elapsed = Duration.seconds(-lastStreamRenderAt.timeIntervalSinceNow)
-                if elapsed < throttle {
-                    do {
-                        try await Task.sleep(for: throttle - elapsed)
-                    } catch {
-                        return
-                    }
-                }
-            }
-            guard !Task.isCancelled else { return }
-
-            guard let rendered = await MarkdownRenderCache.shared.document(
-                for: revision,
-                isIntermediate: true
-            ),
-                  !Task.isCancelled,
-                  rendered.revision == revision else {
-                return
-            }
-            lastStreamRenderAt = .now
-            renderedDocument = rendered
+            // Hand the revision to a renderer that outlives this task. The
+            // task modifier cancels on every revision, so rendering inside it
+            // starves as soon as parsing is slower than the publish cadence;
+            // the renderer instead keeps one render running and always picks
+            // up the newest revision when it finishes (latest wins).
+            streamingRenderer.submit(revision) { renderedDocument = $0 }
+        }
+        .onDisappear {
+            streamingRenderer.cancel()
         }
     }
 
@@ -114,8 +95,66 @@ struct MarkdownMessageView: View {
         if let renderedDocument, renderedDocument.revision == revision {
             return renderedDocument
         }
-        guard !isStreaming else { return nil }
+        // While streaming, a slightly stale document is better than flashing
+        // back to plain text between renders; streamed content only appends.
+        if isStreaming { return renderedDocument }
         return MarkdownRenderCache.shared.documentImmediately(for: revision)
+    }
+}
+
+/// Renders streaming revisions outside SwiftUI's task lifecycle so a render
+/// in progress is never cancelled by the next revision arriving. One render
+/// runs at a time; newer revisions replace the pending slot (latest wins) and
+/// a 150ms throttle bounds the render cadence.
+@MainActor
+private final class StreamingMarkdownRenderer {
+    private let throttle: Duration = .milliseconds(150)
+    private var pending: MarkdownContentRevision?
+    private var deliver: ((MarkdownRenderedDocument) -> Void)?
+    private var renderTask: Task<Void, Never>?
+    private var lastRenderAt: Date?
+
+    func submit(
+        _ revision: MarkdownContentRevision,
+        deliver: @escaping (MarkdownRenderedDocument) -> Void
+    ) {
+        pending = revision
+        self.deliver = deliver
+        guard renderTask == nil else { return }
+        renderTask = Task { [weak self] in
+            await self?.drain()
+        }
+    }
+
+    func cancel() {
+        renderTask?.cancel()
+        renderTask = nil
+        pending = nil
+        deliver = nil
+    }
+
+    private func drain() async {
+        defer { renderTask = nil }
+        while let revision = pending {
+            pending = nil
+            if let lastRenderAt {
+                let elapsed = Duration.seconds(-lastRenderAt.timeIntervalSinceNow)
+                if elapsed < throttle {
+                    try? await Task.sleep(for: throttle - elapsed)
+                }
+            }
+            guard !Task.isCancelled else { return }
+            // Render the newest revision available after the throttle wait.
+            let target = pending ?? revision
+            pending = nil
+            guard let document = await MarkdownRenderCache.shared.document(
+                for: target,
+                isIntermediate: true
+            ) else { continue }
+            guard !Task.isCancelled else { return }
+            lastRenderAt = .now
+            deliver?(document)
+        }
     }
 }
 
