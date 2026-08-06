@@ -312,12 +312,27 @@ import {
 
 <style>
   .download-page {
+    --download-surface: rgba(8, 8, 10, 0.9);
+    --download-surface-hover: rgba(13, 13, 16, 0.95);
+    --download-surface-border: rgba(255, 255, 255, 0.12);
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     min-height: 100vh;
     padding: 0 1.5rem 4rem;
+  }
+
+  :global(html[data-stage="nightly"]) .download-page {
+    --download-surface: rgba(12, 10, 24, 0.88);
+    --download-surface-hover: rgba(18, 15, 34, 0.95);
+    --download-surface-border: rgba(180, 167, 255, 0.2);
+  }
+
+  :global(html[data-stage="dev"]) .download-page {
+    --download-surface: rgba(6, 19, 42, 0.88);
+    --download-surface-hover: rgba(8, 26, 56, 0.95);
+    --download-surface-border: rgba(177, 215, 255, 0.24);
   }
 
   .download-channel-hero {
@@ -333,8 +348,7 @@ import {
     isolation: isolate;
   }
 
-  .download-channel-hero::before,
-  .download-channel-hero::after {
+  .download-channel-hero::before {
     position: absolute;
     z-index: 2;
     content: "";
@@ -351,14 +365,6 @@ import {
     backdrop-filter: blur(2px);
     -webkit-mask-image: linear-gradient(to bottom, transparent, #000 62%);
     mask-image: linear-gradient(to bottom, transparent, #000 62%);
-  }
-
-  .download-channel-hero::after {
-    z-index: 1;
-    inset: 0;
-    background:
-      radial-gradient(circle at 0 100%, rgba(255, 255, 255, 0.06), transparent 30%),
-      radial-gradient(circle at 100% 0, rgba(255, 255, 255, 0.05), transparent 26%);
   }
 
   .download-channel-art,
@@ -401,16 +407,15 @@ import {
       url("/nightly-stars.svg") center / cover,
       url("/nightly-clouds-foreground.webp") center bottom / max(130%, 1600px) auto no-repeat,
       url("/nightly-clouds.webp") center / cover no-repeat,
-      linear-gradient(138deg, #0b162e 0%, #171a3c 46%, #2d1948 100%);
+      #101329;
   }
 
   .download-stage-art--dev {
-    background:
+    background-color: #173d82;
+    background-image:
       linear-gradient(rgba(199, 225, 255, 0.12) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(199, 225, 255, 0.12) 1px, transparent 1px),
-      radial-gradient(circle at 50% 42%, rgba(125, 186, 255, 0.3), transparent 36%),
-      linear-gradient(180deg, #102a55, #173d82);
-    background-size: 32px 32px, 32px 32px, auto, auto;
+      linear-gradient(90deg, rgba(199, 225, 255, 0.12) 1px, transparent 1px);
+    background-size: 32px 32px, 32px 32px;
   }
 
   .download-channel-inner {
@@ -426,7 +431,7 @@ import {
 
   .download-channel-copy {
     margin-top: 10px;
-    color: rgba(218, 222, 239, 0.68);
+    color: rgba(235, 237, 246, 0.82);
     font-size: 1rem;
   }
 
@@ -456,7 +461,7 @@ import {
   .download-stage-picker button {
     position: relative;
     padding: 5px 1px 9px;
-    color: var(--fg-dim);
+    color: rgba(255, 255, 255, 0.62);
     font-size: 0.875rem;
     font-weight: 500;
     line-height: 1;
@@ -496,7 +501,7 @@ import {
 
   .subheading {
     font-size: 0.875rem;
-    color: var(--fg-dim);
+    color: rgba(255, 255, 255, 0.68);
     min-height: 1.35rem;
     margin-bottom: 2.25rem;
     opacity: 0;
@@ -620,12 +625,12 @@ import {
     min-width: 0;
     min-height: 52px;
     padding: 0.75rem 0.875rem;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--download-surface-border);
     border-radius: 10px;
-    background: rgba(8, 8, 10, 0.76);
-    color: rgba(255, 255, 255, 0.86);
-    -webkit-backdrop-filter: blur(28px) saturate(0.72);
-    backdrop-filter: blur(28px) saturate(0.72);
+    background: var(--download-surface);
+    color: rgba(255, 255, 255, 0.92);
+    -webkit-backdrop-filter: blur(42px) saturate(0.8);
+    backdrop-filter: blur(42px) saturate(0.8);
     transition:
       border-color 0.18s ease,
       background 0.18s ease,
@@ -634,7 +639,7 @@ import {
 
   .download-card:hover {
     border-color: rgba(255, 255, 255, 0.16);
-    background: rgba(12, 12, 15, 0.84);
+    background: var(--download-surface-hover);
     color: var(--fg);
   }
 
@@ -661,10 +666,10 @@ import {
     gap: 16px;
     padding: 0.875rem;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(8, 8, 10, 0.76);
-    -webkit-backdrop-filter: blur(28px) saturate(0.72);
-    backdrop-filter: blur(28px) saturate(0.72);
+    border: 1px solid var(--download-surface-border);
+    background: var(--download-surface);
+    -webkit-backdrop-filter: blur(42px) saturate(0.8);
+    backdrop-filter: blur(42px) saturate(0.8);
   }
 
   .source-copy {
@@ -674,7 +679,7 @@ import {
 
   .source-card p {
     max-width: 520px;
-    color: var(--fg-dim);
+    color: rgba(255, 255, 255, 0.76);
     font-size: 0.875rem;
     line-height: 1.5;
   }
