@@ -53,6 +53,7 @@ import {
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import { applyAcpReasoningConfig } from "../acp/AcpReasoningConfig.ts";
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
@@ -745,6 +746,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          yield* applyAcpReasoningConfig({
+            runtime: acp,
+            selections: grokModelSelection?.options,
+            mapError: (cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_config_option", cause),
+          });
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -949,6 +956,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
+              const reasoningEffort = yield* applyAcpReasoningConfig({
+                runtime: ctx.acp,
+                selections: turnModelSelection?.options,
+                mapError: (cause) =>
+                  mapAcpToAdapterError(
+                    PROVIDER,
+                    input.threadId,
+                    "session/set_config_option",
+                    cause,
+                  ),
+              });
 
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(
@@ -1034,7 +1052,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   provider: PROVIDER,
                   threadId: input.threadId,
                   turnId,
-                  payload: displayModel ? { model: displayModel } : {},
+                  payload: {
+                    ...(displayModel ? { model: displayModel } : {}),
+                    ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+                  },
                 });
               }
 

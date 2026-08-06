@@ -696,3 +696,29 @@ export const PiAgentIcon: Icon = ({ className, ...props }) => (
     <path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
   </svg>
 );
+
+export const HermesIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 800 800" className={cn("fill-none", className)}>
+    <rect width="800" height="800" rx="160" fill="#000" />
+    {/* Winged staff: three ascending wing strokes above a vertical staff. */}
+    <path
+      fill="#fff"
+      fillRule="evenodd"
+      d="M150 520 L420 250 L470 300 L200 570 Z M230 620 L500 350 L550 400 L280 670 Z M310 720 L580 450 L630 500 L360 770 Z"
+    />
+    <path fill="#fff" d="M585 200 L625 200 L625 640 L585 640 Z" />
+    <circle cx="605" cy="170" r="45" fill="#fff" />
+  </svg>
+);
+
+export const OpenClawIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 800 800" className={cn("fill-none", className)}>
+    <rect width="800" height="800" rx="160" fill="#000" />
+    {/* Open pincer: a ring with a wedge bite taken out of the upper right. */}
+    <path
+      fill="#fff"
+      fillRule="evenodd"
+      d="M400 130 C549 130 670 251 670 400 L520 400 C520 334 466 280 400 280 C334 280 280 334 280 400 C280 466 334 520 400 520 L400 670 C251 670 130 549 130 400 C130 251 251 130 400 130 Z M460 150 L650 340 L590 400 L460 270 Z"
+    />
+  </svg>
+);

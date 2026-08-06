@@ -30,6 +30,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import { acpReasoningCapabilities } from "../acp/AcpReasoningConfig.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -99,12 +100,18 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined = undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
     return [];
   }
+  // ACP config options are session-scoped, so the same reasoning capability
+  // applies to every discovered model. The fallback catalog (used when
+  // discovery fails) stays descriptor-less because the CLI's options are
+  // unknown in that path.
+  const capabilities = acpReasoningCapabilities(configOptions);
   const seen = new Set<string>();
   return modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
@@ -117,7 +124,7 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities,
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
@@ -137,7 +144,11 @@ const discoverGrokModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    const configOptions = yield* acp.getConfigOptions;
+    return buildGrokDiscoveredModelsFromSessionModelState(
+      started.sessionSetupResult.models,
+      configOptions,
+    );
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
