@@ -12,6 +12,7 @@ import {
   checkGrokProviderStatus,
   ensureGrokStaticSlashCommands,
   GROK_STATIC_SLASH_COMMANDS,
+  isGrokSessionModelState,
   mapAcpCommandsToCatalog,
 } from "./GrokProvider.ts";
 
@@ -162,5 +163,32 @@ describe("Grok capability and command helpers", () => {
         { name: "review" },
       ]).map((command) => command.name),
     ).toEqual(["compact", "review"]);
+  });
+
+  it("rejects malformed modelState so discovery falls back instead of throwing", () => {
+    expect(isGrokSessionModelState(null)).toBe(false);
+    expect(isGrokSessionModelState(undefined)).toBe(false);
+    expect(isGrokSessionModelState({ availableModels: [null] })).toBe(false);
+    expect(
+      isGrokSessionModelState({
+        availableModels: [{ modelId: "grok-4", name: 123 }],
+      }),
+    ).toBe(false);
+    expect(
+      isGrokSessionModelState({
+        availableModels: [{ name: "Grok" }],
+      }),
+    ).toBe(false);
+    expect(
+      isGrokSessionModelState({
+        availableModels: [{ modelId: "grok-4", name: "Grok 4" }],
+      }),
+    ).toBe(true);
+    expect(
+      isGrokSessionModelState({
+        currentModelId: "grok-4",
+        availableModels: [{ modelId: "grok-4", name: "Grok 4" }],
+      }),
+    ).toBe(true);
   });
 });

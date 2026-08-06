@@ -344,6 +344,26 @@ describe("applyGrokPlanModeToPromptText", () => {
     ).toBe("/default already");
   });
 
+  it("does not prefix plan/default onto other slash commands", () => {
+    expect(
+      applyGrokPlanModeToPromptText({ text: "/compact keep auth", interactionMode: "plan" }),
+    ).toBe("/compact keep auth");
+    expect(
+      applyGrokPlanModeToPromptText({
+        text: "/compact keep auth",
+        interactionMode: "default",
+        planModeActive: true,
+      }),
+    ).toBe("/compact keep auth");
+    expect(
+      applyGrokPlanModeToPromptText({
+        text: "/session-info",
+        interactionMode: "default",
+        planModeActive: true,
+      }),
+    ).toBe("/session-info");
+  });
+
   it("returns /default for blank Build prompts while plan mode is active", () => {
     expect(
       applyGrokPlanModeToPromptText({

@@ -1685,12 +1685,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 interactionMode: input.interactionMode,
                 planModeActive: ctx.planModeActive,
               });
-              // Track local plan-mode state so Build can exit with /default.
-              if (input.interactionMode === "plan") {
-                ctx.planModeActive = true;
-              } else if (input.interactionMode === "default" && ctx.planModeActive) {
-                ctx.planModeActive = false;
-              }
+              // Derive plan-mode transition from the prompt we actually send.
+              // Apply only after a successful session/prompt RPC so prep/send
+              // failures cannot desync local state from Grok (e.g. clearing
+              // planModeActive before /default is delivered). Slash commands
+              // like /compact are left untouched by applyGrokPlanModeToPromptText,
+              // so they do not flip the flag either.
+              const planModeUpdate: boolean | undefined =
+                text !== undefined && /^\/plan(?:\s|$)/i.test(text)
+                  ? true
+                  : text !== undefined && /^\/default(?:\s|$)/i.test(text)
+                    ? false
+                    : undefined;
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
@@ -1790,6 +1796,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 displayModel,
                 promptParts,
                 turnId,
+                planModeUpdate,
               };
             }).pipe(
               Effect.tapCause(() =>
@@ -1842,6 +1849,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             input.threadId,
             Effect.gen(function* () {
               const ctx = yield* requireSession(input.threadId);
+              // Prompt RPC succeeded — apply plan enter/exit only now so a failed
+              // prep or send cannot leave local planModeActive desynced from Grok.
+              if (prepared.planModeUpdate !== undefined) {
+                ctx.planModeActive = prepared.planModeUpdate;
+              }
               // Emit usage as soon as the prompt RPC returns, even if xAI already
               // settled the turn (common live path).
               yield* offerGrokPromptTokenUsage(ctx, prepared.turnId, result._meta);

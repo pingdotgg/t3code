@@ -92,6 +92,9 @@ export function resolveGrokReasoningEffortSelection(
  *
  * When leaving plan mode (`interactionMode` default/build while `planModeActive`),
  * prefix `/default` once so Grok exits plan mode for the subsequent Build turn.
+ *
+ * Never rewrite provider slash commands (`/compact`, `/plan`, `/default`, …):
+ * prefixing would break the leading slash token Grok dispatches on.
  */
 export function applyGrokPlanModeToPromptText(input: {
   readonly text: string | undefined;
@@ -100,12 +103,13 @@ export function applyGrokPlanModeToPromptText(input: {
   readonly planModeActive?: boolean;
 }): string | undefined {
   const trimmed = input.text?.trim();
+  // Preserve existing slash commands as-is (including /plan, /default, /compact).
+  if (trimmed && trimmed.startsWith("/")) {
+    return trimmed;
+  }
   if (input.interactionMode === "plan") {
     if (!trimmed) {
       return "/plan";
-    }
-    if (/^\/plan(?:\s|$)/i.test(trimmed)) {
-      return trimmed;
     }
     return `/plan ${trimmed}`;
   }
@@ -113,9 +117,6 @@ export function applyGrokPlanModeToPromptText(input: {
   if (input.planModeActive && input.interactionMode === "default") {
     if (!trimmed) {
       return "/default";
-    }
-    if (/^\/default(?:\s|$)/i.test(trimmed)) {
-      return trimmed;
     }
     return `/default ${trimmed}`;
   }

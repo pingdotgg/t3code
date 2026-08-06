@@ -210,27 +210,68 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
+/**
+ * Validate untrusted `modelState` (e.g. initialize `_meta`) the same way
+ * `isSessionModelState` does for ACP session payloads — reject null entries
+ * and objects missing string `modelId`/`name` so discovery cannot throw.
+ */
+export function isGrokSessionModelState(
+  value: unknown,
+): value is EffectAcpSchema.SessionModelState {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.availableModels)) {
+    return false;
+  }
+  return record.availableModels.every(
+    (model) =>
+      model !== null &&
+      typeof model === "object" &&
+      !Array.isArray(model) &&
+      typeof (model as { modelId?: unknown }).modelId === "string" &&
+      typeof (model as { name?: unknown }).name === "string",
+  );
+}
+
 function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
-  if (!modelState || modelState.availableModels.length === 0) {
+  if (
+    !modelState ||
+    !Array.isArray(modelState.availableModels) ||
+    modelState.availableModels.length === 0
+  ) {
     return [];
   }
   const seen = new Set<string>();
   return modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
-      const slug = resolveGrokAcpBaseModelId(model.modelId);
+      // Defensive: typed SessionModelState can still arrive malformed via casts.
+      if (
+        model === null ||
+        typeof model !== "object" ||
+        typeof (model as { modelId?: unknown }).modelId !== "string" ||
+        typeof (model as { name?: unknown }).name !== "string"
+      ) {
+        return undefined;
+      }
+      const modelId = (model as { modelId: string; name: string; _meta?: unknown }).modelId;
+      const name = (model as { modelId: string; name: string; _meta?: unknown }).name;
+      const slug = resolveGrokAcpBaseModelId(modelId);
       if (!slug || seen.has(slug)) {
         return undefined;
       }
       seen.add(slug);
+      const rawMeta = (model as { _meta?: unknown })._meta;
       const meta =
-        model._meta && typeof model._meta === "object" && !Array.isArray(model._meta)
-          ? (model._meta as Record<string, unknown>)
+        rawMeta && typeof rawMeta === "object" && !Array.isArray(rawMeta)
+          ? (rawMeta as Record<string, unknown>)
           : undefined;
       return {
         slug,
-        name: model.name.trim() || slug,
+        name: name.trim() || slug,
         isCustom: false,
         capabilities: capabilitiesFromGrokModelMeta(meta),
       };
@@ -306,13 +347,11 @@ const discoverGrokModelsViaAcp = (
       started.sessionSetupResult.models,
     );
     const rawInitializeModelState = initializeMeta?.modelState;
-    const initializeModelState =
-      rawInitializeModelState !== null &&
-      typeof rawInitializeModelState === "object" &&
-      !Array.isArray(rawInitializeModelState) &&
-      Array.isArray((rawInitializeModelState as { availableModels?: unknown }).availableModels)
-        ? (rawInitializeModelState as EffectAcpSchema.SessionModelState)
-        : undefined;
+    // Require well-formed entries (string modelId/name); malformed arrays such as
+    // `[null]` must fall through to built-in models instead of throwing.
+    const initializeModelState = isGrokSessionModelState(rawInitializeModelState)
+      ? rawInitializeModelState
+      : undefined;
     const modelsFromInitialize =
       buildGrokDiscoveredModelsFromSessionModelState(initializeModelState);
     const models = modelsFromSession.length > 0 ? modelsFromSession : modelsFromInitialize;
