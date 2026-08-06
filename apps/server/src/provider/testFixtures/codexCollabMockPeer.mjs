@@ -79,6 +79,11 @@ rl.on("line", (line) => {
       write({ id, error: { code: -32000, message: "thread already closed" } });
       return;
     }
+    if (script.hangInterruptFor && script.hangInterruptFor === target) {
+      // Never respond: simulates a wedged child whose RPC neither resolves
+      // nor rejects. The runtime's bounded deadline must move on.
+      return;
+    }
     write({ id, result: {} });
     return;
   }

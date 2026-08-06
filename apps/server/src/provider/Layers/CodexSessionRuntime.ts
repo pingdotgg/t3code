@@ -1794,7 +1794,12 @@ export const makeCodexSessionRuntime = (
           const session = yield* Ref.get(sessionRef);
           // Stop-everything: children are full threads with their own turns;
           // interrupting only the parent leaves the fleet running. Interrupt
-          // each live child turn first, best-effort per child.
+          // each live child turn first, best-effort per child, BOUNDED: the
+          // transport awaits an unbounded Deferred per request, so a wedged
+          // child would otherwise block the parent interrupt forever —
+          // exactly during the runaway fleet where Stop matters most
+          // (review finding). Per-child and overall deadlines guarantee the
+          // parent interrupt below always runs.
           const liveChildTurns = yield* Ref.get(collabChildLiveTurnsRef);
           yield* Effect.forEach(
             Array.from(liveChildTurns.entries()),
@@ -1804,9 +1809,9 @@ export const makeCodexSessionRuntime = (
                   threadId: childThreadId,
                   turnId: childTurnId,
                 })
-                .pipe(Effect.ignore),
+                .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
             { concurrency: 8, discard: true },
-          );
+          ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
           const effectiveTurnId = turnId ?? session.activeTurnId;
           if (!effectiveTurnId) {
             return;

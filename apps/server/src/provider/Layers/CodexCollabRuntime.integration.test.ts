@@ -151,11 +151,13 @@ describe("CodexSessionRuntime collab integration", () => {
   // TestClock the internal timers freeze and the join never completes.
   it.live("Stop interrupts every live child regardless of registration timing", () =>
     Effect.gen(function* () {
-      // Ordering torture for stop-everything: child A's turn/started arrives
-      // BEFORE anything registers it (foreign suppression path must record
-      // the live turn); child B's arrives after registration; child A's
-      // interrupt fails (dead thread) and must not block child B or the
-      // parent. The turn stays open so children are live when Stop fires.
+      // Ordering + liveness torture for stop-everything: child A's
+      // turn/started arrives BEFORE anything registers it (foreign
+      // suppression path must record the live turn); child B's arrives after
+      // registration; child A's interrupt HANGS (RPC never settles — worse
+      // than rejecting) and the bounded deadline must still deliver B's and
+      // the parent's interrupts. The turn stays open so children are live
+      // when Stop fires.
       // Build from REAL captured rows (hand-written shapes fail notification
       // schema validation and are silently dropped): reorder so child A's
       // turn/started precedes its registration, and drop terminal rows so
@@ -179,7 +181,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const script = {
         rootThreadId: ROOT,
         holdTurnOpen: true,
-        failInterruptFor: CHILD_A,
+        hangInterruptFor: CHILD_A,
         notifications: [turnStartedA, registrationA, registrationB, turnStartedB],
       };
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -222,8 +224,8 @@ describe("CodexSessionRuntime collab integration", () => {
       );
       assert.isTrue(childBStarted._tag === "Some", "child B turnStarted never arrived");
 
-      // Stop everything. A's interrupt errors (dead thread) — best-effort
-      // must continue through B and the parent without failing the command.
+      // Stop everything. A's interrupt hangs forever — the bounded child
+      // deadline must expire and the parent interrupt must still be sent.
       yield* runtime.interruptTurn();
 
       const parseInterruptLine = (line: string) => JSON.parse(line) as { threadId?: string };
@@ -235,7 +237,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const interruptedThreads = new Set(interrupted.map((entry) => entry.threadId));
       assert.isTrue(
         interruptedThreads.has(CHILD_A),
-        "pre-registration child A must still be interrupted",
+        "pre-registration child A must still receive the interrupt RPC",
       );
       assert.isTrue(interruptedThreads.has(CHILD_B), "registered child B must be interrupted");
       assert.isTrue(interruptedThreads.has(ROOT), "parent turn must be interrupted last");

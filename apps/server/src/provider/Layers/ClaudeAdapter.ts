@@ -2966,7 +2966,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         entry.phaseIndex ?? "",
         entry.phaseTitle ?? "",
         entry.attempt ?? "",
-      ].join(" ");
+      ].join("\u001f");
       if (context.workflowMemberFingerprints.get(memberTaskId) === fingerprint) {
         continue;
       }
@@ -4383,6 +4383,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // not strand the rest or block the turn interrupt), then interrupt.
       if (context.query.stopTask && context.liveTaskIds.size > 0) {
         const liveIds = Array.from(context.liveTaskIds);
+        // Bounded: a wedged child's stopTask promise may never settle
+        // (Effect.ignore handles rejection, not non-resolution), and the
+        // parent interrupt below MUST still run — Stop matters most during
+        // runaway fleets (review finding). Per-task timeout keeps one hung
+        // child from consuming the whole budget.
         yield* Effect.forEach(
           liveIds,
           (taskId) =>
@@ -4390,9 +4395,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               // Invoke through the query object: SDK methods rely on `this`.
               try: () => context.query.stopTask!(taskId),
               catch: () => undefined,
-            }).pipe(Effect.ignore),
+            }).pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
           { concurrency: 8, discard: true },
-        );
+        ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
       }
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),

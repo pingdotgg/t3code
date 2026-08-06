@@ -1518,6 +1518,94 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("workflow member coalescing: identical snapshots suppress, changes emit", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // Collect task.progress until member-0's tick-3 emission lands, then
+      // evaluate member emissions.
+      const progressFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.progress"),
+        Stream.takeUntil(
+          // Sentinel: member-0's tick-3 emission (tokens 20) — members are
+          // emitted after the coordinator row within a tick.
+          (event) =>
+            (event.payload as { taskId?: string }).taskId === "wf-coalesce:wf:0" &&
+            (event.payload as { typedUsage?: { totalTokens?: number } }).typedUsage?.totalTokens ===
+              20,
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run workflow",
+        attachments: [],
+      });
+
+      const memberSnapshot = (tokens: number) => [
+        { type: "workflow_phase", index: 0, title: "Work" },
+        {
+          type: "workflow_agent",
+          index: 0,
+          state: "running",
+          label: "member-0",
+          phaseIndex: 0,
+          tokens,
+        },
+        {
+          type: "workflow_agent",
+          index: 1,
+          state: "running",
+          label: "member-1",
+          phaseIndex: 0,
+          tokens: 50,
+        },
+      ];
+      const tick = (usageTotal: number, snapshot: ReturnType<typeof memberSnapshot>) =>
+        harness.query.emit({
+          type: "system",
+          subtype: "task_progress",
+          task_id: "wf-coalesce",
+          description: "Coalescing workflow",
+          usage: { total_tokens: usageTotal, tool_uses: 1, duration_ms: 10 },
+          workflow_progress: snapshot,
+          uuid: `wf-tick-${usageTotal}`,
+          session_id: "sdk-session",
+        } as unknown as SDKMessage);
+
+      // Tick 1: both members are new -> 2 member events.
+      tick(100, memberSnapshot(10));
+      // Tick 2: IDENTICAL member snapshot -> 0 member events (coordinator
+      // usage changed, but members did not).
+      tick(200, memberSnapshot(10));
+      // Tick 3: member-0's tokens advanced -> exactly 1 member event.
+      tick(300, memberSnapshot(20));
+
+      const progressEvents = Array.from(yield* Fiber.join(progressFiber));
+      const byMember = new Map<string, number>();
+      for (const event of progressEvents) {
+        const taskId = (event.payload as { taskId: string }).taskId;
+        if (!taskId.includes(":wf:")) continue;
+        byMember.set(taskId, (byMember.get(taskId) ?? 0) + 1);
+      }
+      // member-0: tick 1 + tick 3. member-1: tick 1 only (tick 2 identical,
+      // tick 3 unchanged).
+      assert.equal(byMember.get("wf-coalesce:wf:0"), 2);
+      assert.equal(byMember.get("wf-coalesce:wf:1"), 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("task.started carries model/effort; subagent snapshots refine the model", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
