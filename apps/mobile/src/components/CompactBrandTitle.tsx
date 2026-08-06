@@ -33,6 +33,7 @@ export function brandTitleOffset(nativeLeadingItem: boolean): number {
  */
 export function CompactBrandTitle(
   props: {
+    readonly allowFontScaling?: boolean;
     readonly nativeLeadingItem?: boolean;
   } = {},
 ) {
@@ -57,7 +58,7 @@ export function CompactBrandTitle(
     >
       <T3Wordmark color={iconColor} height={15} />
       <Text
-        allowFontScaling={false}
+        allowFontScaling={props.allowFontScaling}
         style={{
           color: mutedColor,
           fontFamily: "DMSans-Medium",
@@ -76,7 +77,7 @@ export function CompactBrandTitle(
         }}
       >
         <Text
-          allowFontScaling={false}
+          allowFontScaling={props.allowFontScaling}
           style={{
             color: mutedColor,
             fontFamily: "DMSans-Bold",

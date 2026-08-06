@@ -740,7 +740,6 @@ function ThreadNavigationSidebarPane(
   );
 
   const backgroundColor = useThemeColor("--color-drawer");
-  const headerBackgroundColor = useThemeColor("--color-screen");
   const borderColor = useThemeColor("--color-border");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const placeholderColor = useThemeColor("--color-placeholder");
@@ -1289,12 +1288,10 @@ function ThreadNavigationSidebarPane(
         className="absolute inset-x-0 top-0 z-[4]"
         collapsable={false}
         onLayout={handleStickyHeaderLayout}
-        pointerEvents="box-none"
+        pointerEvents="auto"
         style={{
           paddingTop: insets.top,
-          backgroundColor: headerBackgroundColor,
-          elevation: 100,
-          shadowColor: "transparent",
+          backgroundColor,
         }}
       >
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
@@ -1307,7 +1304,7 @@ function ThreadNavigationSidebarPane(
             size="pageTitle"
             brand={
               <View className="h-11 flex-1 justify-center">
-                <CompactBrandTitle />
+                <CompactBrandTitle allowFontScaling={false} />
               </View>
             }
           />
