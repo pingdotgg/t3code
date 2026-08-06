@@ -345,6 +345,52 @@ describe("composerDraftStore syncPersistedAttachments", () => {
   });
 });
 
+describe("composerDraftStore persisted preview annotations", () => {
+  const threadId = ThreadId.make("thread-preview-annotation");
+
+  it("preserves preview-only drafts while normalizing legacy storage", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const previewAnnotation = {
+      id: "preview-1",
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      comment: "Move this button.",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-03-13T12:00:00.000Z",
+    };
+
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "",
+            attachments: [],
+            previewAnnotations: [previewAnnotation],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadKey[threadId]?.previewAnnotations).toEqual([
+      previewAnnotation,
+    ]);
+  });
+});
+
 describe("composerDraftStore terminal contexts", () => {
   const threadId = ThreadId.make("thread-dedupe");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
@@ -676,6 +722,61 @@ describe("composerDraftStore review comments", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments).toEqual([
       comment,
     ]);
+  });
+});
+
+describe("composerDraftStore chat selection annotations", () => {
+  const threadId = ThreadId.make("thread-chat-selection");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const annotation = {
+    id: "selection-1",
+    selectedText: "Restart the adapter, then retry OAuth.",
+    comment: "Why is this needed?",
+  } as const;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("adds and removes annotations in source order", () => {
+    const store = useComposerDraftStore.getState();
+    store.addChatSelectionAnnotation(threadRef, annotation);
+    store.addChatSelectionAnnotation(threadRef, {
+      ...annotation,
+      id: "selection-2",
+      selectedText: "Retry OAuth.",
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.chatSelectionAnnotations).toEqual([
+      annotation,
+      { ...annotation, id: "selection-2", selectedText: "Retry OAuth." },
+    ]);
+
+    store.removeChatSelectionAnnotation(threadRef, annotation.id);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.chatSelectionAnnotations).toHaveLength(1);
+    store.removeChatSelectionAnnotation(threadRef, "selection-2");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("persists chat selection annotations and clears them with composer content", () => {
+    const store = useComposerDraftStore.getState();
+    store.addChatSelectionAnnotation(threadRef, annotation);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { chatSelectionAnnotations?: unknown[] }>;
+    };
+
+    expect(
+      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.chatSelectionAnnotations,
+    ).toEqual([annotation]);
+
+    store.clearComposerContent(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 });
 

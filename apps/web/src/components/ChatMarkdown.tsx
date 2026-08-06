@@ -21,6 +21,7 @@ import React, {
   Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   isValidElement,
   use,
   useCallback,
@@ -39,6 +40,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { ChatTextSelectionPopover } from "./chat/ChatTextSelectionPopover";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -102,6 +104,8 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Enables attaching selected response text to the next chat message. */
+  onTextSelection?: ((input: { selectedText: string; comment: string }) => void) | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -1260,7 +1264,16 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  onTextSelection,
 }: ChatMarkdownProps) {
+  const markdownRootRef = useRef<HTMLDivElement | null>(null);
+  const selectionPointerControllerRef = useRef<AbortController | null>(null);
+  const selectionReadFrameRef = useRef<number | null>(null);
+  const [selectionPopover, setSelectionPopover] = useState<{
+    text: string;
+    rect: { top: number; left: number; width: number; height: number };
+  } | null>(null);
+  const [selectionPopoverHasDraft, setSelectionPopoverHasDraft] = useState(false);
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1598,13 +1611,121 @@ function ChatMarkdown({
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
+  const readTextSelection = useCallback(() => {
+    if (!onTextSelection) return;
+    const root = markdownRootRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.isCollapsed || selection.rangeCount === 0) {
+      if (!selectionPopoverHasDraft) setSelectionPopover(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) {
+      if (!selectionPopoverHasDraft) setSelectionPopover(null);
+      return;
+    }
+    const selectedText = selection.toString().trim();
+    const rect = range.getBoundingClientRect();
+    if (selectedText.length === 0 || (rect.width === 0 && rect.height === 0)) {
+      if (!selectionPopoverHasDraft) setSelectionPopover(null);
+      return;
+    }
+    if (selectionPopoverHasDraft) return;
+    setSelectionPopover({
+      text: selectedText,
+      rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+    });
+  }, [onTextSelection, selectionPopoverHasDraft]);
+  const scheduleReadTextSelection = useCallback(() => {
+    if (selectionReadFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionReadFrameRef.current);
+    }
+    selectionReadFrameRef.current = window.requestAnimationFrame(() => {
+      selectionReadFrameRef.current = null;
+      readTextSelection();
+    });
+  }, [readTextSelection]);
+  const handleSelectionPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      selectionPointerControllerRef.current?.abort();
+      const controller = new AbortController();
+      const pointerId = event.pointerId;
+      selectionPointerControllerRef.current = controller;
+      const options = { signal: controller.signal };
+      window.addEventListener(
+        "pointerup",
+        (pointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) return;
+          controller.abort();
+          scheduleReadTextSelection();
+        },
+        options,
+      );
+      window.addEventListener(
+        "pointercancel",
+        (pointerEvent) => {
+          if (pointerEvent.pointerId === pointerId) controller.abort();
+        },
+        options,
+      );
+    },
+    [scheduleReadTextSelection],
+  );
+
+  useEffect(
+    () => () => {
+      selectionPointerControllerRef.current?.abort();
+      if (selectionReadFrameRef.current !== null) {
+        window.cancelAnimationFrame(selectionReadFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!onTextSelection) return;
+    document.addEventListener("selectionchange", scheduleReadTextSelection);
+    return () => document.removeEventListener("selectionchange", scheduleReadTextSelection);
+  }, [onTextSelection, scheduleReadTextSelection]);
+
+  useEffect(() => {
+    if (!selectionPopover) return;
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-chat-selection-popover]")) return;
+      if (target instanceof Node && markdownRootRef.current?.contains(target)) {
+        if (selectionPopoverHasDraft) return;
+        setSelectionPopover(null);
+        return;
+      }
+      setSelectionPopover(null);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
+  }, [selectionPopover, selectionPopoverHasDraft]);
+
+  useEffect(() => {
+    if (!selectionPopover) return;
+    const closeOnViewportChange = () => {
+      if (!selectionPopoverHasDraft) setSelectionPopover(null);
+    };
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    window.addEventListener("resize", closeOnViewportChange);
+    return () => {
+      window.removeEventListener("scroll", closeOnViewportChange, true);
+      window.removeEventListener("resize", closeOnViewportChange);
+    };
+  }, [selectionPopover, selectionPopoverHasDraft]);
+
   return (
     <div
+      ref={markdownRootRef}
       className={cn(
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80",
         className,
       )}
       onCopy={handleCopy}
+      onPointerDown={onTextSelection ? handleSelectionPointerDown : undefined}
     >
       <ReactMarkdown
         remarkPlugins={
@@ -1616,6 +1737,21 @@ function ChatMarkdown({
       >
         {text}
       </ReactMarkdown>
+      {selectionPopover ? (
+        <ChatTextSelectionPopover
+          rect={selectionPopover.rect}
+          onAddAnnotation={(comment) => {
+            onTextSelection?.({ selectedText: selectionPopover.text, comment });
+            setSelectionPopover(null);
+            setSelectionPopoverHasDraft(false);
+          }}
+          onCommentStateChange={setSelectionPopoverHasDraft}
+          onClose={() => {
+            setSelectionPopover(null);
+            setSelectionPopoverHasDraft(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
