@@ -576,7 +576,7 @@ import {
   .platform-icon {
     width: 1.25rem;
     height: 1.25rem;
-    color: var(--fg-dim);
+    color: rgba(255, 255, 255, 0.68);
     flex-shrink: 0;
     transition: color 0.18s ease;
   }
@@ -620,10 +620,12 @@ import {
     min-width: 0;
     min-height: 52px;
     padding: 0.75rem 0.875rem;
-    border: 1px solid transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--fg-muted);
+    background: rgba(8, 8, 10, 0.76);
+    color: rgba(255, 255, 255, 0.86);
+    -webkit-backdrop-filter: blur(28px) saturate(0.72);
+    backdrop-filter: blur(28px) saturate(0.72);
     transition:
       border-color 0.18s ease,
       background 0.18s ease,
@@ -631,8 +633,8 @@ import {
   }
 
   .download-card:hover {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.065);
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(12, 12, 15, 0.84);
     color: var(--fg);
   }
 
@@ -650,7 +652,7 @@ import {
   .card-format {
     flex: 0 0 auto;
     font-size: 0.8125rem;
-    color: var(--fg-dim);
+    color: rgba(255, 255, 255, 0.58);
     white-space: nowrap;
   }
 
@@ -659,7 +661,10 @@ import {
     gap: 16px;
     padding: 0.875rem;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(8, 8, 10, 0.76);
+    -webkit-backdrop-filter: blur(28px) saturate(0.72);
+    backdrop-filter: blur(28px) saturate(0.72);
   }
 
   .source-copy {
