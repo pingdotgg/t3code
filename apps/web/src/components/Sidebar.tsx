@@ -1881,7 +1881,7 @@ export default function Sidebar() {
   }, [clearSelection, projectScopeKey]);
 
   const handleProjectSettings = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
+    (event: ReactMouseEvent<HTMLElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
       setProjectScopeMenuOpen(false);
@@ -3376,6 +3376,9 @@ export default function Sidebar() {
                             value={scopeKey}
                             closeOnClick
                             className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                            onContextMenu={(event) => {
+                              void handleProjectSettings(event, project);
+                            }}
                           >
                             <ProjectFavicon
                               environmentId={project.environmentId}
@@ -3384,9 +3387,13 @@ export default function Sidebar() {
                               className="size-4 shrink-0"
                             />
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
+                            {/* Mouse-only affordance: hidden from AT because interactive children
+                                are invalid inside menuitemradio and pollute its accessible name.
+                                Keyboard/AT path is Shift+F10 (contextmenu) on the item itself. */}
                             <button
                               type="button"
-                              aria-label={`Project settings for ${project.displayName}`}
+                              tabIndex={-1}
+                              aria-hidden="true"
                               title={`Project settings for ${project.displayName}`}
                               className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                               onPointerDown={(event) => event.stopPropagation()}
