@@ -215,7 +215,11 @@ describe("projectActivityPayload", () => {
       detail: "/repo/project/generated/cat.png",
       status: "completed",
       requestKind: "command",
-      data: {},
+      data: {
+        item: {
+          savedPath: "/repo/project/generated/cat.png",
+        },
+      },
     });
     expect(deriveWorkLogEntries([projectedCodex])[0]?.imagePath).toBe(
       "/repo/project/generated/cat.png",
@@ -246,6 +250,27 @@ describe("projectActivityPayload", () => {
     expect(deriveWorkLogEntries([projectedClaude])[0]?.imagePath).toBe(
       "/repo/project/screenshots/claude.png",
     );
+  });
+
+  it("keeps generated image paths when the activity detail is truncated", () => {
+    const imagePath = `/repo/project/${"generated/".repeat(20)}cat.png`;
+    const truncatedDetail = `${imagePath.slice(0, 177)}...`;
+    const projected = projectActivityPayload(
+      makeActivity(
+        "long-image",
+        "image_view",
+        {
+          item: {
+            type: "imageGeneration",
+            savedPath: imagePath,
+          },
+        },
+        truncatedDetail,
+      ),
+    );
+
+    expect(imagePath.length).toBeGreaterThan(180);
+    expect(deriveWorkLogEntries([projected])[0]?.imagePath).toBe(imagePath);
   });
 
   it("projects snapshot and event transports without mutating their sources", () => {
