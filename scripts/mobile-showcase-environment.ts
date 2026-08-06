@@ -44,17 +44,27 @@ const PROJECT_SCRIPTS = JSON.stringify([
   },
 ]);
 
+const SHOWCASE_TERMINAL_PROMPT =
+  "\u001b[1;32m→\u001b[0m \u001b[1;36mt3code\u001b[0m \u001b[1;34mgit:(\u001b[1;31mfeat/remote-command-center\u001b[1;34m)\u001b[0m \u001b[1;33m✗\u001b[0m ";
+
+// A dev-server startup mirroring the web settings' terminal font preview:
+// zsh-style prompt, brand line, addresses, the thread's 612-test summary,
+// and a READY badge, so the scene exercises bold, dim, underline, the six
+// accent colors, and a background cell.
 export const SHOWCASE_TERMINAL_BUFFER = [
-  "\u001b[38;5;75m~/Code/t3code\u001b[0m \u001b[38;5;212mfeat/remote-command-center\u001b[0m",
-  "$ vp test run --changed",
+  `${SHOWCASE_TERMINAL_PROMPT}vpr dev`,
   "",
-  "  \u001b[38;5;117mt3code-mobile\u001b[0m       184 passed",
-  "  \u001b[38;5;213mclient-runtime\u001b[0m      263 passed",
-  "  \u001b[38;5;221mserver\u001b[0m              165 passed",
+  "  \u001b[1;32mVITE\u001b[0m \u001b[32mv7.1.1\u001b[0m  \u001b[2mready in\u001b[0m \u001b[1m1.24s\u001b[0m",
   "",
-  "\u001b[32m✨ 612 tests passed\u001b[0m  ·  3 environments online",
+  "  \u001b[32m→\u001b[0m  \u001b[2mLocal:\u001b[0m    \u001b[4;36mhttp://127.0.0.1:5173/\u001b[0m",
+  "  \u001b[32m→\u001b[0m  \u001b[2mNetwork:\u001b[0m  \u001b[4;36mhttp://192.168.1.24:5173/\u001b[0m",
+  "  \u001b[32m→\u001b[0m  \u001b[2mProject:\u001b[0m  \u001b[1mt3code\u001b[0m \u001b[2m— ~/Code/t3code\u001b[0m",
   "",
-  "\u001b[38;5;75m~/Code/t3code\u001b[0m \u001b[38;5;212mfeat/remote-command-center\u001b[0m $ ",
+  "  \u001b[32m✓ 612 passed\u001b[0m   \u001b[33m△ 2 warnings\u001b[0m   \u001b[31m✗ 0 failed\u001b[0m",
+  "",
+  "  \u001b[42;30m READY \u001b[0m \u001b[2mwatching for changes — press\u001b[0m \u001b[1mq\u001b[0m \u001b[2mto quit\u001b[0m",
+  "",
+  SHOWCASE_TERMINAL_PROMPT,
 ].join("\r\n");
 
 const BASE_ENVIRONMENT_PRESENCE = `export function environmentLabel(count: number): string {
