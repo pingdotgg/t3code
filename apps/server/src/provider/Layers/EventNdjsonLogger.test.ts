@@ -20,7 +20,7 @@ import {
   writeBatchedMessages,
 } from "./EventNdjsonLogger.ts";
 
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function ownedLogPath(basePath: string, segment: string): string {
   const basename = NodePath.basename(basePath);

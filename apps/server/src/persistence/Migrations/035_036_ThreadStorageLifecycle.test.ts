@@ -143,10 +143,11 @@ branchHistoryLayer("038 branch-history compatibility", (it) => {
         ORDER BY task
       `;
 
-      const executed = yield* runMigrations({ toMigrationInclusive: 38 });
+      const executed = yield* runMigrations({ toMigrationInclusive: 39 });
       assert.deepStrictEqual(executed, [
         [37, "ProjectionThreadTitleRegeneration"],
         [38, "ThreadColdArchiveCompatibility"],
+        [39, "ProjectionThreadsPinned"],
       ]);
 
       const afterManifests = yield* sql<{
@@ -174,6 +175,11 @@ branchHistoryLayer("038 branch-history compatibility", (it) => {
 
       assert.deepStrictEqual(afterManifests, beforeManifests);
       assert.deepStrictEqual(afterMaintenance, beforeMaintenance);
+
+      const columns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(projection_threads)
+      `;
+      assert.ok(columns.some((column) => column.name === "pinned_at"));
     }),
   );
 });
@@ -204,11 +210,12 @@ upstreamHistoryLayer("035 upstream title-regeneration compatibility", (it) => {
         VALUES (35, 'ProjectionThreadTitleRegeneration')
       `;
 
-      const executed = yield* runMigrations({ toMigrationInclusive: 38 });
+      const executed = yield* runMigrations({ toMigrationInclusive: 39 });
       assert.deepStrictEqual(executed, [
         [36, "DeletedThreadCleanupQueue"],
         [37, "ProjectionThreadTitleRegeneration"],
         [38, "ThreadColdArchiveCompatibility"],
+        [39, "ProjectionThreadsPinned"],
       ]);
 
       const manifests = yield* sql<{
@@ -228,6 +235,7 @@ upstreamHistoryLayer("035 upstream title-regeneration compatibility", (it) => {
       const names = new Set(columns.map((column) => column.name));
       assert.ok(names.has("title_regeneration_request_id"));
       assert.ok(names.has("title_regeneration_started_at"));
+      assert.ok(names.has("pinned_at"));
     }),
   );
 });
