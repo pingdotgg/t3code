@@ -161,6 +161,37 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
   );
 }
 
+/**
+ * A neutral row the work log should still show, because the provider told us
+ * where the tool actually got to.
+ *
+ * `workEntryIndicatesToolNeutralStatus` covers two very different things: rows
+ * carrying no lifecycle signal at all, which are noise worth hiding, and rows
+ * with a reported non-terminal or stopped lifecycle, which are the only record
+ * of what the agent was doing. Hiding the second kind means queued, running,
+ * waiting, and stopped tools all disappear from the work log.
+ */
+export function workEntryHasReportedLifecycle(entry: WorkLogEntry): boolean {
+  return entry.toolLifecycleStatus === "inProgress" || entry.toolLifecycleStatus === "stopped";
+}
+
+/**
+ * Whether a tool-like row is genuinely executing right now.
+ *
+ * `toolLifecycleStatus` cannot answer this: `projectedWorkEntryStatus` collapses
+ * `pending`, `running`, and `waiting` into `inProgress`, so a queued tool and an
+ * approval request blocked on the user look identical to a running one. Only a
+ * running tool should spin.
+ */
+export function workEntryIsExecuting(entry: WorkLogEntry): boolean {
+  return workLogEntryIsToolLike(entry) && entry.structuredPayload?.status === "running";
+}
+
+/** Whether the work log shows this row. The work group's filter is this. */
+export function workEntryShouldRenderInWorkLog(entry: WorkLogEntry): boolean {
+  return !workEntryIndicatesToolNeutralStatus(entry) || workEntryHasReportedLifecycle(entry);
+}
+
 export function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
