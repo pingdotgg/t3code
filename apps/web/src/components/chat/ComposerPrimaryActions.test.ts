@@ -39,6 +39,27 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
+function renderStandaloneStop() {
+  return renderToStaticMarkup(
+    createElement(ComposerPrimaryActions, {
+      compact: true,
+      pendingAction: null,
+      isRunning: true,
+      showPlanFollowUpPrompt: false,
+      promptHasText: false,
+      isSendBusy: false,
+      sendDisabledReason: null,
+      isConnecting: false,
+      isEnvironmentUnavailable: false,
+      isPreparingWorktree: false,
+      hasSendableContent: false,
+      onPreviousPendingQuestion: () => {},
+      onInterrupt: () => {},
+      onImplementPlanInNewThread: () => {},
+    }),
+  );
+}
+
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
     expect(
@@ -136,5 +157,11 @@ describe("ComposerPrimaryActions", () => {
 
   it("does not offer Stop generation for a pending request without a running turn", () => {
     expect(renderPendingActions(false)).not.toContain('aria-label="Stop generation"');
+  });
+
+  it("matches the small pending action size without changing the standalone size", () => {
+    expect(renderPendingActions(true)).toContain("size-8 sm:size-7");
+    expect(renderStandaloneStop()).toContain("size-8 sm:h-8 sm:w-8");
+    expect(renderStandaloneStop()).not.toContain("sm:size-7");
   });
 });
