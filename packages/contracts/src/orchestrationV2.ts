@@ -57,7 +57,11 @@ export const OrchestrationV2CreationSource = Schema.Literals([
 ]);
 export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
 
-export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
+export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals([
+  "native",
+  "v1_import",
+  "provider_import",
+]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
 
 const OrchestrationV2CreationFields = {
@@ -2237,6 +2241,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
   launchThread: "orchestration.launchThread",
+  resolveImportSession: "orchestration.resolveImportSession",
+  importSession: "orchestration.importSession",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -2317,6 +2323,57 @@ export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
   resumed: Schema.Boolean,
 });
 export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
+
+export const OrchestrationV2ResolveImportSessionInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  externalId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2ResolveImportSessionInput =
+  typeof OrchestrationV2ResolveImportSessionInput.Type;
+
+export const OrchestrationV2ResolveImportSessionResult = Schema.Struct({
+  externalId: TrimmedNonEmptyString,
+  workspaceRoot: Schema.NullOr(TrimmedNonEmptyString),
+  projectId: Schema.NullOr(ProjectId),
+  title: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationV2ResolveImportSessionResult =
+  typeof OrchestrationV2ResolveImportSessionResult.Type;
+
+export const OrchestrationV2ImportSessionInput = Schema.Struct({
+  projectId: ProjectId,
+  modelSelection: ModelSelection,
+  externalId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2ImportSessionInput = typeof OrchestrationV2ImportSessionInput.Type;
+
+export const OrchestrationV2ImportSessionResult = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2ImportSessionResult = typeof OrchestrationV2ImportSessionResult.Type;
+
+export const OrchestrationV2ImportSessionErrorReason = Schema.Literals([
+  "provider_unsupported",
+  "project_missing",
+  "session_not_found",
+  "already_imported",
+  "workspace_mismatch",
+  "empty_transcript",
+  "read_failed",
+  "store_failed",
+]);
+export type OrchestrationV2ImportSessionErrorReason =
+  typeof OrchestrationV2ImportSessionErrorReason.Type;
+
+export class OrchestrationV2ImportSessionError extends Schema.TaggedErrorClass<OrchestrationV2ImportSessionError>()(
+  "OrchestrationV2ImportSessionError",
+  {
+    reason: OrchestrationV2ImportSessionErrorReason,
+    externalId: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
@@ -2452,6 +2509,14 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  resolveImportSession: {
+    input: OrchestrationV2ResolveImportSessionInput,
+    output: OrchestrationV2ResolveImportSessionResult,
+  },
+  importSession: {
+    input: OrchestrationV2ImportSessionInput,
+    output: OrchestrationV2ImportSessionResult,
   },
   subscribeArchivedShell: {
     input: Schema.Struct({}),

@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
   buildBrowseGroups,
+  buildImportSessionProviderOptions,
   buildThreadActionItems,
+  describeImportSessionStep,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
@@ -324,5 +333,122 @@ describe("buildBrowseGroups", () => {
     finishNavigation?.();
     await action;
     expect(actionSettled).toBe(true);
+  });
+});
+
+function provider(input: {
+  driver: string;
+  instanceId: string;
+  status?: ServerProvider["status"];
+  models?: ServerProvider["models"];
+}): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(input.instanceId),
+    driver: ProviderDriverKind.make(input.driver),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: input.status ?? "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: input.models ?? [],
+    slashCommands: [],
+    skills: [],
+  };
+}
+
+const providerModel = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: {} });
+
+describe("buildImportSessionProviderOptions", () => {
+  it("offers Claude and Codex with their own field labels and default models", () => {
+    const options = buildImportSessionProviderOptions([
+      provider({
+        driver: "claudeAgent",
+        instanceId: "claudeAgent",
+        models: [providerModel("sonnet")],
+      }),
+      provider({ driver: "codex", instanceId: "codex", models: [providerModel("gpt-5-codex")] }),
+    ]);
+
+    expect(options).toEqual([
+      {
+        driverKind: "claudeAgent",
+        label: "Claude Code",
+        fieldLabel: "Session ID",
+        placeholder: "0de413a1-1796-43c7-9abf-967c5aedd890",
+        hint: "Run /status inside a Claude Code session to copy its id, or pick one from claude --resume.",
+        modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "sonnet" },
+      },
+      {
+        driverKind: "codex",
+        label: "Codex",
+        fieldLabel: "Thread ID",
+        placeholder: "019a2f8c-4e1b-7c3d-9f10-2b6a5d8e4c77",
+        hint: "Run codex resume to list thread ids.",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+      },
+    ]);
+  });
+
+  it("drops providers that are not ready and providers this feature does not support", () => {
+    const options = buildImportSessionProviderOptions([
+      provider({
+        driver: "claudeAgent",
+        instanceId: "claudeAgent",
+        status: "error",
+        models: [providerModel("sonnet")],
+      }),
+      provider({ driver: "cursor", instanceId: "cursor", models: [providerModel("auto")] }),
+      provider({ driver: "codex", instanceId: "codex", models: [providerModel("gpt-5-codex")] }),
+    ]);
+
+    expect(options.map((option) => option.driverKind)).toEqual(["codex"]);
+  });
+});
+
+describe("describeImportSessionStep", () => {
+  it("imports straight away before the session is resolved", () => {
+    expect(describeImportSessionStep(null)).toEqual({
+      notice: null,
+      confirmLabel: "Import",
+      missingProjectWorkspaceRoot: null,
+    });
+  });
+
+  it("imports straight away once the session maps to an existing project", () => {
+    expect(
+      describeImportSessionStep({
+        externalId: "session-1",
+        workspaceRoot: "/home/dev/app",
+        projectId: PROJECT_ID,
+        title: "Fix the flaky test",
+      }),
+    ).toEqual({ notice: null, confirmLabel: "Import", missingProjectWorkspaceRoot: null });
+  });
+
+  it("asks to add the workspace when no project matches it", () => {
+    expect(
+      describeImportSessionStep({
+        externalId: "session-1",
+        workspaceRoot: "/home/dev/app",
+        projectId: null,
+        title: null,
+      }),
+    ).toEqual({
+      notice: "This session ran in /home/dev/app, which is not a project yet.",
+      confirmLabel: "Add project & import",
+      missingProjectWorkspaceRoot: "/home/dev/app",
+    });
+  });
+
+  it("imports into the current project when the provider reports no workspace", () => {
+    expect(
+      describeImportSessionStep({
+        externalId: "thread-1",
+        workspaceRoot: null,
+        projectId: null,
+        title: null,
+      }),
+    ).toEqual({ notice: null, confirmLabel: "Import", missingProjectWorkspaceRoot: null });
   });
 });

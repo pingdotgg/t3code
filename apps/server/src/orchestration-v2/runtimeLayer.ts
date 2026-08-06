@@ -40,6 +40,7 @@ import { layer as runFinalizationServiceLayer } from "./RunFinalizationService.t
 import { layerFromProjectRepository as runtimePolicyLayerFromProjectRepository } from "./RuntimePolicy.ts";
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layerWithLegacyImporter as threadManagementServiceLayer } from "./ThreadManagementService.ts";
+import { layer as sessionImportServiceLayer } from "./SessionImportService.ts";
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
@@ -199,6 +200,16 @@ const threadLaunchProvided = threadLaunchServiceLayer.pipe(
     ),
   ),
 );
+const sessionImportProvided = sessionImportServiceLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      storesLayer,
+      eventSinkProvided,
+      providerAdapterRegistryProvided,
+      idAllocatorLayer,
+    ),
+  ),
+);
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
 );
@@ -258,6 +269,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   OrchestrationV2LayerLive,
   ProjectServiceLayerLive,
   threadLaunchProvided,
+  sessionImportProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
   providerContinuationWorkerProvided,

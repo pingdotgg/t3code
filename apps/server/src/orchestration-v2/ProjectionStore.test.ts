@@ -53,6 +53,7 @@ it("includes imported runless history when selecting fork context through a run"
     isTurnItemAtOrBeforeRun({
       historyOrigin: "v1_import",
       itemRunId: null,
+      itemOrdinal: 1,
       runOrdinalById,
       sourceRunOrdinal: 1,
     }),
@@ -61,6 +62,7 @@ it("includes imported runless history when selecting fork context through a run"
     isTurnItemAtOrBeforeRun({
       historyOrigin: undefined,
       itemRunId: null,
+      itemOrdinal: 1,
       runOrdinalById,
       sourceRunOrdinal: 1,
     }),
@@ -69,6 +71,7 @@ it("includes imported runless history when selecting fork context through a run"
     isTurnItemAtOrBeforeRun({
       historyOrigin: "v1_import",
       itemRunId: firstRunId,
+      itemOrdinal: 1_000_001,
       runOrdinalById,
       sourceRunOrdinal: 1,
     }),
@@ -77,6 +80,27 @@ it("includes imported runless history when selecting fork context through a run"
     isTurnItemAtOrBeforeRun({
       historyOrigin: "v1_import",
       itemRunId: secondRunId,
+      itemOrdinal: 2_000_001,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
+  // Provider-imported history: original import (0-band) is inherited, a
+  // transcript entry synced after run 2 is not when forking from run 1.
+  assert.isTrue(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: "provider_import",
+      itemRunId: null,
+      itemOrdinal: 3,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
+  assert.isFalse(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: "provider_import",
+      itemRunId: null,
+      itemOrdinal: 2_000_005,
       runOrdinalById,
       sourceRunOrdinal: 1,
     }),

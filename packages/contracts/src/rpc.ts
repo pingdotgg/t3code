@@ -74,6 +74,7 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2ImportSessionError,
 } from "./orchestrationV2.ts";
 import {
   RelayClientInstallFailedError,
@@ -788,6 +789,24 @@ export const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_MET
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationV2ResolveImportSessionRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.resolveImportSession,
+  {
+    payload: OrchestrationV2RpcSchemas.resolveImportSession.input,
+    success: OrchestrationV2RpcSchemas.resolveImportSession.output,
+    error: Schema.Union([OrchestrationV2ImportSessionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsOrchestrationV2ImportSessionRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.importSession,
+  {
+    payload: OrchestrationV2RpcSchemas.importSession.input,
+    success: OrchestrationV2RpcSchemas.importSession.output,
+    error: Schema.Union([OrchestrationV2ImportSessionError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationV2SubscribeArchivedShellRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   {
@@ -994,6 +1013,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2ResolveImportSessionRpc,
+  WsOrchestrationV2ImportSessionRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,

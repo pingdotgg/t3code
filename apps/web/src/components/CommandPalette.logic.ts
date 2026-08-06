@@ -1,6 +1,9 @@
 import {
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type ModelSelection,
+  type OrchestrationV2ResolveImportSessionResult,
+  type ServerProvider,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -8,6 +11,11 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
+import {
+  deriveProviderInstanceEntries,
+  getDefaultProviderInstanceModel,
+  isProviderInstancePickerReady,
+} from "../providerInstances";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
@@ -396,6 +404,71 @@ export function buildRootGroups(input: {
     });
   }
   return groups;
+}
+
+export interface ImportSessionProviderOption {
+  readonly driverKind: "claudeAgent" | "codex";
+  readonly label: string;
+  readonly fieldLabel: string;
+  readonly placeholder: string;
+  readonly hint: string;
+  readonly modelSelection: ModelSelection;
+}
+
+const IMPORT_SESSION_PROVIDERS = [
+  {
+    driverKind: "claudeAgent",
+    label: "Claude Code",
+    fieldLabel: "Session ID",
+    placeholder: "0de413a1-1796-43c7-9abf-967c5aedd890",
+    hint: "Run /status inside a Claude Code session to copy its id, or pick one from claude --resume.",
+  },
+  {
+    driverKind: "codex",
+    label: "Codex",
+    fieldLabel: "Thread ID",
+    placeholder: "019a2f8c-4e1b-7c3d-9f10-2b6a5d8e4c77",
+    hint: "Run codex resume to list thread ids.",
+  },
+] as const satisfies ReadonlyArray<Omit<ImportSessionProviderOption, "modelSelection">>;
+
+export function buildImportSessionProviderOptions(
+  providers: ReadonlyArray<ServerProvider>,
+): ImportSessionProviderOption[] {
+  const entries = deriveProviderInstanceEntries(providers);
+  return IMPORT_SESSION_PROVIDERS.flatMap((candidate) => {
+    const readyEntries = entries.filter(
+      (item) => item.driverKind === candidate.driverKind && isProviderInstancePickerReady(item),
+    );
+    const entry = readyEntries.find((item) => item.isDefault) ?? readyEntries[0];
+    if (!entry) {
+      return [];
+    }
+    const model = getDefaultProviderInstanceModel(providers, entry.instanceId);
+    if (model === undefined) {
+      return [];
+    }
+    return [{ ...candidate, modelSelection: { instanceId: entry.instanceId, model } }];
+  });
+}
+
+export interface ImportSessionStep {
+  readonly notice: string | null;
+  readonly confirmLabel: string;
+  readonly missingProjectWorkspaceRoot: string | null;
+}
+
+export function describeImportSessionStep(
+  resolved: OrchestrationV2ResolveImportSessionResult | null,
+): ImportSessionStep {
+  if (resolved === null || resolved.projectId !== null || resolved.workspaceRoot === null) {
+    return { notice: null, confirmLabel: "Import", missingProjectWorkspaceRoot: null };
+  }
+  return {
+    notice: `This session ran in ${resolved.workspaceRoot}, which is not a project yet.`,
+    confirmLabel: "Add project & import",
+    missingProjectWorkspaceRoot: resolved.workspaceRoot,
+  };
 }
 
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {

@@ -20,6 +20,7 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
+  type ScopedProjectRef,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -33,6 +34,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  ImportIcon,
   LinkIcon,
   MessageSquareIcon,
   SettingsIcon,
@@ -97,6 +99,7 @@ import {
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
+  buildImportSessionProviderOptions,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
@@ -105,6 +108,7 @@ import {
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
+  type ImportSessionProviderOption,
   filterCommandPaletteGroups,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
@@ -117,6 +121,7 @@ import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sideb
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
+import { ImportSessionDialog } from "./ImportSessionDialog";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -371,6 +376,11 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
     : null;
 }
 
+interface ImportSessionRequest {
+  readonly projectRef: ScopedProjectRef;
+  readonly providerOptions: ReadonlyArray<ImportSessionProviderOption>;
+}
+
 export function CommandPalette({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
@@ -385,6 +395,14 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
+  const [importSession, setImportSession] = useState<ImportSessionRequest | null>(null);
+  const openImportSession = useCallback(
+    (request: ImportSessionRequest) => {
+      setOpen(false);
+      setImportSession(request);
+    },
+    [setOpen],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
@@ -429,7 +447,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         },
       });
       const mode = overlayModeForCommand(command);
-      if (mode === null) {
+      if (mode === null || importSession !== null) {
         return;
       }
       event.preventDefault();
@@ -438,7 +456,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, previewOpen, terminalOpen, toggleMode]);
+  }, [importSession, keybindings, previewOpen, terminalOpen, toggleMode]);
 
   useEffect(
     () =>
@@ -475,8 +493,21 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen={setOpen}
           openOverlayMode={toggleMode}
           clearOpenIntent={clearOpenIntent}
+          openImportSession={openImportSession}
         />
       </CommandDialog>
+      {importSession ? (
+        <ImportSessionDialog
+          open
+          projectRef={importSession.projectRef}
+          providerOptions={importSession.providerOptions}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setImportSession(null);
+            }
+          }}
+        />
+      ) : null}
     </ComposerHandleContext>
   );
 }
@@ -488,6 +519,7 @@ function CommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly openImportSession: (request: ImportSessionRequest) => void;
 }) {
   const composerHandleRef = useComposerHandleContext();
 
@@ -526,6 +558,7 @@ function CommandPaletteDialog(props: {
           setOpen={props.setOpen}
           openOverlayMode={props.openOverlayMode}
           clearOpenIntent={props.clearOpenIntent}
+          openImportSession={props.openImportSession}
         />
       )}
     </CommandDialogPopup>
@@ -537,9 +570,10 @@ function OpenCommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly openImportSession: (request: ImportSessionRequest) => void;
 }) {
   const navigate = useNavigate();
-  const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
+  const { clearOpenIntent, openImportSession, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -1351,6 +1385,15 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  const importSessionProviderOptions = useMemo(
+    () => buildImportSessionProviderOptions(providers),
+    [providers],
+  );
+  const importSessionProjectRef =
+    currentProjectEnvironmentId && currentProjectId
+      ? scopeProjectRef(currentProjectEnvironmentId, currentProjectId)
+      : defaultProjectRef;
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1417,6 +1460,23 @@ function OpenCommandPaletteDialog(props: {
       openOverlayMode("content");
     },
   });
+
+  if (importSessionProviderOptions.length > 0 && importSessionProjectRef) {
+    actionItems.push({
+      kind: "action",
+      value: "action:import-session",
+      searchTerms: ["import session", "resume", "continue", "claude", "codex", "session id"],
+      title: "Import session...",
+      icon: <ImportIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        openImportSession({
+          projectRef: importSessionProjectRef,
+          providerOptions: importSessionProviderOptions,
+        });
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

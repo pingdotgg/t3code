@@ -13,7 +13,7 @@ layer("037_038_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 45 }, (_, index) => index + 1),
+        Array.from({ length: 46 }, (_, index) => index + 1),
       );
     }),
   );

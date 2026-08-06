@@ -8,12 +8,14 @@ import {
   type CreateThreadInput,
   type DeleteThreadInput,
   type EditQueuedRunInput,
+  type ImportSessionInput,
   type InterruptThreadTurnInput,
   type MarkThreadUnreadInput,
   type ForkThreadFromRunInput,
   type MergeThreadBackInput,
   type PromoteQueuedRunInput,
   type ReorderQueuedRunInput,
+  type ResolveImportSessionInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
   type RevertThreadCheckpointInput,
@@ -35,12 +37,14 @@ import {
   createThread,
   deleteThread,
   editQueuedRun,
+  importSession,
   interruptThreadTurn,
   forkThreadFromRun,
   markThreadUnread,
   mergeThreadBack,
   promoteQueuedRun,
   reorderQueuedRun,
+  resolveImportSession,
   respondToThreadApproval,
   respondToThreadUserInput,
   revertThreadCheckpoint,
@@ -66,12 +70,14 @@ export type {
   CreateThreadInput,
   DeleteThreadInput,
   EditQueuedRunInput,
+  ImportSessionInput,
   InterruptThreadTurnInput,
   MarkThreadUnreadInput,
   ForkThreadFromRunInput,
   MergeThreadBackInput,
   PromoteQueuedRunInput,
   ReorderQueuedRunInput,
+  ResolveImportSessionInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   RevertThreadCheckpointInput,
@@ -99,6 +105,11 @@ export function createThreadEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
+  };
+  const importConcurrency = {
+    mode: "serial" as const,
+    key: ({ environmentId, input }: { environmentId: string; input: { externalId: string } }) =>
+      JSON.stringify([environmentId, input.externalId]),
   };
   return {
     create: createEnvironmentCommand(runtime, {
@@ -269,6 +280,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       execute: (input: EditQueuedRunInput) => editQueuedRun(input),
       scheduler,
       concurrency,
+    }),
+    resolveImportSession: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:resolve-import-session",
+      execute: (input: ResolveImportSessionInput) => resolveImportSession(input),
+      scheduler,
+      concurrency: importConcurrency,
+    }),
+    importSession: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:import-session",
+      execute: (input: ImportSessionInput) => importSession(input),
+      scheduler,
+      concurrency: importConcurrency,
     }),
   };
 }

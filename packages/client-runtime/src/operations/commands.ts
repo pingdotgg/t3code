@@ -8,6 +8,8 @@ import {
   type ModelSelection,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ImportSessionInput,
+  type OrchestrationV2ResolveImportSessionInput,
   type PlanId,
   type ProjectId,
   type ProjectScript,
@@ -194,6 +196,9 @@ export interface PromoteQueuedRunInput extends ThreadCommandInput {
   readonly queuedRunId: RunId;
   readonly targetRunId: RunId;
 }
+
+export type ResolveImportSessionInput = OrchestrationV2ResolveImportSessionInput;
+export type ImportSessionInput = OrchestrationV2ImportSessionInput;
 
 export interface CancelQueuedRunInput extends ThreadCommandInput {
   readonly runId: RunId;
@@ -777,6 +782,18 @@ export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(
     threadId: input.threadId,
     runId: input.runId,
   });
+});
+
+export const resolveImportSession = Effect.fn("EnvironmentCommands.resolveImportSession")(
+  function* (input: ResolveImportSessionInput) {
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.resolveImportSession, input);
+  },
+);
+
+export const importSession = Effect.fn("EnvironmentCommands.importSession")(function* (
+  input: ImportSessionInput,
+) {
+  return yield* request(ORCHESTRATION_V2_WS_METHODS.importSession, input);
 });
 
 export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (

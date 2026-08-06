@@ -3684,6 +3684,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               isTurnItemAtOrBeforeRun({
                 historyOrigin: sourceProjection.thread.historyOrigin,
                 itemRunId: item.runId,
+                itemOrdinal: item.ordinal,
                 runOrdinalById: sourceRunOrdinalById,
                 sourceRunOrdinal: sourceRun.ordinal,
               }),

@@ -72,6 +72,7 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as SessionImport from "./orchestration-v2/SessionImportService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -414,6 +415,7 @@ const makeWsRpcLayer = (
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const sessionImport = yield* SessionImport.SessionImportService;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const projectService = yield* ProjectService.ProjectService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -1105,7 +1107,8 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-            threadManagement.getThreadProjection(input.threadId).pipe(
+            sessionImport.ensureSynced(input.threadId).pipe(
+              Effect.andThen(threadManagement.getThreadProjection(input.threadId)),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationV2GetThreadProjectionError({
@@ -1186,10 +1189,27 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "orchestrationV2",
             },
           ),
+        [ORCHESTRATION_V2_WS_METHODS.resolveImportSession]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.resolveImportSession,
+            sessionImport.resolveImportSession(input),
+            { "rpc.aggregate": "orchestrationV2" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.importSession]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.importSession,
+            sessionImport.importSession(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.project_id": input.projectId,
+            },
+          ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeThread,
-            subscribeOrchestrationV2Thread(input),
+            sessionImport
+              .ensureSynced(input.threadId)
+              .pipe(Effect.andThen(subscribeOrchestrationV2Thread(input))),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,
