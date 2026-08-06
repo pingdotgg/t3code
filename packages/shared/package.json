@@ -115,6 +115,10 @@
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
+    "./orchestrationV2Settled": {
+      "types": "./src/orchestrationV2Settled.ts",
+      "import": "./src/orchestrationV2Settled.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"
