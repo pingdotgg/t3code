@@ -39,6 +39,11 @@ public enum T3ConnectAuthError: LocalizedError, Sendable {
     }
 }
 
+enum T3ConnectAuthCallback {
+    static let scheme = PlatformRoute.nativeScheme
+    static let redirectURL = "\(scheme)://clerk-callback"
+}
+
 /// Small ClerkKit boundary. Clerk owns encrypted session persistence and the
 /// ASWebAuthenticationSession callback; the app only asks for the relay JWT.
 @MainActor
@@ -52,8 +57,8 @@ public final class T3ConnectClerkSession {
             publishableKey: configuration.clerkPublishableKey,
             options: .init(
                 redirectConfig: .init(
-                    redirectUrl: "t3code://clerk-callback",
-                    callbackUrlScheme: "t3code"
+                    redirectUrl: T3ConnectAuthCallback.redirectURL,
+                    callbackUrlScheme: T3ConnectAuthCallback.scheme
                 )
             )
         )

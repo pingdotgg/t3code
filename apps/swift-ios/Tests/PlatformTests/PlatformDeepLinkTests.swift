@@ -102,6 +102,15 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func clerkCallbackUsesCurrentAppIdentity() {
+        #expect(T3ConnectAuthCallback.scheme == PlatformRoute.nativeScheme)
+        #expect(
+            T3ConnectAuthCallback.redirectURL
+                == "\(PlatformRoute.nativeScheme)://clerk-callback"
+        )
+    }
+
+    @Test
     func mailboxConsumesExactlyOnce() throws {
         let suiteName = "PlatformDeepLinkTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
