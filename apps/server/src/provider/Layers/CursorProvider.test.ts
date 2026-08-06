@@ -299,6 +299,29 @@ const parameterizedClaudeModelOptionConfigOptions = [
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 
+const parameterizedAutoSmartConfigOptions = [
+  {
+    type: "select",
+    currentValue: "auto-smart",
+    options: [{ name: "Auto", value: "auto-smart" }],
+    category: "model",
+    id: "model",
+    name: "Model",
+  },
+  {
+    type: "select",
+    currentValue: "balanced",
+    options: [
+      { name: "Intelligence", value: "intelligence" },
+      { name: "Balance", value: "balanced" },
+      { name: "Cost", value: "cost" },
+    ],
+    category: "model_config",
+    id: "optimize_for",
+    name: "Optimize For",
+  },
+] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+
 const baseCursorSettings: CursorSettings = {
   enabled: true,
   binaryPath: "cursor-agent",
@@ -519,6 +542,20 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
           ]),
           booleanDescriptor("fastMode", "Fast", true),
           booleanDescriptor("thinking", "Thinking", true),
+        ],
+      }),
+    );
+  });
+
+  it("derives Optimize For modes for Cursor Router Auto", () => {
+    expect(buildCursorCapabilitiesFromConfigOptions(parameterizedAutoSmartConfigOptions)).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("optimizeFor", "Optimize For", [
+            { id: "intelligence", label: "Intelligence" },
+            { id: "balanced", label: "Balance", isDefault: true },
+            { id: "cost", label: "Cost" },
+          ]),
         ],
       }),
     );
@@ -774,5 +811,13 @@ describe("resolveCursorAcpConfigUpdates", () => {
       { configId: "effort", value: "max" },
       { configId: "thinking", value: "false" },
     ]);
+  });
+
+  it("writes Cursor Router Optimize For Cost through optimize_for", () => {
+    expect(
+      resolveCursorAcpConfigUpdates(parameterizedAutoSmartConfigOptions, [
+        { id: "optimizeFor", value: "cost" },
+      ]),
+    ).toEqual([{ configId: "optimize_for", value: "cost" }]);
   });
 });
