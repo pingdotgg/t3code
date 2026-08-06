@@ -360,7 +360,7 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
       }
     }
     if (phases.length > 0) {
-      agent.phases = phases.toSorted((a, b) => a.index - b.index);
+      agent.phases = phases.slice().sort((a, b) => a.index - b.index);
     }
   }
   if (typeof payload.runHandles === "object" && payload.runHandles !== null) {
@@ -657,7 +657,8 @@ export function foldSubagentActivities(
     const rank = (agent: MutableAgent): number =>
       isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
     roster = roster
-      .toSorted((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
+      .slice()
+      .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, ROSTER_LIMIT);
   }
 
@@ -761,14 +762,16 @@ export function deriveAgentPanelModel({
             }
             return Array.from(derived.entries())
               .map(([index, title]) => ({ index, title }))
-              .toSorted((a, b) => a.index - b.index);
+              .slice()
+              .sort((a, b) => a.index - b.index);
           })();
 
     const knownPhaseIndices = new Set(knownPhases.map((phase) => phase.index));
     const phases = knownPhases.map((phase) => {
       const phaseMembers = workflowMembers
         .filter((member) => member.phaseIndex === phase.index)
-        .toSorted((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
+        .slice()
+        .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
       const activeCount = phaseMembers.filter(
         // Idle members count as active for phase-liveness: a resumable Codex
         // member has not finished the phase.
@@ -799,7 +802,8 @@ export function deriveAgentPanelModel({
     // because its phase row was lost (review finding).
     const unphasedMembers = workflowMembers
       .filter((member) => member.phaseIndex === null || !knownPhaseIndices.has(member.phaseIndex))
-      .toSorted((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
+      .slice()
+      .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
 
     return { workflow, phases, unphasedMembers };
   });
@@ -823,7 +827,7 @@ export function deriveAgentPanelModel({
 
   return {
     workflows: workflowGroups,
-    directAgents: direct.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    directAgents: direct.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     runningCount,
     waitingCount,
     idleCount,
@@ -849,9 +853,9 @@ export function workflowCardMembers(
     if (agent.status === "waiting") return 2;
     return 3;
   };
-  const ordered = all.toSorted(
-    (a, b) => urgency(a) - urgency(b) || b.updatedAt.localeCompare(a.updatedAt),
-  );
+  const ordered = all
+    .slice()
+    .sort((a, b) => urgency(a) - urgency(b) || b.updatedAt.localeCompare(a.updatedAt));
   return {
     visible: ordered.slice(0, limit),
     overflow: Math.max(0, ordered.length - limit),

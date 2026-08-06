@@ -226,12 +226,13 @@ describe("CodexSessionRuntime collab integration", () => {
       // must continue through B and the parent without failing the command.
       yield* runtime.interruptTurn();
 
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const parseInterruptLine = (line: string) => JSON.parse(line) as { threadId?: string };
       const interrupted = NodeFS.readFileSync(interruptsPath, "utf8")
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        .map((line) => JSON.parse(line) as { threadId?: string });
+        .map(parseInterruptLine);
       const interruptedThreads = new Set(interrupted.map((entry) => entry.threadId));
       assert.isTrue(
         interruptedThreads.has(CHILD_A),
