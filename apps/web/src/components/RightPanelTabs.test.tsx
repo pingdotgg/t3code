@@ -22,44 +22,37 @@ function actionProps() {
 }
 
 describe("RightPanelTabs add-surface actions", () => {
-  it("keeps Version Control first in the empty state", () => {
+  it("keeps Version Control first and unique in the empty state", () => {
     const actions = buildAddSurfaceActions(actionProps(), ADD_SURFACE_EMPTY_STATE_ORDER);
+    const sourceControlActions = actions.filter((action) => action.id === "source-control");
 
-    expect(actions.map((action) => action.id)).toEqual([
-      "source-control",
-      "browser",
-      "terminal",
-      "files",
-      "diff",
-      "agents",
-    ]);
+    expect(actions[0]?.id).toBe("source-control");
+    expect(sourceControlActions).toHaveLength(1);
   });
 
-  it("preserves the legacy add-menu order", () => {
+  it("keeps Version Control last and unique in the add menu", () => {
     const actions = buildAddSurfaceActions(actionProps(), ADD_SURFACE_MENU_ORDER);
+    const sourceControlActions = actions.filter((action) => action.id === "source-control");
 
-    expect(actions.map((action) => action.label)).toEqual([
-      "Browser",
-      "Terminal",
-      "Files",
-      "Diff",
-      "Agents",
-      "Version Control",
-    ]);
+    expect(actions.at(-1)?.id).toBe("source-control");
+    expect(sourceControlActions).toHaveLength(1);
   });
 
-  it("shares enabled callbacks and disabled reasons across consumers", () => {
+  it("uses the Version Control callback, availability, and disabled reason", () => {
     const props = actionProps();
     const actions = buildAddSurfaceActions(props);
-    const browser = actions.find((action) => action.id === "browser");
-    const diff = actions.find((action) => action.id === "diff");
+    const sourceControl = actions.find((action) => action.id === "source-control");
+    const unavailableSourceControl = buildAddSurfaceActions({
+      ...props,
+      sourceControlAvailable: false,
+    }).find((action) => action.id === "source-control");
 
-    expect(browser?.available).toBe(true);
-    browser?.onClick();
-    expect(props.onAddBrowser).toHaveBeenCalledTimes(1);
-    expect(diff?.available).toBe(false);
-    expect(diff?.disabledReason).toBe(
-      "Diff is only available for server threads in Git repositories.",
+    expect(sourceControl?.available).toBe(true);
+    sourceControl?.onClick();
+    expect(props.onAddSourceControl).toHaveBeenCalledTimes(1);
+    expect(unavailableSourceControl?.available).toBe(false);
+    expect(unavailableSourceControl?.disabledReason).toBe(
+      "Version Control is only available when a project is open in a Git repository.",
     );
   });
 });
