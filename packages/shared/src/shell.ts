@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -491,7 +492,9 @@ function resolveCommandCandidates(
   return Array.from(new Set(candidates));
 }
 
-const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
+// Called once per PATH x PATHEXT candidate, so a single miss on Windows probes
+// hundreds of paths. Keep it untraced: a span per probe floods the tracer.
+const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
@@ -510,7 +513,21 @@ const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
   return canExecuteFile(filePath);
 });
 
-const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
+// A miss on Windows probes every PATH entry against every PATHEXT variant, and
+// editor/provider refreshes resolve the same commands over and over. Cache the
+// outcome briefly; the TTL keeps a newly installed CLI discoverable.
+const COMMAND_PATH_CACHE_TTL_MS = 30_000;
+
+const commandPathCache = new Map<
+  string,
+  { readonly expiresAt: number; readonly resolved: string | null }
+>();
+
+export function clearCommandPathCache(): void {
+  commandPathCache.clear();
+}
+
+const resolveCommandPathUncached = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
 ): Effect.fn.Return<string, CommandResolutionError, FileSystem.FileSystem | Path.Path> {
@@ -555,6 +572,36 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     }
   }
   return yield* new CommandResolutionError({ command, reason: "not-found" });
+});
+
+const resolveCommandPathForPlatform = Effect.fnUntraced(function* (
+  command: string,
+  options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
+): Effect.fn.Return<string, CommandResolutionError, FileSystem.FileSystem | Path.Path> {
+  const env = options.env ?? process.env;
+  const cacheKey = [
+    options.platform,
+    command,
+    resolvePathEnvironmentVariable(env),
+    env.PATHEXT ?? "",
+  ].join("\u0000");
+  const now = yield* Clock.currentTimeMillis;
+  const cached = commandPathCache.get(cacheKey);
+  if (cached !== undefined && cached.expiresAt > now) {
+    if (cached.resolved === null) {
+      return yield* new CommandResolutionError({ command, reason: "not-found" });
+    }
+    return cached.resolved;
+  }
+
+  const resolved = yield* resolveCommandPathUncached(command, options).pipe(
+    Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
+  );
+  commandPathCache.set(cacheKey, { expiresAt: now + COMMAND_PATH_CACHE_TTL_MS, resolved });
+  if (resolved === null) {
+    return yield* new CommandResolutionError({ command, reason: "not-found" });
+  }
+  return resolved;
 });
 
 export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
