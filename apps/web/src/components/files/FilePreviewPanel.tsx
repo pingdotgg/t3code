@@ -77,6 +77,10 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
+  /** Bumped to reveal a directory row in the file tree (e.g. after creating a folder). */
+  revealDirectoryRequest?: { path: string; revealId: number } | null;
+  /** Called after a delete so the caller can reconcile open file surfaces. */
+  onDeletedPath?: ((relativePath: string) => void) | null;
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -757,6 +761,8 @@ export default function FilePreviewPanel({
   revealRequestId,
   onOpenFile,
   onPendingChange,
+  revealDirectoryRequest,
+  onDeletedPath,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
@@ -1056,6 +1062,8 @@ export default function FilePreviewPanel({
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
+              revealDirectoryRequest={revealDirectoryRequest ?? null}
+              onDeletedPath={onDeletedPath ?? null}
             />
           </aside>
         ) : null}

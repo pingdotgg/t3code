@@ -5004,6 +5004,156 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc projects.makeDirectory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-mkdir-" });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsMakeDirectory]({
+            cwd: workspaceDir,
+            relativePath: "nested/deep/folder",
+          }),
+        ),
+      );
+
+      assert.equal(response.relativePath, "nested/deep/folder");
+      const stat = yield* fs.stat(path.join(workspaceDir, "nested", "deep", "folder"));
+      assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.makeDirectory errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-mkdir-" });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsMakeDirectory]({
+            cwd: workspaceDir,
+            relativePath: "../escape-dir",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectMakeDirectoryError") {
+        assert.fail("Expected a ProjectMakeDirectoryError");
+      }
+      const makeError = result.failure;
+      assert.equal(
+        makeError.message,
+        `Failed to create workspace directory '../escape-dir' in '${workspaceDir}'.`,
+      );
+      assert.equal(makeError.cwd, workspaceDir);
+      assert.equal(makeError.relativePath, "../escape-dir");
+      assert.equal(makeError.failure, "workspace_path_outside_root");
+      assert.isDefined(makeError.cause);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteFile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-delete-" });
+      yield* fs.writeFileString(path.join(workspaceDir, "notes.md"), "delete me\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteFile]({
+            cwd: workspaceDir,
+            relativePath: "notes.md",
+          }),
+        ),
+      );
+
+      assert.equal(response.relativePath, "notes.md");
+      const stat = yield* fs
+        .stat(path.join(workspaceDir, "notes.md"))
+        .pipe(Effect.orElseSucceed(() => null));
+      assert.isNull(stat);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteFile recursively for directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-delete-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src", "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "a.ts"), "a\n");
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "nested", "b.ts"), "b\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteFile]({
+            cwd: workspaceDir,
+            relativePath: "src",
+            recursive: true,
+          }),
+        ),
+      );
+
+      assert.equal(response.relativePath, "src");
+      const stat = yield* fs
+        .stat(path.join(workspaceDir, "src"))
+        .pipe(Effect.orElseSucceed(() => null));
+      assert.isNull(stat);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteFile errors for non-recursive directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-delete-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "a.ts"), "a\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteFile]({
+            cwd: workspaceDir,
+            relativePath: "src",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectDeleteFileError") {
+        assert.fail("Expected a ProjectDeleteFileError");
+      }
+      const deleteError = result.failure;
+      assert.equal(
+        deleteError.message,
+        `Failed to delete workspace file 'src' in '${workspaceDir}'.`,
+      );
+      assert.equal(deleteError.cwd, workspaceDir);
+      assert.equal(deleteError.relativePath, "src");
+      assert.equal(deleteError.failure, "directory_requires_recursive");
+      assert.isDefined(deleteError.cause);
+      const stat = yield* fs.stat(path.join(workspaceDir, "src"));
+      assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc shell.openInEditor", () =>
     Effect.gen(function* () {
       let openedInput: { cwd: string; editor: EditorId } | null = null;

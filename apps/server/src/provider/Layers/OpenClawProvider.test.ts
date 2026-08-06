@@ -7,7 +7,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { OpenClawSettings } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { OpenClawRuntimeLive } from "../openclawRuntime.ts";
 import { startMockOpenClawGateway } from "../testUtils/openclawMockGateway.ts";
@@ -21,13 +20,7 @@ import {
 const decodeOpenClawSettings = Schema.decodeSync(OpenClawSettings);
 
 const openClawProviderTestLayer = NodeServices.layer.pipe(
-  Layer.provideMerge(
-    OpenClawRuntimeLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(NodeServices.layer, Layer.succeed(HostProcessPlatform, process.platform)),
-      ),
-    ),
-  ),
+  Layer.provideMerge(OpenClawRuntimeLive.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer)))),
 );
 
 /** Writes a fake `openclaw` CLI into the current scope's temp directory. */

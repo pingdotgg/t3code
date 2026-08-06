@@ -16,7 +16,7 @@
  *
  * @module provider/Layers/PiAgentSessionRuntime
  */
-import { StringDecoder } from "node:string_decoder";
+import * as NodeStringDecoder from "node:string_decoder";
 
 import {
   ApprovalRequestId,
@@ -169,7 +169,7 @@ export function makePiRecordSplitter(): {
   readonly push: (chunk: Uint8Array) => ReadonlyArray<string>;
   readonly flush: () => ReadonlyArray<string>;
 } {
-  const decoder = new StringDecoder("utf8");
+  const decoder = new NodeStringDecoder.StringDecoder("utf8");
   let remainder = "";
   const flushRecords = (): ReadonlyArray<string> => {
     if (!remainder.includes("\n")) {

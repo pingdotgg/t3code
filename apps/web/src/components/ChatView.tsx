@@ -117,11 +117,6 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import {
-  clearPlanSidebarDismissal,
-  dismissPlanSidebarForTurn,
-  isPlanSidebarDismissedForTurn,
-} from "../planSidebarDismissal";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
   selectActiveRightPanel,
@@ -145,11 +140,6 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
-import { AgentsPanel } from "./AgentsPanel";
-import {
-  deriveAgentPanelModel,
-  foldSubagentActivities,
-} from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -160,6 +150,7 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -290,6 +281,7 @@ import {
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
@@ -401,6 +393,11 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const CreateFileDialog = lazy(() =>
+  import("./files/CreateFileDialog").then((module) => ({
+    default: module.CreateFileDialog,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1314,6 +1311,8 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  // Tracks whether the user explicitly dismissed the sidebar for the active turn.
+  const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
@@ -1985,41 +1984,31 @@ function ChatViewContent(props: ChatViewProps) {
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
-        variant: updateFailed ? "error" : "default",
-        // In-flight and failed states carry their own status dot inside
-        // ServerUpdateProgress; only the idle offer needs an icon.
-        icon:
-          updateInProgress || updateFailed ? null : (
-            <span
-              className="size-1.5 rounded-full border border-muted-foreground/40"
-              aria-hidden="true"
-            />
-          ),
+        variant: updateFailed ? "error" : updateInProgress ? "default" : "warning",
+        icon: updateInProgress ? (
+          <span
+            className="size-1.5 animate-status-pulse rounded-full bg-foreground"
+            aria-hidden="true"
+          />
+        ) : (
+          <TriangleAlertIcon />
+        ),
         title:
-          updateInProgress || updateFailed ? (
-            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
-          ) : versionMismatch ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button type="button" className="cursor-help rounded-sm text-left">
-                    Server update available
-                  </button>
-                }
-              />
-              <TooltipPopup side="top">
-                {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
-                <span aria-hidden="true">→</span> {versionMismatch.clientVersion}
-              </TooltipPopup>
-            </Tooltip>
-          ) : (
-            "Server update available"
-          ),
+          updateInProgress || updateFailed
+            ? `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
+            : "Client and server versions differ",
         description:
           updateInProgress || updateFailed ? (
-            <ServerUpdateProgress state={serverUpdateState} />
-          ) : versionMismatchSelfUpdate === "desktop-managed" ? (
-            serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)
+            <ServerUpdateProgress
+              fromVersion={serverUpdateState.fromVersion}
+              state={serverUpdateState}
+            />
+          ) : versionMismatch ? (
+            <>
+              Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
+              {versionMismatch.serverVersion}.{" "}
+              {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+            </>
           ) : null,
         // The desktop-managed guidance is already the description; the action
         // slot would only repeat it.
@@ -2032,13 +2021,13 @@ function ChatViewContent(props: ChatViewProps) {
               serverLabel={versionMismatchServerLabel}
               selfUpdate={versionMismatchSelfUpdate}
               targetVersion={versionMismatch.clientVersion}
-              label={updateFailed ? "Retry" : "Update"}
+              {...(updateFailed ? { label: "Retry update" } : {})}
             />
           ),
         ...(updateInProgress || updateFailed || !versionMismatchDismissKey
           ? {}
           : {
-              dismissLabel: "Dismiss update notice",
+              dismissLabel: "Dismiss version mismatch warning",
               onDismiss: () => {
                 dismissVersionMismatch(versionMismatchDismissKey);
                 setDismissedVersionMismatchKey(versionMismatchDismissKey);
@@ -2069,18 +2058,6 @@ function ChatViewContent(props: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
-  // Native subagent fold: memoized by activity-list identity, shared by the
-  // Agents surface, live strip, and workflow cards. v2Projection is null
-  // until orchestration-v2 lands (source precedence lives in the derive).
-  // sessionLive derives interruption for agents orphaned by session death.
-  const agentSessionLive = phase !== "disconnected";
-  const agentPanelModel = useMemo(
-    () =>
-      deriveAgentPanelModel({
-        agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
-      }),
-    [agentSessionLive, threadActivities],
-  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -3122,21 +3099,18 @@ function ChatViewContent(props: ChatViewProps) {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
   const dismissPlanSidebarForCurrentTurn = useCallback(() => {
-    if (!activeThreadKey) return;
-    dismissPlanSidebarForTurn(
-      activeThreadKey,
-      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__",
-    );
-  }, [activeThreadKey, activePlan?.turnId, sidebarProposedPlan?.turnId]);
+    planSidebarDismissedForTurnRef.current =
+      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
   const togglePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     if (planSidebarOpen) {
       dismissPlanSidebarForCurrentTurn();
-    } else if (activeThreadKey) {
-      clearPlanSidebarDismissal(activeThreadKey);
+    } else {
+      planSidebarDismissedForTurnRef.current = null;
     }
     useRightPanelStore.getState().toggle(activeThreadRef, "plan");
-  }, [activeThreadKey, activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
+  }, [activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
   const closePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     setMaximizedRightPanelThreadKey(null);
@@ -3166,10 +3140,32 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
-  const addAgentsSurface = useCallback(() => {
-    if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "agents");
-  }, [activeThreadRef]);
+  const toggleFilesSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().toggle(activeThreadRef, "files");
+  }, [activeProject, activeThreadRef]);
+  const [folderRevealRequest, setFolderRevealRequest] = useState<{
+    path: string;
+    revealId: number;
+  } | null>(null);
+  const handleFolderCreated = useCallback(
+    (relativePath: string) => {
+      if (!activeThreadRef || !activeProject) return;
+      useRightPanelStore.getState().open(activeThreadRef, "files");
+      setFolderRevealRequest((request) => ({
+        path: relativePath,
+        revealId: (request?.revealId ?? 0) + 1,
+      }));
+    },
+    [activeProject, activeThreadRef],
+  );
+  const handleDeletedPath = useCallback(
+    (relativePath: string) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().closeDeletedFileSurfaces(activeThreadRef, relativePath);
+    },
+    [activeThreadRef],
+  );
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -3298,7 +3294,7 @@ function ChatViewContent(props: ChatViewProps) {
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       if (surface.kind === "plan") {
-        clearPlanSidebarDismissal(scopedThreadKey(activeThreadRef));
+        planSidebarDismissedForTurnRef.current = null;
       } else if (planSidebarOpen) {
         dismissPlanSidebarForCurrentTurn();
       }
@@ -3426,19 +3422,9 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
   }, [activeThreadRef, cleanupRightPanelSurfaces, rightPanelState.surfaces]);
   const copyRightPanelFilePath = useCallback((relativePath: string) => {
-    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
-        }),
-      );
-      return;
-    }
-
-    void navigator.clipboard.writeText(relativePath).then(
-      () => {
+    void writeTextToClipboard(relativePath, "path").then(
+      (didCopy) => {
+        if (!didCopy) return;
         toastManager.add({
           type: "success",
           title: "Path copied",
@@ -3867,10 +3853,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       if (activeThreadRef) {
-        clearPlanSidebarDismissal(scopedThreadKey(activeThreadRef));
         useRightPanelStore.getState().open(activeThreadRef, "plan");
       }
     }
+    planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
   }, [activeThread?.id]);
 
@@ -3883,9 +3869,10 @@ function ChatViewContent(props: ChatViewProps) {
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-    if (!activeThreadRef) return;
-    if (isPlanSidebarDismissedForTurn(scopedThreadKey(activeThreadRef), turnKey)) return;
-    useRightPanelStore.getState().open(activeThreadRef, "plan");
+    if (planSidebarDismissedForTurnRef.current === turnKey) return;
+    if (activeThreadRef) {
+      useRightPanelStore.getState().open(activeThreadRef, "plan");
+    }
   }, [
     activePlan,
     activeLatestTurn?.turnId,
@@ -4202,85 +4189,6 @@ function ChatViewContent(props: ChatViewProps) {
     switchGitRef,
     updateThreadMetadata,
   ]);
-  // Background work (subagent fleets, workflow runs, watch loops) can outlive
-  // the turn; once it settles, the composer stop button is gone, so this
-  // banner is the only visible stop affordance. Stop routes through the
-  // stop-everything interrupt: it kills every live background task before
-  // interrupting, and works by session, so no active turn is needed.
-  const activeBackgroundLiveness =
-    !isWorking && activeThread ? (activeThreadShell?.backgroundLiveness ?? null) : null;
-  const [isStoppingBackgroundWork, setIsStoppingBackgroundWork] = useState(false);
-  useEffect(() => {
-    // "Stopping..." holds until the liveness clears; the interrupt command
-    // returning only means the request was accepted.
-    if (activeBackgroundLiveness === null) {
-      setIsStoppingBackgroundWork(false);
-    }
-  }, [activeBackgroundLiveness]);
-  useEffect(() => {
-    // Per-thread state: switching threads while A's stop is pending must not
-    // disable B's Stop button (review finding).
-    setIsStoppingBackgroundWork(false);
-  }, [activeThreadId]);
-  const handleStopBackgroundWork = useCallback(async () => {
-    if (!activeThread) return;
-    setIsStoppingBackgroundWork(true);
-    const result = await interruptThreadTurn({
-      environmentId,
-      input: buildThreadTurnInterruptInput(activeThread),
-    });
-    if (result._tag === "Failure") {
-      // Every failure clears the pending state — an interrupted command
-      // never reached the server, so liveness would hold "Stopping..."
-      // forever. Only real failures toast.
-      setIsStoppingBackgroundWork(false);
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to stop background work.",
-        );
-      }
-    }
-  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
-  const backgroundLivenessBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    if (activeBackgroundLiveness === null || !activeThread) {
-      return null;
-    }
-    const working = activeBackgroundLiveness === "working";
-    const liveCount = agentPanelModel.liveCount;
-    return {
-      id: `background-liveness:${activeThread.id}`,
-      variant: "default",
-      icon: (
-        <span
-          className={cn("size-1.5 rounded-full bg-foreground", working && "animate-status-pulse")}
-          aria-hidden="true"
-        />
-      ),
-      title: working
-        ? liveCount > 0
-          ? `${liveCount} ${liveCount === 1 ? "agent" : "agents"} working in the background`
-          : "Background work running"
-        : "Monitoring in the background",
-      actions: (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={isStoppingBackgroundWork}
-          onClick={() => void handleStopBackgroundWork()}
-        >
-          {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
-        </Button>
-      ),
-    };
-  }, [
-    activeBackgroundLiveness,
-    activeThread,
-    agentPanelModel.liveCount,
-    handleStopBackgroundWork,
-    isStoppingBackgroundWork,
-  ]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
   // ordering is priority: system banners, then the branch-mismatch notice,
   // and the informational parked-thread banner last — it must never cover another.
@@ -4333,15 +4241,12 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    const backgroundLivenessItems =
-      backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
-      return [...systemComposerBannerItems, ...backgroundLivenessItems, ...parkedThreadItems];
+      return [...systemComposerBannerItems, ...parkedThreadItems];
     }
     return [
       ...systemComposerBannerItems,
-      ...backgroundLivenessItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
@@ -4385,7 +4290,6 @@ function ChatViewContent(props: ChatViewProps) {
     ];
   }, [
     activeBranchMismatchKey,
-    backgroundLivenessBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -4583,6 +4487,13 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "files.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFilesSurface();
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4616,6 +4527,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
+    toggleFilesSurface,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -5426,8 +5338,8 @@ function ChatViewContent(props: ChatViewProps) {
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
         if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
+          planSidebarDismissedForTurnRef.current = null;
           if (activeThreadRef) {
-            clearPlanSidebarDismissal(scopedThreadKey(activeThreadRef));
             useRightPanelStore.getState().open(activeThreadRef, "plan");
           }
         }
@@ -5882,12 +5794,6 @@ function ChatViewContent(props: ChatViewProps) {
         timestampFormat={timestampFormat}
         mode="embedded"
       />
-    ) : activeRightPanelSurface?.kind === "agents" ? (
-      <AgentsPanel
-        model={agentPanelModel}
-        environmentId={activeThreadRef?.environmentId ?? null}
-        threadId={activeThreadRef?.threadId ?? null}
-      />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -5908,6 +5814,8 @@ function ChatViewContent(props: ChatViewProps) {
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
           onOpenFile={openFileSurface}
           onPendingChange={handleFilePendingChange}
+          revealDirectoryRequest={folderRevealRequest}
+          onDeletedPath={handleDeletedPath}
         />
       </Suspense>
     ) : null
@@ -5983,8 +5891,6 @@ function ChatViewContent(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
-                agentPanelModel={agentPanelModel}
-                onOpenAgents={addAgentsSurface}
                 key={activeThread.id}
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
@@ -6321,7 +6227,6 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
-          onAddAgents={addAgentsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -6349,7 +6254,6 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
-            onAddAgents={addAgentsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
@@ -6366,6 +6270,18 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+
+      {activeProject && activeWorkspaceRoot ? (
+        <Suspense fallback={null}>
+          <CreateFileDialog
+            environmentId={activeProject.environmentId}
+            cwd={activeWorkspaceRoot}
+            projectName={activeProject.title}
+            onOpenFile={openFileSurface}
+            onFolderCreated={handleFolderCreated}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

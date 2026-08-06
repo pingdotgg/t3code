@@ -19,7 +19,7 @@
  * @module provider/testUtils/openclawMockGateway
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeHTTP from "node:http";
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
 export interface OpenClawMockGatewayOptions {
@@ -144,7 +144,7 @@ export function startMockOpenClawGateway(
 ): Promise<OpenClawMockGatewayHandle> {
   const requests: OpenClawMockGatewayHandle["requests"] = [];
   const sockets = new Set<MockSocket>();
-  const server = NodeHTTP.createServer();
+  const server = NodeHttp.createServer();
 
   server.on("upgrade", (req, socket) => {
     const key = req.headers["sec-websocket-key"];

@@ -18,7 +18,6 @@ import {
   type ProviderSessionStartInput,
   ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
 import {
@@ -41,13 +40,7 @@ const openClawAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-openclaw-adapter-test-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(
-    OpenClawRuntimeLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(NodeServices.layer, Layer.succeed(HostProcessPlatform, process.platform)),
-      ),
-    ),
-  ),
+  Layer.provideMerge(OpenClawRuntimeLive.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer)))),
 );
 
 /**

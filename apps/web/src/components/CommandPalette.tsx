@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
   CornerLeftUpIcon,
+  FilePlusIcon,
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -81,6 +82,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { openCreateFileDialog } from "./files/createFileDialogBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -1391,6 +1393,18 @@ function OpenCommandPaletteDialog(props: {
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:new-file",
+    searchTerms: ["new file", "create file", "add file", "file"],
+    title: "New file",
+    disabled: currentProjectId === null,
+    icon: <FilePlusIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openCreateFileDialog({ mode: "file" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { ServerConfig } from "../config.ts";
 import { OpenClawRuntime, OpenClawRuntimeLive } from "./openclawRuntime.ts";
 import { startMockOpenClawGateway } from "./testUtils/openclawMockGateway.ts";
@@ -39,13 +38,7 @@ const openClawRuntimeTestLayer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
   // Close the runtime's own requirements so the merged layer graph is complete.
-  Layer.provideMerge(
-    OpenClawRuntimeLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(NodeServices.layer, Layer.succeed(HostProcessPlatform, process.platform)),
-      ),
-    ),
-  ),
+  Layer.provideMerge(OpenClawRuntimeLive.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer)))),
 );
 
 const makeRuntime = () => Effect.service(OpenClawRuntime);

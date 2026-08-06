@@ -2,6 +2,7 @@ import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useTheme } from "../../hooks/useTheme";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
@@ -213,7 +214,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
       onData: echo,
       onResize: noop,
       onSelectionChange: noop,
-      onCopy: (text) => void navigator.clipboard?.writeText(text).catch(noop),
+      onCopy: (text) => void writeTextToClipboard(text, "font preview").catch(noop),
       // Tab keeps walking the settings page instead of feeding the echo loop.
       beforeKey: (event) => event.key !== "Tab",
       onLinkActivate: noop,

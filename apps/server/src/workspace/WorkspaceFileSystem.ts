@@ -10,6 +10,10 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type {
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
+  ProjectMakeDirectoryInput,
+  ProjectMakeDirectoryResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectWriteFileInput,
@@ -43,6 +47,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
       "close",
       "make-directory",
       "write-file",
+      "delete-file",
     ]),
     cause: Schema.Defect(),
   },
@@ -92,11 +97,25 @@ export class WorkspaceBinaryFileError extends Schema.TaggedErrorClass<WorkspaceB
   }
 }
 
+export class WorkspaceDirectoryRequiresRecursiveError extends Schema.TaggedErrorClass<WorkspaceDirectoryRequiresRecursiveError>()(
+  "WorkspaceDirectoryRequiresRecursiveError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace directory '${this.relativePath}' in '${this.workspaceRoot}' requires recursive deletion: ${this.resolvedPath}`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceDirectoryRequiresRecursiveError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -121,6 +140,27 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
+     * Create a directory relative to the workspace root, creating missing
+     * parents as needed. Existing directories are left untouched.
+     */
+    readonly makeDirectory: (
+      input: ProjectMakeDirectoryInput,
+    ) => Effect.Effect<
+      ProjectMakeDirectoryResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
+     * Delete a file or directory relative to the workspace root. Directories
+     * require `recursive: true`; deleting one without it fails with
+     * `WorkspaceDirectoryRequiresRecursiveError`.
+     */
+    readonly deleteFile: (
+      input: ProjectDeleteFileInput,
+    ) => Effect.Effect<
+      ProjectDeleteFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   }
@@ -297,7 +337,78 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ readFile, writeFile });
+  const makeDirectory: WorkspaceFileSystem["Service"]["makeDirectory"] = Effect.fn(
+    "WorkspaceFileSystem.makeDirectory",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+
+    yield* fileSystem.makeDirectory(target.absolutePath, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: target.absolutePath,
+            operation: "make-directory",
+            cause,
+          }),
+      ),
+    );
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
+  const deleteFile: WorkspaceFileSystem["Service"]["deleteFile"] = Effect.fn(
+    "WorkspaceFileSystem.deleteFile",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+
+    const stat = yield* fileSystem.stat(target.absolutePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: target.absolutePath,
+            operation: "stat",
+            cause,
+          }),
+      ),
+    );
+    if (stat.type === "Directory" && !input.recursive) {
+      return yield* new WorkspaceDirectoryRequiresRecursiveError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: target.absolutePath,
+      });
+    }
+
+    yield* fileSystem.remove(target.absolutePath, { recursive: input.recursive }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: target.absolutePath,
+            operation: "delete-file",
+            cause,
+          }),
+      ),
+    );
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
+  return WorkspaceFileSystem.of({ readFile, writeFile, makeDirectory, deleteFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

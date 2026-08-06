@@ -40,6 +40,8 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectMakeDirectoryError,
+  ProjectDeleteFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
@@ -250,6 +252,11 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceDirectoryRequiresRecursiveError":
+      return {
+        failure: "directory_requires_recursive",
+        resolvedPath: error.resolvedPath,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -1678,6 +1685,38 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new ProjectWriteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsMakeDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsMakeDirectory,
+            workspaceFileSystem.makeDirectory(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectMakeDirectoryError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteFile,
+            workspaceFileSystem.deleteFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectDeleteFileError({
                     cwd: input.cwd,
                     relativePath: input.relativePath,
                     ...projectFileFailureContext(cause),

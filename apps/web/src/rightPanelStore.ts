@@ -78,6 +78,8 @@ interface RightPanelStoreState {
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
   reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
+  /** Closes open `file:` surfaces whose path was deleted (or lives under a deleted folder). */
+  closeDeletedFileSurfaces: (ref: ScopedThreadRef, deletedPath: string) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
@@ -486,6 +488,32 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activeSurfaceId: activeStillExists
                 ? current.activeSurfaceId
                 : (surfaces.at(-1)?.id ?? null),
+            };
+          }),
+        })),
+      closeDeletedFileSurfaces: (ref, deletedPath) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const deletedPrefix = `${deletedPath}/`;
+            const surfaces = current.surfaces.filter(
+              (surface) =>
+                surface.kind !== "file" ||
+                (surface.relativePath !== deletedPath &&
+                  !surface.relativePath.startsWith(deletedPrefix)),
+            );
+            if (surfaces.length === current.surfaces.length) return current;
+            const activeStillExists = surfaces.some(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            const index = current.surfaces.findIndex(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            return {
+              ...current,
+              isOpen: surfaces.length > 0 && current.isOpen,
+              surfaces,
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : (fallback?.id ?? null),
             };
           }),
         })),
