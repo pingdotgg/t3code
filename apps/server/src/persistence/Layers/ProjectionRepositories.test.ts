@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import { PinnedThreadOrder, ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -96,6 +96,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedUntil: null,
         snoozedAt: null,
         pinnedAt: null,
+        pinnedOrder: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
@@ -134,7 +135,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
     }),
   );
 
-  it.effect("round-trips non-null settlement values through the thread row", () =>
+  it.effect("round-trips lifecycle and pinned-order values through the thread row", () =>
     Effect.gen(function* () {
       const threads = yield* ProjectionThreadRepository;
 
@@ -159,6 +160,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
         pinnedAt: "2026-03-25T00:00:00.000Z",
+        pinnedOrder: PinnedThreadOrder.make("3/7"),
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
@@ -178,6 +180,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(row.snoozedUntil, "2026-03-26T09:00:00.000Z");
       assert.strictEqual(row.snoozedAt, "2026-03-25T00:00:00.000Z");
       assert.strictEqual(row.pinnedAt, "2026-03-25T00:00:00.000Z");
+      assert.strictEqual(row.pinnedOrder, "3/7");
 
       // Un-settle to the keep-active pin and wake the snooze; confirm the
       // flips persist.
@@ -188,6 +191,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedUntil: null,
         snoozedAt: null,
         pinnedAt: null,
+        pinnedOrder: null,
       });
       const repersisted = yield* threads.getById({
         threadId: ThreadId.make("thread-settled"),
@@ -198,6 +202,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(updated?.snoozedUntil, null);
       assert.strictEqual(updated?.snoozedAt, null);
       assert.strictEqual(updated?.pinnedAt, null);
+      assert.strictEqual(updated?.pinnedOrder, null);
     }),
   );
 });

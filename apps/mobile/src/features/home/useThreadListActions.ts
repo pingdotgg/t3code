@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { PinnedThreadOrder } from "@t3tools/contracts";
 import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -33,6 +34,13 @@ function environmentSupportsPinning(environmentId: EnvironmentThreadShell["envir
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadPinning === true
+  );
+}
+
+function environmentSupportsPinReordering(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadPinReordering === true
   );
 }
 
@@ -211,12 +219,19 @@ export function useThreadListActions(): {
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly reorderPinnedThread: (
+    thread: EnvironmentThreadShell,
+    pinnedOrder: PinnedThreadOrder,
+  ) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
+  const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPinned, {
+    reportFailure: false,
+  });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
 
   const archiveThread = useCallback(
@@ -377,6 +392,34 @@ export function useThreadListActions(): {
     },
     [unpinMutation],
   );
+  const reorderPinnedThread = useCallback(
+    async (thread: EnvironmentThreadShell, pinnedOrder: PinnedThreadOrder) => {
+      if (!environmentSupportsPinReordering(thread.environmentId)) {
+        Alert.alert(
+          "Could not reorder pinned thread",
+          "This environment's server does not support pinned ordering yet. Update the server to reorder pins.",
+        );
+        return false;
+      }
+      selectionHaptic();
+      const result = await reorderPinnedMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, pinnedOrder },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not reorder pinned thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The pinned thread could not be reordered.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [reorderPinnedMutation],
+  );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
@@ -389,6 +432,7 @@ export function useThreadListActions(): {
     unsettleThread,
     pinThread,
     unpinThread,
+    reorderPinnedThread,
   };
 }
 

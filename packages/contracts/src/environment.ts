@@ -50,6 +50,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.pin.reorder and persists a synced pinned
+      position. Kept separate from threadPinning so newer clients never send
+      the command to older pinning-capable servers. */
+  threadPinReordering: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

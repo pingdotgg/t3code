@@ -2,6 +2,7 @@ import {
   CommandId,
   EventId,
   ProjectId,
+  PinnedThreadOrder,
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
@@ -64,14 +65,29 @@ it.effect("projects pin lifecycle events", () =>
     );
     expect(pinned.threads[0]?.pinnedAt).toBe(now);
 
-    const unpinned = yield* projectEvent(
+    const reordered = yield* projectEvent(
       pinned,
       makeEvent({
         sequence: 3,
+        type: "thread.pin-reordered",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          pinnedOrder: PinnedThreadOrder.make("3/7"),
+          updatedAt: now,
+        },
+      }),
+    );
+    expect(reordered.threads[0]?.pinnedOrder).toBe("3/7");
+
+    const unpinned = yield* projectEvent(
+      reordered,
+      makeEvent({
+        sequence: 4,
         type: "thread.unpinned",
         payload: { threadId: ThreadId.make("thread-1"), updatedAt: now },
       }),
     );
     expect(unpinned.threads[0]?.pinnedAt).toBeNull();
+    expect(unpinned.threads[0]?.pinnedOrder).toBeNull();
   }),
 );

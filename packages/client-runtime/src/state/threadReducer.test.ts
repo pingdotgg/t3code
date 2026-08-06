@@ -254,6 +254,43 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("sets and clears pinnedOrder", () => {
+      const reordered = applyThreadDetailEvent(
+        { ...baseThread, pinnedAt: "2026-04-01T05:00:00.000Z" },
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T06:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.pin-reordered",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            pinnedOrder: "3/7" as never,
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+        },
+      );
+      expect(reordered.kind).toBe("updated");
+      if (reordered.kind !== "updated") return;
+      expect(reordered.thread.pinnedOrder).toBe("3/7");
+
+      const unpinned = applyThreadDetailEvent(reordered.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.unpinned",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+      expect(unpinned.kind).toBe("updated");
+      if (unpinned.kind === "updated") expect(unpinned.thread.pinnedOrder).toBeNull();
+    });
+
     it("clears pinnedAt", () => {
       const pinnedThread: OrchestrationThread = {
         ...baseThread,

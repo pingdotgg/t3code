@@ -5,6 +5,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  PinnedThreadOrder,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -309,6 +310,32 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-settled", "active"]);
     expect(layout.items.map((item) => item.pinned)).toEqual([true, false]);
     expect(layout.settledCount).toBe(0);
+  });
+
+  it("renders pinned threads in their synced order", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("first-created"),
+          title: "First created",
+          createdAt: "2026-06-01T12:00:00.000Z",
+          pinnedAt: NOW,
+          pinnedOrder: PinnedThreadOrder.make("2/1"),
+        }),
+        makeThread({
+          id: ThreadId.make("second-created"),
+          title: "Second created",
+          createdAt: "2026-06-01T11:00:00.000Z",
+          pinnedAt: NOW,
+          pinnedOrder: PinnedThreadOrder.make("1/1"),
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["second-created", "first-created"]);
   });
 
   it("snooze hides a pinned thread and wake restores it to the pinned block", () => {

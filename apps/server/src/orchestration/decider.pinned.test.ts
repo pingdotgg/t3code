@@ -1,6 +1,7 @@
 import {
   CommandId,
   ProjectId,
+  PinnedThreadOrder,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationReadModel,
@@ -16,6 +17,7 @@ const PINNED_AT = "1969-12-30T00:00:00.000Z";
 
 function makeReadModel(input: {
   readonly pinnedAt?: string | null;
+  readonly pinnedOrder?: PinnedThreadOrder | null;
   readonly archivedAt?: string | null;
   readonly settledOverride?: "settled" | "active" | null;
   readonly settledAt?: string | null;
@@ -44,6 +46,7 @@ function makeReadModel(input: {
         snoozedUntil: input.snoozedUntil ?? null,
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? PINNED_AT : null),
         pinnedAt: input.pinnedAt ?? null,
+        pinnedOrder: input.pinnedOrder ?? null,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
@@ -128,6 +131,42 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
       if (events[0]?.type === "thread.unpinned") {
         expect(events[0].payload.updatedAt).toBe(NOW);
       }
+    }),
+  );
+
+  it.effect("reorders a pinned thread with a synced rational position", () =>
+    Effect.gen(function* () {
+      const pinnedOrder = PinnedThreadOrder.make("3/7");
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin.reorder",
+          commandId: CommandId.make("cmd-reorder-pin"),
+          threadId: ThreadId.make("thread-1"),
+          pinnedOrder,
+        },
+        readModel: makeReadModel({ pinnedAt: PINNED_AT }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe("thread.pin-reordered");
+      if (events[0]?.type === "thread.pin-reordered") {
+        expect(events[0].payload.pinnedOrder).toBe(pinnedOrder);
+      }
+    }),
+  );
+
+  it.effect("rejects reordering an unpinned thread", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin.reorder",
+          commandId: CommandId.make("cmd-reorder-unpinned"),
+          threadId: ThreadId.make("thread-1"),
+          pinnedOrder: PinnedThreadOrder.make("3/7"),
+        },
+        readModel: makeReadModel({}),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
 

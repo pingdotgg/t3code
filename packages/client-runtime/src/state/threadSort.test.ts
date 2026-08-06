@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sortThreads, type ThreadSortInput } from "./threadSort.ts";
+import {
+  pinnedThreadOrderForMove,
+  sortPinnedThreads,
+  sortThreads,
+  type ThreadSortInput,
+} from "./threadSort.ts";
 
 type TestThread = { readonly id: string } & ThreadSortInput;
 
@@ -67,5 +72,52 @@ describe("sortThreads", () => {
     );
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+});
+
+describe("pinned thread ordering", () => {
+  const pinned = [
+    { id: "newest", createdAt: "2026-03-09T12:00:00.000Z" },
+    { id: "middle", createdAt: "2026-03-09T11:00:00.000Z" },
+    { id: "oldest", createdAt: "2026-03-09T10:00:00.000Z" },
+  ] as const;
+
+  it("keeps creation order until a synced order is assigned", () => {
+    expect(sortPinnedThreads(pinned.toReversed()).map((thread) => thread.id)).toEqual([
+      "newest",
+      "middle",
+      "oldest",
+    ]);
+  });
+
+  it("moves one thread between neighbors without changing sibling values", () => {
+    const order = pinnedThreadOrderForMove(pinned, "oldest", "middle");
+    expect(order).not.toBeNull();
+    expect(
+      sortPinnedThreads(
+        pinned.map((thread) =>
+          thread.id === "oldest" ? { ...thread, pinnedOrder: order } : thread,
+        ),
+      ).map((thread) => thread.id),
+    ).toEqual(["newest", "oldest", "middle"]);
+  });
+
+  it("can move to both list boundaries", () => {
+    const topOrder = pinnedThreadOrderForMove(pinned, "oldest", "newest");
+    const bottomOrder = pinnedThreadOrderForMove(pinned, "newest", "oldest");
+    expect(
+      sortPinnedThreads(
+        pinned.map((thread) =>
+          thread.id === "oldest" ? { ...thread, pinnedOrder: topOrder } : thread,
+        ),
+      ).map((thread) => thread.id),
+    ).toEqual(["oldest", "newest", "middle"]);
+    expect(
+      sortPinnedThreads(
+        pinned.map((thread) =>
+          thread.id === "newest" ? { ...thread, pinnedOrder: bottomOrder } : thread,
+        ),
+      ).map((thread) => thread.id),
+    ).toEqual(["middle", "oldest", "newest"]);
   });
 });

@@ -127,6 +127,19 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+
+/**
+ * A positive rational used as a stable, environment-independent position in
+ * the global pinned-thread list. Clients compare values by cross-multiplying
+ * the numerator and denominator, and can always create another value between
+ * two existing positions without renumbering sibling threads.
+ */
+export const PinnedThreadOrder = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(513),
+  Schema.isPattern(/^[1-9]\d{0,255}\/[1-9]\d{0,255}$/),
+).pipe(Schema.brand("PinnedThreadOrder"));
+export type PinnedThreadOrder = typeof PinnedThreadOrder.Type;
+
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -379,6 +392,8 @@ export const OrchestrationThread = Schema.Struct({
   // thread renders in the pinned block and never classifies into a shelf.
   // Optional so payloads from pre-pinning servers still decode.
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Optional so pre-reordering servers and clients continue to interoperate.
+  pinnedOrder: Schema.optional(Schema.NullOr(PinnedThreadOrder)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -434,6 +449,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  pinnedOrder: Schema.optional(Schema.NullOr(PinnedThreadOrder)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
@@ -710,6 +726,13 @@ const ThreadUnpinCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+const ThreadPinReorderCommand = Schema.Struct({
+  type: Schema.Literal("thread.pin.reorder"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  pinnedOrder: PinnedThreadOrder,
+});
+
 const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
@@ -865,6 +888,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUnsnoozeCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
+  ThreadPinReorderCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -892,6 +916,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUnsnoozeCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
+  ThreadPinReorderCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -1009,6 +1034,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unsnoozed",
   "thread.pinned",
   "thread.unpinned",
+  "thread.pin-reordered",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
@@ -1125,6 +1151,12 @@ export const ThreadPinnedPayload = Schema.Struct({
 
 export const ThreadUnpinnedPayload = Schema.Struct({
   threadId: ThreadId,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadPinReorderedPayload = Schema.Struct({
+  threadId: ThreadId,
+  pinnedOrder: PinnedThreadOrder,
   updatedAt: IsoDateTime,
 });
 
@@ -1331,6 +1363,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unpinned"),
     payload: ThreadUnpinnedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.pin-reordered"),
+    payload: ThreadPinReorderedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

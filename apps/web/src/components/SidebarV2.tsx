@@ -1,4 +1,21 @@
 import { autoAnimate } from "@formkit/auto-animate";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canSnooze,
@@ -12,7 +29,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  PinnedThreadOrder,
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -27,6 +48,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  GripVerticalIcon,
   EllipsisIcon,
   MessageSquareIcon,
   PinIcon,
@@ -122,9 +144,11 @@ import {
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
+  sortPinnedThreads,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
+import { pinnedThreadOrderForMove } from "../lib/threadSort";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -389,6 +413,26 @@ function SnoozePopoverButton(props: {
   );
 }
 
+function PinnedThreadDndContext(props: {
+  readonly items: string[];
+  readonly sensors: ReturnType<typeof useSensors>;
+  readonly onDragEnd: (event: DragEndEvent) => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <DndContext
+      sensors={props.sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+      onDragEnd={props.onDragEnd}
+    >
+      <SortableContext items={props.items} strategy={verticalListSortingStrategy}>
+        {props.children}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
 const SidebarV2Row = memo(function SidebarV2Row(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -405,6 +449,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // card until wake with the pin intact underneath. Pin/unpin themselves
   // live in the context menu only.
   isPinned: boolean;
+  pinReorderingSupported: boolean;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
   // When a snooze ended (timer or early wake); drives the Woke pill until
@@ -459,6 +504,23 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const {
+    attributes: sortableAttributes,
+    listeners: sortableListeners,
+    setNodeRef: setSortableNodeRef,
+    transform: sortableTransform,
+    transition: sortableTransition,
+    isDragging,
+  } = useSortable({
+    id: threadKey,
+    disabled: !props.isPinned || !props.pinReorderingSupported,
+  });
+  const sortableStyle = {
+    transform: CSS.Transform.toString(sortableTransform),
+    transition: sortableTransition,
+    zIndex: isDragging ? 20 : undefined,
+    opacity: isDragging ? 0.82 : undefined,
+  };
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -829,6 +891,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   if (variant === "slim") {
     return (
       <li
+        ref={setSortableNodeRef}
+        style={sortableStyle}
         data-thread-item
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
@@ -961,6 +1025,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
 
   return (
     <li
+      ref={setSortableNodeRef}
+      style={sortableStyle}
       data-thread-item
       className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]"
     >
@@ -1000,11 +1066,25 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 <span className="flex-1" />
               )}
               {props.isPinned ? (
-                <PinIcon
-                  aria-label="Pinned"
-                  role="img"
-                  className="size-3 shrink-0 text-muted-foreground/65"
-                />
+                props.pinReorderingSupported ? (
+                  <button
+                    type="button"
+                    aria-label="Reorder pinned thread"
+                    title="Drag to reorder"
+                    className="-m-1 inline-flex cursor-grab touch-none items-center rounded p-1 text-muted-foreground/65 hover:text-foreground active:cursor-grabbing"
+                    onClick={(event) => event.stopPropagation()}
+                    {...sortableAttributes}
+                    {...sortableListeners}
+                  >
+                    <GripVerticalIcon aria-hidden className="size-3.5" />
+                  </button>
+                ) : (
+                  <PinIcon
+                    aria-label="Pinned"
+                    role="img"
+                    className="size-3 shrink-0 text-muted-foreground/65"
+                  />
+                )
               ) : null}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
@@ -1290,6 +1370,7 @@ export default function SidebarV2() {
     unsnoozeThread,
     pinThread,
     unpinThread,
+    reorderPinnedThread,
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -1675,6 +1756,27 @@ export default function SidebarV2() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const [pendingPinnedOrderByKey, setPendingPinnedOrderByKey] = useState<
+    ReadonlyMap<string, PinnedThreadOrder>
+  >(() => new Map());
+  useEffect(() => {
+    const threadByKey = new Map(
+      threads.map(
+        (thread) =>
+          [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+      ),
+    );
+    setPendingPinnedOrderByKey((current) => {
+      let next: Map<string, PinnedThreadOrder> | null = null;
+      for (const [threadKey, order] of current) {
+        const thread = threadByKey.get(threadKey);
+        if (thread && thread.pinnedAt != null && thread.pinnedOrder !== order) continue;
+        next ??= new Map(current);
+        next.delete(threadKey);
+      }
+      return next ?? current;
+    });
+  }, [threads]);
   const { pinnedThreads, activeThreads, snoozedThreads, settledThreads, snoozeNow } =
     useMemo(() => {
       const now = `${nowMinute}:00.000Z`;
@@ -1707,9 +1809,9 @@ export default function SidebarV2() {
         const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
         // Snooze outranks everything, including a pin: "hide until Tuesday"
-        // temporarily suspends "keep on top". The pin survives underneath —
-        // pinned cards are creation-ordered, so on wake the thread reappears
-        // at its original spot in the pinned block. (For unpinned threads
+        // temporarily suspends "keep on top". The pin and its synced order
+        // survive underneath, so on wake the thread reappears at its original
+        // spot in the pinned block. (For unpinned threads
         // this is also the snooze-beats-auto-settle rule: the wake time is a
         // stronger statement about when the thread matters again.)
         if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
@@ -1719,7 +1821,12 @@ export default function SidebarV2() {
           // pin and the pin on settle, so pin-vs-settled conflicts only
           // arise from stale or raced writes.)
         } else if (thread.pinnedAt != null) {
-          pinned.push(thread);
+          const pendingPinnedOrder = pendingPinnedOrderByKey.get(threadKey);
+          pinned.push(
+            pendingPinnedOrder === undefined
+              ? thread
+              : { ...thread, pinnedOrder: pendingPinnedOrder },
+          );
         } else if (
           supportsSettlement &&
           effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
@@ -1730,9 +1837,9 @@ export default function SidebarV2() {
         }
       }
       return {
-        // Same static creation order as the inbox: a pin freezes prominence,
-        // it does not introduce a new ordering scheme.
-        pinnedThreads: sortThreadsForSidebarV2(pinned),
+        // Synced manual order with creation order as the compatibility
+        // fallback for pins written by older clients.
+        pinnedThreads: sortPinnedThreads(pinned),
         activeThreads: sortThreadsForSidebarV2(active),
         // Soonest wake first: "what comes back next" is the shelf's question.
         snoozedThreads: snoozed.toSorted(
@@ -1747,11 +1854,75 @@ export default function SidebarV2() {
       autoSettleAfterDays,
       changeRequestStateByKey,
       nowMinute,
+      pendingPinnedOrderByKey,
       scopedProjectKeys,
       serverConfigs,
       snoozeWakeTick,
       threads,
     ]);
+
+  const pinnedThreadDnDSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const movePinnedThread = useCallback(
+    (thread: EnvironmentThreadShell, overThread: EnvironmentThreadShell) => {
+      const nextOrder = pinnedThreadOrderForMove(
+        pinnedThreads,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        scopedThreadKey(scopeThreadRef(overThread.environmentId, overThread.id)),
+      );
+      if (nextOrder === null) return;
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      setPendingPinnedOrderByKey((current) => new Map(current).set(threadKey, nextOrder));
+      void (async () => {
+        const result = await reorderPinnedThread(
+          scopeThreadRef(thread.environmentId, thread.id),
+          nextOrder,
+        );
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to reorder pinned thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        if (result._tag === "Failure") {
+          setPendingPinnedOrderByKey((current) => {
+            if (current.get(threadKey) !== nextOrder) return current;
+            const next = new Map(current);
+            next.delete(threadKey);
+            return next;
+          });
+        }
+      })();
+    },
+    [pinnedThreads, reorderPinnedThread],
+  );
+  const handlePinnedThreadDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const overId = event.over?.id;
+      if (overId == null || event.active.id === overId) return;
+      const activeId = String(event.active.id);
+      const thread = pinnedThreads.find(
+        (candidate) =>
+          scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id)) === activeId,
+      );
+      const overThread = pinnedThreads.find(
+        (candidate) =>
+          scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id)) === String(overId),
+      );
+      if (thread && overThread) movePinnedThread(thread, overThread);
+    },
+    [movePinnedThread, pinnedThreads],
+  );
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2528,6 +2699,9 @@ export default function SidebarV2() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
         const supportsPinning =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinning === true;
+        const supportsPinReordering =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinReordering ===
+          true;
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
@@ -2535,6 +2709,12 @@ export default function SidebarV2() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
+        const pinnedIndex = isPinned
+          ? pinnedThreads.findIndex(
+              (candidate) =>
+                candidate.environmentId === thread.environmentId && candidate.id === thread.id,
+            )
+          : -1;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
@@ -2553,6 +2733,20 @@ export default function SidebarV2() {
                     isPinned
                       ? { id: "unpin", label: "Unpin thread" }
                       : { id: "pin", label: "Pin thread" },
+                  ]
+                : []),
+              ...(isPinned && supportsPinReordering
+                ? [
+                    {
+                      id: "move-pin-up",
+                      label: "Move pinned thread up",
+                      disabled: pinnedIndex <= 0,
+                    },
+                    {
+                      id: "move-pin-down",
+                      label: "Move pinned thread down",
+                      disabled: pinnedIndex < 0 || pinnedIndex >= pinnedThreads.length - 1,
+                    },
                   ]
                 : []),
               // Both lifecycle actions stay available on pinned threads:
@@ -2645,6 +2839,16 @@ export default function SidebarV2() {
           case "unpin":
             attemptUnpin(threadRef);
             return;
+          case "move-pin-up": {
+            const target = pinnedThreads[pinnedIndex - 1];
+            if (target) movePinnedThread(thread, target);
+            return;
+          }
+          case "move-pin-down": {
+            const target = pinnedThreads[pinnedIndex + 1];
+            if (target) movePinnedThread(thread, target);
+            return;
+          }
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
@@ -2731,6 +2935,8 @@ export default function SidebarV2() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      movePinnedThread,
+      pinnedThreads,
       projectCwdByKey,
       serverConfigs,
       startThreadRename,
@@ -3121,6 +3327,11 @@ export default function SidebarV2() {
                             .threadSnooze === true
                         }
                         isPinned={section === "pinned"}
+                        pinReorderingSupported={
+                          section === "pinned" &&
+                          serverConfigs.get(thread.environmentId)?.environment.capabilities
+                            .threadPinReordering === true
+                        }
                         snoozeWakeLabelText={
                           section === "snoozed" && thread.snoozedUntil != null
                             ? snoozeWakeLabel(thread.snoozedUntil, {
@@ -3168,9 +3379,18 @@ export default function SidebarV2() {
                   // Pinned block: full cards above the inbox, closed by a
                   // thin divider (the pin glyphs carry the meaning, so no
                   // header text). Vanishes entirely at count 0.
-                  const items: ReactNode[] = pinnedThreads.map((thread) =>
-                    renderThreadRow(thread, "pinned"),
-                  );
+                  const items: ReactNode[] = [
+                    <PinnedThreadDndContext
+                      key="pinned-dnd-context"
+                      items={pinnedThreads.map((thread) =>
+                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                      )}
+                      sensors={pinnedThreadDnDSensors}
+                      onDragEnd={handlePinnedThreadDragEnd}
+                    >
+                      {pinnedThreads.map((thread) => renderThreadRow(thread, "pinned"))}
+                    </PinnedThreadDndContext>,
+                  ];
                   if (pinnedThreads.length > 0) {
                     items.push(
                       <li

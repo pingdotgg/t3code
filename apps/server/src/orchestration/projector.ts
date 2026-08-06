@@ -24,6 +24,7 @@ import {
   ThreadRuntimeModeSetPayload,
   ThreadSettledPayload,
   ThreadPinnedPayload,
+  ThreadPinReorderedPayload,
   ThreadSnoozedPayload,
   ThreadUnpinnedPayload,
   ThreadUnarchivedPayload,
@@ -402,6 +403,7 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             pinnedAt: payload.pinnedAt,
+            pinnedOrder: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -413,6 +415,18 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             pinnedAt: null,
+            pinnedOrder: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.pin-reordered":
+      return decodeForEvent(ThreadPinReorderedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            pinnedOrder: payload.pinnedOrder,
             updatedAt: payload.updatedAt,
           }),
         })),

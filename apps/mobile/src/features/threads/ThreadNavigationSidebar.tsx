@@ -7,6 +7,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import { pinnedThreadOrderForMove } from "@t3tools/client-runtime/state/thread-sort";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -207,6 +208,7 @@ function ThreadNavigationSidebarPane(
     unsettleThread,
     pinThread,
     unpinThread,
+    reorderPinnedThread,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
@@ -492,6 +494,15 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const pinReorderingEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadPinReordering === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -536,6 +547,27 @@ function ThreadNavigationSidebarPane(
     threads,
     selectedProjectScope,
   ]);
+  const orderedPinnedThreads = useMemo(
+    () => threadListV2Layout.items.filter((item) => item.pinned).map((item) => item.thread),
+    [threadListV2Layout.items],
+  );
+  const movePinnedThread = useCallback(
+    (thread: EnvironmentThreadShell, direction: "up" | "down") => {
+      const index = orderedPinnedThreads.findIndex(
+        (candidate) =>
+          candidate.environmentId === thread.environmentId && candidate.id === thread.id,
+      );
+      const target = orderedPinnedThreads[index + (direction === "up" ? -1 : 1)];
+      if (index < 0 || !target) return;
+      const order = pinnedThreadOrderForMove(
+        orderedPinnedThreads,
+        scopedThreadKey(thread.environmentId, thread.id),
+        scopedThreadKey(target.environmentId, target.id),
+      );
+      if (order !== null) void reorderPinnedThread(thread, order);
+    },
+    [orderedPinnedThreads, reorderPinnedThread],
+  );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -886,6 +918,12 @@ function ThreadNavigationSidebarPane(
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
+          const pinnedIndex = item.item.pinned
+            ? orderedPinnedThreads.findIndex(
+                (candidate) =>
+                  candidate.environmentId === thread.environmentId && candidate.id === thread.id,
+              )
+            : -1;
           return (
             <ThreadListV2Row
               thread={thread}
@@ -929,11 +967,15 @@ function ThreadNavigationSidebarPane(
               onSettleThread={settleThread}
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+              pinReorderingSupported={pinReorderingEnvironmentIds.has(thread.environmentId)}
+              canMovePinnedUp={pinnedIndex > 0}
+              canMovePinnedDown={pinnedIndex >= 0 && pinnedIndex < orderedPinnedThreads.length - 1}
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
+              onMovePinnedThread={movePinnedThread}
               onChangeRequestState={handleChangeRequestState}
               projectCwd={projectCwdByKey.get(scopeKey) ?? null}
               onSwipeableClose={handleSwipeableClose}
@@ -1063,6 +1105,9 @@ function ThreadNavigationSidebarPane(
       openPendingTask,
       pinThread,
       pinningEnvironmentIds,
+      pinReorderingEnvironmentIds,
+      movePinnedThread,
+      orderedPinnedThreads,
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey,

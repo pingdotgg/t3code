@@ -6,7 +6,12 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSettle, canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type PinnedThreadOrder,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -23,6 +28,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
+  readEnvironmentSupportsPinReordering,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentThreadRefs,
@@ -130,6 +136,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unpinThreadMutation = useAtomCommand(threadEnvironment.unpin, {
+    reportFailure: false,
+  });
+  const reorderPinnedThreadMutation = useAtomCommand(threadEnvironment.reorderPinned, {
     reportFailure: false,
   });
   const snoozeThreadMutation = useAtomCommand(threadEnvironment.snooze, {
@@ -546,6 +555,26 @@ export function useThreadActions() {
     [unpinThreadMutation],
   );
 
+  const reorderPinnedThread = useCallback(
+    async (target: ScopedThreadRef, pinnedOrder: PinnedThreadOrder) => {
+      if (!readEnvironmentSupportsPinReordering(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadPinningUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return reorderPinnedThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, pinnedOrder },
+      });
+    },
+    [reorderPinnedThreadMutation],
+  );
+
   const snoozeThread = useCallback(
     async (target: ScopedThreadRef, snoozedUntil: string) => {
       // Version skew: never send the command to a server that predates it.
@@ -641,12 +670,14 @@ export function useThreadActions() {
       unsnoozeThread,
       pinThread,
       unpinThread,
+      reorderPinnedThread,
     }),
     [
       archiveThread,
       confirmAndDeleteThread,
       deleteThread,
       pinThread,
+      reorderPinnedThread,
       settleThread,
       snoozeThread,
       unarchiveThread,

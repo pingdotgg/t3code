@@ -11,8 +11,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import { pinnedThreadOrderForMove } from "@t3tools/client-runtime/state/thread-sort";
 import type {
   EnvironmentId,
+  PinnedThreadOrder,
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
@@ -28,7 +30,7 @@ import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { scopedProjectKey } from "../../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
@@ -113,6 +115,10 @@ interface HomeScreenProps {
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onReorderPinnedThread: (
+    thread: EnvironmentThreadShell,
+    pinnedOrder: PinnedThreadOrder,
+  ) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
@@ -598,6 +604,15 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const pinReorderingEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadPinReordering === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -643,6 +658,27 @@ export function HomeScreen(props: HomeScreenProps) {
     threadListV2Enabled,
     v2ScopedProjectGroup,
   ]);
+  const orderedPinnedThreads = useMemo(
+    () => threadListV2Layout.items.filter((item) => item.pinned).map((item) => item.thread),
+    [threadListV2Layout.items],
+  );
+  const handleMovePinnedThread = useCallback(
+    (thread: EnvironmentThreadShell, direction: "up" | "down") => {
+      const index = orderedPinnedThreads.findIndex(
+        (candidate) =>
+          candidate.environmentId === thread.environmentId && candidate.id === thread.id,
+      );
+      const target = orderedPinnedThreads[index + (direction === "up" ? -1 : 1)];
+      if (index < 0 || !target) return;
+      const order = pinnedThreadOrderForMove(
+        orderedPinnedThreads,
+        scopedThreadKey(thread.environmentId, thread.id),
+        scopedThreadKey(target.environmentId, target.id),
+      );
+      if (order !== null) void props.onReorderPinnedThread(thread, order);
+    },
+    [orderedPinnedThreads, props.onReorderPinnedThread],
+  );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -741,6 +777,12 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
+      const pinnedIndex = item.item.pinned
+        ? orderedPinnedThreads.findIndex(
+            (candidate) =>
+              candidate.environmentId === thread.environmentId && candidate.id === thread.id,
+          )
+        : -1;
       return (
         <ThreadListV2Row
           thread={thread}
@@ -784,11 +826,15 @@ export function HomeScreen(props: HomeScreenProps) {
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+          pinReorderingSupported={pinReorderingEnvironmentIds.has(thread.environmentId)}
+          canMovePinnedUp={pinnedIndex > 0}
+          canMovePinnedDown={pinnedIndex >= 0 && pinnedIndex < orderedPinnedThreads.length - 1}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
           onPinThread={handlePinThread}
           onUnpinThread={handleUnpinThread}
+          onMovePinnedThread={handleMovePinnedThread}
           onChangeRequestState={handleChangeRequestState}
           projectCwd={
             projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
@@ -802,6 +848,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleChangeRequestState,
       handleDeleteThread,
       handlePinThread,
+      handleMovePinnedThread,
       handleSettleThread,
       handleSnoozeThread,
       handleUnpinThread,
@@ -810,6 +857,8 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableWillOpen,
       handleUnsettleThread,
       pinningEnvironmentIds,
+      pinReorderingEnvironmentIds,
+      orderedPinnedThreads,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,

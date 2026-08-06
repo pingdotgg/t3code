@@ -318,6 +318,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: null,
+          pinnedOrder: null,
           titleRegeneration: null,
           deletedAt: null,
           messages: [
@@ -434,6 +435,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: null,
+          pinnedOrder: null,
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),

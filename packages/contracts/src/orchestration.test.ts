@@ -116,6 +116,30 @@ it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
   }),
 );
 
+it.effect("validates pinned thread reorder positions at the command boundary", () =>
+  Effect.gen(function* () {
+    const valid = yield* decodeOrchestrationCommand({
+      type: "thread.pin.reorder",
+      commandId: "command-reorder-pin",
+      threadId: "thread-1",
+      pinnedOrder: "3/7",
+    });
+    assert.strictEqual(valid.type, "thread.pin.reorder");
+
+    for (const pinnedOrder of ["0/1", "1/0", "1", "1.5/2"]) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationCommand({
+          type: "thread.pin.reorder",
+          commandId: "command-reorder-pin",
+          threadId: "thread-1",
+          pinnedOrder,
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }
+  }),
+);
+
 it.effect("trims branded ids and command string fields at decode boundaries", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreateCommand({

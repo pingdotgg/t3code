@@ -4,6 +4,7 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import {
   getThreadSortTimestamp,
   sortThreads,
+  sortPinnedThreads,
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
@@ -509,6 +510,8 @@ export function sortThreadsForSidebarV2<
       left.id.localeCompare(right.id),
   );
 }
+
+export { sortPinnedThreads };
 
 /**
  * Search the already-ordered sidebar thread collection by title only.

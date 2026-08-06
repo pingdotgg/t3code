@@ -347,6 +347,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
+  readonly onMovePinnedThread: (thread: EnvironmentThreadShell, direction: "up" | "down") => void;
   /** False on environments whose server predates thread.settle/unsettle:
       swipe + menu fall back to Archive instead of failing on use. */
   readonly settlementSupported: boolean;
@@ -354,6 +355,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozeSupported: boolean;
   /** False on servers that predate thread.pin/unpin. */
   readonly pinningSupported: boolean;
+  readonly pinReorderingSupported: boolean;
+  readonly canMovePinnedUp: boolean;
+  readonly canMovePinnedDown: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   /** Reports this row's live PR state up so the partition can auto-settle
@@ -382,6 +386,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onArchiveThread,
     onPinThread,
     onUnpinThread,
+    onMovePinnedThread,
     onChangeRequestState,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -416,6 +421,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
   const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
   const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
+  const handleMovePinnedUp = useCallback(
+    () => onMovePinnedThread(thread, "up"),
+    [onMovePinnedThread, thread],
+  );
+  const handleMovePinnedDown = useCallback(
+    () => onMovePinnedThread(thread, "down"),
+    [onMovePinnedThread, thread],
+  );
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
@@ -459,12 +472,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () =>
       props.pinningSupported
         ? [
+            ...(pinnedRow && props.pinReorderingSupported
+              ? [
+                  {
+                    id: "move-pin-up",
+                    title: "Move up",
+                    image: "arrow.up",
+                    attributes: { disabled: !props.canMovePinnedUp },
+                  } as MenuAction,
+                  {
+                    id: "move-pin-down",
+                    title: "Move down",
+                    image: "arrow.down",
+                    attributes: { disabled: !props.canMovePinnedDown },
+                  } as MenuAction,
+                ]
+              : []),
             pinnedRow
               ? { id: "unpin", title: "Unpin", image: "pin.slash" }
               : { id: "pin", title: "Pin", image: "pin" },
           ]
         : [],
-    [pinnedRow, props.pinningSupported],
+    [
+      pinnedRow,
+      props.canMovePinnedDown,
+      props.canMovePinnedUp,
+      props.pinReorderingSupported,
+      props.pinningSupported,
+    ],
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -491,6 +526,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
+      if (nativeEvent.event === "move-pin-up") handleMovePinnedUp();
+      if (nativeEvent.event === "move-pin-down") handleMovePinnedDown();
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
       const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
@@ -508,6 +545,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleArchive,
       handleDelete,
       handlePin,
+      handleMovePinnedDown,
+      handleMovePinnedUp,
       handleSettle,
       handleSnooze,
       handleUnpin,
