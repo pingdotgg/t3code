@@ -112,6 +112,7 @@ private final class StreamingMarkdownRenderer {
     private var pending: MarkdownContentRevision?
     private var deliver: ((MarkdownRenderedDocument) -> Void)?
     private var renderTask: Task<Void, Never>?
+    private var generation = 0
     private var lastRenderAt: Date?
 
     func submit(
@@ -121,8 +122,10 @@ private final class StreamingMarkdownRenderer {
         pending = revision
         self.deliver = deliver
         guard renderTask == nil else { return }
+        generation += 1
+        let generation = generation
         renderTask = Task { [weak self] in
-            await self?.drain()
+            await self?.drain(generation: generation)
         }
     }
 
@@ -133,9 +136,14 @@ private final class StreamingMarkdownRenderer {
         deliver = nil
     }
 
-    private func drain() async {
-        defer { renderTask = nil }
-        while let revision = pending {
+    private func drain(generation: Int) async {
+        // A cancelled drain can unwind after a replacement was already
+        // started; only the current generation may clear the shared slot or
+        // deliver, so two drains can never race or regress the document.
+        defer {
+            if self.generation == generation { renderTask = nil }
+        }
+        while self.generation == generation, let revision = pending {
             pending = nil
             if let lastRenderAt {
                 let elapsed = Duration.seconds(-lastRenderAt.timeIntervalSinceNow)
@@ -151,7 +159,7 @@ private final class StreamingMarkdownRenderer {
                 for: target,
                 isIntermediate: true
             ) else { continue }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.generation == generation else { return }
             lastRenderAt = .now
             deliver?(document)
         }
