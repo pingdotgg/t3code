@@ -990,12 +990,16 @@ export const makeCodexSessionRuntime = (
             return false;
           }
           // Merge with any subAgentActivity registration that got here
-          // first: its spawnTurnId was captured during the live parent turn
-          // and must not be clobbered with the (possibly settled → undefined)
-          // current activeTurnId (review finding).
+          // first. spawnTurnId is REGISTRATION-time-only on both paths: for
+          // an already-known child we keep its value (set or unset) — a
+          // later thread/started during an unrelated parent turn must not
+          // backfill that turn as the spawn batch, which would stamp an old
+          // child onto a new fleet's CTA (review finding). Only a genuinely
+          // new registration captures the current turn.
           const existingChild = (yield* Ref.get(collabChildAgentsRef)).get(thread.id);
-          const spawnTurnId =
-            existingChild?.spawnTurnId ?? (yield* Ref.get(sessionRef)).activeTurnId ?? undefined;
+          const spawnTurnId = existingChild
+            ? existingChild.spawnTurnId
+            : ((yield* Ref.get(sessionRef)).activeTurnId ?? undefined);
           const state: CollabChildAgentState = {
             agentThreadId: thread.id,
             nickname: spawn.nickname ?? thread.agentNickname ?? existingChild?.nickname,
@@ -1278,6 +1282,38 @@ export const makeCodexSessionRuntime = (
           (childParentTurnId !== undefined || foreignConversation) &&
           shouldSuppressChildConversationNotification(notification.method)
         ) {
+          // Stop-everything must not depend on registration timing: a
+          // child's turn/started can arrive before the subAgentActivity that
+          // registers it (captured ordering), and suppressing it without
+          // remembering the live turn would leave that child running after
+          // Stop (review finding). Track live turns for ANY foreign
+          // conversation; interrupts are best-effort per child, so a
+          // false-positive entry costs one ignored RPC at worst.
+          const foreignThreadId = readNotificationThreadId(notification);
+          if (foreignThreadId !== undefined) {
+            if (notification.method === "turn/started") {
+              const foreignTurnId =
+                typeof (notification.params as { turn?: { id?: unknown } }).turn?.id === "string"
+                  ? (notification.params as { turn: { id: string } }).turn.id
+                  : undefined;
+              if (foreignTurnId) {
+                yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+                  const next = new Map(current);
+                  next.set(foreignThreadId, foreignTurnId);
+                  return next;
+                });
+              }
+            } else if (
+              notification.method === "turn/completed" ||
+              notification.method === "thread/closed"
+            ) {
+              yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+                const next = new Map(current);
+                next.delete(foreignThreadId);
+                return next;
+              });
+            }
+          }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }

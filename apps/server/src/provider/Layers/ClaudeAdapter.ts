@@ -228,6 +228,14 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
+  /**
+   * Last emitted workflow-member fingerprint per member slot. A coordinator
+   * task_progress repeats the FULL member array every tick; without a
+   * material-transition filter one provider tick fans out into up to 100
+   * runtime events (event-log writes, queue pressure, client reducer work)
+   * even when nothing changed for most members.
+   */
+  readonly workflowMemberFingerprints: Map<string, string>;
   /** Task ids that have started and not yet reached a terminal state. */
   readonly liveTaskIds: Set<string>;
   turnState: ClaudeTurnState | undefined;
@@ -2943,6 +2951,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     for (const entry of progress.agents) {
       const memberTaskId = `${coordinatorId}:wf:${entry.index}`;
       const status = workflowAgentStatus(entry);
+      // Material-transition filter: the wire repeats every member each tick.
+      // Emit only when something the client renders actually changed, so a
+      // 100-agent fleet costs ~1 event per changed member instead of 100
+      // per tick (review finding: unbounded event amplification).
+      const fingerprint = [
+        status,
+        entry.label ?? "",
+        entry.model ?? "",
+        entry.lastToolName ?? "",
+        entry.error ?? "",
+        entry.tokens ?? "",
+        entry.toolCalls ?? "",
+        entry.phaseIndex ?? "",
+        entry.phaseTitle ?? "",
+        entry.attempt ?? "",
+      ].join(" ");
+      if (context.workflowMemberFingerprints.get(memberTaskId) === fingerprint) {
+        continue;
+      }
+      context.workflowMemberFingerprints.set(memberTaskId, fingerprint);
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         ...base,
@@ -3702,6 +3730,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
+      const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
@@ -4147,6 +4176,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         taskAgents,
+        workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,
         lastKnownContextWindow: initialContextWindow,

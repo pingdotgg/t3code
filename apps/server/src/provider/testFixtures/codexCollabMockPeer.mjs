@@ -54,14 +54,32 @@ rl.on("line", (line) => {
     for (const notification of script.notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
     }
-    write({
-      jsonrpc: "2.0",
-      method: "turn/completed",
-      params: {
-        threadId: rootThreadId,
-        turn: { ...turn, status: "completed" },
-      },
-    });
+    if (script.holdTurnOpen !== true) {
+      write({
+        jsonrpc: "2.0",
+        method: "turn/completed",
+        params: {
+          threadId: rootThreadId,
+          turn: { ...turn, status: "completed" },
+        },
+      });
+    }
+    return;
+  }
+  if (method === "turn/interrupt") {
+    // Record which thread/turn was interrupted (append-only sidecar file the
+    // test reads) so Stop coverage can assert every live child was reached.
+    // failInterruptFor simulates a dead child whose interrupt errors.
+    const target = message.params?.threadId;
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.interrupts`,
+      `${JSON.stringify({ threadId: target, turnId: message.params?.turnId })}\n`,
+    );
+    if (script.failInterruptFor && script.failInterruptFor === target) {
+      write({ id, error: { code: -32000, message: "thread already closed" } });
+      return;
+    }
+    write({ id, result: {} });
     return;
   }
   if (id !== undefined) {

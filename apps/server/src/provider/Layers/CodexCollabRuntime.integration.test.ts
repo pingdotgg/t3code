@@ -146,4 +146,101 @@ describe("CodexSessionRuntime collab integration", () => {
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  // it.live: the runtime talks to a real child process; under it.effect's
+  // TestClock the internal timers freeze and the join never completes.
+  it.live("Stop interrupts every live child regardless of registration timing", () =>
+    Effect.gen(function* () {
+      // Ordering torture for stop-everything: child A's turn/started arrives
+      // BEFORE anything registers it (foreign suppression path must record
+      // the live turn); child B's arrives after registration; child A's
+      // interrupt fails (dead thread) and must not block child B or the
+      // parent. The turn stays open so children are live when Stop fires.
+      // Build from REAL captured rows (hand-written shapes fail notification
+      // schema validation and are silently dropped): reorder so child A's
+      // turn/started precedes its registration, and drop terminal rows so
+      // children stay live when Stop fires.
+      const byIndex = wireFixture.notifications;
+      const isTurnStarted = (entry: (typeof byIndex)[number], child: string) =>
+        entry.method === "turn/started" &&
+        (entry.params as { threadId?: string }).threadId === child;
+      const isRegistration = (entry: (typeof byIndex)[number], child: string) => {
+        const item = (entry.params as { item?: { type?: string; agentThreadId?: string } }).item;
+        return item?.type === "subAgentActivity" && item.agentThreadId === child;
+      };
+      const turnStartedA = byIndex.find((entry) => isTurnStarted(entry, CHILD_A));
+      const turnStartedB = byIndex.find((entry) => isTurnStarted(entry, CHILD_B));
+      const registrationA = byIndex.find((entry) => isRegistration(entry, CHILD_A));
+      const registrationB = byIndex.find((entry) => isRegistration(entry, CHILD_B));
+      assert.isDefined(turnStartedA);
+      assert.isDefined(turnStartedB);
+      assert.isDefined(registrationA);
+      assert.isDefined(registrationB);
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        failInterruptFor: CHILD_A,
+        notifications: [turnStartedA, registrationA, registrationB, turnStartedB],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      // Wait for both children's turnStarted signals to be processed before
+      // stopping (B via the registered-child path; A only produces live-turn
+      // bookkeeping, so key on B's synthetic event).
+      const childBStartedFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "collabAgent/turnStarted" &&
+            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "fan out and hang" });
+      const childBStarted = yield* Fiber.join(childBStartedFiber).pipe(
+        Effect.timeoutOption("15 seconds"),
+      );
+      assert.isTrue(childBStarted._tag === "Some", "child B turnStarted never arrived");
+
+      // Stop everything. A's interrupt errors (dead thread) — best-effort
+      // must continue through B and the parent without failing the command.
+      yield* runtime.interruptTurn();
+
+      const interrupted = NodeFS.readFileSync(interruptsPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        .map((line) => JSON.parse(line) as { threadId?: string });
+      const interruptedThreads = new Set(interrupted.map((entry) => entry.threadId));
+      assert.isTrue(
+        interruptedThreads.has(CHILD_A),
+        "pre-registration child A must still be interrupted",
+      );
+      assert.isTrue(interruptedThreads.has(CHILD_B), "registered child B must be interrupted");
+      assert.isTrue(interruptedThreads.has(ROOT), "parent turn must be interrupted last");
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
