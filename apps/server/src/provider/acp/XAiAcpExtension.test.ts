@@ -277,16 +277,15 @@ describe("XAiAcpExtension", () => {
   it("matches only Grok session plan.md paths", () => {
     // Real layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
     expect(
-      isGrokPlanMarkdownPath(
-        "/Users/me/.grok/sessions/%2FUsers%2Fme%2Fproj/sess-123/plan.md",
-      ),
+      isGrokPlanMarkdownPath("/Users/me/.grok/sessions/%2FUsers%2Fme%2Fproj/sess-123/plan.md"),
     ).toBe(true);
-    expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/encoded-cwd/sess-1/plan.md")).toBe(
-      true,
-    );
+    expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/encoded-cwd/sess-1/plan.md")).toBe(true);
     // Too few segments after sessions/ (workspace false positive)
     expect(isGrokPlanMarkdownPath("/home/x/.grok/sessions/abc/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/demo/plan.md")).toBe(false);
+    // Too many segments (workspace nest that old `.+` regex incorrectly accepted)
+    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/foo/bar/baz/plan.md")).toBe(false);
+    expect(isGrokPlanMarkdownPath("/Users/me/proj/.grok/sessions/a/b/c/d/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/repo/docs/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/tmp/other.md")).toBe(false);

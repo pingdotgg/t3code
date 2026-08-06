@@ -338,7 +338,13 @@ const program = Effect.gen(function* () {
                 },
               ],
             }
-          : undefined;
+          : process.env.T3_ACP_EMIT_INIT_AVAILABLE_COMMANDS === "empty"
+            ? {
+                // Authoritative empty catalog — must still publish so callers
+                // can clear a prior session's stale slash commands.
+                availableCommands: [],
+              }
+            : undefined;
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },

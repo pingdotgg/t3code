@@ -334,11 +334,18 @@ function preferredModelMeta(input: {
   return undefined;
 }
 
+/**
+ * Parse initialize `_meta.availableCommands`.
+ * - `undefined` when the key is missing (leave prior catalog alone)
+ * - `[]` when present but empty (authoritative clear — publish so stale
+ *   commands from a previous session do not stick)
+ * - non-empty list when present with valid entries
+ */
 function parseGrokAvailableCommandsFromMeta(
   meta: Record<string, unknown> | undefined,
-): ReadonlyArray<AcpAvailableCommand> {
+): ReadonlyArray<AcpAvailableCommand> | undefined {
   if (!meta || !Array.isArray(meta.availableCommands)) {
-    return [];
+    return undefined;
   }
   return meta.availableCommands.flatMap((entry): AcpAvailableCommand[] => {
     if (!isRecord(entry) || typeof entry.name !== "string" || !entry.name.trim()) {
@@ -1273,8 +1280,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             initializeMeta,
             preferredModelId: boundModelId,
           });
+          // Present-empty [] is authoritative and must publish so a later
+          // session can clear a prior session's stale slash catalog.
           const initializeCommands = parseGrokAvailableCommandsFromMeta(initializeMeta);
-          if (initializeCommands.length > 0 && options?.onAvailableCommands) {
+          if (initializeCommands !== undefined && options?.onAvailableCommands) {
             yield* options
               .onAvailableCommands(initializeCommands)
               .pipe(
@@ -1301,7 +1310,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             currentModelId: boundModelId,
             processReasoningEffort,
             stopped: false,
-            availableCommands: initializeCommands,
+            availableCommands: initializeCommands ?? [],
             configOptions: started.sessionSetupResult.configOptions ?? [],
             sessionTitle: undefined,
             contextWindowTokens,

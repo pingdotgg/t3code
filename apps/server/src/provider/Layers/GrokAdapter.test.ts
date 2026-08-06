@@ -1334,90 +1334,117 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }).pipe(TestClock.withLive),
   );
 
-  it.effect(
-    "applies mid-thread effort via session/set_model _meta without process restart",
-    () =>
-      Effect.gen(function* () {
-        const threadId = ThreadId.make("grok-effort-set-model-meta");
-        const tmpDir = yield* Effect.promise(() =>
-          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-effort-")),
-        );
-        const argvLogPath = NodePath.join(tmpDir, "argv.log");
-        const requestLogPath = NodePath.join(tmpDir, "requests.ndjson");
-        const wrapperPath = yield* Effect.promise(() =>
-          makeMockGrokWrapper(
-            {
-              T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-            },
-            { argvLogPath },
-          ),
-        );
-        const adapter = yield* makeTestAdapter(wrapperPath);
-        const turnCompleted = yield* Deferred.make<void>();
-        const sessionExited = yield* Deferred.make<void>();
-        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
-          if (event.type === "turn.completed" && String(event.threadId) === String(threadId)) {
-            return Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
-          }
-          if (event.type === "session.exited" && String(event.threadId) === String(threadId)) {
-            return Deferred.succeed(sessionExited, undefined).pipe(Effect.ignore);
-          }
-          return Effect.void;
-        }).pipe(Effect.forkChild);
+  it.effect("publishes present-empty initialize availableCommands so stale catalogs clear", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-init-commands-empty");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_INIT_AVAILABLE_COMMANDS: "empty" }),
+      );
+      const catalog =
+        yield* Deferred.make<
+          ReadonlyArray<{ readonly name: string; readonly description?: string }>
+        >();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        onAvailableCommands: (commands) =>
+          Deferred.succeed(catalog, commands).pipe(Effect.asVoid, Effect.ignore),
+      });
 
-        const instanceId = ProviderInstanceId.make("grok");
-        yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("grok"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: {
-            instanceId,
-            model: "grok-mock-alt",
-            options: [{ id: "reasoningEffort", value: "high" }],
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const published = yield* Deferred.await(catalog).pipe(Effect.timeout("2 seconds"));
+      assert.equal(published.length, 0);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("applies mid-thread effort via session/set_model _meta without process restart", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-effort-set-model-meta");
+      const tmpDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-effort-")),
+      );
+      const argvLogPath = NodePath.join(tmpDir, "argv.log");
+      const requestLogPath = NodePath.join(tmpDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper(
+          {
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
           },
-        });
+          { argvLogPath },
+        ),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const turnCompleted = yield* Deferred.make<void>();
+      const sessionExited = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (event.type === "turn.completed" && String(event.threadId) === String(threadId)) {
+          return Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
+        }
+        if (event.type === "session.exited" && String(event.threadId) === String(threadId)) {
+          return Deferred.succeed(sessionExited, undefined).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
 
-        const firstArgv = yield* waitForFileContent(argvLogPath, 40, "--reasoning-effort high");
-        assert.include(firstArgv, "--reasoning-effort high");
-        assert.include(firstArgv, "--model grok-mock-alt");
+      const instanceId = ProviderInstanceId.make("grok");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId,
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "switch effort mid-thread",
-          attachments: [],
-          modelSelection: {
-            instanceId,
-            model: "grok-mock-alt",
-            options: [{ id: "reasoningEffort", value: "low" }],
-          },
-        });
+      const firstArgv = yield* waitForFileContent(argvLogPath, 40, "--reasoning-effort high");
+      assert.include(firstArgv, "--reasoning-effort high");
+      assert.include(firstArgv, "--model grok-mock-alt");
 
-        yield* Deferred.await(turnCompleted);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "switch effort mid-thread",
+        attachments: [],
+        modelSelection: {
+          instanceId,
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        },
+      });
 
-        // Process must not restart: still a single argv line with the spawn effort.
-        const argvAfter = yield* waitForFileContent(argvLogPath, 10, "--reasoning-effort high");
-        const argvLines = argvAfter
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
-        assert.equal(argvLines.length, 1);
-        assert.include(argvLines[0] ?? "", "--reasoning-effort high");
+      yield* Deferred.await(turnCompleted);
 
-        const requestLog = yield* waitForFileContent(requestLogPath, 40, "session/set_model");
-        assert.include(requestLog, "session/set_model");
-        assert.include(requestLog, "reasoningEffort");
-        assert.include(requestLog, "low");
-        assert.notInclude(requestLog, "session/load");
+      // Process must not restart: still a single argv line with the spawn effort.
+      const argvAfter = yield* waitForFileContent(argvLogPath, 10, "--reasoning-effort high");
+      const argvLines = argvAfter
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      assert.equal(argvLines.length, 1);
+      assert.include(argvLines[0] ?? "", "--reasoning-effort high");
 
-        const exitedRace = yield* Deferred.await(sessionExited).pipe(
-          Effect.timeoutOption("100 millis"),
-        );
-        assert.isTrue(exitedRace._tag === "None");
+      const requestLog = yield* waitForFileContent(requestLogPath, 40, "session/set_model");
+      assert.include(requestLog, "session/set_model");
+      assert.include(requestLog, "reasoningEffort");
+      assert.include(requestLog, "low");
+      assert.notInclude(requestLog, "session/load");
 
-        yield* Fiber.interrupt(eventsFiber);
-        yield* adapter.stopSession(threadId);
-      }).pipe(TestClock.withLive),
+      const exitedRace = yield* Deferred.await(sessionExited).pipe(
+        Effect.timeoutOption("100 millis"),
+      );
+      assert.isTrue(exitedRace._tag === "None");
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("maps /compact session notifications to thread.state.changed compacted", () =>
