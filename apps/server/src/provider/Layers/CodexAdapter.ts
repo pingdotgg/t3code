@@ -8,6 +8,7 @@
  * @module CodexAdapterLive
  */
 import {
+  type AccountRateLimitsUpdatedPayload,
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
@@ -434,6 +435,40 @@ function providerRefsFromEvent(
   if (event.requestId) refs.providerRequestId = event.requestId;
 
   return Object.keys(refs).length > 0 ? (refs as ProviderRuntimeEvent["providerRefs"]) : undefined;
+}
+
+function rateLimitWindow(
+  kind: string,
+  window: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitWindow | null,
+): AccountRateLimitsUpdatedPayload["windows"][number] | undefined {
+  if (!window) {
+    return undefined;
+  }
+  return {
+    kind,
+    usedPercent: window.usedPercent,
+    ...(window.resetsAt != null ? { resetsAt: window.resetsAt } : {}),
+    ...(window.windowDurationMins != null ? { windowDurationMins: window.windowDurationMins } : {}),
+  };
+}
+
+/**
+ * Normalizes a Codex rate-limit snapshot onto the canonical payload. Codex
+ * reports two windows at once and signals exhaustion out of band, via
+ * `rateLimitReachedType`, rather than as a status on the windows themselves.
+ */
+function rateLimitsPayloadFromNotification(
+  snapshot: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitSnapshot,
+): AccountRateLimitsUpdatedPayload {
+  const windows = [
+    rateLimitWindow("primary", snapshot.primary ?? null),
+    rateLimitWindow("secondary", snapshot.secondary ?? null),
+  ].filter((window) => window !== undefined);
+
+  return {
+    status: snapshot.rateLimitReachedType != null ? "rejected" : "allowed",
+    windows,
+  };
 }
 
 function runtimeEventBase(
@@ -1393,16 +1428,18 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    if (!payload) {
       return [];
     }
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          rateLimits: event.payload ?? {},
-        },
+        payload: rateLimitsPayloadFromNotification(payload.rateLimits),
       },
     ];
   }
