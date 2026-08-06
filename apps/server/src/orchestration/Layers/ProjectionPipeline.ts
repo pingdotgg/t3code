@@ -729,7 +729,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             pinnedAt: event.payload.pinnedAt,
-            pinnedOrder: null,
             updatedAt: event.payload.updatedAt,
           });
           return;

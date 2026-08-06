@@ -131,8 +131,9 @@ export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "defau
 /**
  * A positive rational used as a stable, environment-independent position in
  * the global pinned-thread list. Clients compare values by cross-multiplying
- * the numerator and denominator, and can always create another value between
- * two existing positions without renumbering sibling threads.
+ * the numerator and denominator. Clients normally create another value
+ * between two positions and compact the list only when this bounded wire
+ * representation is exhausted.
  */
 export const PinnedThreadOrder = TrimmedNonEmptyString.check(
   Schema.isMaxLength(513),

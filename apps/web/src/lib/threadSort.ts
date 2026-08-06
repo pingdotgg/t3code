@@ -4,6 +4,7 @@ export {
   sortThreads,
   sortPinnedThreads,
   pinnedThreadOrderForMove,
+  pinnedThreadOrderUpdatesForMove,
   toSortableTimestamp,
   type PinnedThreadSortInput,
   type ThreadSortInput,

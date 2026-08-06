@@ -79,10 +79,20 @@ it.effect("projects pin lifecycle events", () =>
     );
     expect(reordered.threads[0]?.pinnedOrder).toBe("3/7");
 
-    const unpinned = yield* projectEvent(
+    const pinnedAgain = yield* projectEvent(
       reordered,
       makeEvent({
         sequence: 4,
+        type: "thread.pinned",
+        payload: { threadId: ThreadId.make("thread-1"), pinnedAt: now, updatedAt: now },
+      }),
+    );
+    expect(pinnedAgain.threads[0]?.pinnedOrder).toBe("3/7");
+
+    const unpinned = yield* projectEvent(
+      pinnedAgain,
+      makeEvent({
+        sequence: 5,
         type: "thread.unpinned",
         payload: { threadId: ThreadId.make("thread-1"), updatedAt: now },
       }),

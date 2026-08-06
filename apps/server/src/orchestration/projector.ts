@@ -403,7 +403,6 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             pinnedAt: payload.pinnedAt,
-            pinnedOrder: null,
             updatedAt: payload.updatedAt,
           }),
         })),

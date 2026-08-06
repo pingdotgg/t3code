@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { PinnedThreadOrder } from "@t3tools/contracts";
 
 import {
   pinnedThreadOrderForMove,
+  pinnedThreadOrderUpdatesForMove,
   sortPinnedThreads,
   sortThreads,
   type ThreadSortInput,
@@ -119,5 +121,38 @@ describe("pinned thread ordering", () => {
         ),
       ).map((thread) => thread.id),
     ).toEqual(["middle", "oldest", "newest"]);
+  });
+
+  it("compacts the list before an order can exceed the wire limit", () => {
+    const large = `6${"0".repeat(255)}`;
+    const crowded = [
+      {
+        id: "left",
+        createdAt: pinned[0].createdAt,
+        pinnedOrder: `${large}/1` as PinnedThreadOrder,
+      },
+      {
+        id: "right",
+        createdAt: pinned[1].createdAt,
+        pinnedOrder: `${BigInt(large) + 1n}/1` as PinnedThreadOrder,
+      },
+      { id: "moved", createdAt: pinned[2].createdAt },
+    ];
+
+    expect(pinnedThreadOrderForMove(crowded, "moved", "right")).toBeNull();
+    const updates = pinnedThreadOrderUpdatesForMove(crowded, "moved", "right");
+    expect(updates).toEqual([
+      { threadId: "left", pinnedOrder: "1/1" },
+      { threadId: "moved", pinnedOrder: "2/1" },
+      { threadId: "right", pinnedOrder: "3/1" },
+    ]);
+    expect(
+      sortPinnedThreads(
+        crowded.map((thread) => {
+          const update = updates?.find((candidate) => candidate.threadId === thread.id);
+          return update ? { ...thread, pinnedOrder: update.pinnedOrder } : thread;
+        }),
+      ).map((thread) => thread.id),
+    ).toEqual(["left", "moved", "right"]);
   });
 });

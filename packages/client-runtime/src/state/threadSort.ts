@@ -123,6 +123,7 @@ const DEFAULT_ORDER_TIMESTAMP_CEILING = 10_000_000_000_000_000n;
 const DEFAULT_ORDER_ID_BUCKET = 1n << 64n;
 const FNV_OFFSET_BASIS_64 = 14_695_981_039_346_656_037n;
 const FNV_PRIME_64 = 1_099_511_628_211n;
+const PINNED_THREAD_ORDER_MAX_DIGITS = 256;
 
 function stableIdHash(id: string): bigint {
   let hash = FNV_OFFSET_BASIS_64;
@@ -180,21 +181,39 @@ export function sortPinnedThreads<T extends PinnedThreadSortInput>(threads: read
     .map(({ thread }) => thread);
 }
 
-function serializePinnedThreadOrder(order: RationalOrder): PinnedThreadOrder {
-  return `${order.numerator}/${order.denominator}` as PinnedThreadOrder;
+function greatestCommonDivisor(left: bigint, right: bigint): bigint {
+  let dividend = left;
+  let divisor = right;
+  while (divisor !== 0n) {
+    const remainder = dividend % divisor;
+    dividend = divisor;
+    divisor = remainder;
+  }
+  return dividend;
 }
 
-/**
- * Returns a new stable position for one thread dragged over another. The
- * mediant of adjacent rational positions is always strictly between them, so
- * only the moved thread needs a server command and sibling environments do
- * not need a coordinated renumber.
- */
-export function pinnedThreadOrderForMove<T extends PinnedThreadSortInput>(
+function serializePinnedThreadOrder(order: RationalOrder): PinnedThreadOrder | null {
+  const divisor = greatestCommonDivisor(order.numerator, order.denominator);
+  const numerator = order.numerator / divisor;
+  const denominator = order.denominator / divisor;
+  const numeratorText = numerator.toString();
+  const denominatorText = denominator.toString();
+  if (
+    numerator <= 0n ||
+    denominator <= 0n ||
+    numeratorText.length > PINNED_THREAD_ORDER_MAX_DIGITS ||
+    denominatorText.length > PINNED_THREAD_ORDER_MAX_DIGITS
+  ) {
+    return null;
+  }
+  return `${numeratorText}/${denominatorText}` as PinnedThreadOrder;
+}
+
+function reorderPinnedThreads<T extends PinnedThreadSortInput>(
   orderedThreads: readonly T[],
   threadId: string,
   overThreadId: string,
-): PinnedThreadOrder | null {
+): { readonly reordered: T[]; readonly moved: T } | null {
   const fromIndex = orderedThreads.findIndex((thread) => pinnedThreadIdentity(thread) === threadId);
   const toIndex = orderedThreads.findIndex(
     (thread) => pinnedThreadIdentity(thread) === overThreadId,
@@ -205,6 +224,13 @@ export function pinnedThreadOrderForMove<T extends PinnedThreadSortInput>(
   const [moved] = reordered.splice(fromIndex, 1);
   if (!moved) return null;
   reordered.splice(toIndex, 0, moved);
+  return { reordered, moved };
+}
+
+function boundedOrderForMovedThread<T extends PinnedThreadSortInput>(
+  reordered: readonly T[],
+  moved: T,
+): PinnedThreadOrder | null {
   const movedIndex = reordered.indexOf(moved);
   const previous = movedIndex > 0 ? reordered[movedIndex - 1] : undefined;
   const next = movedIndex + 1 < reordered.length ? reordered[movedIndex + 1] : undefined;
@@ -232,4 +258,51 @@ export function pinnedThreadOrderForMove<T extends PinnedThreadSortInput>(
     });
   }
   return "1/1" as PinnedThreadOrder;
+}
+
+/**
+ * Returns a new stable position for one thread dragged over another. The
+ * mediant of adjacent rational positions is always strictly between them, so
+ * only the moved thread needs a server command and sibling environments do
+ * not need a coordinated renumber.
+ */
+export function pinnedThreadOrderForMove<T extends PinnedThreadSortInput>(
+  orderedThreads: readonly T[],
+  threadId: string,
+  overThreadId: string,
+): PinnedThreadOrder | null {
+  const result = reorderPinnedThreads(orderedThreads, threadId, overThreadId);
+  return result ? boundedOrderForMovedThread(result.reordered, result.moved) : null;
+}
+
+export interface PinnedThreadOrderUpdate {
+  readonly threadId: string;
+  readonly pinnedOrder: PinnedThreadOrder;
+}
+
+/** Returns the usual single-thread update, or a compact full-list rebalance
+ * when no rational within the wire contract remains between two neighbors. */
+export function pinnedThreadOrderUpdatesForMove<T extends PinnedThreadSortInput>(
+  orderedThreads: readonly T[],
+  threadId: string,
+  overThreadId: string,
+): readonly PinnedThreadOrderUpdate[] | null {
+  const result = reorderPinnedThreads(orderedThreads, threadId, overThreadId);
+  if (!result) return null;
+
+  const movedOrder = boundedOrderForMovedThread(result.reordered, result.moved);
+  if (movedOrder !== null) {
+    return [{ threadId: pinnedThreadIdentity(result.moved), pinnedOrder: movedOrder }];
+  }
+
+  const compacted = result.reordered.map((thread, index) => {
+    const pinnedOrder = serializePinnedThreadOrder({
+      numerator: BigInt(index + 1),
+      denominator: 1n,
+    });
+    return pinnedOrder === null ? null : { threadId: pinnedThreadIdentity(thread), pinnedOrder };
+  });
+  return compacted.some((update) => update === null)
+    ? null
+    : (compacted as PinnedThreadOrderUpdate[]);
 }

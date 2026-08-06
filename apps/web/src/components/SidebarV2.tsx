@@ -148,7 +148,7 @@ import {
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
-import { pinnedThreadOrderForMove } from "../lib/threadSort";
+import { pinnedThreadOrderUpdatesForMove } from "../lib/threadSort";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -1871,21 +1871,41 @@ export default function SidebarV2() {
   );
   const movePinnedThread = useCallback(
     (thread: EnvironmentThreadShell, overThread: EnvironmentThreadShell) => {
-      const nextOrder = pinnedThreadOrderForMove(
+      const updates = pinnedThreadOrderUpdatesForMove(
         pinnedThreads,
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         scopedThreadKey(scopeThreadRef(overThread.environmentId, overThread.id)),
       );
-      if (nextOrder === null) return;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      setPendingPinnedOrderByKey((current) => new Map(current).set(threadKey, nextOrder));
-      void (async () => {
-        const result = await reorderPinnedThread(
-          scopeThreadRef(thread.environmentId, thread.id),
-          nextOrder,
+      if (updates === null) return;
+      const requests = updates.flatMap((update) => {
+        const target = pinnedThreads.find(
+          (candidate) =>
+            scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id)) ===
+            update.threadId,
         );
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
+        return target ? [{ ...update, target }] : [];
+      });
+      if (requests.length !== updates.length) return;
+      setPendingPinnedOrderByKey((current) => {
+        const next = new Map(current);
+        for (const request of requests) next.set(request.threadId, request.pinnedOrder);
+        return next;
+      });
+      void (async () => {
+        const results = await Promise.all(
+          requests.map(async (request) => ({
+            request,
+            result: await reorderPinnedThread(
+              scopeThreadRef(request.target.environmentId, request.target.id),
+              request.pinnedOrder,
+            ),
+          })),
+        );
+        const failed = results.find(
+          ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
+        );
+        if (failed?.result._tag === "Failure") {
+          const error = squashAtomCommandFailure(failed.result);
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -1894,14 +1914,15 @@ export default function SidebarV2() {
             }),
           );
         }
-        if (result._tag === "Failure") {
-          setPendingPinnedOrderByKey((current) => {
-            if (current.get(threadKey) !== nextOrder) return current;
-            const next = new Map(current);
-            next.delete(threadKey);
-            return next;
-          });
-        }
+        setPendingPinnedOrderByKey((current) => {
+          const next = new Map(current);
+          for (const { request } of results) {
+            if (next.get(request.threadId) === request.pinnedOrder) {
+              next.delete(request.threadId);
+            }
+          }
+          return next;
+        });
       })();
     },
     [pinnedThreads, reorderPinnedThread],

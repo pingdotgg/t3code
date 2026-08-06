@@ -7,7 +7,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
-import { pinnedThreadOrderForMove } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  pinnedThreadOrderUpdatesForMove,
+  sortPinnedThreads,
+} from "@t3tools/client-runtime/state/thread-sort";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -548,23 +551,49 @@ function ThreadNavigationSidebarPane(
     selectedProjectScope,
   ]);
   const orderedPinnedThreads = useMemo(
-    () => threadListV2Layout.items.filter((item) => item.pinned).map((item) => item.thread),
-    [threadListV2Layout.items],
+    () =>
+      sortPinnedThreads(
+        threads.filter((thread) => thread.archivedAt === null && thread.pinnedAt !== null),
+      ),
+    [threads],
   );
+  const pinnedReorderInFlightRef = useRef(false);
+  const [pinnedReorderInFlight, setPinnedReorderInFlight] = useState(false);
   const movePinnedThread = useCallback(
     (thread: EnvironmentThreadShell, direction: "up" | "down") => {
+      if (pinnedReorderInFlightRef.current) return;
       const index = orderedPinnedThreads.findIndex(
         (candidate) =>
           candidate.environmentId === thread.environmentId && candidate.id === thread.id,
       );
       const target = orderedPinnedThreads[index + (direction === "up" ? -1 : 1)];
       if (index < 0 || !target) return;
-      const order = pinnedThreadOrderForMove(
+      const updates = pinnedThreadOrderUpdatesForMove(
         orderedPinnedThreads,
         scopedThreadKey(thread.environmentId, thread.id),
         scopedThreadKey(target.environmentId, target.id),
       );
-      if (order !== null) void reorderPinnedThread(thread, order);
+      if (updates === null) return;
+      const requests = updates.flatMap((update) => {
+        const updateThread = orderedPinnedThreads.find(
+          (candidate) => scopedThreadKey(candidate.environmentId, candidate.id) === update.threadId,
+        );
+        return updateThread ? [{ update, thread: updateThread }] : [];
+      });
+      if (requests.length !== updates.length) return;
+      pinnedReorderInFlightRef.current = true;
+      setPinnedReorderInFlight(true);
+      void (async () => {
+        try {
+          for (const request of requests) {
+            const succeeded = await reorderPinnedThread(request.thread, request.update.pinnedOrder);
+            if (!succeeded) break;
+          }
+        } finally {
+          pinnedReorderInFlightRef.current = false;
+          setPinnedReorderInFlight(false);
+        }
+      })();
     },
     [orderedPinnedThreads, reorderPinnedThread],
   );
@@ -968,8 +997,12 @@ function ThreadNavigationSidebarPane(
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
               pinReorderingSupported={pinReorderingEnvironmentIds.has(thread.environmentId)}
-              canMovePinnedUp={pinnedIndex > 0}
-              canMovePinnedDown={pinnedIndex >= 0 && pinnedIndex < orderedPinnedThreads.length - 1}
+              canMovePinnedUp={!pinnedReorderInFlight && pinnedIndex > 0}
+              canMovePinnedDown={
+                !pinnedReorderInFlight &&
+                pinnedIndex >= 0 &&
+                pinnedIndex < orderedPinnedThreads.length - 1
+              }
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
