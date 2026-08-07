@@ -96,6 +96,21 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
+const confirmQuit = Effect.gen(function* () {
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const result = yield* electronDialog.showMessageBox({
+    type: "warning",
+    title: "Quit T3 Code?",
+    message: "Quit T3 Code?",
+    detail: "All running agents will be stopped.",
+    buttons: ["Cancel", "Quit"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  return result.response === 1;
+}).pipe(Effect.withSpan("desktop.menu.confirmQuit"));
+
 export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
@@ -127,6 +142,30 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    let quitConfirmationOpen = false;
+    const quitClick = () => {
+      if (quitConfirmationOpen) return;
+      quitConfirmationOpen = true;
+      runMenuEffect(
+        "quit",
+        Effect.gen(function* () {
+          if (yield* confirmQuit) {
+            yield* electronApp.quit;
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              quitConfirmationOpen = false;
+            }),
+          ),
+        ),
+      );
+    };
+    const quitMenuItem: Electron.MenuItemConstructorOptions = {
+      label: `Quit ${appName}`,
+      accelerator: "CmdOrCtrl+Q",
+      click: quitClick,
+    };
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (environment.platform === "darwin") {
@@ -151,7 +190,7 @@ export const make = Effect.gen(function* () {
           { role: "hideOthers" },
           { role: "unhide" },
           { type: "separator" },
-          { role: "quit" },
+          quitMenuItem,
         ],
       });
     }
@@ -170,7 +209,7 @@ export const make = Effect.gen(function* () {
                 },
                 { type: "separator" as const },
               ]),
-          { role: environment.platform === "darwin" ? "close" : "quit" },
+          environment.platform === "darwin" ? { role: "close" } : quitMenuItem,
         ],
       },
       { role: "editMenu" },

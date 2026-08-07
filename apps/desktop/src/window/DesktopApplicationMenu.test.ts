@@ -28,34 +28,39 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
-  metadata: Effect.die("unexpected metadata read"),
-  name: Effect.succeed("T3 Code"),
-  whenReady: Effect.void,
-  quit: Effect.void,
-  exit: () => Effect.void,
-  relaunch: () => Effect.void,
-  setPath: () => Effect.void,
-  setName: () => Effect.void,
-  setAboutPanelOptions: () => Effect.void,
-  setAppUserModelId: () => Effect.void,
-  getAppMetrics: Effect.succeed([]),
-  isDefaultProtocolClient: () => Effect.succeed(false),
-  setAsDefaultProtocolClient: () => Effect.succeed(true),
-  setDesktopName: () => Effect.void,
-  setDockIcon: () => Effect.void,
-  appendCommandLineSwitch: () => Effect.void,
-  onBeforeQuitForUpdate: () => Effect.void,
-  removeCommandLineSwitch: () => Effect.void,
-  on: () => Effect.void,
-} satisfies ElectronApp.ElectronApp["Service"]);
+const makeElectronAppLayer = (quit: Effect.Effect<void> = Effect.void) =>
+  Layer.succeed(ElectronApp.ElectronApp, {
+    metadata: Effect.die("unexpected metadata read"),
+    name: Effect.succeed("T3 Code"),
+    whenReady: Effect.void,
+    quit,
+    exit: () => Effect.void,
+    relaunch: () => Effect.void,
+    setPath: () => Effect.void,
+    setName: () => Effect.void,
+    setAboutPanelOptions: () => Effect.void,
+    setAppUserModelId: () => Effect.void,
+    getAppMetrics: Effect.succeed([]),
+    isDefaultProtocolClient: () => Effect.succeed(false),
+    setAsDefaultProtocolClient: () => Effect.succeed(true),
+    setDesktopName: () => Effect.void,
+    setDockIcon: () => Effect.void,
+    appendCommandLineSwitch: () => Effect.void,
+    onBeforeQuitForUpdate: () => Effect.void,
+    removeCommandLineSwitch: () => Effect.void,
+    on: () => Effect.void,
+  } satisfies ElectronApp.ElectronApp["Service"]);
 
-const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
-  pickFolder: () => Effect.succeed(Option.none()),
-  confirm: () => Effect.succeed(false),
-  showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
-  showErrorBox: () => Effect.void,
-} satisfies ElectronDialog.ElectronDialog["Service"]);
+const makeElectronDialogLayer = (
+  showMessageBox: ElectronDialog.ElectronDialog["Service"]["showMessageBox"] = () =>
+    Effect.succeed({ response: 0, checkboxChecked: false }),
+) =>
+  Layer.succeed(ElectronDialog.ElectronDialog, {
+    pickFolder: () => Effect.succeed(Option.none()),
+    confirm: () => Effect.succeed(false),
+    showMessageBox,
+    showErrorBox: () => Effect.void,
+  } satisfies ElectronDialog.ElectronDialog["Service"]);
 
 const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   getState: Effect.die("unexpected getState"),
@@ -109,8 +114,8 @@ describe("DesktopApplicationMenu", () => {
             Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
             Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
             Layer.provideMerge(desktopUpdatesLayer),
-            Layer.provideMerge(electronDialogLayer),
-            Layer.provideMerge(electronAppLayer),
+            Layer.provideMerge(makeElectronDialogLayer()),
+            Layer.provideMerge(makeElectronAppLayer()),
             Layer.provideMerge(
               DesktopEnvironment.layer(environmentInput).pipe(
                 Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
@@ -135,6 +140,71 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+
+  it.effect("confirms Cmd+Q before quitting on macOS", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const promptOptions = yield* Deferred.make<Electron.MessageBoxOptions>();
+      const quitRequested = yield* Deferred.make<void>();
+
+      yield* Effect.gen(function* () {
+        const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+        yield* menu.configure;
+      }).pipe(
+        Effect.provide(
+          DesktopApplicationMenu.layer.pipe(
+            Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
+            Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
+            Layer.provideMerge(desktopUpdatesLayer),
+            Layer.provideMerge(
+              makeElectronDialogLayer((options) =>
+                Deferred.succeed(promptOptions, options).pipe(
+                  Effect.as({ response: 1, checkboxChecked: false }),
+                ),
+              ),
+            ),
+            Layer.provideMerge(
+              makeElectronAppLayer(Deferred.succeed(quitRequested, undefined).pipe(Effect.asVoid)),
+            ),
+            Layer.provideMerge(
+              DesktopEnvironment.layer({ ...environmentInput, platform: "darwin" }).pipe(
+                Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const appMenu = template.find((item) => item.label === "T3 Code");
+      assert.isDefined(appMenu);
+      if (!Array.isArray(appMenu.submenu)) {
+        throw new Error("Expected application menu submenu to be an array.");
+      }
+      const quitItem = appMenu.submenu.find((item) => item.label === "Quit T3 Code");
+      assert.isDefined(quitItem);
+      assert.equal(quitItem.accelerator, "CmdOrCtrl+Q");
+      if (typeof quitItem.click !== "function") {
+        throw new Error("Expected Quit menu item to have a click handler.");
+      }
+
+      quitItem.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+
+      assert.deepEqual(yield* Deferred.await(promptOptions), {
+        type: "warning",
+        title: "Quit T3 Code?",
+        message: "Quit T3 Code?",
+        detail: "All running agents will be stopped.",
+        buttons: ["Cancel", "Quit"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      yield* Deferred.await(quitRequested);
     }),
   );
 });
