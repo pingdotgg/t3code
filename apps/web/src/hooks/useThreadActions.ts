@@ -123,6 +123,18 @@ export class ThreadPinningUnsupportedError extends Schema.TaggedErrorClass<Threa
   }
 }
 
+export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<ThreadPinReorderUnsupportedError>()(
+  "ThreadPinReorderUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support reordering pinned threads yet. Update the server to reorder pins.";
+  }
+}
+
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
@@ -583,7 +595,7 @@ export function useThreadActions() {
       if (!readEnvironmentSupportsPinReorder(target.environmentId)) {
         return AsyncResult.failure(
           Cause.fail(
-            new ThreadPinningUnsupportedError({
+            new ThreadPinReorderUnsupportedError({
               environmentId: target.environmentId,
               threadId: target.threadId,
             }),
