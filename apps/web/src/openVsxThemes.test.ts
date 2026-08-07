@@ -44,6 +44,7 @@ describe("Open VSX themes", () => {
             extensions: [
               { namespace: "demo", name: "theme" },
               { namespace: "icons", name: "theme" },
+              { namespace: "oversized", name: "theme" },
               { namespace: "closed", name: "theme" },
               { namespace: "huge", name: "theme" },
             ],
@@ -65,6 +66,20 @@ describe("Open VSX themes", () => {
           { status: 200 },
         );
       }
+      if (url.endsWith("/oversized/theme")) {
+        return new Response(
+          JSON.stringify(
+            extensionDetail({
+              namespace: "oversized",
+              files: {
+                ...extensionDetail().files,
+                download: `${ASSET_ROOT.replace("demo/theme", "oversized/theme")}/oversized.vsix`,
+              },
+            }),
+          ),
+          { status: 200 },
+        );
+      }
       if (url.endsWith("/closed/theme")) {
         return new Response(
           JSON.stringify(extensionDetail({ namespace: "closed", license: "All Rights Reserved" })),
@@ -73,6 +88,15 @@ describe("Open VSX themes", () => {
       }
       if (url.endsWith("/huge/theme")) {
         return new Response(JSON.stringify({ padding: "x".repeat(256 * 1024) }), { status: 200 });
+      }
+      if (url.endsWith("/oversized/theme/1.0.0/file/oversized.vsix")) {
+        return new Response(null, {
+          headers: { "content-length": String(20 * 1024 * 1024 + 1) },
+          status: 200,
+        });
+      }
+      if (url.endsWith(".vsix")) {
+        return new Response(null, { headers: { "content-length": "1024" }, status: 200 });
       }
       if (url.endsWith("/icons/theme/1.0.0/file/package.json")) {
         return new Response(JSON.stringify({ contributes: { iconThemes: [{}] } }), { status: 200 });

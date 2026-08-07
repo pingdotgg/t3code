@@ -197,8 +197,19 @@ export async function searchOpenVsxThemes(
       try {
         const extension = extensionFromDetail(JSON.parse(new TextDecoder().decode(detailBytes)));
         if (!extension) return null;
-        const manifestResponse = await fetch(extension.manifestUrl, signal ? { signal } : {});
+        const [manifestResponse, packageResponse] = await Promise.all([
+          fetch(extension.manifestUrl, signal ? { signal } : {}),
+          fetch(extension.vsixUrl, { method: "HEAD", ...(signal ? { signal } : {}) }),
+        ]);
         if (!manifestResponse.ok) throw new Error("manifest unavailable");
+        const packageLength = Number(packageResponse.headers.get("content-length"));
+        if (
+          packageResponse.ok &&
+          Number.isFinite(packageLength) &&
+          packageLength > MAX_VSIX_BYTES
+        ) {
+          return null;
+        }
         const manifestBytes = await readCappedResponse(
           manifestResponse,
           MAX_MANIFEST_BYTES,

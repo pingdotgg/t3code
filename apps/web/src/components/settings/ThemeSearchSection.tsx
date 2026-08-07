@@ -39,12 +39,17 @@ export function ThemeSearchSection({
   useEffect(() => {
     requestRef.current?.abort();
     requestRef.current = null;
-    if (!open) return;
-    setQuery("");
-    setResults(null);
-    setError(null);
-    setIsSearching(false);
-    setInstallingId(null);
+    if (open) {
+      setQuery("");
+      setResults(null);
+      setError(null);
+      setIsSearching(false);
+      setInstallingId(null);
+    }
+    return () => {
+      requestRef.current?.abort();
+      requestRef.current = null;
+    };
   }, [open]);
 
   const runSearch = useCallback(async (searchText: string) => {
