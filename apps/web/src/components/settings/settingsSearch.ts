@@ -183,6 +183,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "sidebar-v2",
   },
   {
+    id: "restore-plan-mode",
+    title: "Restore plan mode (legacy)",
+    to: "/settings/beta",
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
