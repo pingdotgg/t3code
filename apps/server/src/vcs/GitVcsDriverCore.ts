@@ -396,6 +396,23 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
   return refName.length > 0 ? refName : null;
 }
 
+/**
+ * Tail of git's stderr for `GitCommandError.stderrTail`.
+ *
+ * Truncated from the end, because git puts the reason on its last lines and a
+ * long transfer log in front of it. Credential-bearing URLs are redacted:
+ * git echoes back the remote it was handed, which may embed a token.
+ */
+const GIT_STDERR_TAIL_LIMIT = 2000;
+
+function gitStderrTail(stderr: string): string | undefined {
+  const redacted = stderr.replace(/\/\/([^/@:\s]+):([^@\s]+)@/g, "//$1:***@").trim();
+  if (redacted.length === 0) return undefined;
+  return redacted.length > GIT_STDERR_TAIL_LIMIT
+    ? `…${redacted.slice(-GIT_STDERR_TAIL_LIMIT)}`
+    : redacted;
+}
+
 function isMissingGitCwdError(error: GitCommandError): boolean {
   if (!(error.cause instanceof PlatformError.PlatformError)) {
     return false;
@@ -800,6 +817,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
+            stderrTail: gitStderrTail(stderr.text),
           });
         }
 
@@ -881,6 +899,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
+            stderrTail: gitStderrTail(result.stderr),
           }),
         );
       }),

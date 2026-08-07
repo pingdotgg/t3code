@@ -330,11 +330,18 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   stdoutLength: Schema.optional(Schema.Number),
   stderrLength: Schema.optional(Schema.Number),
   outputLength: Schema.optional(Schema.Number),
+  /**
+   * Tail of git's stderr, truncated and with credential-bearing URLs
+   * redacted. Without it a failed git command is undiagnosable from outside
+   * the process: the lengths above say how much git wrote, never what.
+   */
+  stderrTail: Schema.optional(Schema.String),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
+    const summary = `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
+    return this.stderrTail === undefined ? summary : `${summary}\n${this.stderrTail}`;
   }
 }
 
