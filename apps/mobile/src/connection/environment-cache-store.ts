@@ -17,7 +17,10 @@ import * as Schema from "effect/Schema";
 import * as MobileDatabase from "../persistence/mobile-database";
 
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 2;
+// v3 adds windowed (paginated) snapshots carrying `page` metadata; the bump
+// makes pre-pagination clients discard the record instead of decoding a
+// partial thread as complete (rollback safety).
+const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 3;
 const SERVER_CONFIG_CACHE_SCHEMA_VERSION = 1;
 const VCS_REFS_CACHE_SCHEMA_VERSION = 1;
 

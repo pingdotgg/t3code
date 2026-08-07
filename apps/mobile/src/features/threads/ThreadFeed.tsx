@@ -164,6 +164,11 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  /** Non-null when older turns exist beyond the loaded window. */
+  readonly loadEarlier?: {
+    readonly loading: boolean;
+    readonly onLoadEarlier: () => void;
+  } | null;
 }
 
 function MessageAttachmentImage(props: {
@@ -1893,7 +1898,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onScroll={handleScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={
-              usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
+              <>
+                {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {props.loadEarlier != null ? (
+                  <Pressable
+                    onPress={props.loadEarlier.onLoadEarlier}
+                    disabled={props.loadEarlier.loading}
+                    className="items-center py-2"
+                  >
+                    <Text className="text-xs text-foreground-secondary">
+                      {props.loadEarlier.loading ? "Loading earlier turns…" : "Load earlier turns"}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </>
             }
             contentContainerStyle={{
               paddingTop: 12,
