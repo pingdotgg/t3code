@@ -108,6 +108,7 @@ import {
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
+import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
@@ -2539,62 +2540,21 @@ export default function SidebarV2() {
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...(thread.branch
-                ? [
-                    {
-                      id: "new-thread-on-branch",
-                      label: `New thread on ${thread.branch}`,
-                    },
-                  ]
-                : []),
-              ...(supportsPinning
-                ? [
-                    isPinned
-                      ? { id: "unpin", label: "Unpin thread" }
-                      : { id: "pin", label: "Pin thread" },
-                  ]
-                : []),
-              // Both lifecycle actions stay available on pinned threads:
-              // settling clears the pin ("done" beats "keep on top"), and
-              // snoozing hides the card until wake with the pin intact.
-              ...(supportsSettlement
-                ? [
-                    isSettled
-                      ? { id: "unsettle", label: "Un-settle thread" }
-                      : { id: "settle", label: "Settle thread" },
-                  ]
-                : []),
-              ...(supportsSnooze
-                ? [
-                    isSnoozed
-                      ? { id: "unsnooze", label: "Wake thread" }
-                      : {
-                          id: "snooze",
-                          label: "Snooze",
-                          disabled: !canSnooze(thread, { now: new Date().toISOString() }),
-                          children: snoozePresets.map((preset) => ({
-                            id: `snooze:${preset.id}`,
-                            label: `${preset.label} (${preset.whenLabel})`,
-                          })),
-                        },
-                  ]
-                : []),
-              { id: "rename", label: "Rename thread" },
-              ...(supportsTitleRegeneration
-                ? [
-                    {
-                      id: "regenerate-title",
-                      label: isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
-                      disabled: isRegeneratingTitle,
-                    },
-                  ]
-                : []),
-              { id: "mark-unread", label: "Mark unread" },
-              { id: "copy-path", label: "Copy path", icon: "copy" },
-              ...(thread.branch ? [{ id: "copy-branch", label: "Copy branch", icon: "copy" }] : []),
-              { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-            ],
+            buildThreadActionMenuItems({
+              branch: thread.branch ?? null,
+              isPinned,
+              isSettled,
+              isSnoozed,
+              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+              isRegeneratingTitle,
+              supports: {
+                settlement: supportsSettlement,
+                snooze: supportsSnooze,
+                pinning: supportsPinning,
+                titleRegeneration: supportsTitleRegeneration,
+              },
+              snoozePresets,
+            }),
             position,
           ),
         );
