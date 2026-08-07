@@ -10,7 +10,6 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
-  RunId,
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import {
@@ -227,7 +226,6 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
-  ListTodoIcon,
   LoaderCircleIcon,
   PencilRulerIcon,
   PlayIcon,
@@ -583,8 +581,6 @@ export interface ChatComposerProps {
   // Plan
   showPlanFollowUpPrompt: boolean;
   activeProposedPlan: LatestProposedPlanState | null;
-  activePlan: { runId?: RunId | null } | null;
-  sidebarProposedPlan: { runId?: RunId | null } | null;
 
   // Mode
   runtimeMode: RuntimeMode;
@@ -686,8 +682,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     respondingRequestIds,
     showPlanFollowUpPrompt,
     activeProposedPlan,
-    activePlan,
-    sidebarProposedPlan,
     runtimeMode,
     interactionMode,
     lockedProvider,
