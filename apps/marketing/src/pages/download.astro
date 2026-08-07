@@ -1,4 +1,7 @@
 ---
+import devAppIcon from "../assets/t3-dev-384.webp?url";
+import nightlyAppIcon from "../assets/t3-nightly-384.webp?url";
+import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
 import {
@@ -12,6 +15,7 @@ import {
   title="Download — T3 Code"
   description="Download T3 Code for iPhone, iPad, Android, macOS, Windows, or Linux."
   pageClass="marketing-downloads"
+  favicon={stableAppIcon}
 >
   <div class="download-page">
   <section id="download-channel-hero" class="download-channel-hero" data-stage="latest">
@@ -21,6 +25,11 @@ import {
       <span class="download-stage-art download-stage-art--dev"></span>
     </div>
     <div class="download-channel-inner">
+      <div class="download-app-icon" aria-hidden="true">
+        <img class="download-app-icon--latest" src={stableAppIcon} alt="" />
+        <img class="download-app-icon--nightly" src={nightlyAppIcon} alt="" />
+        <img class="download-app-icon--dev" src={devAppIcon} alt="" />
+      </div>
       <h1 class="heading">Download T3 Code</h1>
       <p class="download-channel-copy">Choose the channel that matches how you work.</p>
       <div class="download-stage-picker" aria-label="Desktop release channel">
@@ -423,6 +432,29 @@ import {
     margin-top: 10px;
     color: rgba(235, 237, 246, 0.82);
     font-size: 1rem;
+  }
+
+  .download-app-icon {
+    position: relative;
+    width: clamp(82px, 8vw, 112px);
+    aspect-ratio: 1;
+    margin-bottom: 20px;
+  }
+
+  .download-app-icon img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity var(--channel-fade-duration) ease;
+  }
+
+  .download-channel-hero[data-stage="latest"] .download-app-icon--latest,
+  .download-channel-hero[data-stage="nightly"] .download-app-icon--nightly,
+  .download-channel-hero[data-stage="dev"] .download-app-icon--dev {
+    opacity: 1;
   }
 
   /* ── Heading ── */

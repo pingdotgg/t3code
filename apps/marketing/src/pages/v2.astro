@@ -8,14 +8,6 @@ import {
 } from "../lib/site";
 import { tweets } from "../lib/tweets";
 
-const agents = [
-  { name: "Claude", icon: "/harnesses/claude-ai-icon.svg" },
-  { name: "Cursor", icon: "/harnesses/cursor_light.svg" },
-  { name: "Codex", icon: "/harnesses/openai_dark.svg" },
-  { name: "Grok", icon: "/harnesses/grok-dark.svg" },
-  { name: "OpenCode", icon: "/harnesses/opencode-dark.svg" },
-] as const;
-
 const surfaces = [
   { id: "desk", label: "at your desk", image: null },
   { id: "phone", label: "from your phone", image: "/mobile-states/ios-thread.png" },
@@ -68,21 +60,6 @@ const endorsementRows = [
         </div>
       </header>
 
-      <div class="v2-provider-field" aria-label="Supported coding agents">
-        {agents.map((agent, index) => (
-          <span style={`--provider-index: ${index}`}>
-            <small>{String(index + 1).padStart(2, "0")}</small>
-            <img src={agent.icon} alt="" width="28" height="28" />
-            {agent.name}
-          </span>
-        ))}
-      </div>
-    </div>
-
-    <div class="v2-shell v2-proof" aria-label="Supported coding agents">
-      {agents.map((agent) => (
-        <span><img src={agent.icon} alt="" width="18" height="18" />{agent.name}</span>
-      ))}
     </div>
   </section>
 
@@ -345,10 +322,8 @@ const endorsementRows = [
   }
 
   .v2-hero-grid {
-    display: grid;
-    grid-template-columns: minmax(330px, 0.8fr) minmax(520px, 1.2fr);
+    display: flex;
     align-items: center;
-    gap: 90px;
     min-height: 610px;
   }
 
@@ -478,76 +453,6 @@ const endorsementRows = [
     color: #050505;
     background: #fff;
     font-weight: 600;
-  }
-
-  .v2-provider-field {
-    display: grid;
-    align-content: center;
-    min-height: 470px;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .v2-provider-field > span {
-    display: grid;
-    grid-template-columns: 34px 30px 1fr;
-    align-items: center;
-    gap: 15px;
-    min-height: 82px;
-    padding: 0 24px;
-    border-bottom: 1px solid var(--border);
-    color: #7e7e87;
-    font-size: clamp(20px, 2vw, 30px);
-    letter-spacing: -0.03em;
-    transition: color 0.18s ease, padding-left 0.18s ease;
-  }
-
-  .v2-provider-field > span:last-child {
-    border-bottom: 0;
-  }
-
-  .v2-provider-field > span:hover {
-    padding-left: 30px;
-    color: #fff;
-  }
-
-  .v2-provider-field small {
-    color: #484850;
-    font-family: var(--font-mono);
-    font-size: 9px;
-  }
-
-  .v2-provider-field img {
-    width: 24px;
-    height: 24px;
-    object-fit: contain;
-    opacity: 0.75;
-    filter: grayscale(1);
-  }
-
-  .v2-proof {
-    min-height: 168px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: clamp(18px, 3vw, 46px);
-    border-top: 1px solid var(--border);
-  }
-
-  .v2-proof span {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: #74747d;
-    font-size: 12px;
-  }
-
-  .v2-proof img {
-    width: 17px;
-    height: 17px;
-    object-fit: contain;
-    opacity: 0.72;
-    filter: grayscale(1);
   }
 
   .v2-system,
@@ -919,14 +824,6 @@ const endorsementRows = [
   }
 
   @media (max-width: 1100px) {
-    .v2-hero-grid {
-      grid-template-columns: minmax(240px, 0.8fr) minmax(480px, 1.4fr);
-    }
-
-    .v2-proof span {
-      font-size: 0;
-    }
-
     .v2-system-grid,
     .v2-connect-grid {
       grid-template-columns: 0.8fr 1.2fr;
@@ -943,23 +840,10 @@ const endorsementRows = [
       padding-top: 128px;
     }
 
-    .v2-hero-grid,
     .v2-section-heading,
     .v2-system-grid,
     .v2-connect-grid {
       grid-template-columns: 1fr;
-    }
-
-    .v2-hero-grid {
-      gap: 70px;
-    }
-
-    .v2-provider-field {
-      min-height: 410px;
-    }
-
-    .v2-proof {
-      margin-top: 90px;
     }
 
     .v2-system,
@@ -1011,11 +895,6 @@ const endorsementRows = [
     .v2-download-row .v2-button--primary {
       flex: 1;
       min-width: 0;
-    }
-
-    .v2-proof {
-      width: 100%;
-      justify-content: space-between;
     }
 
     .v2-surface-tabs button {
