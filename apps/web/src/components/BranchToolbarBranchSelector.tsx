@@ -37,7 +37,6 @@ import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
-  resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -47,7 +46,7 @@ import {
 import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
-  resolveThreadPr,
+  selectBranchPr,
 } from "./ThreadStatusIndicators";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
@@ -601,13 +600,28 @@ export function BranchToolbarBranchSelector({
     startFromOrigin,
   });
 
-  // PR pill shown next to the branch selector when the active branch has one.
-  const branchPr = resolveThreadPr({
-    threadBranch: resolveBranchToolbarPrBranch({
-      activeThreadBranch,
-      resolvedActiveBranch,
-    }),
+  // PR pill shown next to the branch selector when the displayed ref has one.
+  // The stream-fed status is the fast path while the checkout matches; the
+  // branch-keyed query keeps the pill correct when the checkout has moved
+  // elsewhere. Draft "From <base>" selectors intentionally show none — the
+  // base branch's PR is not this thread's.
+  const branchPrLookupBranch =
+    (effectiveEnvMode === "worktree" && !activeWorktreePath) ||
+    resolvedActiveBranchIsRemote === true
+      ? null
+      : resolvedActiveBranch;
+  const branchPrQuery = useEnvironmentQuery(
+    branchCwd !== null && branchPrLookupBranch !== null
+      ? vcsEnvironment.branchPr({
+          environmentId,
+          input: { cwd: branchCwd, branch: branchPrLookupBranch },
+        })
+      : null,
+  );
+  const branchPr = selectBranchPr({
+    branch: branchPrLookupBranch,
     gitStatus: branchStatusQuery.data ?? null,
+    branchPr: branchPrQuery.data?.pr,
   });
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's

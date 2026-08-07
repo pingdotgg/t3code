@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -208,7 +209,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("keeps the cached snapshot unchanged when a refresh branch fails", () => {
+  it.effect("keeps local progress and recovers the remote half after a failed refresh", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -273,14 +274,139 @@ describe("VcsStatusBroadcaster", () => {
       state.failRemoteStatus = true;
 
       const refreshExit = yield* broadcaster.refreshStatus("/repo").pipe(Effect.exit);
-      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
-
       assert.isTrue(Exit.isFailure(refreshExit));
-      assert.deepStrictEqual(cached, baseStatus);
+
+      // The local half landed even though the refresh failed. The remote half
+      // was computed for the previous checkout, so the refName change dropped
+      // it rather than pairing the old branch's data with the new branch; it
+      // repopulates on the next successful read.
+      state.failRemoteStatus = false;
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.deepStrictEqual(cached, {
+        ...state.currentLocalStatus,
+        ...state.currentRemoteStatus,
+      });
     }).pipe(Effect.provide(testLayer));
   });
 
-  it.effect("refreshes only the cached local snapshot when requested", () => {
+  it.effect("returns the new checkout when one lands mid-refresh", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const remoteEntered = yield* Deferred.make<void>();
+      const releaseRemote = yield* Deferred.make<void>();
+      // Armed only around the refresh under test, so neither the priming read
+      // nor the follow-up refresh that the checkout change kicks off blocks.
+      const gate = { armed: false };
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () =>
+              Effect.sync(() => {
+                state.localStatusCalls += 1;
+                return state.currentLocalStatus;
+              }),
+            remoteStatus: () =>
+              Effect.suspend(() => {
+                state.remoteStatusCalls += 1;
+                if (!gate.armed) {
+                  return Effect.succeed(state.currentRemoteStatus);
+                }
+                gate.armed = false;
+                return Deferred.succeed(remoteEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseRemote)),
+                  Effect.as(state.currentRemoteStatus),
+                );
+              }),
+            invalidateLocalStatus: () =>
+              Effect.sync(() => {
+                state.localInvalidationCalls += 1;
+              }),
+            invalidateRemoteStatus: () =>
+              Effect.sync(() => {
+                state.remoteInvalidationCalls += 1;
+              }),
+            invalidateStatus: () =>
+              Effect.sync(() => {
+                state.localInvalidationCalls += 1;
+                state.remoteInvalidationCalls += 1;
+              }),
+          }),
+        ),
+      );
+
+      return yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/repo" });
+
+        gate.armed = true;
+        const refreshFiber = yield* Effect.forkChild(broadcaster.refreshStatus("/repo"), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(remoteEntered);
+
+        // A checkout lands while the slow remote read is still in flight.
+        state.currentLocalStatus = {
+          ...baseLocalStatus,
+          refName: "feature/checked-out-mid-refresh",
+        };
+        yield* broadcaster.refreshLocalStatus("/repo");
+
+        yield* Deferred.succeed(releaseRemote, undefined);
+        const refreshed = yield* Fiber.join(refreshFiber);
+
+        // The refresh must not hand back the branch that was checked out when
+        // it started; its own remote result was discarded as superseded.
+        assert.equal(refreshed.refName, "feature/checked-out-mid-refresh");
+      }).pipe(Effect.provide(testLayer));
+    });
+  });
+
+  it.effect("refreshes only the cached local snapshot when the checkout is unchanged", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        hasWorkingTreeChanges: true,
+      };
+
+      const refreshedLocal = yield* broadcaster.refreshLocalStatus("/repo");
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.deepStrictEqual(initial, baseStatus);
+      assert.deepStrictEqual(refreshedLocal, state.currentLocalStatus);
+      assert.deepStrictEqual(cached, {
+        ...state.currentLocalStatus,
+        ...baseRemoteStatus,
+      });
+      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("repopulates the remote half when a local refresh changes the checkout", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -299,20 +425,31 @@ describe("VcsStatusBroadcaster", () => {
         refName: "feature/local-only-refresh",
         hasWorkingTreeChanges: true,
       };
+      state.currentRemoteStatus = {
+        ...baseRemoteStatus,
+        aheadCount: 4,
+      };
 
       const refreshedLocal = yield* broadcaster.refreshLocalStatus("/repo");
+
+      // The refName change drops the stale remote half and forks a remote
+      // refresh for the new branch; let that fiber settle.
+      for (let i = 0; i < 100 && state.remoteStatusCalls < 2; i++) {
+        yield* Effect.yieldNow;
+      }
+
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       assert.deepStrictEqual(initial, baseStatus);
       assert.deepStrictEqual(refreshedLocal, state.currentLocalStatus);
       assert.deepStrictEqual(cached, {
         ...state.currentLocalStatus,
-        ...baseRemoteStatus,
+        ...state.currentRemoteStatus,
       });
       assert.equal(state.localStatusCalls, 2);
-      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 2);
       assert.equal(state.localInvalidationCalls, 1);
-      assert.equal(state.remoteInvalidationCalls, 0);
+      assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 

@@ -23,6 +23,8 @@ import {
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
+  type VcsBranchPrInput,
+  type VcsBranchPrResult,
   VcsStatusInput,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
@@ -87,6 +89,9 @@ export class GitManager extends Context.Service<
       input: VcsStatusInput,
       options?: GitVcsDriver.GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
+    readonly branchPr: (
+      input: VcsBranchPrInput,
+    ) => Effect.Effect<VcsBranchPrResult, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -1684,6 +1689,43 @@ export const make = Effect.gen(function* () {
     });
     return mergeGitStatusParts(local, remote);
   });
+  // PR lookup for a branch that is not necessarily checked out. Threads keep
+  // a recorded branch, and their PR badge must survive the checkout moving
+  // elsewhere — so this derives the branch's upstream from git config instead
+  // of HEAD and funnels into the same cached lookup as status.
+  const branchPr: GitManager["Service"]["branchPr"] = Effect.fn("branchPr")(function* (input) {
+    const cwd = yield* normalizeStatusCacheKey(input.cwd);
+    const branch = input.branch;
+    const [remoteName, mergeRef, originHead] = yield* Effect.all(
+      [
+        readConfigValueNullable(cwd, `branch.${branch}.remote`),
+        readConfigValueNullable(cwd, `branch.${branch}.merge`),
+        gitCore
+          .execute({
+            operation: "GitManager.branchPr.defaultBranch",
+            cwd,
+            args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            allowNonZeroExit: true,
+          })
+          .pipe(Effect.orElseSucceed(() => null)),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const upstreamRef =
+      remoteName !== null && mergeRef !== null && mergeRef.startsWith("refs/heads/")
+        ? `${remoteName}/${mergeRef.slice("refs/heads/".length)}`
+        : null;
+    const originHeadBranch =
+      originHead !== null && originHead.exitCode === 0
+        ? (originHead.stdout.trim().split("/").slice(1).join("/") ?? "")
+        : "";
+    const isDefaultBranch =
+      originHeadBranch.length > 0
+        ? branch === originHeadBranch
+        : branch === "main" || branch === "master";
+    const pr = yield* lookupStatusPr(cwd, { branch, upstreamRef, isDefaultBranch });
+    return { branch, pr } satisfies VcsBranchPrResult;
+  });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
   )(function* (cwd) {
@@ -2136,6 +2178,7 @@ export const make = Effect.gen(function* () {
   return GitManager.of({
     localStatus,
     remoteStatus,
+    branchPr,
     status,
     invalidateLocalStatus,
     invalidateRemoteStatus,

@@ -188,9 +188,15 @@ export const VcsInitInput = Schema.Struct({
 });
 export type VcsInitInput = typeof VcsInitInput.Type;
 
+export const VcsBranchPrInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema,
+});
+export type VcsBranchPrInput = typeof VcsBranchPrInput.Type;
+
 // RPC Results
 
-const VcsStatusChangeRequest = Schema.Struct({
+export const VcsStatusChangeRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
   url: Schema.String,
@@ -198,6 +204,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
 });
+export type VcsStatusChangeRequest = typeof VcsStatusChangeRequest.Type;
 
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
@@ -252,6 +259,17 @@ export const VcsStatusStreamEvent = Schema.Union([
   }),
 ]);
 export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;
+
+/**
+ * PR/MR state for one branch of a repository, independent of what is
+ * currently checked out at the cwd. This is what lets a thread keep its PR
+ * badge after the user (or another thread) switches the checkout elsewhere.
+ */
+export const VcsBranchPrResult = Schema.Struct({
+  branch: TrimmedNonEmptyStringSchema,
+  pr: Schema.NullOr(VcsStatusChangeRequest),
+});
+export type VcsBranchPrResult = typeof VcsBranchPrResult.Type;
 
 export const VcsListRefsResult = Schema.Struct({
   refs: Schema.Array(VcsRef),

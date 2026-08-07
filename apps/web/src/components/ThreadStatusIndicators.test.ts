@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   prStatusIndicator,
-  resolveThreadPr,
+  selectBranchPr,
   settledPrHoverColorClass,
 } from "./ThreadStatusIndicators";
 
@@ -30,43 +30,54 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   };
 }
 
-describe("resolveThreadPr", () => {
-  it("keeps local-checkout PR indicators scoped to the stored thread branch", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: "feature/other",
-        gitStatus: status(),
-      }),
-    ).toBeNull();
-  });
+const otherBranchPr = {
+  number: 7,
+  title: "Branch-keyed PR",
+  url: "https://github.com/pingdotgg/t3code/pull/7",
+  baseRef: "main",
+  headRef: "feature/other",
+  state: "open",
+} as const;
 
-  it("hides PR indicators when a dedicated worktree has switched away from the thread branch", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: "stack/base",
-        gitStatus: status(),
-      }),
-    ).toBeNull();
-  });
-
-  it("hides PR indicators when thread branch metadata is missing", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: null,
-        gitStatus: status(),
-      }),
-    ).toBeNull();
-  });
-
-  it("shows the PR when the live checkout matches the stored thread branch", () => {
+describe("selectBranchPr", () => {
+  it("shows the PR when the live checkout matches the requested branch", () => {
     const gitStatus = status();
 
+    expect(selectBranchPr({ branch: "feature/current", gitStatus, branchPr: undefined })).toBe(
+      gitStatus.pr,
+    );
+  });
+
+  it("falls back to the branch-keyed lookup when the checkout moved elsewhere", () => {
     expect(
-      resolveThreadPr({
-        threadBranch: "feature/current",
-        gitStatus,
+      selectBranchPr({
+        branch: "feature/other",
+        gitStatus: status(),
+        branchPr: otherBranchPr,
       }),
-    ).toBe(gitStatus.pr);
+    ).toBe(otherBranchPr);
+  });
+
+  it("treats an empty PR on the matching checkout as authoritative", () => {
+    // Regression: a warm branch-keyed result must not resurrect a badge the
+    // status stream just cleared (e.g. immediately after a merge).
+    expect(
+      selectBranchPr({
+        branch: "feature/current",
+        gitStatus: status({ pr: null }),
+        branchPr: otherBranchPr,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns nothing when the branch is unknown and no lookup resolved", () => {
+    expect(selectBranchPr({ branch: null, gitStatus: status(), branchPr: undefined })).toBeNull();
+  });
+
+  it("returns nothing while the branch-keyed lookup is unresolved", () => {
+    expect(
+      selectBranchPr({ branch: "feature/other", gitStatus: status(), branchPr: undefined }),
+    ).toBeNull();
   });
 });
 

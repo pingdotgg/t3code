@@ -22,6 +22,8 @@ import {
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
+  type VcsBranchPrInput,
+  type VcsBranchPrResult,
   type VcsStatusInput,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
@@ -45,6 +47,9 @@ export class GitWorkflowService extends Context.Service<
       input: VcsStatusInput,
       options?: GitVcsDriver.GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
+    readonly branchPr: (
+      input: VcsBranchPrInput,
+    ) => Effect.Effect<VcsBranchPrResult, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -272,6 +277,14 @@ export const make = Effect.gen(function* () {
       detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? gitManager.remoteStatus(input, options) : Effect.succeed(null),
+        ),
+      ),
+    branchPr: (input) =>
+      detectGitRepositoryForStatus("GitWorkflowService.branchPr", input.cwd).pipe(
+        Effect.flatMap((isGitRepository) =>
+          isGitRepository
+            ? gitManager.branchPr(input)
+            : Effect.succeed({ branch: input.branch, pr: null }),
         ),
       ),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,

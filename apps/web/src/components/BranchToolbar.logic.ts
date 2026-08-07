@@ -191,13 +191,6 @@ export function resolveBranchTriggerLabel(input: {
   return resolvedActiveBranch;
 }
 
-export function resolveBranchToolbarPrBranch(input: {
-  activeThreadBranch: string | null;
-  resolvedActiveBranch: string | null;
-}): string | null {
-  return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
-}
-
 export function resolveLocalCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;

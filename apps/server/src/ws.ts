@@ -1787,6 +1787,10 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "vcs",
             },
           ),
+        [WS_METHODS.vcsBranchPr]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsBranchPr, gitWorkflow.branchPr(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPull,
@@ -1863,7 +1867,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsSwitchRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsSwitchRef,
-            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            gitWorkflow.switchRef(input).pipe(
+              // Publish the new refName before the RPC resolves so a client
+              // that awaited the switch can never observe the old branch from
+              // the status stream afterwards. The full refresh (remote half,
+              // PR lookup) is slow and stays forked.
+              Effect.tap(() =>
+                vcsStatusBroadcaster
+                  .refreshLocalStatus(input.cwd)
+                  .pipe(Effect.ignoreCause({ log: true })),
+              ),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsInit]: (input) =>

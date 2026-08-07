@@ -15,6 +15,10 @@ export {
  * (environmentId, cwd) by the atom family, so many rows on the same worktree
  * or project root share one stream — and virtualization means only visible
  * rows subscribe at all.
+ *
+ * Keyed by the thread's recorded branch, not the current checkout: the
+ * streamed status is the fast path while the checkout matches, and a
+ * branch-keyed lookup keeps the badge alive once the checkout moves away.
  */
 export function useThreadPr(
   thread: EnvironmentThreadShell,
@@ -29,13 +33,25 @@ export function useThreadPr(
         })
       : null,
   );
+  const branchPr = useEnvironmentQuery(
+    thread.branch !== null && cwd !== null
+      ? vcsEnvironment.branchPr({
+          environmentId: thread.environmentId,
+          input: { cwd, branch: thread.branch },
+        })
+      : null,
+  );
 
   const status = gitStatus.data;
-  if (status === null || thread.branch === null || status.refName !== thread.branch) {
+  // When the status describes the thread's own branch it is authoritative
+  // about that branch's PR — including when it reports none, so this must not
+  // fall through to a warm branch lookup that would resurrect a stale badge.
+  if (status !== null && thread.branch !== null && status.refName === thread.branch) {
+    return status.pr ? presentThreadPr(status.pr, status.sourceControlProvider) : null;
+  }
+  const pr = branchPr.data?.pr;
+  if (!pr) {
     return null;
   }
-  if (!status.pr) {
-    return null;
-  }
-  return presentThreadPr(status.pr, status.sourceControlProvider);
+  return presentThreadPr(pr, status?.sourceControlProvider);
 }

@@ -21,6 +21,8 @@ import {
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
   GitActionProgressEvent,
+  VcsBranchPrInput,
+  VcsBranchPrResult,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
   GitCommandError,
@@ -192,6 +194,7 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsBranchPr: "vcs.branchPr",
 
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
@@ -559,6 +562,12 @@ export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
 });
 
+export const WsVcsBranchPrRpc = Rpc.make(WS_METHODS.vcsBranchPr, {
+  payload: VcsBranchPrInput,
+  success: VcsBranchPrResult,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
 /**
  * Ephemeral live diff preview for compact/mobile surfaces.
  * Not the persisted T3 Review model. Future review sessions should use
@@ -848,6 +857,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsBranchPrRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

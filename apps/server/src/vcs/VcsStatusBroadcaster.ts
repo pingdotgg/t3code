@@ -10,6 +10,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import type {
@@ -194,6 +195,35 @@ export const make = Effect.gen(function* () {
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
+  // Serialize refreshes per cwd so a read that started before a mutation (a
+  // checkout, a pull) cannot finish after the post-mutation refresh and
+  // publish stale state on top of fresh state. Local and remote halves get
+  // separate locks: local reads are cheap and must never queue behind an
+  // in-flight remote read (PR lookups hit the network for seconds). The only
+  // path that holds both acquires remote before local.
+  interface CwdLocks {
+    readonly local: Semaphore.Semaphore;
+    readonly remote: Semaphore.Semaphore;
+  }
+  const locksRef = yield* SynchronizedRef.make(new Map<string, CwdLocks>());
+  const locksFor = (cwd: string) =>
+    SynchronizedRef.modifyEffect(locksRef, (locks) => {
+      const existing = locks.get(cwd);
+      if (existing) {
+        return Effect.succeed([existing, locks] as const);
+      }
+      return Effect.all([Semaphore.make(1), Semaphore.make(1)]).pipe(
+        Effect.map(([local, remote]) => {
+          const created: CwdLocks = { local, remote };
+          return [created, new Map(locks).set(cwd, created)] as const;
+        }),
+      );
+    });
+  const withLocalLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    locksFor(cwd).pipe(Effect.flatMap((locks) => locks.local.withPermits(1)(effect)));
+  const withRemoteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    locksFor(cwd).pipe(Effect.flatMap((locks) => locks.remote.withPermits(1)(effect)));
+
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
@@ -206,27 +236,45 @@ export const make = Effect.gen(function* () {
         fingerprint: fingerprintStatusPart(local),
         value: local,
       } satisfies CachedValue<VcsStatusLocalResult>;
-      const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
+      const { shouldPublish, checkoutChanged } = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
+        const changedRefName =
+          previous.local !== null && previous.local.value.refName !== local.refName;
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
-          ...previous,
           local: nextLocal,
+          // The cached remote half (ahead/behind, PR) was computed for the
+          // previous checkout; carrying it across a refName change would pair
+          // the new branch with the old branch's PR. Drop it and let the
+          // remote refresh repopulate it for the new branch.
+          remote: changedRefName ? null : previous.remote,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [
+          {
+            shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
+            checkoutChanged: changedRefName,
+          },
+          nextCache,
+        ] as const;
       });
 
       if (options?.publish && shouldPublish) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
-          event: {
-            _tag: "localUpdated",
-            local,
-          },
+          event: checkoutChanged
+            ? {
+                _tag: "snapshot",
+                local,
+                remote: null,
+              }
+            : {
+                _tag: "localUpdated",
+                local,
+              },
         });
       }
 
-      return local;
+      return { local, checkoutChanged };
     },
   );
 
@@ -305,8 +353,13 @@ export const make = Effect.gen(function* () {
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
   ) {
-    const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local);
+    return yield* withLocalLock(
+      cwd,
+      Effect.gen(function* () {
+        const local = yield* workflow.localStatus({ cwd });
+        return (yield* updateCachedLocalStatus(cwd, local)).local;
+      }),
+    );
   });
 
   const getOrLoadLocalStatus = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(function* (
@@ -329,21 +382,52 @@ export const make = Effect.gen(function* () {
     if (cached?.local && cached.remote) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    const [local, remote] = yield* Effect.all(
-      [
-        cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
-        cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
-      ],
-      { concurrency: "unbounded" },
+    return yield* withRemoteLock(
+      cwd,
+      withLocalLock(
+        cwd,
+        Effect.gen(function* () {
+          // Re-check under the locks: a refresh may have populated the cache
+          // while this call was waiting for them.
+          const current = yield* getCachedStatus(cwd);
+          if (current?.local && current.remote) {
+            return mergeGitStatusParts(current.local.value, current.remote.value);
+          }
+          const [local, remote] = yield* Effect.all(
+            [
+              current?.local ? Effect.succeed(current.local.value) : workflow.localStatus({ cwd }),
+              current?.remote
+                ? Effect.succeed(current.remote.value)
+                : workflow.remoteStatus({ cwd }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          return yield* updateCachedStatus(cwd, local, remote);
+        }),
+      ),
     );
-    return yield* updateCachedStatus(cwd, local, remote);
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
-      yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      const result = yield* withLocalLock(
+        cwd,
+        Effect.gen(function* () {
+          yield* workflow.invalidateLocalStatus(cwd);
+          const local = yield* workflow.localStatus({ cwd });
+          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        }),
+      );
+      if (result.checkoutChanged) {
+        // The checkout moved (a switch, or a `git checkout` outside T3's
+        // commands). The remote half was dropped above; repopulate it for the
+        // new branch without waiting for the next poll tick.
+        yield* refreshRemoteStatus(cwd).pipe(
+          Effect.ignoreCause({ log: true }),
+          Effect.forkIn(broadcasterScope),
+        );
+      }
+      return result.local;
     },
   );
 
@@ -356,27 +440,65 @@ export const make = Effect.gen(function* () {
 
   const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (
     cwd: string,
-    options?: { readonly refreshUpstream?: boolean },
+    options?: { readonly refreshUpstream?: boolean; readonly invalidate?: boolean },
   ) {
-    if (options?.refreshUpstream !== false) {
-      yield* workflow.invalidateRemoteStatus(cwd);
-    }
-    const remote = yield* workflow.remoteStatus({ cwd }, options);
-    return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+    return yield* withRemoteLock(
+      cwd,
+      Effect.gen(function* () {
+        const refNameBefore = (yield* getCachedStatus(cwd))?.local?.value.refName;
+        if (options?.invalidate !== false && options?.refreshUpstream !== false) {
+          yield* workflow.invalidateRemoteStatus(cwd);
+        }
+        const remote = yield* workflow.remoteStatus(
+          { cwd },
+          options?.refreshUpstream === undefined
+            ? undefined
+            : { refreshUpstream: options.refreshUpstream },
+        );
+        // A checkout that lands while the slow remote read is in flight makes
+        // this result describe the previous branch. Publishing it would
+        // attach the old branch's PR/divergence to the new refName — discard
+        // it; the refName change itself already kicked a follow-up refresh.
+        const refNameAfter = (yield* getCachedStatus(cwd))?.local?.value.refName;
+        if (refNameBefore !== undefined && refNameAfter !== refNameBefore) {
+          return (yield* getCachedStatus(cwd))?.remote?.value ?? null;
+        }
+        return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+      }),
+    );
+  });
+
+  const refreshStatusCore = Effect.fn("VcsStatusBroadcaster.refreshStatusCore")(function* (
+    cwd: string,
+  ) {
+    // invalidateStatus (not the two partial invalidations) so an explicit
+    // refresh also bypasses GitManager's slow PR-lookup cache.
+    yield* workflow.invalidateStatus(cwd);
+    const local = yield* withLocalLock(
+      cwd,
+      Effect.gen(function* () {
+        const localResult = yield* workflow.localStatus({ cwd });
+        return (yield* updateCachedLocalStatus(cwd, localResult, { publish: true })).local;
+      }),
+    );
+    const remote = yield* refreshRemoteStatus(cwd, { invalidate: false });
+    // A checkout can land between the two reads. refreshRemoteStatus discards
+    // a superseded remote result, which would leave `local` describing the old
+    // branch — returning that pair would hand the caller a status the cache
+    // itself no longer agrees with. Prefer the cache's halves, which the
+    // concurrent refresh has already reconciled for the new branch.
+    const cached = yield* getCachedStatus(cwd);
+    return mergeGitStatusParts(
+      cached?.local?.value ?? local,
+      cached?.remote ? cached.remote.value : remote,
+    );
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    // invalidateStatus (not the two partial invalidations) so an explicit
-    // refresh also bypasses GitManager's slow PR-lookup cache.
-    yield* workflow.invalidateStatus(cwd);
-    const [local, remote] = yield* Effect.all(
-      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-      { concurrency: "unbounded" },
-    );
-    return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+    return yield* refreshStatusCore(cwd);
   });
 
   const makeRemoteRefreshLoop = (

@@ -1099,6 +1099,12 @@ export default function GitActionsControl({
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
+  // Deliberately the checkout's status, not the active thread's branch: every
+  // action here (commit, push, create) runs against whatever is checked out at
+  // `gitCwd`, so gating them on another branch's PR would offer "Create PR"
+  // for a branch that already has one — or hide it for one that doesn't.
+  // Thread-scoped PR state lives on the sidebar badge and the composer pill,
+  // which are branch-keyed; the branch-mismatch banner explains the split.
   const gitStatusForActions = gitStatus;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];

@@ -16,8 +16,8 @@ import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
   PrStatusTooltipContent,
-  resolveThreadPr,
   terminalStatusFromRunningIds,
+  useThreadPr,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
@@ -449,7 +449,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       lastVisitedAt,
     },
   });
-  const pr = resolveThreadPr({
+  const pr = useThreadPr({
+    environmentId: thread.environmentId,
+    cwd: gitCwd,
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
   });
