@@ -263,6 +263,18 @@ export function useSidebarV2Enabled(): boolean {
   );
 }
 
+/**
+ * Resolved sidebar v3 state: a plain opt-in with no per-channel default.
+ * Held off until client settings hydrate for the same reason as v2 — the
+ * pre-hydration snapshot is just schema defaults, and resolving against it
+ * would mount one sidebar and swap it out a tick later, remounting the tree.
+ */
+export function useSidebarV3Enabled(): boolean {
+  const settingsHydrated = useClientSettingsHydrated();
+  const enabled = useClientSettingsValue().sidebarV3Enabled;
+  return settingsHydrated && enabled;
+}
+
 /** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,

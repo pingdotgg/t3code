@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   useClientSettings,
   useSidebarV2Enabled,
+  useSidebarV3Enabled,
   useUpdateClientSettings,
 } from "../../hooks/useSettings";
 import { Input } from "../ui/input";
@@ -57,6 +58,7 @@ function AutoSettleDaysInput({
 
 export function BetaSettingsPanel() {
   const sidebarV2Enabled = useSidebarV2Enabled();
+  const sidebarV3Enabled = useSidebarV3Enabled();
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
@@ -83,7 +85,18 @@ export function BetaSettingsPanel() {
             />
           }
         />
-        {sidebarV2Enabled ? (
+        <SettingsRow
+          {...searchableSetting("sidebar-v3")}
+          description="Status-grouped compact thread list: collapsible Needs attention, Working, and Ready sections with one-line rows. Takes precedence over Sidebar v2 while enabled. Switch back any time."
+          control={
+            <Switch
+              checked={sidebarV3Enabled}
+              onCheckedChange={(checked) => updateSettings({ sidebarV3Enabled: Boolean(checked) })}
+              aria-label="Enable the sidebar v3 beta"
+            />
+          }
+        />
+        {sidebarV2Enabled || sidebarV3Enabled ? (
           <>
             <SettingsRow
               title={searchableSetting("auto-settle-inactive-threads").title}

@@ -111,6 +111,33 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings sidebar v3", () => {
+  it("defaults the beta off with status grouping and created sort", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.sidebarV3Enabled).toBe(false);
+    expect(settings.sidebarV3Grouping).toBe("status");
+    expect(settings.sidebarV3ThreadSortOrder).toBe("created");
+  });
+
+  it("carries the beta toggle and both menu choices through a patch", () => {
+    const patch = decodeClientSettingsPatch({
+      sidebarV3Enabled: true,
+      sidebarV3Grouping: "flat",
+      sidebarV3ThreadSortOrder: "activity",
+    });
+    expect(patch.sidebarV3Enabled).toBe(true);
+    expect(patch.sidebarV3Grouping).toBe("flat");
+    expect(patch.sidebarV3ThreadSortOrder).toBe("activity");
+  });
+
+  it("rejects unknown grouping and sort values", () => {
+    expect(() => decodeClientSettings({ sidebarV3Grouping: "project" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV3Grouping: "project" })).toThrow();
+    expect(() => decodeClientSettings({ sidebarV3ThreadSortOrder: "updated_at" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV3ThreadSortOrder: "updated_at" })).toThrow();
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({

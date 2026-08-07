@@ -951,7 +951,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    The version attribute remains useful for layout-specific styling without
    changing the color system when the beta is toggled. */
 [data-sidebar-version="v1"],
-[data-sidebar-version="v2"] {
+[data-sidebar-version="v2"],
+[data-sidebar-version="v3"] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -975,7 +976,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 .dark [data-sidebar-version="v1"],
-.dark [data-sidebar-version="v2"] {
+.dark [data-sidebar-version="v2"],
+.dark [data-sidebar-version="v3"] {
   --background: #000;
   --foreground: #f1f3f7;
   --card: #000;
