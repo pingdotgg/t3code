@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   PreviewAnnotationPayload,
+  ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -75,6 +76,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { useProviderSkills } from "../../state/queries";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -545,6 +547,7 @@ export interface ChatComposerProps {
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
+  activeProjectId: ProjectId | null;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
 
@@ -608,9 +611,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
     draftId,
     activeThreadId,
-    activeThreadEnvironmentId: _activeThreadEnvironmentId,
+    activeThreadEnvironmentId,
     activeThread,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -635,6 +638,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     interactionMode,
     lockedProvider,
     providerStatuses,
+    activeProjectId,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
@@ -1022,6 +1026,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     query: isPathTrigger ? pathTriggerQuery : null,
   });
 
+  const composerSkills = useProviderSkills({
+    activeEnvironmentId: activeThreadEnvironmentId,
+    fallbackEnvironmentId: environmentId,
+    provider: selectedProviderStatus,
+    isServerThread,
+    threadId: activeThreadId,
+    projectId: activeProjectId,
+  });
+
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -1076,22 +1089,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(composerSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    composerSkills,
+    composerTrigger,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -3021,7 +3038,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={composerSkills}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}

@@ -1,4 +1,15 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationThread,
+  ServerProviderSkill,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  type ProviderSkillInventoryContext,
+  resolveProviderSkillInventoryRequest,
+  resolveProviderSkillInventoryTarget,
+  selectProviderSkills,
+} from "@t3tools/client-runtime/state/provider-skill-inventory";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
@@ -12,6 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import {
@@ -123,6 +135,24 @@ export function useBranches(input: {
         })
       : null,
   );
+}
+
+/**
+ * Skills for a composer or message feed. Snapshot-mode providers never hit the
+ * network; project-mode providers issue one request per
+ * (environment, scope, instance).
+ */
+export function useProviderSkills(
+  context: ProviderSkillInventoryContext,
+): ReadonlyArray<ServerProviderSkill> {
+  const target = resolveProviderSkillInventoryTarget(context);
+  const request = resolveProviderSkillInventoryRequest(target);
+  const result = useEnvironmentQuery(
+    request === null ? null : serverEnvironment.skillInventory(request),
+  );
+  const provider = target.provider;
+  const inventory = result.data;
+  return useMemo(() => selectProviderSkills({ provider, inventory }), [provider, inventory]);
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {

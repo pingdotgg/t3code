@@ -83,6 +83,10 @@
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"
     },
+    "./state/provider-skill-inventory": {
+      "types": "./src/state/providerSkillInventory.ts",
+      "default": "./src/state/providerSkillInventory.ts"
+    },
     "./state/project-grouping": {
       "types": "./src/state/projectGrouping.ts",
       "default": "./src/state/projectGrouping.ts"

@@ -6,6 +6,7 @@ import {
   ServerProvider,
   ServerProviders,
   ServerUpsertKeybindingResult,
+  usesProjectSkillInventory,
 } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
@@ -45,8 +46,29 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(parsed.skillInventoryMode).toBeUndefined();
+    expect(usesProjectSkillInventory(parsed)).toBe(false);
   });
 
+  it("treats an explicit project inventory mode as dynamic", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "cursor",
+      driver: "cursor",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      skillInventoryMode: "project",
+    });
+
+    expect(usesProjectSkillInventory(parsed)).toBe(true);
+  });
+});
+
+describe("ServerProvider compatibility", () => {
   it("defaults one-click update support when decoding older advisory snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
