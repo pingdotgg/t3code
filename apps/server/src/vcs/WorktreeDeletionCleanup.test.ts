@@ -4,7 +4,9 @@ import { ThreadId, WorktreeMutationError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorktreeDeletionCleanup from "./WorktreeDeletionCleanup.ts";
@@ -144,5 +146,40 @@ it.effect("subscribes once and routes thread deletion events to cleanup", () =>
     }).pipe(Effect.provide(layer));
 
     assert.deepEqual(pruned, ["/worktrees/from-event"]);
+  }),
+);
+
+it.effect("restarts the domain event subscription after a stream failure", () =>
+  Effect.gen(function* () {
+    const firstAttemptStarted = yield* Deferred.make<void>();
+    const recoveredPath = yield* Deferred.make<string>();
+    const attempts = yield* Ref.make(0);
+    const events = Stream.unwrap(
+      Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
+        Effect.flatMap((attempt) =>
+          attempt === 0
+            ? Deferred.succeed(firstAttemptStarted, undefined).pipe(
+                Effect.as(Stream.fail("simulated subscription failure")),
+              )
+            : Effect.succeed(Stream.fromIterable([deletionEvent("/worktrees/recovered")])),
+        ),
+      ),
+    );
+    const prune = (path: string) => Deferred.succeed(recoveredPath, path).pipe(Effect.as(true));
+    const layer = makeLayer(prune, {
+      deleteOrphanedImmediately: true,
+      events,
+    });
+
+    yield* Effect.gen(function* () {
+      const cleanup = yield* WorktreeDeletionCleanup.WorktreeDeletionCleanup;
+      yield* cleanup.start();
+      yield* cleanup.start();
+      yield* Deferred.await(firstAttemptStarted);
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* Deferred.await(recoveredPath), "/worktrees/recovered");
+      yield* cleanup.drain;
+      assert.equal(yield* Ref.get(attempts), 2);
+    }).pipe(Effect.provide(layer));
   }),
 );

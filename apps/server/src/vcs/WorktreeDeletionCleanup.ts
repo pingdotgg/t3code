@@ -1,9 +1,11 @@
 import type { OrchestrationV2DomainEvent, ThreadId } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -79,15 +81,20 @@ export const makeWorktreeDeletionCleanup = (
       if (!shouldStart) return;
 
       yield* domainEvents.pipe(
+        Stream.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Stream.fromEffect(
+              Effect.logWarning("worktree.deletion-cleanup.stream-failed", {
+                cause,
+              }).pipe(Effect.andThen(Effect.fail(cause))),
+            ),
+        ),
+        Stream.retry(Schedule.exponential("1 second")),
         Stream.runForEach((event) => {
           const request = threadDeletionCleanupRequest(event);
           return request === null ? Effect.void : worker.enqueue(request);
         }),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("worktree.deletion-cleanup.stream-failed", {
-            cause,
-          }),
-        ),
         Effect.forkScoped,
       );
     });
