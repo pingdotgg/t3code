@@ -13,9 +13,7 @@ import {
   type AgentProfileDocument,
   type AgentProfileLocator,
   type AgentProfileRef,
-  type AgentRunSummary,
   type OrchestrationCommand,
-  type RuntimeTaskUsage,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -37,12 +35,27 @@ import * as ProcessRunner from "../processRunner.ts";
 import { resolveAgentRuntimeCompatibility } from "../provider/AgentRuntimeCompatibility.ts";
 import * as AgentCatalog from "./AgentCatalog.ts";
 import * as AgentHookRunner from "./AgentHookRunner.ts";
-import { AgentOrchestration, type AgentOrchestrationError } from "./AgentOrchestration.ts";
+import { AgentOrchestration } from "./AgentOrchestration.ts";
 import { compileAgentPrompt } from "./prompt/PromptCompiler.ts";
 import * as AgentRunDomain from "./run/AgentRun.ts";
 import * as AgentRunRepository from "./run/AgentRunRepository.ts";
 
-const invalid = (detail: string) => new AgentProfileInvalidError({ detail });
+const invalid = (
+  detail: string,
+  context?: {
+    readonly operation?: string;
+    readonly cause?: unknown;
+    readonly profileId?: AgentProfileId;
+    readonly runId?: AgentRunId;
+  },
+) =>
+  new AgentProfileInvalidError({
+    detail: detail.slice(0, 4_000),
+    operation: context?.operation ?? "agent-orchestration",
+    ...(context?.profileId === undefined ? {} : { profileId: context.profileId }),
+    ...(context?.runId === undefined ? {} : { runId: context.runId }),
+    cause: context?.cause ?? new Error(detail),
+  });
 
 const minimumBudgets = (
   child: AgentProfileBudgets,
@@ -98,21 +111,23 @@ export const dispatchAgentChildLifecycle = Effect.fn(
   readonly prepareThread: Effect.Effect<void, AgentProfileInvalidError>;
   readonly startTurn: ThreadTurnStartCommand;
 }) {
-  yield* input.engine
-    .dispatch(input.createThread)
-    .pipe(
-      Effect.mapError((error) =>
-        invalid(`T3 could not create the child Agent thread: ${error.message}`),
-      ),
-    );
+  yield* input.engine.dispatch(input.createThread).pipe(
+    Effect.mapError((error) =>
+      invalid(`T3 could not create the child Agent thread: ${error.message}`, {
+        operation: "child-thread-create",
+        cause: error,
+      }),
+    ),
+  );
   yield* input.prepareThread;
-  return yield* input.engine
-    .dispatch(input.startTurn)
-    .pipe(
-      Effect.mapError((error) =>
-        invalid(`T3 could not start the child Agent thread: ${error.message}`),
-      ),
-    );
+  return yield* input.engine.dispatch(input.startTurn).pipe(
+    Effect.mapError((error) =>
+      invalid(`T3 could not start the child Agent thread: ${error.message}`, {
+        operation: "child-turn-start",
+        cause: error,
+      }),
+    ),
+  );
 });
 
 export const agentWorktreeBranchName = (runId: AgentRunId): string => `t3code/agent-${runId}`;
@@ -139,9 +154,14 @@ export const applyIsolatedWorktreePatch = Effect.fn(
   const processRunner = yield* ProcessRunner.ProcessRunner;
 
   const canonical = (candidate: string, label: string) =>
-    fileSystem
-      .realPath(candidate)
-      .pipe(Effect.mapError(() => invalid(`${label} is no longer available.`)));
+    fileSystem.realPath(candidate).pipe(
+      Effect.mapError((cause) =>
+        invalid(`${label} is no longer available.`, {
+          operation: "integration-path-resolve",
+          cause,
+        }),
+      ),
+    );
   const runGit = (cwd: string, args: ReadonlyArray<string>, operation: string, stdin?: string) =>
     processRunner
       .run({
@@ -154,7 +174,9 @@ export const applyIsolatedWorktreePatch = Effect.fn(
         outputMode: "error",
       })
       .pipe(
-        Effect.mapError(() => invalid(`${operation} could not start.`)),
+        Effect.mapError((cause) =>
+          invalid(`${operation} could not start.`, { operation: "git-command", cause }),
+        ),
         Effect.flatMap((result) => {
           if (
             result.code === 0 &&
@@ -170,6 +192,7 @@ export const applyIsolatedWorktreePatch = Effect.fn(
               detail.length > 0
                 ? `${operation} failed: ${detail.slice(0, 4_000)}`
                 : `${operation} failed.`,
+              { operation: "git-command", cause: result },
             ),
           );
         }),
@@ -230,9 +253,20 @@ export const applyIsolatedWorktreePatch = Effect.fn(
     );
   }
 
+  const targetHead = (yield* runGit(
+    targetWorktreePath,
+    ["rev-parse", "HEAD"],
+    "Integration target revision",
+  )).trim();
+  const mergeBase = (yield* runGit(
+    sourceWorktreePath,
+    ["merge-base", "HEAD", targetHead],
+    "Agent branch-point inspection",
+  )).trim();
+
   const patch = yield* runGit(
     sourceWorktreePath,
-    ["diff", "--binary", "--no-ext-diff", "HEAD", "--"],
+    ["diff", "--binary", "--no-ext-diff", mergeBase, "--"],
     "Agent patch generation",
   );
   if (patch.length === 0) return;
@@ -271,15 +305,17 @@ export const make = Effect.gen(function* () {
     ref: AgentProfileLocator | AgentProfileRef,
     workspaceRoot: string,
   ) {
-    const profile = yield* catalog
-      .getProfile({ ref, workspaceRoot })
-      .pipe(
-        Effect.mapError((error) =>
-          error._tag === "AgentCatalogNotFoundError"
-            ? new AgentProfileNotFoundError({ id: ref.id, scope: ref.scope })
-            : invalid(error.message),
-        ),
-      );
+    const profile = yield* catalog.getProfile({ ref, workspaceRoot }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "AgentCatalogNotFoundError"
+          ? new AgentProfileNotFoundError({ id: ref.id, scope: ref.scope })
+          : invalid(error.message, {
+              operation: "profile-load",
+              cause: error,
+              profileId: ref.id,
+            }),
+      ),
+    );
     if ("revision" in ref && ref.revision !== profile.revision) {
       return yield* invalid(
         `Agent profile '${ref.scope}/${ref.id}' changed after this thread pinned revision ${ref.revision}.`,
@@ -295,7 +331,12 @@ export const make = Effect.gen(function* () {
     scope: Parameters<AgentOrchestration["Service"]["list"]>[0],
   ) {
     const thread = yield* projection.getThreadShellById(scope.threadId).pipe(
-      Effect.mapError(() => invalid(`Could not resolve invoking thread '${scope.threadId}'.`)),
+      Effect.mapError((cause) =>
+        invalid(`Could not resolve invoking thread '${scope.threadId}'.`, {
+          operation: "invocation-thread-resolve",
+          cause,
+        }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(invalid(`Invoking thread '${scope.threadId}' was not found.`)),
@@ -304,7 +345,12 @@ export const make = Effect.gen(function* () {
       ),
     );
     const project = yield* projection.getProjectShellById(thread.projectId).pipe(
-      Effect.mapError(() => invalid(`Could not resolve project '${thread.projectId}'.`)),
+      Effect.mapError((cause) =>
+        invalid(`Could not resolve project '${thread.projectId}'.`, {
+          operation: "invocation-project-resolve",
+          cause,
+        }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(invalid(`Project '${thread.projectId}' was not found.`)),
@@ -313,7 +359,12 @@ export const make = Effect.gen(function* () {
       ),
     );
     const currentRun = yield* runs.getByChildThread(scope.threadId).pipe(
-      Effect.mapError(() => invalid("Could not resolve the invoking Agent run.")),
+      Effect.mapError((cause) =>
+        invalid("Could not resolve the invoking Agent run.", {
+          operation: "invocation-run-resolve",
+          cause,
+        }),
+      ),
       Effect.map(Option.getOrNull),
     );
     const selectedRef = currentRun?.profile ?? thread.agentProfile ?? null;
@@ -327,7 +378,13 @@ export const make = Effect.gen(function* () {
     runId: AgentRunId,
   ) {
     const run = yield* runs.get(runId).pipe(
-      Effect.mapError(() => invalid(`Could not load Agent run '${runId}'.`)),
+      Effect.mapError((cause) =>
+        invalid(`Could not load Agent run '${runId}'.`, {
+          operation: "run-load",
+          cause,
+          runId,
+        }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(new AgentRunNotFoundError({ id: runId })),
@@ -403,11 +460,15 @@ export const make = Effect.gen(function* () {
       }
       const target = yield* loadProfile(input.profile, context.project.workspaceRoot);
       const modelSelection = target.defaultModelSelection ?? context.thread.modelSelection;
-      const capabilities = yield* providers
-        .getCapabilities(modelSelection.instanceId)
-        .pipe(
-          Effect.mapError(() => invalid(`Provider '${modelSelection.instanceId}' is unavailable.`)),
-        );
+      const capabilities = yield* providers.getCapabilities(modelSelection.instanceId).pipe(
+        Effect.mapError((cause) =>
+          invalid(`Provider '${modelSelection.instanceId}' is unavailable.`, {
+            operation: "provider-capabilities",
+            cause,
+            profileId: target.id,
+          }),
+        ),
+      );
       const unsupportedT3Capabilities = target.requirements.t3McpCapabilities.filter(
         (capability) => capability !== "agents" && capability !== "preview",
       );
@@ -441,14 +502,30 @@ export const make = Effect.gen(function* () {
           stage: "beforeSpawn",
           workspaceRoot: context.project.workspaceRoot,
         })
-        .pipe(Effect.mapError((error) => invalid(error.detail)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.detail, {
+              operation: "before-spawn-hook",
+              cause: error,
+              profileId: target.id,
+            }),
+          ),
+        );
       const promptBuild = yield* hooks
         .run({
           profile: target,
           stage: "promptBuild",
           workspaceRoot: context.project.workspaceRoot,
         })
-        .pipe(Effect.mapError((error) => invalid(error.detail)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.detail, {
+              operation: "prompt-build-hook",
+              cause: error,
+              profileId: target.id,
+            }),
+          ),
+        );
       const catalogSnapshot = yield* catalog.list({ workspaceRoot: context.project.workspaceRoot });
       const ruleDocuments = yield* Effect.forEach(catalogSnapshot.rules, (rule) =>
         catalog
@@ -456,9 +533,18 @@ export const make = Effect.gen(function* () {
             ref: { id: AgentProfileId.make(rule.id), scope: rule.scope },
             workspaceRoot: context.project.workspaceRoot,
           })
-          .pipe(Effect.result),
-      ).pipe(
-        Effect.map((results) => results.filter(Result.isSuccess).map((result) => result.success)),
+          .pipe(
+            Effect.mapError((error) =>
+              invalid(
+                `Could not load rule '${rule.scope}/${rule.id}' before spawning the Agent: ${error.message}`,
+                {
+                  operation: "spawn-rule-load",
+                  cause: error,
+                  profileId: target.id,
+                },
+              ),
+            ),
+          ),
       );
       const budget = minimumBudgets(target.budgets, context.profile.budgets);
       const compiled = yield* Effect.try({
@@ -478,28 +564,59 @@ export const make = Effect.gen(function* () {
             toolNames: target.tools.allowed,
           }),
         catch: (error) =>
-          invalid(error instanceof Error ? error.message : "Prompt compilation failed."),
+          invalid(error instanceof Error ? error.message : "Prompt compilation failed.", {
+            operation: "prompt-compile",
+            cause: error,
+            profileId: target.id,
+          }),
       });
 
       const runId = AgentRunId.make(
         yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError(() => invalid("Could not allocate an Agent run id.")),
+          Effect.mapError((cause) =>
+            invalid("Could not allocate an Agent run id.", {
+              operation: "run-id-allocate",
+              cause,
+              profileId: target.id,
+            }),
+          ),
         ),
       );
       const childThreadId = ThreadId.make(
         yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError(() => invalid("Could not allocate an Agent thread id.")),
+          Effect.mapError((cause) =>
+            invalid("Could not allocate an Agent thread id.", {
+              operation: "child-thread-id-allocate",
+              cause,
+              profileId: target.id,
+              runId,
+            }),
+          ),
         ),
       );
       const messageId = MessageId.make(
-        `agent:${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => invalid("Could not allocate an Agent message id.")))}`,
+        `agent:${yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) =>
+            invalid("Could not allocate an Agent message id.", {
+              operation: "child-message-id-allocate",
+              cause,
+              profileId: target.id,
+              runId,
+            }),
+          ),
+        )}`,
       );
       const occurredAt = yield* nowIso;
-      yield* runs
-        .putProfileSnapshot(target)
-        .pipe(
-          Effect.mapError(() => invalid("Could not persist the pinned Agent profile revision.")),
-        );
+      yield* runs.putProfileSnapshot(target).pipe(
+        Effect.mapError((cause) =>
+          invalid("Could not persist the pinned Agent profile revision.", {
+            operation: "profile-snapshot-persist",
+            cause,
+            profileId: target.id,
+            runId,
+          }),
+        ),
+      );
       yield* runs
         .dispatch({
           type: "agent-run.request",
@@ -515,7 +632,11 @@ export const make = Effect.gen(function* () {
           workspaceMode: target.workspace.mode,
           occurredAt,
         })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, { operation: "run-request", cause: error, runId }),
+          ),
+        );
       yield* runs
         .dispatch({
           type: "agent-run.assign-child-thread",
@@ -523,14 +644,21 @@ export const make = Effect.gen(function* () {
           childThreadId,
           occurredAt,
         })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, { operation: "run-assign-thread", cause: error, runId }),
+          ),
+        );
 
       const pinnedProfile: AgentProfileRef = {
         id: target.id,
         scope: target.scope,
         revision: target.revision,
       };
-      const failSpawn = Effect.fn("AgentOrchestration.failSpawn")(function* (detail: string) {
+      const failSpawn = Effect.fn("AgentOrchestration.failSpawn")(function* (
+        detail: string,
+        cause: unknown,
+      ) {
         yield* runs
           .dispatch({
             type: "agent-run.fail",
@@ -546,7 +674,12 @@ export const make = Effect.gen(function* () {
             threadId: childThreadId,
           })
           .pipe(Effect.ignore);
-        return yield* invalid(detail);
+        return yield* invalid(detail, {
+          operation: "child-lifecycle-dispatch",
+          cause,
+          profileId: target.id,
+          runId,
+        });
       });
 
       const createThread: ThreadCreateCommand = {
@@ -576,7 +709,12 @@ export const make = Effect.gen(function* () {
                 })
                 .pipe(
                   Effect.mapError((error) =>
-                    invalid(`T3 could not prepare the child Agent worktree: ${error.message}`),
+                    invalid(`T3 could not prepare the child Agent worktree: ${error.message}`, {
+                      operation: "child-worktree-create",
+                      cause: error,
+                      profileId: target.id,
+                      runId,
+                    }),
                   ),
                 );
               yield* engine
@@ -589,7 +727,12 @@ export const make = Effect.gen(function* () {
                 })
                 .pipe(
                   Effect.mapError((error) =>
-                    invalid(`T3 could not attach the child Agent worktree: ${error.message}`),
+                    invalid(`T3 could not attach the child Agent worktree: ${error.message}`, {
+                      operation: "child-worktree-attach",
+                      cause: error,
+                      profileId: target.id,
+                      runId,
+                    }),
                   ),
                 );
               yield* projectSetupScriptRunner
@@ -634,13 +777,23 @@ export const make = Effect.gen(function* () {
         startTurn,
       }).pipe(Effect.result);
       if (Result.isFailure(dispatched)) {
-        return yield* failSpawn(dispatched.failure.detail);
+        return yield* failSpawn(dispatched.failure.detail, dispatched.failure);
       }
       yield* runs
         .dispatch({ type: "agent-run.start", runId, occurredAt: yield* nowIso })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, { operation: "run-start", cause: error, runId }),
+          ),
+        );
       const run = yield* runs.get(runId).pipe(
-        Effect.mapError(() => invalid("Could not reload the Agent run.")),
+        Effect.mapError((cause) =>
+          invalid("Could not reload the Agent run.", {
+            operation: "run-reload",
+            cause,
+            runId,
+          }),
+        ),
         Effect.map(Option.getOrThrow),
       );
       return {
@@ -674,7 +827,12 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.timeoutOption(Duration.seconds(input.timeoutSeconds)),
-          Effect.mapError(() => invalid("Could not wait for Agent runs.")),
+          Effect.mapError((cause) =>
+            invalid("Could not wait for Agent runs.", {
+              operation: "run-wait",
+              cause,
+            }),
+          ),
         );
       if (Option.isSome(advanced)) {
         return { runs: advanced.value.map(AgentRunDomain.summaryOf) };
@@ -703,7 +861,13 @@ export const make = Effect.gen(function* () {
         };
       }
       const thread = yield* projection.getThreadDetailById(run.childThreadId).pipe(
-        Effect.mapError(() => invalid("Could not read the child Agent thread.")),
+        Effect.mapError((cause) =>
+          invalid("Could not read the child Agent thread.", {
+            operation: "child-thread-read",
+            cause,
+            runId: run.id,
+          }),
+        ),
         Effect.map(Option.getOrNull),
       );
       const allEntries: AgentMcpResultEntry[] = (thread?.messages ?? []).map(
@@ -720,7 +884,7 @@ export const make = Effect.gen(function* () {
       const nextCursor =
         cursor + entries.length < allEntries.length ? cursor + entries.length : null;
       const finalMessage =
-        [...(thread?.messages ?? [])].reverse().find((message) => message.role === "assistant")
+        (thread?.messages ?? []).toReversed().find((message) => message.role === "assistant")
           ?.text ?? null;
       const latestTurnCount =
         thread?.checkpoints.reduce(
@@ -772,17 +936,41 @@ export const make = Effect.gen(function* () {
           message: input.message,
           occurredAt,
         })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, {
+              operation: "run-follow-up",
+              cause: error,
+              runId: run.id,
+            }),
+          ),
+        );
       const dispatch = yield* engine
         .dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make(
-            `agent-send:${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => invalid("Could not allocate an Agent command id.")))}`,
+            `agent-send:${yield* crypto.randomUUIDv4.pipe(
+              Effect.mapError((cause) =>
+                invalid("Could not allocate an Agent command id.", {
+                  operation: "follow-up-command-id-allocate",
+                  cause,
+                  runId: run.id,
+                }),
+              ),
+            )}`,
           ),
           threadId: run.childThreadId,
           message: {
             messageId: MessageId.make(
-              `agent:${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => invalid("Could not allocate an Agent message id.")))}`,
+              `agent:${yield* crypto.randomUUIDv4.pipe(
+                Effect.mapError((cause) =>
+                  invalid("Could not allocate an Agent message id.", {
+                    operation: "follow-up-message-id-allocate",
+                    cause,
+                    runId: run.id,
+                  }),
+                ),
+              )}`,
             ),
             role: "user",
             text: input.message,
@@ -803,11 +991,23 @@ export const make = Effect.gen(function* () {
             occurredAt: yield* nowIso,
           })
           .pipe(Effect.ignore);
-        return yield* invalid("T3 could not send the Agent follow-up turn.");
+        return yield* invalid("T3 could not send the Agent follow-up turn.", {
+          operation: "follow-up-turn-dispatch",
+          cause: dispatch.failure,
+          runId: run.id,
+        });
       }
       yield* runs
         .dispatch({ type: "agent-run.start", runId: run.id, occurredAt: yield* nowIso })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, {
+              operation: "follow-up-run-start",
+              cause: error,
+              runId: run.id,
+            }),
+          ),
+        );
       const updated = yield* ensureOwnedRun(context, run.id);
       return { runId: updated.id, status: updated.status, revision: updated.revision };
     },
@@ -824,7 +1024,11 @@ export const make = Effect.gen(function* () {
           ...(input.reason === undefined ? {} : { reason: input.reason }),
           occurredAt: yield* nowIso,
         })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, { operation: "run-cancel", cause: error, runId: run.id }),
+          ),
+        );
       if (run.childThreadId !== null) {
         yield* providers.stopSession({ threadId: run.childThreadId }).pipe(Effect.ignore);
       }
@@ -865,7 +1069,13 @@ export const make = Effect.gen(function* () {
 
     const targetThreadId = input.targetThreadId ?? run.parentThreadId;
     const targetThread = yield* projection.getThreadShellById(targetThreadId).pipe(
-      Effect.mapError(() => invalid("Could not resolve the Agent integration target.")),
+      Effect.mapError((cause) =>
+        invalid("Could not resolve the Agent integration target.", {
+          operation: "integration-target-resolve",
+          cause,
+          runId: run.id,
+        }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(invalid("The Agent integration target was not found.")),
@@ -884,10 +1094,19 @@ export const make = Effect.gen(function* () {
         targetThreadId,
         occurredAt: yield* nowIso,
       })
-      .pipe(Effect.mapError((error) => invalid(error.message)));
+      .pipe(
+        Effect.mapError((error) =>
+          invalid(error.message, {
+            operation: "integration-start",
+            cause: error,
+            runId: run.id,
+          }),
+        ),
+      );
 
     const failIntegration = Effect.fn("AgentOrchestration.failIntegration")(function* (
       detail: string,
+      cause: unknown,
     ) {
       yield* runs
         .dispatch({
@@ -897,7 +1116,11 @@ export const make = Effect.gen(function* () {
           occurredAt: yield* nowIso,
         })
         .pipe(Effect.ignore);
-      return yield* invalid(detail);
+      return yield* invalid(detail, {
+        operation: "integration-apply",
+        cause,
+        runId: run.id,
+      });
     });
     const succeedIntegration = Effect.fn("AgentOrchestration.succeedIntegration")(function* () {
       yield* runs
@@ -906,7 +1129,15 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           occurredAt: yield* nowIso,
         })
-        .pipe(Effect.mapError((error) => invalid(error.message)));
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, {
+              operation: "integration-succeed",
+              cause: error,
+              runId: run.id,
+            }),
+          ),
+        );
       const updated = yield* ensureOwnedRun(context, run.id);
       const integratedAt = updated.finishedAt ?? (yield* nowIso);
       return {
@@ -923,7 +1154,13 @@ export const make = Effect.gen(function* () {
     }
 
     const childThread = yield* projection.getThreadShellById(run.childThreadId).pipe(
-      Effect.mapError(() => invalid("Could not resolve the isolated Agent worktree.")),
+      Effect.mapError((cause) =>
+        invalid("Could not resolve the isolated Agent worktree.", {
+          operation: "integration-source-resolve",
+          cause,
+          runId: run.id,
+        }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(invalid("The isolated Agent thread was not found.")),
@@ -934,10 +1171,18 @@ export const make = Effect.gen(function* () {
     const sourceWorktreePath = childThread.worktreePath;
     const targetWorktreePath = targetThread.worktreePath ?? context.project.workspaceRoot;
     if (sourceWorktreePath === null) {
-      return yield* failIntegration("The isolated Agent does not have a prepared Git worktree.");
+      const detail = "The isolated Agent does not have a prepared Git worktree.";
+      return yield* failIntegration(detail, new Error(detail));
     }
     const profile = yield* runs.getProfileSnapshot(run.profile.revision).pipe(
-      Effect.mapError(() => invalid("Could not load the pinned Agent profile for integration.")),
+      Effect.mapError((cause) =>
+        invalid("Could not load the pinned Agent profile for integration.", {
+          operation: "integration-profile-load",
+          cause,
+          profileId: run.profile.id,
+          runId: run.id,
+        }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () =>
@@ -950,7 +1195,7 @@ export const make = Effect.gen(function* () {
       .run({ profile, stage: "beforeIntegrate", workspaceRoot: sourceWorktreePath })
       .pipe(Effect.result);
     if (Result.isFailure(beforeIntegrate)) {
-      return yield* failIntegration(beforeIntegrate.failure.detail);
+      return yield* failIntegration(beforeIntegrate.failure.detail, beforeIntegrate.failure);
     }
 
     const applied = yield* applyIsolatedWorktreePatch({
@@ -963,7 +1208,7 @@ export const make = Effect.gen(function* () {
       Effect.result,
     );
     if (Result.isFailure(applied)) {
-      return yield* failIntegration(applied.failure.detail);
+      return yield* failIntegration(applied.failure.detail, applied.failure);
     }
 
     // An after hook cannot safely undo a patch. Its block policy is treated as

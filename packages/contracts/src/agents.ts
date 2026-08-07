@@ -19,7 +19,6 @@ import {
 import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 import { RuntimeTaskUsage } from "./providerRuntime.ts";
 import {
-  AgentDocumentRef,
   AgentProfileId,
   AgentProfileLocator,
   AgentProfileRef,
@@ -407,7 +406,13 @@ export class AgentProfileRevisionConflictError extends Schema.TaggedErrorClass<A
 
 export class AgentProfileInvalidError extends Schema.TaggedErrorClass<AgentProfileInvalidError>()(
   "AgentProfileInvalidError",
-  { detail: TrimmedNonEmptyString },
+  {
+    detail: TrimmedNonEmptyString,
+    operation: Schema.optional(Schema.String),
+    profileId: Schema.optional(AgentProfileId),
+    runId: Schema.optional(AgentRunId),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {
   override get message(): string {
     return this.detail;

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { AgentProfileId, AgentRuleDocument } from "@t3tools/contracts";
@@ -71,6 +72,7 @@ it.layer(NodeServices.layer)("AgentRuleStore", (it) => {
         ),
       );
       assert.notEqual(updated.revision, saved.revision);
+      assert.equal(updated.body, "Use strict types and tests.");
       const archived = yield* withStore(
         tempDir,
         tempDir,
@@ -139,6 +141,32 @@ it.layer(NodeServices.layer)("AgentRuleStore", (it) => {
           path.join(workspace, ".t3code", "rules", "project-typescript.md"),
         ),
         /Project TypeScript\./,
+      );
+    }),
+  );
+
+  it.effect("rolls back a new project rule when its t3.json reference cannot be written", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-rule-store-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fileSystem.makeDirectory(workspace, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(workspace, "t3.json"), "not JSON");
+      const initial = yield* rule("project", "rollback-typescript");
+      const result = yield* withStore(
+        workspace,
+        tempDir,
+        Effect.service(AgentRuleStore.AgentRuleStore).pipe(
+          Effect.flatMap((store) => store.save({ rule: initial, workspaceRoot: workspace })),
+          Effect.result,
+        ),
+      );
+      assert.isTrue(Result.isFailure(result));
+      assert.isFalse(
+        yield* fileSystem.exists(
+          path.join(workspace, ".t3code", "rules", "rollback-typescript.md"),
+        ),
       );
     }),
   );

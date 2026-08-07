@@ -6,7 +6,7 @@ import { AgentToolkit } from "./tools.ts";
 
 const invoke = Effect.fn("AgentToolkit.invoke")(function* <A>(
   operation: (
-    service: AgentOrchestration.AgentOrchestrationShape,
+    service: AgentOrchestration.AgentOrchestration["Service"],
     scope: McpInvocationContext.McpInvocationScope,
   ) => Effect.Effect<A, AgentOrchestration.AgentOrchestrationError>,
 ) {

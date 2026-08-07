@@ -4,6 +4,12 @@ import {
   AgentProfileLocator as AgentProfileLocatorSchema,
   AgentRuleDocument as AgentRuleDocumentSchema,
 } from "@t3tools/contracts";
+import { formatAgentRuleGlobs, parseAgentRuleGlobs } from "@t3tools/shared/agentRuleGlobs";
+
+const decodeAgentRuleDocument = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
+const decodeAgentProfileLocators = Schema.decodeUnknownSync(
+  Schema.Array(AgentProfileLocatorSchema),
+);
 
 export interface AgentRuleDraft {
   readonly id: string;
@@ -26,19 +32,13 @@ export function draftFromRule(
     name: rule?.name ?? "",
     description: rule?.description ?? "",
     scope: rule?.scope ?? scope,
-    globs: (rule?.globs ?? []).join(", "),
+    globs: formatAgentRuleGlobs(rule?.globs ?? []),
     alwaysApply: rule?.alwaysApply ?? false,
     priority: String(rule?.priority ?? 0),
     profiles: JSON.stringify(rule?.profiles ?? [], null, 2),
     body: rule?.body ?? "",
   };
 }
-
-const list = (value: string) =>
-  value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
 
 export function buildAgentRuleDocument(
   draft: AgentRuleDraft,
@@ -47,21 +47,19 @@ export function buildAgentRuleDocument(
 ): AgentRuleDocument {
   let profiles: ReadonlyArray<AgentProfileLocator>;
   try {
-    profiles = Schema.decodeUnknownSync(Schema.Array(AgentProfileLocatorSchema))(
-      draft.profiles.trim() ? JSON.parse(draft.profiles) : [],
-    );
+    profiles = decodeAgentProfileLocators(draft.profiles.trim() ? JSON.parse(draft.profiles) : []);
   } catch {
     throw new Error("Profiles must contain a JSON array of profile locators.");
   }
   const priority = Number(draft.priority);
   if (!Number.isInteger(priority)) throw new Error("Priority must be a whole number.");
-  return Schema.decodeUnknownSync(AgentRuleDocumentSchema)({
+  return decodeAgentRuleDocument({
     id: draft.id.trim(),
     scope: draft.scope,
     revision: baseline?.revision ?? "a".repeat(64),
     name: draft.name.trim(),
     ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
-    globs: list(draft.globs),
+    globs: parseAgentRuleGlobs(draft.globs),
     alwaysApply: draft.alwaysApply,
     priority,
     sourcePath: baseline?.sourcePath ?? null,

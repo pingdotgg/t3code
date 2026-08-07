@@ -42,6 +42,9 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { resolveAgentProfileSelection } from "./agentProfileSelection";
+
+export { resolveAgentProfileSelection } from "./agentProfileSelection";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -104,7 +107,10 @@ export function useThreadComposerState() {
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
-  const agentProfile = selectedDraft?.agentProfile ?? selectedThread?.agentProfile ?? null;
+  const agentProfile = resolveAgentProfileSelection(
+    selectedDraft?.agentProfile,
+    selectedThread?.agentProfile,
+  );
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -166,7 +172,7 @@ export function useThreadComposerState() {
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
-      agentProfile: draft.agentProfile ?? thread.agentProfile ?? null,
+      agentProfile: resolveAgentProfileSelection(draft.agentProfile, thread.agentProfile),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);

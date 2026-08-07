@@ -39,4 +39,17 @@ describe("mobile agent rule editor", () => {
       ]).map((rule) => rule.id),
     ).toEqual(["new", "old"]);
   });
+  it("keeps commas inside brace alternation and formats globs one per line", () => {
+    const rule = buildAgentRuleDocument(
+      {
+        ...draftFromRule(),
+        id: "sources",
+        name: "Sources",
+        globs: "src/**/*.{ts,tsx}\n tests/**/*.test.ts",
+      },
+      null,
+    );
+    expect(rule.globs).toEqual(["src/**/*.{ts,tsx}", "tests/**/*.test.ts"]);
+    expect(draftFromRule(rule).globs).toBe("src/**/*.{ts,tsx}\ntests/**/*.test.ts");
+  });
 });

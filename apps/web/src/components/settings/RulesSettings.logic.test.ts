@@ -33,6 +33,19 @@ describe("agent rule settings model", () => {
     expect(rule.revision).toBe(baseline.revision);
     expect(rule.profiles).toEqual([{ id: "reviewer", scope: "project" }]);
   });
+  it("keeps commas inside brace alternation and supports one glob per line", () => {
+    const rule = buildAgentRuleDocument(
+      {
+        ...draftFromRule(),
+        id: "sources",
+        name: "Sources",
+        globs: "src/**/*.{ts,tsx}\n tests/**/*.test.ts",
+      },
+      null,
+    );
+    expect(rule.globs).toEqual(["src/**/*.{ts,tsx}", "tests/**/*.test.ts"]);
+    expect(draftFromRule(rule).globs).toBe("src/**/*.{ts,tsx}\ntests/**/*.test.ts");
+  });
   it("sorts active environment, project, then archived rules", () => {
     expect(
       sortAgentRules([

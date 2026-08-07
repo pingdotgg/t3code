@@ -22,7 +22,6 @@ import {
   AgentProfileSummary,
   AgentRuleDocument,
   AgentRuleSummary,
-  type T3ProjectFile,
 } from "@t3tools/contracts";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 
@@ -259,7 +258,7 @@ export const make = Effect.gen(function* () {
     scope: CatalogScope,
   ) {
     return yield* fileSystem.realPath(root).pipe(
-      Effect.mapError((cause) =>
+      Effect.mapError((_cause) =>
         diagnostic({
           code: "root-unavailable",
           kind,
@@ -340,13 +339,32 @@ export const make = Effect.gen(function* () {
       return { sources: [] as ReadonlyArray<Source>, diagnostics: [stateRoot.failure] };
     }
 
-    const catalogRoot = yield* canonicalRoot(root, kind, "environment").pipe(Effect.result);
-    if (Result.isFailure(catalogRoot)) {
-      // A missing optional catalog root is normal; any other root problem is
-      // kept as a non-fatal diagnostic for validation callers.
+    const catalogRootExists = yield* fileSystem.exists(root).pipe(
+      Effect.mapError(() =>
+        diagnostic({
+          code: "root-unavailable",
+          kind,
+          scope: "environment",
+          sourcePath: root,
+          message: `Could not inspect catalog root '${root}'.`,
+        }),
+      ),
+      Effect.result,
+    );
+    if (Result.isFailure(catalogRootExists)) {
+      return { sources: [] as ReadonlyArray<Source>, diagnostics: [catalogRootExists.failure] };
+    }
+    if (!catalogRootExists.success) {
       return {
         sources: [] as ReadonlyArray<Source>,
         diagnostics: [] as ReadonlyArray<AgentCatalogDiagnostic>,
+      };
+    }
+    const catalogRoot = yield* canonicalRoot(root, kind, "environment").pipe(Effect.result);
+    if (Result.isFailure(catalogRoot)) {
+      return {
+        sources: [] as ReadonlyArray<Source>,
+        diagnostics: [catalogRoot.failure],
       };
     }
     if (!isContained(path, stateRoot.success, catalogRoot.success)) {
@@ -364,14 +382,26 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const entries = yield* fileSystem
-      .readDirectory(catalogRoot.success)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const entries = yield* fileSystem.readDirectory(catalogRoot.success).pipe(
+      Effect.mapError(() =>
+        diagnostic({
+          code: "read-failed",
+          kind,
+          scope: "environment",
+          sourcePath: catalogRoot.success,
+          message: `Could not read catalog root '${catalogRoot.success}'.`,
+        }),
+      ),
+      Effect.result,
+    );
+    if (Result.isFailure(entries)) {
+      return { sources: [] as ReadonlyArray<Source>, diagnostics: [entries.failure] };
+    }
     const sources: Array<Source> = [];
     const diagnostics: Array<AgentCatalogDiagnostic> = [];
-    for (const entry of [...entries].sort()) {
+    for (const entry of [...entries.success].sort()) {
       if (path.extname(entry).toLowerCase() !== MARKDOWN_EXTENSION) continue;
-      const id = path.basename(entry, MARKDOWN_EXTENSION).trim();
+      const id = path.basename(entry, path.extname(entry)).trim();
       if (!id) continue;
       const resolved = yield* canonicalFile({
         root: catalogRoot.success,

@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { AgentRun, AgentRunEvent } from "./AgentRun.ts";
-import type { AgentRunRepositoryShape } from "./AgentRunRepository.ts";
+import type { AgentRunRepository } from "./AgentRunRepository.ts";
 import { deadlineAtMillis, expireRun, isDeadlineExpired } from "./AgentRunDeadlineReactor.ts";
 import type { ProviderServiceShape } from "../../provider/Services/ProviderService.ts";
 
@@ -67,9 +67,9 @@ const run: AgentRun = {
 const repositoryFor = (
   getRun: () => AgentRun | null,
   dispatch: (
-    command: Parameters<AgentRunRepositoryShape["dispatch"]>[0],
+    command: Parameters<AgentRunRepository["Service"]["dispatch"]>[0],
   ) => ReadonlyArray<AgentRunEvent>,
-): AgentRunRepositoryShape =>
+): AgentRunRepository["Service"] =>
   ({
     get: () => Effect.succeed(Option.fromNullishOr(getRun())),
     dispatch: (command) => Effect.succeed(dispatch(command)),
@@ -82,18 +82,16 @@ const repositoryFor = (
     waitForAdvance: () => Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.succeed(Stream.empty),
-  }) as AgentRunRepositoryShape;
+  }) as AgentRunRepository["Service"];
 
 const providerFor = (interrupt: () => void): ProviderServiceShape =>
   ({ interruptTurn: () => Effect.sync(interrupt) }) as unknown as ProviderServiceShape;
 
-it.effect("derives and recognizes a persisted wall-time deadline", () =>
-  Effect.gen(function* () {
-    assert.equal(deadlineAtMillis(run), Date.parse(requestedAt) + 60_000);
-    assert.isFalse(isDeadlineExpired(run, Date.parse(requestedAt) + 59_999));
-    assert.isTrue(isDeadlineExpired(run, Date.parse(requestedAt) + 60_000));
-  }),
-);
+it("derives and recognizes a persisted wall-time deadline", () => {
+  assert.equal(deadlineAtMillis(run), Date.parse(requestedAt) + 60_000);
+  assert.isFalse(isDeadlineExpired(run, Date.parse(requestedAt) + 59_999));
+  assert.isTrue(isDeadlineExpired(run, Date.parse(requestedAt) + 60_000));
+});
 
 it.effect("cancels and interrupts once when a running run reaches its deadline", () =>
   Effect.gen(function* () {

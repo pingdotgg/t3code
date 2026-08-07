@@ -44,7 +44,7 @@ const budgetFailure = (run: AgentRun): string =>
  */
 export const expireRun = Effect.fn("AgentRunDeadlineReactor.expireRun")(function* (
   runId: AgentRun["id"],
-  repository: AgentRunRepository.AgentRunRepositoryShape,
+  repository: AgentRunRepository.AgentRunRepository["Service"],
   provider: ProviderService.ProviderServiceShape,
 ) {
   const run = yield* repository.get(runId).pipe(Effect.map(Option.getOrNull));

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { AgentProfileDocument } from "@t3tools/contracts";
@@ -71,7 +72,7 @@ it.layer(NodeServices.layer)("AgentProfileStore", (it) => {
         id: "reviewer",
         scope: "environment",
         instructions: "Review the diff.",
-        sourcePath: null,
+        sourcePath: "elsewhere.md",
       });
 
       const saved = yield* withStore(
@@ -84,6 +85,10 @@ it.layer(NodeServices.layer)("AgentProfileStore", (it) => {
       assert.notEqual(saved.revision, INITIAL_REVISION);
       assert.equal(saved.instructions, "Review the diff.");
       assert.equal(saved.chatSelectable, true);
+      assert.isTrue(
+        yield* fileSystem.exists(path.join(tempDir, "userdata", "agents", "reviewer.md")),
+      );
+      assert.isFalse(yield* fileSystem.exists(path.join(tempDir, "userdata", "elsewhere.md")));
 
       const changed = { ...saved, instructions: "Review the diff and tests." };
       const updated = yield* withStore(
@@ -96,6 +101,7 @@ it.layer(NodeServices.layer)("AgentProfileStore", (it) => {
         ),
       );
       assert.notEqual(updated.revision, saved.revision);
+      assert.equal(updated.instructions, "Review the diff and tests.");
 
       const archived = yield* withStore(
         workspace,
@@ -169,6 +175,35 @@ it.layer(NodeServices.layer)("AgentProfileStore", (it) => {
         path.join(workspace, ".t3code", "agents", "project-reviewer.md"),
       );
       assert.match(document, /Review this repository carefully\./);
+    }),
+  );
+
+  it.effect("rolls back a new project profile when its t3.json reference cannot be written", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agent-store-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fileSystem.makeDirectory(workspace, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(workspace, "t3.json"), "not JSON");
+      const initial = yield* profile({
+        id: "rollback-reviewer",
+        scope: "project",
+        instructions: "This must not be left behind.",
+        sourcePath: null,
+      });
+      const result = yield* withStore(
+        workspace,
+        tempDir,
+        Effect.service(AgentProfileStore.AgentProfileStore).pipe(
+          Effect.flatMap((store) => store.save({ profile: initial, workspaceRoot: workspace })),
+          Effect.result,
+        ),
+      );
+      assert.isTrue(Result.isFailure(result));
+      assert.isFalse(
+        yield* fileSystem.exists(path.join(workspace, ".t3code", "agents", "rollback-reviewer.md")),
+      );
     }),
   );
 });

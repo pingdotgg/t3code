@@ -1,9 +1,10 @@
-import type { AgentHook, AgentHookStage, AgentProfileDocument } from "@t3tools/contracts";
+import { AgentHookStage, type AgentHook, type AgentProfileDocument } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -13,18 +14,49 @@ const MAX_HOOK_OUTPUT_BYTES = 64 * 1024;
 
 export class AgentHookBlockedError extends Schema.TaggedErrorClass<AgentHookBlockedError>()(
   "AgentHookBlockedError",
-  { stage: Schema.String, detail: Schema.String },
-) {}
+  {
+    stage: AgentHookStage,
+    hookKind: Schema.Literals(["context", "shell"]),
+    category: Schema.Literals(["configuration", "filesystem", "process", "exit"]),
+    detail: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Agent ${this.hookKind} hook failed during ${this.stage}: ${this.detail}`;
+  }
+}
 
 class AgentHookExecutionError extends Schema.TaggedErrorClass<AgentHookExecutionError>()(
   "AgentHookExecutionError",
-  { detail: Schema.String },
-) {}
+  {
+    stage: AgentHookStage,
+    hookKind: Schema.Literals(["context", "shell"]),
+    category: Schema.Literals(["configuration", "filesystem", "process", "exit"]),
+    detail: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Agent ${this.hookKind} hook failed during ${this.stage}: ${this.detail}`;
+  }
+}
 
-const executionError = (cause: unknown) =>
-  new AgentHookExecutionError({
-    detail: cause instanceof Error ? cause.message : "Agent hook execution failed.",
-  });
+const executionError =
+  (stage: AgentHookStage, hookKind: AgentHook["kind"], category: "filesystem" | "process") =>
+  (cause: unknown) =>
+    new AgentHookExecutionError({
+      stage,
+      hookKind,
+      category,
+      detail:
+        category === "filesystem"
+          ? "Context hook filesystem operation failed."
+          : "Shell hook process failed.",
+      cause,
+    });
 
 export interface AgentHookRunResult {
   readonly context: ReadonlyArray<string>;
@@ -48,6 +80,24 @@ const isContained = (path: Path.Path, root: string, candidate: string) => {
     relative === "" ||
     (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
+};
+
+const sameFile = (opened: FileSystem.File.Info, current: FileSystem.File.Info): boolean =>
+  opened.dev === current.dev &&
+  Option.isSome(opened.ino) &&
+  Option.isSome(current.ino) &&
+  opened.ino.value === current.ino.value;
+
+const decodeUtf8Prefix = (bytes: Uint8Array): string => {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  for (let end = bytes.length; end >= Math.max(0, bytes.length - 4); end -= 1) {
+    try {
+      return decoder.decode(bytes.subarray(0, end));
+    } catch {
+      // A UTF-8 code point is at most four bytes. Try the preceding boundary.
+    }
+  }
+  return new TextDecoder().decode(bytes);
 };
 
 export const make = Effect.gen(function* () {
@@ -74,10 +124,16 @@ export const make = Effect.gen(function* () {
           outputMode: "truncate",
           truncatedMarker: "\n[hook output truncated]",
         })
-        .pipe(Effect.mapError(executionError));
+        .pipe(Effect.mapError(executionError(hook.stage, "shell", "process")));
       if (result.code !== 0) {
+        const detail = `Hook exited with code ${result.code ?? "unknown"}.`;
         return yield* new AgentHookExecutionError({
-          detail: result.stderr.trim() || `Hook exited with code ${result.code ?? "unknown"}.`,
+          stage: hook.stage,
+          hookKind: "shell",
+          category: "exit",
+          detail,
+          ...(result.code === null ? {} : { exitCode: result.code }),
+          cause: { stderr: result.stderr.slice(0, 4_000), timedOut: result.timedOut },
         });
       }
       return result.stdout.trim();
@@ -85,25 +141,59 @@ export const make = Effect.gen(function* () {
 
     if (path.isAbsolute(hook.path)) {
       return yield* new AgentHookExecutionError({
+        stage: hook.stage,
+        hookKind: "context",
+        category: "configuration",
         detail: "Context hook paths must be workspace-relative.",
+        cause: new Error("Absolute context hook path rejected."),
       });
     }
-    const root = yield* fileSystem.realPath(workspaceRoot).pipe(Effect.mapError(executionError));
-    const candidate = yield* fileSystem
-      .realPath(path.resolve(root, hook.path))
-      .pipe(Effect.mapError(executionError));
-    if (!isContained(path, root, candidate)) {
-      return yield* new AgentHookExecutionError({
-        detail: "Context hook path resolves outside the workspace.",
-      });
-    }
-    return yield* fileSystem.readFileString(candidate).pipe(
-      Effect.map((contents) =>
-        Buffer.byteLength(contents, "utf8") > MAX_HOOK_OUTPUT_BYTES
-          ? `${contents.slice(0, MAX_HOOK_OUTPUT_BYTES)}\n[hook context truncated]`
-          : contents,
-      ),
-      Effect.mapError(executionError),
+    const root = yield* fileSystem
+      .realPath(workspaceRoot)
+      .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+    const requestedPath = path.resolve(root, hook.path);
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Open first, then validate that the path still names the same object.
+        // Reads stay bound to this handle if a workspace path changes later.
+        const file = yield* fileSystem
+          .open(requestedPath, { flag: "r" })
+          .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+        const opened = yield* file.stat.pipe(
+          Effect.mapError(executionError(hook.stage, "context", "filesystem")),
+        );
+        const candidate = yield* fileSystem
+          .realPath(requestedPath)
+          .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+        const current = yield* fileSystem
+          .stat(candidate)
+          .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+        if (!isContained(path, root, candidate) || !sameFile(opened, current)) {
+          return yield* new AgentHookExecutionError({
+            stage: hook.stage,
+            hookKind: "context",
+            category: "filesystem",
+            detail: "Context hook path changed or resolves outside the workspace.",
+            cause: new Error("Context hook containment or file identity check failed."),
+          });
+        }
+        const readLength = Math.min(Number(opened.size), MAX_HOOK_OUTPUT_BYTES + 1);
+        const bytes = new Uint8Array(readLength);
+        let offset = 0;
+        while (offset < bytes.length) {
+          const count = Number(
+            yield* file
+              .read(bytes.subarray(offset))
+              .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem"))),
+          );
+          if (count === 0) break;
+          offset += count;
+        }
+        const truncated = Number(opened.size) > MAX_HOOK_OUTPUT_BYTES;
+        const visible = bytes.subarray(0, Math.min(offset, MAX_HOOK_OUTPUT_BYTES));
+        const contents = truncated ? decodeUtf8Prefix(visible) : new TextDecoder().decode(visible);
+        return truncated ? `${contents}\n[hook context truncated]` : contents;
+      }),
     );
   });
 
@@ -121,7 +211,14 @@ export const make = Effect.gen(function* () {
         }
         const detail = result.failure.detail;
         if (hook.failurePolicy === "block") {
-          return yield* new AgentHookBlockedError({ stage: input.stage, detail });
+          return yield* new AgentHookBlockedError({
+            stage: input.stage,
+            hookKind: result.failure.hookKind,
+            category: result.failure.category,
+            detail,
+            ...(result.failure.exitCode === undefined ? {} : { exitCode: result.failure.exitCode }),
+            cause: result.failure,
+          });
         }
         warnings.push(detail);
         yield* Effect.logWarning("Agent hook failed with warn policy", {

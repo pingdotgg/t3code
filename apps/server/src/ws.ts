@@ -67,7 +67,6 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as AgentCatalog from "./agents/AgentCatalog.ts";
-import * as AgentProfileServices from "./agents/AgentProfileServices.ts";
 import * as AgentProfileStore from "./agents/AgentProfileStore.ts";
 import * as AgentRuleStore from "./agents/AgentRuleStore.ts";
 import * as ServerConfig from "./config.ts";
@@ -129,6 +128,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isAgentProfileInvalidError = Schema.is(AgentProfileInvalidError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -459,7 +459,7 @@ const makeWsRpcLayer = (
                 }),
               ),
               Effect.mapError((error) =>
-                Schema.is(AgentProfileInvalidError)(error)
+                isAgentProfileInvalidError(error)
                   ? error
                   : new AgentProfileInvalidError({
                       detail: `Could not resolve project '${projectId}'.`,
@@ -2449,5 +2449,5 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         }),
       ),
     );
-  }).pipe(Effect.provide(AgentProfileServices.layer)),
+  }),
 );

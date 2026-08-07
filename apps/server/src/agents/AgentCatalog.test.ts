@@ -237,4 +237,62 @@ it.layer(NodeServices.layer)("AgentCatalog", (it) => {
         assert.isFalse(listed.profiles.some((profile) => profile.name === "Hidden"));
       }),
   );
+
+  it.effect(
+    "keeps optional directories quiet but reports unreadable catalog roots and normalizes .MD ids",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agent-catalog-" });
+        const workspace = path.join(tempDir, "workspace");
+        const stateDir = path.join(tempDir, "userdata");
+
+        // A file where the optional directory belongs is an operational failure, not an empty catalog.
+        yield* write(path.join(stateDir, "agents"), "not a directory");
+        const unreadable = yield* withCatalog(
+          workspace,
+          tempDir,
+          Effect.service(AgentCatalog.AgentCatalog).pipe(
+            Effect.flatMap((catalog) => catalog.list()),
+          ),
+        );
+        assert.isTrue(
+          unreadable.diagnostics.some(
+            (entry) => entry.kind === "profile" && entry.code === "read-failed",
+          ),
+        );
+        assert.isFalse(unreadable.diagnostics.some((entry) => entry.kind === "rule"));
+
+        yield* fileSystem.remove(path.join(stateDir, "agents"));
+        yield* write(
+          path.join(stateDir, "agents", "reviewer.MD"),
+          [
+            "---",
+            "name: Reviewer",
+            "runtime: { mode: auto, interactionMode: default }",
+            "workspace: { mode: shared, access: read-only }",
+            "tools: { policy: inherit, allowed: [] }",
+            "delegation: { policy: disabled, profiles: [] }",
+            "budgets: { maxRuns: 1, maxConcurrency: 1, maxDepth: 0, maxWallTimeMinutes: 1 }",
+            "hooks: []",
+            "rules: []",
+            "---",
+            "",
+            "Review.",
+          ].join("\n"),
+        );
+        const catalog = yield* withCatalog(
+          workspace,
+          tempDir,
+          Effect.service(AgentCatalog.AgentCatalog).pipe(
+            Effect.flatMap((service) => service.list()),
+          ),
+        );
+        assert.deepEqual(
+          catalog.profiles.map((profile) => profile.id),
+          ["reviewer"],
+        );
+      }),
+  );
 });

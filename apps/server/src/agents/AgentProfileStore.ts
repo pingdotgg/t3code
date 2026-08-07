@@ -45,6 +45,7 @@ export class AgentProfileStoreError extends Schema.TaggedErrorClass<AgentProfile
     scope: AgentProfileLocator.fields.scope,
     id: AgentProfileLocator.fields.id,
     detail: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -62,7 +63,7 @@ export class AgentProfileStoreRevisionConflictError extends Schema.TaggedErrorCl
   },
 ) {
   override get message(): string {
-    return `Profile '${this.id}' was changed by another writer.`;
+    return `Profile '${this.scope}/${this.id}' revision conflict (expected ${this.expectedRevision ?? "a new profile"}, found ${this.actualRevision ?? "no profile"}).`;
   }
 }
 
@@ -110,7 +111,7 @@ const renderProfile = (profile: AgentProfileDocument): string => {
     instructions,
     ...frontmatter
   } = profile;
-  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n\n${instructions}\n`;
+  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n${instructions}`;
 };
 
 export const make = Effect.gen(function* () {
@@ -124,7 +125,15 @@ export const make = Effect.gen(function* () {
     operation: AgentProfileStoreError["operation"],
     ref: AgentProfileLocator,
     detail: string,
-  ) => new AgentProfileStoreError({ operation, scope: ref.scope, id: ref.id, detail });
+    cause?: unknown,
+  ) =>
+    new AgentProfileStoreError({
+      operation,
+      scope: ref.scope,
+      id: ref.id,
+      detail,
+      ...(cause === undefined ? {} : { cause }),
+    });
 
   const profileRoot = (scope: AgentProfileLocator["scope"], workspaceRoot: string | undefined) =>
     scope === "environment" ? config.stateDir : workspaceRoot;
@@ -147,13 +156,17 @@ export const make = Effect.gen(function* () {
       yield* fileSystem
         .makeDirectory(root, { recursive: true })
         .pipe(
-          Effect.mapError(() => storeError("resolve", input.ref, "Could not create profile root.")),
+          Effect.mapError((cause) =>
+            storeError("resolve", input.ref, "Could not create profile root.", cause),
+          ),
         );
     }
     const canonicalRoot = yield* fileSystem
       .realPath(root)
       .pipe(
-        Effect.mapError(() => storeError("resolve", input.ref, "Could not resolve profile root.")),
+        Effect.mapError((cause) =>
+          storeError("resolve", input.ref, "Could not resolve profile root.", cause),
+        ),
       );
     if (path.isAbsolute(input.documentPath)) {
       return yield* new AgentProfileStoreError({
@@ -178,15 +191,15 @@ export const make = Effect.gen(function* () {
     yield* fileSystem
       .makeDirectory(path.dirname(requested), { recursive: true })
       .pipe(
-        Effect.mapError(() =>
-          storeError("resolve", input.ref, "Could not create profile directory."),
+        Effect.mapError((cause) =>
+          storeError("resolve", input.ref, "Could not create profile directory.", cause),
         ),
       );
     const canonicalParent = yield* fileSystem
       .realPath(path.dirname(requested))
       .pipe(
-        Effect.mapError(() =>
-          storeError("resolve", input.ref, "Could not resolve profile directory."),
+        Effect.mapError((cause) =>
+          storeError("resolve", input.ref, "Could not resolve profile directory.", cause),
         ),
       );
     if (!isContained(path, canonicalRoot, canonicalParent)) {
@@ -197,7 +210,58 @@ export const make = Effect.gen(function* () {
         detail: "Profile directory resolves outside its allowed root.",
       });
     }
-    return path.join(canonicalParent, path.basename(requested));
+    return { root: canonicalRoot, filePath: path.join(canonicalParent, path.basename(requested)) };
+  });
+
+  const writeContained = Effect.fn("AgentProfileStore.writeContained")(function* (input: {
+    readonly ref: AgentProfileLocator;
+    readonly root: string;
+    readonly filePath: string;
+    readonly contents: string;
+    readonly operation: AgentProfileStoreError["operation"];
+  }) {
+    yield* writeFileStringAtomically({ filePath: input.filePath, contents: input.contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError((cause) =>
+        storeError(
+          input.operation,
+          input.ref,
+          `Could not replace '${path.basename(input.filePath)}'.`,
+          cause,
+        ),
+      ),
+    );
+    const canonicalFile = yield* fileSystem.realPath(input.filePath).pipe(Effect.result);
+    if (Result.isFailure(canonicalFile)) {
+      yield* fileSystem.remove(input.filePath, { force: true }).pipe(Effect.ignore);
+      return yield* storeError(
+        input.operation,
+        input.ref,
+        "Written file no longer resolves inside its allowed root.",
+        canonicalFile.failure,
+      );
+    }
+    if (!isContained(path, input.root, canonicalFile.success)) {
+      yield* fileSystem.remove(input.filePath, { force: true }).pipe(Effect.ignore);
+      return yield* storeError(
+        input.operation,
+        input.ref,
+        "Written file no longer resolves inside its allowed root.",
+      );
+    }
+  });
+
+  const existingFile = Effect.fn("AgentProfileStore.existingFile")(function* (filePath: string) {
+    return yield* fileSystem.readFileString(filePath).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(error),
+      }),
+    );
   });
 
   const projectFile = Effect.fn("AgentProfileStore.projectFile")(function* (
@@ -207,22 +271,24 @@ export const make = Effect.gen(function* () {
     const canonicalRoot = yield* fileSystem
       .realPath(workspaceRoot)
       .pipe(
-        Effect.mapError(() =>
-          storeError("write-project-file", ref, "Could not resolve project root."),
+        Effect.mapError((cause) =>
+          storeError("write-project-file", ref, "Could not resolve project root.", cause),
         ),
       );
     const filePath = path.join(canonicalRoot, T3_PROJECT_FILE_NAME);
     const exists = yield* fileSystem
       .exists(filePath)
       .pipe(
-        Effect.mapError(() => storeError("write-project-file", ref, "Could not inspect t3.json.")),
+        Effect.mapError((cause) =>
+          storeError("write-project-file", ref, "Could not inspect t3.json.", cause),
+        ),
       );
     if (exists) {
       const canonicalFile = yield* fileSystem
         .realPath(filePath)
         .pipe(
-          Effect.mapError(() =>
-            storeError("write-project-file", ref, "Could not resolve t3.json."),
+          Effect.mapError((cause) =>
+            storeError("write-project-file", ref, "Could not resolve t3.json.", cause),
           ),
         );
       if (!isContained(path, canonicalRoot, canonicalFile)) {
@@ -242,11 +308,15 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(Option.none<string>())
             : Effect.fail(error),
       }),
-      Effect.mapError(() => storeError("write-project-file", ref, "Could not read t3.json.")),
+      Effect.mapError((cause) =>
+        storeError("write-project-file", ref, "Could not read t3.json.", cause),
+      ),
     );
     if (Option.isNone(raw)) return {} satisfies T3ProjectFileType;
     return yield* decodeProjectFile(raw.value).pipe(
-      Effect.mapError(() => storeError("write-project-file", ref, "t3.json is invalid.")),
+      Effect.mapError((cause) =>
+        storeError("write-project-file", ref, "t3.json is invalid.", cause),
+      ),
     );
   });
 
@@ -266,20 +336,24 @@ export const make = Effect.gen(function* () {
       ];
       const contents = yield* encodeProjectFile({ ...current, agents }).pipe(
         Effect.map((encoded) => `${encoded}\n`),
-        Effect.mapError(() =>
-          storeError("write-project-file", input.ref, "Could not encode t3.json."),
+        Effect.mapError((cause) =>
+          storeError("write-project-file", input.ref, "Could not encode t3.json.", cause),
         ),
       );
-      yield* writeFileStringAtomically({
-        filePath: path.join(input.workspaceRoot, T3_PROJECT_FILE_NAME),
+      const root = yield* fileSystem
+        .realPath(input.workspaceRoot)
+        .pipe(
+          Effect.mapError((cause) =>
+            storeError("write-project-file", input.ref, "Could not resolve project root.", cause),
+          ),
+        );
+      yield* writeContained({
+        ref: input.ref,
+        root,
+        filePath: path.join(root, T3_PROJECT_FILE_NAME),
         contents,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.mapError(() =>
-          storeError("write-project-file", input.ref, "Could not replace t3.json."),
-        ),
-      );
+        operation: "write-project-file",
+      });
     },
   );
 
@@ -302,7 +376,7 @@ export const make = Effect.gen(function* () {
         });
       }
     } else if (current.failure._tag !== "AgentCatalogNotFoundError") {
-      return yield* storeError("load", ref, "Could not load current profile.");
+      return yield* storeError("load", ref, "Could not load current profile.", current.failure);
     } else if (input.expectedRevision !== undefined) {
       return yield* new AgentProfileStoreRevisionConflictError({
         scope: ref.scope,
@@ -311,40 +385,62 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const defaultPath =
+      ref.scope === "environment"
+        ? path.join("agents", `${ref.id}.md`)
+        : `.t3code/agents/${ref.id}.md`;
     const documentPath =
       current._tag === "Success"
-        ? (current.success.sourcePath ??
-          (ref.scope === "environment"
-            ? path.join("agents", `${ref.id}.md`)
-            : `.t3code/agents/${ref.id}.md`))
-        : (input.profile.sourcePath ??
-          (ref.scope === "environment"
-            ? path.join("agents", `${ref.id}.md`)
-            : `.t3code/agents/${ref.id}.md`));
-    const targetPath = yield* resolveWritePath({
+        ? (current.success.sourcePath ?? defaultPath)
+        : ref.scope === "environment"
+          ? defaultPath
+          : (input.profile.sourcePath ?? defaultPath);
+    const target = yield* resolveWritePath({
       ref,
       workspaceRoot: input.workspaceRoot,
       documentPath,
     });
-    yield* writeFileStringAtomically({
-      filePath: targetPath,
-      contents: renderProfile(input.profile),
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError(() =>
-        storeError("write-document", ref, "Could not replace profile Markdown."),
+    const previous = yield* existingFile(target.filePath).pipe(
+      Effect.mapError((cause) =>
+        storeError("write-document", ref, "Could not snapshot profile Markdown.", cause),
       ),
     );
+    yield* writeContained({
+      ref,
+      root: target.root,
+      filePath: target.filePath,
+      contents: renderProfile(input.profile),
+      operation: "write-document",
+    });
     if (ref.scope === "project") {
       if (!input.workspaceRoot) {
         return yield* storeError("resolve", ref, "Project profiles require a workspace root.");
       }
-      yield* writeProjectReference({ ref, workspaceRoot: input.workspaceRoot, documentPath });
+      const projectWrite = yield* writeProjectReference({
+        ref,
+        workspaceRoot: input.workspaceRoot,
+        documentPath,
+      }).pipe(Effect.result);
+      if (Result.isFailure(projectWrite)) {
+        yield* (
+          Option.isSome(previous)
+            ? writeContained({
+                ref,
+                root: target.root,
+                filePath: target.filePath,
+                contents: previous.value,
+                operation: "write-document",
+              })
+            : fileSystem.remove(target.filePath, { force: true })
+        ).pipe(Effect.ignore);
+        return yield* projectWrite.failure;
+      }
     }
     return yield* catalog
       .getProfile({ ref, workspaceRoot: input.workspaceRoot })
-      .pipe(Effect.mapError(() => storeError("load", ref, "Could not load saved profile.")));
+      .pipe(
+        Effect.mapError((cause) => storeError("load", ref, "Could not load saved profile.", cause)),
+      );
   });
 
   const save: AgentProfileStore["Service"]["save"] = (input) =>
@@ -358,7 +454,9 @@ export const make = Effect.gen(function* () {
   }) {
     const profile = yield* catalog
       .getProfile({ ref: input.ref, workspaceRoot: input.workspaceRoot })
-      .pipe(Effect.mapError(() => storeError("load", input.ref, "Could not load profile.")));
+      .pipe(
+        Effect.mapError((cause) => storeError("load", input.ref, "Could not load profile.", cause)),
+      );
     const now = DateTime.formatIso(yield* DateTime.now);
     return yield* save({
       profile: { ...profile, archivedAt: input.archived ? now : null, updatedAt: now },

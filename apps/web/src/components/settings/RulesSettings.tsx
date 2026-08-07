@@ -423,16 +423,16 @@ export function RuleEditor({
       </label>
       <label className="block space-y-1.5">
         <span className="text-xs font-medium">File globs</span>
-        <Input
-          nativeInput
+        <Textarea
           value={draft.globs}
           disabled={disabled}
           onChange={(event) => onChange("globs", event.target.value)}
           aria-label="Rule file globs"
-          placeholder="src/**/*.ts, **/*.test.ts"
+          placeholder={"src/**/*.ts\n**/*.test.ts"}
         />
         <span className="block text-[11px] text-muted-foreground/75">
-          Comma-separated workspace-relative globs. Leave empty only for an always-applied rule.
+          One workspace-relative glob per line. Comma-separated input is also supported when it is
+          outside brace alternation. Leave empty only for an always-applied rule.
         </span>
       </label>
       <label className="block space-y-1.5">

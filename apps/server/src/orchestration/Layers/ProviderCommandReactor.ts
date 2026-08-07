@@ -737,6 +737,7 @@ const make = Effect.gen(function* () {
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly commandId: CommandId | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -755,6 +756,8 @@ const make = Effect.gen(function* () {
     const resolvedPrompt = yield* agentPromptResolver
       .resolve({
         profileRef: thread.agentProfile ?? null,
+        threadId: input.threadId,
+        commandId: input.commandId,
         workspaceRoot,
         message: input.messageText,
       })
@@ -1208,6 +1211,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
+      commandId: event.commandId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined

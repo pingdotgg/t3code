@@ -147,16 +147,19 @@ export function SettingsAgentsRouteScreen() {
       setSelectedKey(null);
       setSelectedRuleKey(null);
       setIsNew(false);
+      setIsNewRule(false);
     } else if (event === "project:none") {
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
       setIsNew(false);
+      setIsNewRule(false);
     } else if (event.startsWith("project:")) {
       setProjectId(event.slice("project:".length) as ProjectId);
       setSelectedKey(null);
       setSelectedRuleKey(null);
       setIsNew(false);
+      setIsNewRule(false);
     }
   }, []);
   const updateDraft = useCallback(
@@ -711,7 +714,7 @@ function RuleEditor(props: {
       {field("id", "Rule id")}
       {field("name", "Name")}
       {field("description", "Description")}
-      {field("globs", "Globs (comma separated)")}
+      {field("globs", "Globs (one per line)", true)}
       <View className="flex-row items-center justify-between rounded-xl bg-input px-3.5 py-3">
         <Text className="text-base text-foreground">Always apply</Text>
         <Pressable

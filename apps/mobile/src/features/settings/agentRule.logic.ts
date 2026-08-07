@@ -5,6 +5,12 @@ import {
   AgentProfileLocator as AgentProfileLocatorSchema,
   type AgentRuleDocument,
 } from "@t3tools/contracts";
+import { formatAgentRuleGlobs, parseAgentRuleGlobs } from "@t3tools/shared/agentRuleGlobs";
+
+const decodeAgentRuleDocument = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
+const decodeAgentProfileLocators = Schema.decodeUnknownSync(
+  Schema.Array(AgentProfileLocatorSchema),
+);
 
 export type AgentRuleDraft = {
   readonly id: string;
@@ -26,7 +32,7 @@ export function draftFromRule(
     id: rule?.id ?? "",
     name: rule?.name ?? "",
     description: rule?.description ?? "",
-    globs: rule?.globs.join(", ") ?? "",
+    globs: formatAgentRuleGlobs(rule?.globs ?? []),
     alwaysApply: rule?.alwaysApply ?? false,
     priority: String(rule?.priority ?? 0),
     profiles: rule?.profiles.map((profile) => `${profile.scope}:${profile.id}`).join(", ") ?? "",
@@ -41,13 +47,6 @@ function parseInteger(value: string): number {
     throw new Error("Priority must be a whole number from -100 to 100.");
   }
   return parsed;
-}
-
-function parseGlobs(value: string): ReadonlyArray<string> {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function parseProfiles(
@@ -71,22 +70,20 @@ export function buildAgentRuleDocument(
   baseline: AgentRuleDocument | null,
   now = new Date().toISOString(),
 ): AgentRuleDocument {
-  return Schema.decodeUnknownSync(AgentRuleDocumentSchema)({
+  return decodeAgentRuleDocument({
     id: draft.id.trim(),
     scope: draft.scope,
     revision: baseline?.revision ?? "a".repeat(64),
     name: draft.name.trim(),
     ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
-    globs: parseGlobs(draft.globs),
+    globs: parseAgentRuleGlobs(draft.globs),
     alwaysApply: draft.alwaysApply,
     priority: parseInteger(draft.priority),
     sourcePath: baseline?.sourcePath ?? null,
     archivedAt: baseline?.archivedAt ?? null,
     updatedAt: now,
     body: draft.body,
-    profiles: Schema.decodeUnknownSync(Schema.Array(AgentProfileLocatorSchema))(
-      parseProfiles(draft.profiles),
-    ),
+    profiles: decodeAgentProfileLocators(parseProfiles(draft.profiles)),
     createdAt: baseline?.createdAt ?? now,
   });
 }

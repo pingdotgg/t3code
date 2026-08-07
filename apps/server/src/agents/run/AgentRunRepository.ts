@@ -15,7 +15,6 @@ import {
   AgentRunId,
   ModelSelection,
   RuntimeTaskUsage,
-  ThreadId,
   type AgentRunId as AgentRunIdType,
   type ThreadId as ThreadIdType,
   type AgentProfileDocument as AgentProfileDocumentType,
@@ -35,8 +34,12 @@ import {
 
 export class AgentRunRepositoryDecodeError extends Schema.TaggedErrorClass<AgentRunRepositoryDecodeError>()(
   "AgentRunRepositoryDecodeError",
-  { operation: Schema.String, detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
-) {}
+  { operation: Schema.String, detail: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.operation}: ${this.detail}`;
+  }
+}
 
 export type AgentRunRepositoryError =
   | AgentRunCommandInvariantError
@@ -50,43 +53,41 @@ export const AgentRunWaitInput = Schema.Struct({
 });
 export type AgentRunWaitInput = typeof AgentRunWaitInput.Type;
 
-export interface AgentRunRepositoryShape {
-  readonly putProfileSnapshot: (
-    profile: AgentProfileDocumentType,
-  ) => Effect.Effect<void, AgentRunRepositoryError>;
-  readonly getProfileSnapshot: (
-    revision: AgentProfileDocumentType["revision"],
-  ) => Effect.Effect<Option.Option<AgentProfileDocumentType>, AgentRunRepositoryError>;
-  readonly dispatch: (
-    command: AgentRunCommand,
-  ) => Effect.Effect<ReadonlyArray<AgentRunEvent>, AgentRunRepositoryError>;
-  readonly get: (
-    runId: AgentRunIdType,
-  ) => Effect.Effect<Option.Option<AgentRun>, AgentRunRepositoryError>;
-  readonly getByChildThread: (
-    childThreadId: ThreadIdType,
-  ) => Effect.Effect<Option.Option<AgentRun>, AgentRunRepositoryError>;
-  readonly listByParentThread: (
-    parentThreadId: ThreadIdType,
-  ) => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
-  readonly listByLineage: (
-    rootRunId: AgentRunIdType,
-  ) => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
-  /** Active runs currently owned by this server, used for restart recovery. */
-  readonly listActive: () => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
-  /** In-process notification stream; durable state remains the source of truth. */
-  readonly streamChanges: Stream.Stream<AgentRun>;
-  /** Subscribe before taking a recovery snapshot to close the startup race. */
-  readonly subscribeChanges: Effect.Effect<Stream.Stream<AgentRun>, never, Scope.Scope>;
-  /** Resolves after a requested run advances past its supplied revision. */
-  readonly waitForAdvance: (
-    input: AgentRunWaitInput,
-  ) => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
-}
-
 export class AgentRunRepository extends Context.Service<
   AgentRunRepository,
-  AgentRunRepositoryShape
+  {
+    readonly putProfileSnapshot: (
+      profile: AgentProfileDocumentType,
+    ) => Effect.Effect<void, AgentRunRepositoryError>;
+    readonly getProfileSnapshot: (
+      revision: AgentProfileDocumentType["revision"],
+    ) => Effect.Effect<Option.Option<AgentProfileDocumentType>, AgentRunRepositoryError>;
+    readonly dispatch: (
+      command: AgentRunCommand,
+    ) => Effect.Effect<ReadonlyArray<AgentRunEvent>, AgentRunRepositoryError>;
+    readonly get: (
+      runId: AgentRunIdType,
+    ) => Effect.Effect<Option.Option<AgentRun>, AgentRunRepositoryError>;
+    readonly getByChildThread: (
+      childThreadId: ThreadIdType,
+    ) => Effect.Effect<Option.Option<AgentRun>, AgentRunRepositoryError>;
+    readonly listByParentThread: (
+      parentThreadId: ThreadIdType,
+    ) => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
+    readonly listByLineage: (
+      rootRunId: AgentRunIdType,
+    ) => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
+    /** Active runs currently owned by this server, used for restart recovery. */
+    readonly listActive: () => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
+    /** In-process notification stream; durable state remains the source of truth. */
+    readonly streamChanges: Stream.Stream<AgentRun>;
+    /** Subscribe before taking a recovery snapshot to close the startup race. */
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<AgentRun>, never, Scope.Scope>;
+    /** Resolves after a requested run advances past its supplied revision. */
+    readonly waitForAdvance: (
+      input: AgentRunWaitInput,
+    ) => Effect.Effect<ReadonlyArray<AgentRun>, AgentRunRepositoryError>;
+  }
 >()("t3/agents/run/AgentRunRepository") {}
 
 const StoredEventRow = Schema.Struct({ payload: Schema.String });
@@ -100,6 +101,12 @@ const encodeModelSelection = Schema.encodeUnknownEffect(Schema.fromJsonString(Mo
 const encodeBudget = Schema.encodeUnknownEffect(Schema.fromJsonString(AgentProfileBudgets));
 const encodeUsage = Schema.encodeUnknownEffect(Schema.fromJsonString(RuntimeTaskUsage));
 const encodeProfile = Schema.encodeUnknownEffect(Schema.fromJsonString(AgentProfileDocument));
+const decodeRootRunIdRow = Schema.decodeUnknownEffect(RootRunIdRow);
+const decodeRunIdRow = Schema.decodeUnknownEffect(RunIdRow);
+const decodeProfileSnapshotRow = Schema.decodeUnknownEffect(ProfileSnapshotRow);
+const decodeProfileDocument = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(AgentProfileDocument),
+);
 const isInvariantError = Schema.is(AgentRunCommandInvariantError);
 
 const sqlError = (operation: string) => (cause: unknown) =>
@@ -172,7 +179,7 @@ export const make = Effect.gen(function* () {
       LIMIT 1
     `.pipe(Effect.mapError(sqlError("AgentRunRepository.rootRunIdFor:query")));
     if (rows[0] === undefined) return Option.none();
-    return yield* Schema.decodeUnknownEffect(RootRunIdRow)(rows[0]).pipe(
+    return yield* decodeRootRunIdRow(rows[0]).pipe(
       Effect.map(({ rootRunId }) => Option.some(rootRunId)),
       Effect.mapError(decodeError("AgentRunRepository.rootRunIdFor:decode")),
     );
@@ -257,13 +264,13 @@ export const make = Effect.gen(function* () {
     `.pipe(Effect.asVoid, Effect.mapError(sqlError("AgentRunRepository.upsertProjection:query")));
   });
 
-  const get: AgentRunRepositoryShape["get"] = (runId) =>
+  const get: AgentRunRepository["Service"]["get"] = (runId) =>
     readEvents({ runId }).pipe(
       Effect.map(eventState),
       Effect.map((state) => Option.fromNullishOr(state.runs.get(runId))),
     );
 
-  const putProfileSnapshot: AgentRunRepositoryShape["putProfileSnapshot"] = (profile) =>
+  const putProfileSnapshot: AgentRunRepository["Service"]["putProfileSnapshot"] = (profile) =>
     encodeProfile(profile).pipe(
       Effect.mapError(decodeError("AgentRunRepository.putProfileSnapshot:encodeProfile")),
       Effect.flatMap((documentText) =>
@@ -276,7 +283,7 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
-  const getByChildThread: AgentRunRepositoryShape["getByChildThread"] = (childThreadId) =>
+  const getByChildThread: AgentRunRepository["Service"]["getByChildThread"] = (childThreadId) =>
     sql<{ readonly runId: string }>`
       SELECT agent_run_id AS runId
       FROM projection_agent_runs
@@ -287,14 +294,14 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         rows[0] === undefined
           ? Effect.succeed(Option.none())
-          : Schema.decodeUnknownEffect(RunIdRow)(rows[0]).pipe(
+          : decodeRunIdRow(rows[0]).pipe(
               Effect.mapError(decodeError("AgentRunRepository.getByChildThread:decode")),
               Effect.flatMap(({ runId }) => get(runId)),
             ),
       ),
     );
 
-  const getProfileSnapshot: AgentRunRepositoryShape["getProfileSnapshot"] = (revision) =>
+  const getProfileSnapshot: AgentRunRepository["Service"]["getProfileSnapshot"] = (revision) =>
     sql<{ readonly documentText: string }>`
       SELECT document_text AS documentText
       FROM agent_profile_snapshots
@@ -305,12 +312,10 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         rows[0] === undefined
           ? Effect.succeed(Option.none())
-          : Schema.decodeUnknownEffect(ProfileSnapshotRow)(rows[0]).pipe(
+          : decodeProfileSnapshotRow(rows[0]).pipe(
               Effect.mapError(decodeError("AgentRunRepository.getProfileSnapshot:decodeRow")),
               Effect.flatMap(({ documentText }) =>
-                Schema.decodeUnknownEffect(Schema.fromJsonString(AgentProfileDocument))(
-                  documentText,
-                ).pipe(
+                decodeProfileDocument(documentText).pipe(
                   Effect.map(Option.some),
                   Effect.mapError(
                     decodeError("AgentRunRepository.getProfileSnapshot:decodeDocument"),
@@ -321,19 +326,21 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const listByParentThread: AgentRunRepositoryShape["listByParentThread"] = (parentThreadId) =>
+  const listByParentThread: AgentRunRepository["Service"]["listByParentThread"] = (
+    parentThreadId,
+  ) =>
     readEvents({ parentThreadId }).pipe(
       Effect.map(eventState),
       Effect.map((state) => [...state.runs.values()]),
     );
 
-  const listByLineage: AgentRunRepositoryShape["listByLineage"] = (rootRunId) =>
+  const listByLineage: AgentRunRepository["Service"]["listByLineage"] = (rootRunId) =>
     readEvents({ rootRunId }).pipe(
       Effect.map(eventState),
       Effect.map((state) => [...state.runs.values()]),
     );
 
-  const listActive: AgentRunRepositoryShape["listActive"] = () =>
+  const listActive: AgentRunRepository["Service"]["listActive"] = () =>
     sql<{ readonly runId: string }>`
       SELECT agent_run_id AS runId
       FROM projection_agent_runs
@@ -343,7 +350,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(sqlError("AgentRunRepository.listActive:query")),
       Effect.flatMap((rows) =>
         Effect.forEach(rows, (row) =>
-          Schema.decodeUnknownEffect(RunIdRow)(row).pipe(
+          decodeRunIdRow(row).pipe(
             Effect.mapError(decodeError("AgentRunRepository.listActive:decode")),
             Effect.flatMap(({ runId }) => get(runId)),
             Effect.map(Option.getOrUndefined),
@@ -353,7 +360,7 @@ export const make = Effect.gen(function* () {
       Effect.map((runs) => runs.filter((run): run is AgentRun => run !== undefined)),
     );
 
-  const dispatch: AgentRunRepositoryShape["dispatch"] = (command) =>
+  const dispatch: AgentRunRepository["Service"]["dispatch"] = (command) =>
     sql
       .withTransaction(
         Effect.gen(function* () {
@@ -396,7 +403,7 @@ export const make = Effect.gen(function* () {
         Effect.map(({ events }) => events),
       );
 
-  const waitForAdvance: AgentRunRepositoryShape["waitForAdvance"] = (input) =>
+  const waitForAdvance: AgentRunRepository["Service"]["waitForAdvance"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
         const runIds = new Set(input.runIds);
@@ -425,7 +432,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  return {
+  return AgentRunRepository.of({
     putProfileSnapshot,
     getProfileSnapshot,
     dispatch,
@@ -437,7 +444,7 @@ export const make = Effect.gen(function* () {
     streamChanges: Stream.fromPubSub(changes),
     subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
     waitForAdvance,
-  } satisfies AgentRunRepositoryShape;
+  });
 });
 
 export const layer = Layer.effect(AgentRunRepository, make);

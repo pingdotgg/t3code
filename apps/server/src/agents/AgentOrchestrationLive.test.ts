@@ -8,6 +8,7 @@ import {
   ThreadId,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
+import * as NodeAssert from "node:assert/strict";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,7 +25,7 @@ import {
 } from "./AgentOrchestrationLive.ts";
 
 it("allocates a dedicated branch for each isolated Agent run", () => {
-  assert.equal(
+  NodeAssert.equal(
     agentWorktreeBranchName(AgentRunId.make("f4f7030b-4c6f-46dd-8872-3446d653746a")),
     "t3code/agent-f4f7030b-4c6f-46dd-8872-3446d653746a",
   );
@@ -87,8 +88,8 @@ it.effect("creates and prepares a child thread before starting its first turn", 
       startTurn,
     });
 
-    assert.deepEqual(order, ["thread.create", "prepare", "thread.turn.start"]);
-    assert.equal(result.sequence, 3);
+    NodeAssert.deepEqual(order, ["thread.create", "prepare", "thread.turn.start"]);
+    NodeAssert.equal(result.sequence, 3);
   }),
 );
 
@@ -115,8 +116,8 @@ it.effect("preserves the orchestration invariant when the child turn cannot star
       }),
     );
 
-    assert.equal(result._tag, "Failure");
-    assert.match(
+    NodeAssert.equal(result._tag, "Failure");
+    NodeAssert.match(
       result._tag === "Failure" ? result.failure.detail : "",
       /could not start.*Thread 'child-thread' does not exist/i,
     );
@@ -161,9 +162,36 @@ it.effect("integrates a tracked isolated-worktree patch into a clean target", ()
       sourceWorktreePath: child,
       targetWorktreePath: root,
     });
-    assert.equal(
+    NodeAssert.equal(
       (yield* fileSystem.readFileString(path.join(root, "tracked.txt"))).trim(),
       "child result",
+    );
+  }).pipe(Effect.provide(IntegrationTestLayer)),
+);
+
+it.effect("integrates committed child changes from the original branch point", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    const { root, child } = yield* makeWorktrees();
+    yield* fileSystem.writeFileString(path.join(child, "tracked.txt"), "committed child\n");
+    const commit = yield* processRunner.run({
+      command: "git",
+      args: ["commit", "-am", "child result"],
+      cwd: child,
+      timeout: "30 seconds",
+    });
+    NodeAssert.equal(commit.code, 0);
+
+    yield* applyIsolatedWorktreePatch({
+      sourceWorktreePath: child,
+      targetWorktreePath: root,
+    });
+
+    NodeAssert.equal(
+      (yield* fileSystem.readFileString(path.join(root, "tracked.txt"))).trim(),
+      "committed child",
     );
   }).pipe(Effect.provide(IntegrationTestLayer)),
 );
@@ -180,9 +208,8 @@ it.effect("refuses untracked isolated-worktree files without touching the target
         targetWorktreePath: root,
       }),
     );
-    assert.equal(result._tag, "Failure");
-    assert.match(result._tag === "Failure" ? result.failure.detail : "", /untracked files/i);
-    assert.equal(yield* fileSystem.readFileString(path.join(root, "tracked.txt")), "base\n");
+    NodeAssert.equal(result._tag, "Failure");
+    NodeAssert.match(result._tag === "Failure" ? result.failure.detail : "", /untracked files/i);
+    NodeAssert.equal(yield* fileSystem.readFileString(path.join(root, "tracked.txt")), "base\n");
   }).pipe(Effect.provide(IntegrationTestLayer)),
 );
-import assert from "node:assert/strict";
