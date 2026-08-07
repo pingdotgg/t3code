@@ -1375,7 +1375,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("includes post-checkout output when worktree creation fails", () =>
+    it.effect("keeps failed post-checkout output out of error details", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -1402,9 +1402,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           })
           .pipe(Effect.flip);
 
-        assert.include(error.detail, "git worktree add failed");
-        assert.include(error.detail, "hook-failure-stdout");
-        assert.include(error.detail, "hook-failure-stderr");
+        assert.equal(error.detail, "git worktree add failed");
       }),
     );
   });
