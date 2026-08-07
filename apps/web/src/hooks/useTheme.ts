@@ -20,6 +20,7 @@ const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
 };
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
+const APP_CHROME_BACKGROUND_PROPERTY = "--app-chrome-background";
 
 export class ThemeStorageError extends Schema.TaggedErrorClass<ThemeStorageError>()(
   "ThemeStorageError",
@@ -151,25 +152,17 @@ function normalizeThemeColor(value: string | null | undefined): string | null {
   return value?.trim() ?? null;
 }
 
-function resolveBrowserChromeSurface(): HTMLElement {
-  return (
-    document.querySelector<HTMLElement>("main[data-slot='sidebar-inset']") ??
-    document.querySelector<HTMLElement>("[data-slot='sidebar-inner']") ??
-    document.body
-  );
-}
-
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
-  const surfaceColor = normalizeThemeColor(
-    getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
+  document.documentElement.style.backgroundColor = `var(${APP_CHROME_BACKGROUND_PROPERTY})`;
+  document.body.style.backgroundColor = `var(${APP_CHROME_BACKGROUND_PROPERTY})`;
+  const appChromeColor = normalizeThemeColor(
+    getComputedStyle(document.documentElement).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = surfaceColor ?? fallbackColor;
+  const backgroundColor = appChromeColor ?? fallbackColor;
   if (!backgroundColor) return;
 
-  document.documentElement.style.backgroundColor = backgroundColor;
-  document.body.style.backgroundColor = backgroundColor;
   ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
 }
 
