@@ -36,6 +36,9 @@ const stackCapBorderClass: Record<ComposerBannerStackItem["variant"], string> = 
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: "default" | "error" | "info" | "success" | "warning";
+  // Ordering hint for stack assemblers: front this banner even though its
+  // variant is calm (e.g. live update progress). The stack itself ignores it.
+  readonly urgent?: boolean;
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
