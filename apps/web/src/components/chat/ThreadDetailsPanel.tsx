@@ -83,6 +83,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.environmentConnection?.phase === "connecting" ||
     props.environmentConnection?.phase === "reconnecting";
   const branchToolbarProps = {
+    showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
     threadId: props.threadId,
     ...(props.draftId ? { draftId: props.draftId } : {}),
