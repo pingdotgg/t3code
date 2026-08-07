@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
+import type { DesktopThemePalette } from "@t3tools/contracts";
 import * as Electron from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -21,9 +22,6 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const TITLEBAR_HEIGHT = 40;
-const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
-const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
-const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 // Renderer crash (usually V8 OOM on long sessions) recovery: reload after a
@@ -106,8 +104,60 @@ function getIconOption(
   });
 }
 
-function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+function getFallbackThemePalette(shouldUseDarkColors: boolean): DesktopThemePalette {
+  return shouldUseDarkColors
+    ? {
+        appearance: "dark",
+        background: "#0a0a0a",
+        foreground: "#9ca3af",
+        accent: "#f8fafc",
+        titlebarSymbol: "#f8fafc",
+      }
+    : {
+        appearance: "light",
+        background: "#ffffff",
+        foreground: "#6b7280",
+        accent: "#1f2937",
+        titlebarSymbol: "#1f2937",
+      };
+}
+
+function getThemePalette(
+  settings: DesktopAppSettings.DesktopSettings,
+  shouldUseDarkColors: boolean,
+): DesktopThemePalette {
+  const appearance = shouldUseDarkColors ? "dark" : "light";
+  const persistedPalette = settings.themePalettes?.[appearance];
+  return persistedPalette?.appearance === appearance
+    ? persistedPalette
+    : getFallbackThemePalette(shouldUseDarkColors);
+}
+
+function getInitialWindowBackgroundColor(
+  shouldUseDarkColors: boolean,
+  palette?: DesktopThemePalette,
+): string {
+  const fallback = getFallbackThemePalette(shouldUseDarkColors);
+  return palette?.appearance === fallback.appearance ? palette.background : fallback.background;
+}
+
+function rgbaWithAlpha(hex: string, alpha: number): string {
+  const raw = hex.slice(1);
+  const expanded =
+    raw.length === 3 || raw.length === 4
+      ? raw
+          .slice(0, 3)
+          .split("")
+          .map((channel) => channel.repeat(2))
+          .join("")
+      : raw.slice(0, 6);
+  if (expanded.length !== 6 || !/^[0-9a-f]{6}$/i.test(expanded)) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+  return `rgba(${Number.parseInt(expanded.slice(0, 2), 16)}, ${Number.parseInt(
+    expanded.slice(2, 4),
+    16,
+  )}, ${Number.parseInt(expanded.slice(4, 6), 16)}, ${alpha})`;
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -152,11 +202,11 @@ export function resolveInitialMainWindowBounds(
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
 // mode while the WSL backend (which serves the renderer) cold-boots. Inlined as
 // a data URL so it needs no bundled asset and no backend — pure CSS, no JS.
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
-  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
-  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
-  const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
+function buildConnectingSplashDataUrl(palette: DesktopThemePalette): string {
+  const background = palette.background;
+  const label = palette.foreground;
+  const accent = palette.accent;
+  const track = rgbaWithAlpha(palette.titlebarSymbol ?? palette.foreground, 0.18);
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
@@ -189,7 +239,7 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
 }
 
 function getWindowTitleBarOptions(
-  shouldUseDarkColors: boolean,
+  palette: DesktopThemePalette,
   platform: NodeJS.Platform,
 ): WindowTitleBarOptions {
   if (platform === "darwin") {
@@ -202,16 +252,16 @@ function getWindowTitleBarOptions(
   return {
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: TITLEBAR_COLOR,
+      color: palette.background,
       height: TITLEBAR_HEIGHT,
-      symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
+      symbolColor: palette.titlebarSymbol ?? palette.foreground,
     },
   };
 }
 
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
-  shouldUseDarkColors: boolean,
+  palette: DesktopThemePalette,
   platform: NodeJS.Platform,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
@@ -219,8 +269,8 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
+    window.setBackgroundColor(palette.background);
+    const { titleBarOverlay } = getWindowTitleBarOptions(palette, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
@@ -303,6 +353,14 @@ export const make = Effect.gen(function* () {
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
+    const themePalette = getThemePalette(persistedSettings, shouldUseDarkColors);
+    yield* previewManager.setThemePalette(themePalette).pipe(
+      Effect.catch((error) =>
+        logWindowWarning("failed to initialize preview theme palette", {
+          message: error.message,
+        }),
+      ),
+    );
     const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
@@ -332,10 +390,10 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors, themePalette),
       ...iconOption,
       title: environment.displayName,
-      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
+      ...getWindowTitleBarOptions(themePalette, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
         backgroundThrottling: false,
@@ -739,6 +797,15 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const persistedSettings = yield* desktopSettings.get;
+    const themePalette = getThemePalette(persistedSettings, shouldUseDarkColors);
+    yield* previewManager.setThemePalette(themePalette).pipe(
+      Effect.catch((error) =>
+        logWindowWarning("failed to initialize preview theme palette", {
+          message: error.message,
+        }),
+      ),
+    );
     const splash = yield* electronWindow.create({
       width: 360,
       height: 220,
@@ -750,7 +817,7 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors, themePalette),
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,
@@ -767,7 +834,7 @@ export const make = Effect.gen(function* () {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
+    void splash.loadURL(buildConnectingSplashDataUrl(themePalette));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     // The splash is best-effort UX — never let it fail startup.
@@ -838,9 +905,35 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+      const persistedSettings = yield* desktopSettings.get;
+      const themePalette = getThemePalette(persistedSettings, shouldUseDarkColors);
+      yield* previewManager.setThemePalette(themePalette).pipe(
+        Effect.catch((error) =>
+          logWindowWarning("failed to update preview theme palette", {
+            message: error.message,
+          }),
+        ),
       );
+      yield* electronWindow.syncAllAppearance((window) =>
+        syncWindowAppearance(window, themePalette, environment.platform),
+      );
+      const splash = yield* Ref.get(splashWindowRef);
+      if (Option.isSome(splash) && !splash.value.isDestroyed()) {
+        yield* Effect.tryPromise({
+          try: () => splash.value.loadURL(buildConnectingSplashDataUrl(themePalette)),
+          catch: (cause) =>
+            new PreviewManager.PreviewOperationError({
+              operation: "connectingSplash.load",
+              cause,
+            }),
+        }).pipe(
+          Effect.catch((error) =>
+            logWindowWarning("failed to refresh connecting splash theme", {
+              message: String(error),
+            }),
+          ),
+        );
+      }
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });
 });

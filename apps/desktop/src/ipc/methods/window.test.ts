@@ -7,8 +7,11 @@ import type * as Electron from "electron";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
+import * as ElectronTheme from "../../electron/ElectronTheme.ts";
+import { getLocalEnvironmentBootstraps, getWindowFullscreenState, setTheme } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -142,6 +145,56 @@ describe("getWindowFullscreenState", () => {
         Layer.mock(ElectronWindow.ElectronWindow)({
           currentMainOrFirst: Effect.succeed(Option.some(window)),
         }),
+      ),
+    );
+  });
+});
+
+describe("setTheme", () => {
+  it.effect("accepts the palette extension while preserving legacy callers", () => {
+    const sources: string[] = [];
+    const palettes: Array<unknown> = [];
+    let syncCount = 0;
+    const palette = {
+      appearance: "dark" as const,
+      background: "#1f1a24",
+      foreground: "#f9f8fb",
+      accent: "#a3004c",
+      titlebarSymbol: "#f9f8fb",
+    };
+
+    return Effect.gen(function* () {
+      yield* setTheme.handler({ theme: "dark", palette });
+      yield* setTheme.handler("light");
+
+      assert.deepEqual(sources, ["dark", "light"]);
+      assert.deepEqual(palettes, [palette]);
+      assert.equal(syncCount, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronTheme.ElectronTheme)({
+            setSource: (theme) =>
+              Effect.sync(() => {
+                sources.push(theme);
+              }),
+          }),
+          Layer.mock(DesktopAppSettings.DesktopAppSettings)({
+            setThemePalette: (nextPalette) =>
+              Effect.sync(() => {
+                palettes.push(nextPalette);
+                return {
+                  settings: DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+                  changed: true,
+                };
+              }),
+          }),
+          Layer.mock(DesktopWindow.DesktopWindow)({
+            syncAppearance: Effect.sync(() => {
+              syncCount += 1;
+            }),
+          }),
+        ),
       ),
     );
   });

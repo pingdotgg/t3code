@@ -15,6 +15,8 @@ import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
   DesktopPreviewScreenshotArtifact,
+  DesktopThemeAppearance,
+  DesktopThemePalette,
   PreviewAutomationClickInput,
   PreviewAutomationActionEvent,
   PreviewAutomationConsoleEntry,
@@ -49,7 +51,10 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
+import {
+  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+  PREVIEW_PICTURE_IN_PICTURE_THEME_CHANNEL,
+} from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -131,7 +136,17 @@ const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   fontMono: "ui-monospace, monospace",
 };
 
-export const buildPreviewPictureInPictureDataUrl = (): string => {
+const DEFAULT_PREVIEW_THEME_PALETTE: DesktopThemePalette = {
+  appearance: "dark",
+  background: "#111111",
+  foreground: "#f5f5f5",
+  accent: "#818cf8",
+};
+
+export const buildPreviewPictureInPictureDataUrl = (
+  background = "#111111",
+  appearance: DesktopThemeAppearance = "dark",
+): string => {
   const html = `<!doctype html>
 <html>
   <head>
@@ -140,9 +155,9 @@ export const buildPreviewPictureInPictureDataUrl = (): string => {
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
     >
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="${appearance}">
     <style>
-      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: ${background}; }
       body { display: grid; place-items: center; }
       img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
     </style>
@@ -153,6 +168,12 @@ export const buildPreviewPictureInPictureDataUrl = (): string => {
       const frame = document.getElementById("preview-frame");
       window.previewPictureInPicture.onFrame((next) => {
         frame.src = "data:image/jpeg;base64," + next.data;
+      });
+      window.previewPictureInPicture.onTheme((next) => {
+        document.documentElement.style.backgroundColor = next.background;
+        document.body.style.backgroundColor = next.background;
+        document.documentElement.style.colorScheme = next.appearance;
+        document.body.style.colorScheme = next.appearance;
       });
     </script>
   </body>
@@ -468,6 +489,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   );
 
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
+  const themePaletteRef = yield* Ref.make(DEFAULT_PREVIEW_THEME_PALETTE);
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
@@ -2329,6 +2351,29 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
+  const setThemePalette = Effect.fn("PreviewManager.setThemePalette")(function* (
+    palette: DesktopThemePalette,
+  ) {
+    yield* Ref.set(themePaletteRef, palette);
+    const sessions = yield* SynchronizedRef.get(pictureInPictureSessionsRef);
+    for (const session of sessions.values()) {
+      if (session.window.isDestroyed()) continue;
+      yield* attempt(
+        {
+          operation: "pictureInPicture.setThemePalette",
+          webContentsId: session.webContentsId,
+        },
+        () => {
+          session.window.setBackgroundColor(palette.background);
+          session.window.webContents.send(PREVIEW_PICTURE_IN_PICTURE_THEME_CHANNEL, {
+            appearance: palette.appearance,
+            background: palette.background,
+          });
+        },
+      );
+    }
+  });
+
   const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
     tabId: string,
   ) {
@@ -2350,6 +2395,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           },
           () => wc.getTitle().trim(),
         );
+        const themePalette = yield* Ref.get(themePaletteRef);
         const pictureInPictureWindow = yield* attempt(
           {
             operation: "pictureInPicture.create",
@@ -2371,7 +2417,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               minimizable: false,
               resizable: true,
               skipTaskbar: true,
-              backgroundColor: "#111111",
+              backgroundColor: themePalette.background,
               ...(hostPlatform === "darwin" ? { type: "panel" as const } : {}),
               webPreferences: {
                 preload: pictureInPicturePreloadPath,
@@ -2466,13 +2512,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
 
     const initialize = Effect.gen(function* () {
+      const themePalette = yield* Ref.get(themePaletteRef);
       yield* attemptPromise(
         {
           operation: "pictureInPicture.load",
           tabId,
           webContentsId: pictureInPictureSession.webContentsId,
         },
-        () => pictureInPictureSession.window.loadURL(buildPreviewPictureInPictureDataUrl()),
+        () =>
+          pictureInPictureSession.window.loadURL(
+            buildPreviewPictureInPictureDataUrl(
+              themePalette.background,
+              themePalette.appearance,
+            ),
+          ),
       );
       const currentWebContents = yield* requireWebContents(tabId);
       if (
@@ -3300,6 +3353,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     saveRecording,
     setAnnotationTheme,
     setColorScheme,
+    setThemePalette,
     setMainWindow,
     startRecording,
     closePictureInPicture,
@@ -3603,6 +3657,9 @@ export class PreviewManager extends Context.Service<
     readonly setAnnotationTheme: (
       theme: DesktopPreviewAnnotationTheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setThemePalette: (
+      palette: DesktopThemePalette,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly pickElement: (
       tabId: string,
     ) => Effect.Effect<PreviewAnnotationSubmissionResult | null, PreviewManagerError>;
@@ -3720,6 +3777,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         );
     }),
     setAnnotationTheme: operations.setAnnotationTheme,
+    setThemePalette: operations.setThemePalette,
     pickElement: operations.pickElement,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,

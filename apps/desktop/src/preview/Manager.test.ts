@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { PREVIEW_PICTURE_IN_PICTURE_THEME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
@@ -195,6 +196,7 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
     once: vi.fn((event: string, listener: () => void) => {
       listeners.set(event, listener);
     }),
+    setBackgroundColor: vi.fn(),
     setAlwaysOnTop: vi.fn(),
     setVisibleOnAllWorkspaces: vi.fn(),
     setAspectRatio: vi.fn(),
@@ -229,6 +231,49 @@ describe("PreviewManager", () => {
     createFromPath.mockClear();
     webviewSend.mockClear();
   });
+
+  it("uses the supplied background in the picture-in-picture bootstrap document", () => {
+    const encodedHtml = PreviewManager.buildPreviewPictureInPictureDataUrl("#fdf7fd").split(
+      ",",
+      2,
+    )[1];
+    expect(encodedHtml).toBeDefined();
+    expect(decodeURIComponent(encodedHtml ?? "")).toContain("background: #fdf7fd");
+    expect(decodeURIComponent(encodedHtml ?? "")).toContain('color-scheme" content="dark"');
+  });
+
+  effectIt.effect("updates the native picture-in-picture background when the palette changes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("preview-frame"),
+            getSize: () => ({ width: 1280, height: 720 }),
+          })),
+        );
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+
+        yield* manager.createTab("tab_theme_palette");
+        yield* manager.registerWebview("tab_theme_palette", 42);
+        yield* manager.openPictureInPicture("tab_theme_palette");
+        yield* manager.setThemePalette({
+          appearance: "light",
+          background: "#fdf7fd",
+          foreground: "#501854",
+          accent: "#e33f86",
+        });
+
+        expect(pictureInPictureWindow.setBackgroundColor).toHaveBeenCalledWith("#fdf7fd");
+        expect(send).toHaveBeenCalledWith(PREVIEW_PICTURE_IN_PICTURE_THEME_CHANNEL, {
+          appearance: "light",
+          background: "#fdf7fd",
+        });
+      }),
+    ),
+  );
 
   effectIt.effect("reports an unregistered webview as temporarily unavailable", () =>
     withManager((manager) =>

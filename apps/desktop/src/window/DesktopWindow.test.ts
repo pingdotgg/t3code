@@ -86,7 +86,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url?: string) => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -95,10 +95,10 @@ function makeFakeBrowserWindow() {
       windowListeners.set(eventName, listener);
     }),
     restore: vi.fn(),
-    setBackgroundColor: vi.fn(),
+    setBackgroundColor: vi.fn((_color?: string) => undefined),
     setAutoHideCursor: vi.fn(),
     setTitle: vi.fn(),
-    setTitleBarOverlay: vi.fn(),
+    setTitleBarOverlay: vi.fn((_options?: Electron.TitleBarOverlayOptions) => undefined),
     show: vi.fn(),
     webContents,
   };
@@ -117,6 +117,8 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     send: webContents.send,
     setAutoHideCursor: window.setAutoHideCursor,
+    setBackgroundColor: window.setBackgroundColor,
+    setTitleBarOverlay: window.setTitleBarOverlay,
     webContentsListeners,
     windowListeners,
   };
@@ -217,6 +219,7 @@ function makeTestLayer(input: {
     setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+    setThemePalette: () => Effect.die("unexpected theme palette update"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -262,6 +265,7 @@ function makeTestLayer(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
+          setThemePalette: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
         }),
@@ -356,6 +360,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
+            setThemePalette: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
@@ -508,6 +513,77 @@ describe("DesktopWindow", () => {
         assert.equal(createdWindowOptions[0]?.height, 880);
         assert.equal(createdWindowOptions[0]?.x, 120);
         assert.equal(createdWindowOptions[0]?.y, 80);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("uses the persisted theme palette for the initial window background", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const palette = {
+        appearance: "light" as const,
+        background: "#fdf7fd",
+        foreground: "#501854",
+        accent: "#e33f86",
+        titlebarSymbol: "#501854",
+      };
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          themePalettes: { light: palette },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(createdWindowOptions[0]?.backgroundColor, palette.background);
+        yield* desktopWindow.syncAppearance;
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.calls.at(-1), [palette.background]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("uses the persisted theme palette for the WSL splash document", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const palette = {
+        appearance: "light" as const,
+        background: "#fdf7fd",
+        foreground: "#501854",
+        accent: "#e33f86",
+        titlebarSymbol: "#501854",
+      };
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          themePalettes: { light: palette },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+
+        const dataUrl = String(fakeWindow.loadURL.mock.calls[0]?.[0] ?? "");
+        const encodedHtml = dataUrl.split(",", 2)[1] ?? "";
+        const html = decodeURIComponent(encodedHtml);
+        assert.include(html, "background:#fdf7fd");
+        assert.include(html, "color:#501854");
+        assert.include(html, "border-top-color:#e33f86");
       }).pipe(Effect.provide(layer));
     }),
   );

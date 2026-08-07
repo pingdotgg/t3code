@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopThemePaletteSchema,
   DesktopThemeSchema,
   PickedThemeFileSchema,
   PickFolderOptionsSchema,
@@ -19,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -44,6 +46,14 @@ const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
 });
+
+const SetThemeInput = Schema.Union([
+  DesktopThemeSchema,
+  Schema.Struct({
+    theme: DesktopThemeSchema,
+    palette: Schema.optionalKey(DesktopThemePaletteSchema),
+  }),
+]);
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
   const url = new URL(httpBaseUrl.href);
@@ -235,11 +245,20 @@ export const confirm = DesktopIpc.makeIpcMethod({
 
 export const setTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_THEME_CHANNEL,
-  payload: DesktopThemeSchema,
+  payload: SetThemeInput,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
+  handler: Effect.fn("desktop.ipc.window.setTheme")(function* (input) {
+    const theme = typeof input === "string" ? input : input.theme;
+    if (typeof input !== "string" && input.palette !== undefined) {
+      const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+      yield* desktopSettings.setThemePalette(input.palette);
+    }
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+    if (typeof input !== "string" && input.palette !== undefined) {
+      const desktopWindow = yield* DesktopWindow.DesktopWindow;
+      yield* desktopWindow.syncAppearance;
+    }
   }),
 });
 

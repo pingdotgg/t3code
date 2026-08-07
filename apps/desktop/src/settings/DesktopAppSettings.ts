@@ -1,7 +1,10 @@
 import {
   DesktopServerExposureModeSchema,
+  DesktopThemePaletteSchema,
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
+  type DesktopThemeAppearance,
+  type DesktopThemePalette,
   type DesktopUpdateChannel,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -48,12 +51,17 @@ export interface DesktopSettings {
   // this requires a desktop restart because the pool's primary spec is
   // chosen once at layer init.
   readonly wslOnly: boolean;
+  readonly themePalettes?: DesktopThemePalettes;
 }
 
 export interface DesktopSettingsChange {
   readonly settings: DesktopSettings;
   readonly changed: boolean;
 }
+
+export type DesktopThemePalettes = Readonly<
+  Partial<Record<DesktopThemeAppearance, DesktopThemePalette>>
+>;
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const MIN_MAIN_WINDOW_SIZE = {
@@ -109,6 +117,12 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  themePalettes: Schema.optionalKey(
+    Schema.Struct({
+      light: Schema.optionalKey(DesktopThemePaletteSchema),
+      dark: Schema.optionalKey(DesktopThemePaletteSchema),
+    }),
+  ),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -175,6 +189,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setWslOnly: (
       enabled: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setThemePalette: (
+      palette: DesktopThemePalette,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly applyWslWindowsFallback: Effect.Effect<
       DesktopSettingsChange,
       DesktopSettingsWriteError
@@ -238,6 +255,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
+    ...(parsed.themePalettes === undefined ? {} : { themePalettes: parsed.themePalettes }),
   };
 }
 
@@ -279,6 +297,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
+  }
+  if (settings.themePalettes !== undefined) {
+    document.themePalettes = settings.themePalettes;
   }
 
   return document;
@@ -368,6 +389,32 @@ function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSetting
         ...settings,
         wslOnly: enabled,
       };
+}
+
+function themePaletteEqual(
+  left: DesktopThemePalette | undefined,
+  right: DesktopThemePalette,
+): boolean {
+  return (
+    left?.appearance === right.appearance &&
+    left.background === right.background &&
+    left.foreground === right.foreground &&
+    left.accent === right.accent &&
+    left.titlebarSymbol === right.titlebarSymbol
+  );
+}
+
+function setThemePalette(settings: DesktopSettings, palette: DesktopThemePalette): DesktopSettings {
+  if (themePaletteEqual(settings.themePalettes?.[palette.appearance], palette)) {
+    return settings;
+  }
+  return {
+    ...settings,
+    themePalettes: {
+      ...settings.themePalettes,
+      [palette.appearance]: palette,
+    },
+  };
 }
 
 function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
@@ -544,6 +591,12 @@ export const make = Effect.gen(function* () {
       persist((settings) => setWslOnly(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
       ),
+    setThemePalette: (palette) =>
+      persist((settings) => setThemePalette(settings, palette)).pipe(
+        Effect.withSpan("desktop.settings.setThemePalette", {
+          attributes: { appearance: palette.appearance },
+        }),
+      ),
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
     ),
@@ -585,6 +638,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
+        setThemePalette: (palette) => update((settings) => setThemePalette(settings, palette)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });
