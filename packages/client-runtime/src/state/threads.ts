@@ -178,6 +178,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // from the session config. Gates loadOlderTurns so a reconnect to a
   // pre-pagination server never sends unsupported window parameters.
   const paginationSupported = yield* Ref.make(false);
+  // An older page whose thread watermark is ahead of the live state, parked
+  // until the subscription catches up (see mergeOlderPage's caller). At most
+  // one can exist because loadOlderTurns no-ops while loadingOlder is true.
+  const pendingOlderPage = yield* Ref.make<{
+    readonly snapshot: OrchestrationThreadDetailSnapshot;
+    readonly epoch: number;
+  } | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
@@ -359,7 +366,38 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     } else if (result.kind === "deleted") {
       yield* setDeleted();
     }
+    // The event may have advanced the live state past a parked page's
+    // watermark; merge it as soon as that happens.
+    yield* tryMergePendingOlderPage();
   });
+
+  // Merges a parked older page once the live state has caught up to the
+  // page's thread watermark, or discards it if history was rewritten
+  // (epoch advanced) while it waited. Must run under applyLock.
+  const tryMergePendingOlderPage = Effect.fn("EnvironmentThreadState.tryMergePendingOlderPage")(
+    function* () {
+      const pending = yield* Ref.get(pendingOlderPage);
+      if (pending === null) {
+        return;
+      }
+      const epochNow = yield* Ref.get(historyEpoch);
+      if (epochNow !== pending.epoch) {
+        yield* Ref.set(pendingOlderPage, null);
+        yield* SubscriptionRef.update(state, (value) => ({
+          ...value,
+          page: Option.map(value.page, (existing) => ({ ...existing, loadingOlder: false })),
+        }));
+        return;
+      }
+      const watermark = pending.snapshot.page?.threadSequence;
+      const loadedSequence = yield* SubscriptionRef.get(lastSequence);
+      if (watermark !== undefined && watermark > loadedSequence) {
+        return;
+      }
+      yield* Ref.set(pendingOlderPage, null);
+      yield* mergeOlderPage(pending.snapshot);
+    },
+  );
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
@@ -470,6 +508,22 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ...value,
             page: Option.map(value.page, (existing) => ({ ...existing, loadingOlder: false })),
           }));
+          return;
+        }
+        // A page read AHEAD of the live state may include content (e.g.
+        // streaming deltas of an out-of-window turn) the subscription has
+        // not delivered yet; merging now and then replaying those events
+        // would duplicate them. Park the page until the live state reaches
+        // the page's thread-scoped watermark; loadingOlder stays true so
+        // the UI shows progress and no second fetch starts. Pages from
+        // pre-watermark servers (threadSequence absent) merge immediately,
+        // preserving the old behavior.
+        const watermark = response.value.page?.threadSequence;
+        if (watermark !== undefined && watermark > loadedSequence) {
+          yield* Ref.set(pendingOlderPage, {
+            snapshot: response.value,
+            epoch: epochNow,
+          });
           return;
         }
         yield* mergeOlderPage(response.value);

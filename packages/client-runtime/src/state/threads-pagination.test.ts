@@ -241,6 +241,27 @@ const hasMessage = (state: EnvironmentThreadState, id: string): boolean =>
     onSome: (thread) => thread.messages.some((entry) => entry.id === id),
   });
 
+const titleEvent = (title: string, sequence: number): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make(`event-title-${sequence}`),
+    sequence,
+    occurredAt: "2026-04-01T01:30:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.meta-updated",
+    payload: {
+      threadId: THREAD_ID,
+      title,
+      updatedAt: "2026-04-01T01:30:00.000Z",
+    },
+  },
+});
+
 // Reverting to turnCount 1 retains only turns whose checkpoint count is <= 1:
 // turn-1 survives, turn-2 (the loaded window's newest turn) is discarded.
 const revertEvent = (sequence: number): OrchestrationThreadStreamItem => ({
@@ -423,6 +444,37 @@ describe("thread pagination state", () => {
         (value) => !hasMessage(value, "message-recent") && hasMessage(value, "message-old"),
       );
       expect(hasMessage(state, "message-old")).toBe(true);
+    }),
+  );
+
+  it.effect("parks a page read ahead of the live state until events catch up", () =>
+    Effect.gen(function* () {
+      // A page whose thread watermark is ahead of the loaded state may
+      // contain streaming content the subscription has not delivered yet
+      // (e.g. an out-of-window subagent turn mid-stream); merging it
+      // immediately and then replaying those deltas would duplicate text.
+      // The page parks until the live state reaches the watermark.
+      const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.awaitState((value) =>
+        Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+      );
+      // Page watermark 11 > loaded sequence 10: must park, not merge.
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 11,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 11, threadSequence: 11 },
+        }),
+      );
+
+      // A live event at sequence 11 arrives; only then does the page merge.
+      yield* Queue.offer(harness.inputs, titleEvent("Advanced past watermark", 11));
+      const state = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      expect(hasMessage(state, "message-recent")).toBe(true);
+      expect(Option.getOrThrow(state.page).loadingOlder).toBe(false);
     }),
   );
 

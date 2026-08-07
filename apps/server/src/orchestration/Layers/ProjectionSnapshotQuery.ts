@@ -135,7 +135,7 @@ const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
 // Windowed reads order turns by the stable keyset (anchor, turn key), where
-// anchor is COALESCE(requested_at, started_at, '') and turn key is
+// anchor is requested_at and turn key is
 // COALESCE(turn_id, ''). Both are event-derived, so cursors survive the
 // revert projector's row-id rewrite and full projection rebuilds.
 const ThreadTurnWindowLookupInput = Schema.Struct({
@@ -1083,10 +1083,43 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // `userTurnLimit` user-anchored turns — turns whose pending message is a
   // user message; subagent/fan-out turns between them ride along — or hits the
   // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
-  // CTE applies the keyset bound and LIMIT before the window functions run, so
-  // a page over a huge thread scans at most `maxRawTurns` turns instead of
-  // every older turn. The caller derives the continuation cursor from the
-  // oldest returned row.
+  // CTE applies the keyset bound and LIMIT before the window functions run;
+  // its ORDER BY uses raw columns so the migration-037
+  // (thread_id, requested_at, turn_id) index serves both range and order with
+  // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
+  // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
+  // real id.) The caller derives the continuation cursor from the oldest
+  // returned row.
+  // Highest thread-DETAIL event sequence for this thread that the projection
+  // has applied (bounded by the global snapshot sequence read in the same
+  // transaction). This is the thread-scoped watermark a windowed page carries
+  // so clients can defer merging until their live subscription has caught up;
+  // the global sequence is not waitable per-thread. The event_type filter
+  // must match ws.ts's isThreadDetailEvent exactly: the subscription only
+  // delivers these types, so a watermark counting any other event could
+  // never be reached by the client and would park the page forever. Served
+  // by the event store's (aggregate_kind, stream_id, sequence) index.
+  const getThreadEventWatermarkRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, maxSequence: Schema.Number }),
+    Result: Schema.Struct({ threadSequence: Schema.NullOr(Schema.Number) }),
+    execute: ({ threadId, maxSequence }) =>
+      sql`
+        SELECT MAX(sequence) AS "threadSequence"
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND sequence <= ${maxSequence}
+          AND event_type IN (
+            'thread.message-sent',
+            'thread.proposed-plan-upserted',
+            'thread.activity-appended',
+            'thread.turn-diff-completed',
+            'thread.reverted',
+            'thread.session-set'
+          )
+      `,
+  });
+
   const listTurnWindowRows = SqlSchema.findAll({
     Request: ThreadTurnWindowLookupInput,
     Result: ProjectionTurnWindowRowSchema,
@@ -1094,19 +1127,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         WITH candidates AS (
           SELECT
-            COALESCE(turns.requested_at, turns.started_at, '') AS anchor_at,
+            turns.requested_at AS anchor_at,
             COALESCE(turns.turn_id, '') AS turn_key,
             turns.pending_message_id
           FROM projection_turns AS turns
           WHERE turns.thread_id = ${threadId}
             AND (
-              COALESCE(turns.requested_at, turns.started_at, '') < ${beforeAnchorAt}
+              turns.requested_at < ${beforeAnchorAt}
               OR (
-                COALESCE(turns.requested_at, turns.started_at, '') = ${beforeAnchorAt}
+                turns.requested_at = ${beforeAnchorAt}
                 AND COALESCE(turns.turn_id, '') < ${beforeTurnKey}
               )
             )
-          ORDER BY anchor_at DESC, turn_key DESC
+          ORDER BY turns.requested_at DESC, turns.turn_id DESC
           LIMIT ${maxRawTurns}
         ),
         walked AS (
@@ -1161,16 +1194,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               WHERE thread_id = ${threadId}
                 AND turn_id IS NOT NULL
                 AND (
-                  COALESCE(requested_at, started_at, '') > ${minAnchorAt}
+                  requested_at > ${minAnchorAt}
                   OR (
-                    COALESCE(requested_at, started_at, '') = ${minAnchorAt}
+                    requested_at = ${minAnchorAt}
                     AND turn_id >= ${minTurnKey}
                   )
                 )
                 AND (
-                  COALESCE(requested_at, started_at, '') < ${beforeAnchorAt}
+                  requested_at < ${beforeAnchorAt}
                   OR (
-                    COALESCE(requested_at, started_at, '') = ${beforeAnchorAt}
+                    requested_at = ${beforeAnchorAt}
                     AND turn_id < ${beforeTurnKey}
                   )
                 )
@@ -1208,16 +1241,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               WHERE thread_id = ${threadId}
                 AND turn_id IS NOT NULL
                 AND (
-                  COALESCE(requested_at, started_at, '') > ${minAnchorAt}
+                  requested_at > ${minAnchorAt}
                   OR (
-                    COALESCE(requested_at, started_at, '') = ${minAnchorAt}
+                    requested_at = ${minAnchorAt}
                     AND turn_id >= ${minTurnKey}
                   )
                 )
                 AND (
-                  COALESCE(requested_at, started_at, '') < ${beforeAnchorAt}
+                  requested_at < ${beforeAnchorAt}
                   OR (
-                    COALESCE(requested_at, started_at, '') = ${beforeAnchorAt}
+                    requested_at = ${beforeAnchorAt}
                     AND turn_id < ${beforeTurnKey}
                   )
                 )
@@ -2558,6 +2591,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )).length > 0;
 
           const { snapshotSequence } = yield* getSnapshotSequence();
+          const watermarkRow = yield* getThreadEventWatermarkRow({
+            threadId,
+            maxSequence: snapshotSequence,
+          }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadDetailSnapshot:threadWatermark:query",
+                "ProjectionSnapshotQuery.getThreadDetailSnapshot:threadWatermark:decodeRow",
+              ),
+            ),
+          );
+          const threadSequence = Option.match(watermarkRow, {
+            onNone: () => 0,
+            onSome: (row) => row.threadSequence ?? 0,
+          });
           return Option.some({
             snapshotSequence,
             thread: thread.value,
@@ -2572,6 +2620,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   : null,
               hasMore,
               snapshotSequence,
+              threadSequence,
             },
           });
         }),
