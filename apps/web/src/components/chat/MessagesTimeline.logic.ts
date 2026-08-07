@@ -164,6 +164,7 @@ export type MessagesTimelineRow =
       message: ChatMessage;
       durationStart: string;
       showAssistantMeta: boolean;
+      assistantTurnInProgress: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
@@ -573,6 +574,7 @@ export function deriveMessagesTimelineRows(input: {
       message: timelineEntry.message,
       durationStart,
       showAssistantMeta,
+      assistantTurnInProgress: assistantTurnStillInProgress,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
       assistantTurnDiffSummary:
@@ -653,6 +655,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.message === bm.message &&
         a.durationStart === bm.durationStart &&
         a.showAssistantMeta === bm.showAssistantMeta &&
+        a.assistantTurnInProgress === bm.assistantTurnInProgress &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&

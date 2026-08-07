@@ -1,5 +1,5 @@
 import { useColorScheme } from "react-native";
-import { Path, Svg } from "react-native-svg";
+import { Path, Rect, Svg } from "react-native-svg";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -54,6 +54,48 @@ export function ProviderIcon(props: ProviderIconProps) {
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
         <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />
         <Path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill={isDarkMode ? "#F1ECEC" : "#211E1E"} />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "piAgent") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 800 800" fill="none">
+        <Rect width="800" height="800" rx="160" fill="#000" />
+        <Path
+          fill="#fff"
+          fillRule="evenodd"
+          d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
+        />
+        <Path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "hermes") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 800 800" fill="none">
+        <Rect width="800" height="800" rx="160" fill="#000" />
+        <Path
+          fill="#fff"
+          fillRule="evenodd"
+          d="M150 520 L420 250 L470 300 L200 570 Z M230 620 L500 350 L550 400 L280 670 Z M310 720 L580 450 L630 500 L360 770 Z"
+        />
+        <Path fill="#fff" d="M585 200 L625 200 L625 640 L585 640 Z" />
+        <Path fill="#fff" d="M605 125 m-45 0 a45 45 0 1 0 90 0 a45 45 0 1 0 -90 0" />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "openclaw") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 800 800" fill="none">
+        <Rect width="800" height="800" rx="160" fill="#000" />
+        <Path
+          fill="#fff"
+          fillRule="evenodd"
+          d="M400 130 C549 130 670 251 670 400 L520 400 C520 334 466 280 400 280 C334 280 280 334 280 400 C280 466 334 520 400 520 L400 670 C251 670 130 549 130 400 C130 251 251 130 400 130 Z M460 150 L650 340 L590 400 L460 270 Z"
+        />
       </Svg>
     );
   }

@@ -27,8 +27,12 @@ import type {
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
+  ProjectMakeDirectoryInput,
+  ProjectMakeDirectoryResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectSearchEntriesInput,
@@ -1180,6 +1184,8 @@ export interface EnvironmentApi {
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    makeDirectory: (input: ProjectMakeDirectoryInput) => Promise<ProjectMakeDirectoryResult>;
+    deleteFile: (input: ProjectDeleteFileInput) => Promise<ProjectDeleteFileResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

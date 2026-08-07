@@ -10,6 +10,8 @@ const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_MAKE_DIRECTORY_PATH_MAX_LENGTH = 512;
+const PROJECT_DELETE_FILE_PATH_MAX_LENGTH = 512;
 
 export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 export type ProjectEntryKind = typeof ProjectEntryKind.Type;
@@ -209,6 +211,7 @@ export const ProjectFileFailure = Schema.Literals([
   "resolved_path_outside_root",
   "path_not_file",
   "binary_file",
+  "directory_requires_recursive",
   "operation_failed",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
@@ -222,6 +225,7 @@ export const ProjectFileOperation = Schema.Literals([
   "close",
   "make-directory",
   "write-file",
+  "delete-file",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
@@ -294,6 +298,84 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
       message:
         decodedProjectErrorMessage(props) ??
         `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+    } as any);
+  }
+}
+
+export const ProjectMakeDirectoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROJECT_MAKE_DIRECTORY_PATH_MAX_LENGTH),
+  ),
+});
+export type ProjectMakeDirectoryInput = typeof ProjectMakeDirectoryInput.Type;
+
+export const ProjectMakeDirectoryResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectMakeDirectoryResult = typeof ProjectMakeDirectoryResult.Type;
+
+export class ProjectMakeDirectoryError extends Schema.TaggedErrorClass<ProjectMakeDirectoryError>()(
+  "ProjectMakeDirectoryError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(ProjectFileFailure),
+    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    operation: Schema.optional(ProjectFileOperation),
+    operationPath: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: ProjectFileFailureContext) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to create workspace directory '${props.relativePath}' in '${props.cwd}'.`,
+    } as any);
+  }
+}
+
+export const ProjectDeleteFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROJECT_DELETE_FILE_PATH_MAX_LENGTH),
+  ),
+  // Directories require explicit recursive deletion; files ignore this flag.
+  recursive: Schema.optional(Schema.Boolean),
+});
+export type ProjectDeleteFileInput = typeof ProjectDeleteFileInput.Type;
+
+export const ProjectDeleteFileResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectDeleteFileResult = typeof ProjectDeleteFileResult.Type;
+
+export class ProjectDeleteFileError extends Schema.TaggedErrorClass<ProjectDeleteFileError>()(
+  "ProjectDeleteFileError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(ProjectFileFailure),
+    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    operation: Schema.optional(ProjectFileOperation),
+    operationPath: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: ProjectFileFailureContext) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to delete workspace file '${props.relativePath}' in '${props.cwd}'.`,
     } as any);
   }
 }

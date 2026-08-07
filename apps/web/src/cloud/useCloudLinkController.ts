@@ -8,6 +8,7 @@ import {
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -63,7 +64,7 @@ export function useCloudLinkController() {
         ? {
             secondaryActionProps: {
               children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
+              onClick: () => void writeTextToClipboard(traceId, "trace id"),
             },
           }
         : undefined,

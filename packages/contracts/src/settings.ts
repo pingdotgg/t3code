@@ -468,6 +468,149 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const PiAgentSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("pi").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Pi CLI binary.",
+        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
+      }),
+    ),
+    homePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "PI_CODING_AGENT_DIR path",
+        description: "Custom Pi home and config directory.",
+        providerSettingsForm: {
+          placeholder: "~/.pi/agent",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed to pi --mode rpc on session start.",
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "homePath", "launchArgs"],
+  },
+);
+export type PiAgentSettings = typeof PiAgentSettings.Type;
+
+export const HermesSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("hermes").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Hermes CLI binary.",
+        providerSettingsForm: { placeholder: "hermes", clearWhenEmpty: "omit" },
+      }),
+    ),
+    homePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "HERMES_HOME path",
+        description: "Custom Hermes home directory. Keeps config.yaml and .env separate.",
+        providerSettingsForm: { placeholder: "~/.hermes", clearWhenEmpty: "omit" },
+      }),
+    ),
+    profile: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Profile",
+        description: "Hermes profile to run sessions under. Leave blank for the default profile.",
+        providerSettingsForm: { placeholder: "default", clearWhenEmpty: "omit" },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed to hermes acp on session start.",
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "homePath", "profile", "launchArgs"],
+  },
+);
+export type HermesSettings = typeof HermesSettings.Type;
+
+export const OpenClawSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("openclaw").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the OpenClaw CLI binary.",
+        providerSettingsForm: { placeholder: "openclaw", clearWhenEmpty: "omit" },
+      }),
+    ),
+    gatewayUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Gateway URL",
+        description: "Leave blank to let T3 Code spawn the OpenClaw gateway when needed.",
+        providerSettingsForm: {
+          placeholder: "ws://127.0.0.1:18789",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    gatewayToken: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Gateway token",
+        description: "Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed to the OpenClaw gateway on start.",
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "gatewayUrl", "gatewayToken", "launchArgs"],
+  },
+);
+export type OpenClawSettings = typeof OpenClawSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -593,6 +736,9 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    piAgent: PiAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    hermes: HermesSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openclaw: OpenClawSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -696,6 +842,32 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const PiAgentSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  launchArgs: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const HermesSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  profile: Schema.optionalKey(TrimmedString),
+  launchArgs: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OpenClawSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  gatewayUrl: Schema.optionalKey(TrimmedString),
+  gatewayToken: Schema.optionalKey(TrimmedString),
+  launchArgs: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -736,6 +908,9 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      piAgent: Schema.optionalKey(PiAgentSettingsPatch),
+      hermes: Schema.optionalKey(HermesSettingsPatch),
+      openclaw: Schema.optionalKey(OpenClawSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

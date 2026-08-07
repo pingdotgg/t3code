@@ -6,7 +6,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+  buildGrokDiscoveredModelsFromSessionModelState,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -107,4 +111,55 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+});
+
+describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
+  const grokModelState = {
+    currentModelId: "grok-build",
+    availableModels: [
+      { modelId: "grok-build", name: "Grok Build" },
+      { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
+    ],
+  };
+
+  it("attaches a reasoning descriptor when the ACP server declares an effort option", () => {
+    const models = buildGrokDiscoveredModelsFromSessionModelState(grokModelState, [
+      {
+        id: "reasoning",
+        name: "Reasoning Effort",
+        category: "model_config",
+        type: "select",
+        currentValue: "high",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ]);
+    expect(models.map((model) => model.slug)).toEqual(["grok-build", "grok-mock-alt"]);
+    for (const model of models) {
+      const reasoning = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "reasoning",
+      );
+      expect(reasoning?.type).toBe("select");
+    }
+  });
+
+  it("stays descriptor-less when no effort option is advertised", () => {
+    const models = buildGrokDiscoveredModelsFromSessionModelState(grokModelState, []);
+    expect(models.map((model) => model.slug)).toEqual(["grok-build", "grok-mock-alt"]);
+    for (const model of models) {
+      expect(model.capabilities?.optionDescriptors).toEqual([]);
+    }
+  });
+
+  it("returns no models when the session model state is empty", () => {
+    expect(buildGrokDiscoveredModelsFromSessionModelState(undefined, undefined)).toEqual([]);
+    expect(
+      buildGrokDiscoveredModelsFromSessionModelState(
+        { currentModelId: "grok-build", availableModels: [] },
+        undefined,
+      ),
+    ).toEqual([]);
+  });
 });

@@ -5,8 +5,8 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RotateCw } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { FilePlus, FolderPlus, RotateCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -19,6 +19,8 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
+import { openCreateFileDialog } from "./createFileDialogBus";
+import { DeleteFileDialog, type DeleteFileTarget } from "./DeleteFileDialog";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
@@ -31,6 +33,10 @@ interface FileBrowserPanelProps {
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  /** Bumped to reveal a directory row (e.g. after creating a folder). */
+  revealDirectoryRequest?: { path: string; revealId: number } | null;
+  /** Called after a delete so the caller can reconcile open file surfaces. */
+  onDeletedPath?: ((relativePath: string) => void) | null;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -70,6 +76,32 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
+function ToolbarIconButton(props: {
+  ariaLabel: string;
+  tooltip: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={props.ariaLabel}
+            onClick={props.onClick}
+          />
+        }
+      >
+        {props.children}
+      </TooltipTrigger>
+      <TooltipPopup>{props.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function FileSearchField(props: {
   ariaLabel: string;
   name: string;
@@ -105,11 +137,14 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  revealDirectoryRequest,
+  onDeletedPath,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
   const entries = entriesQuery.data?.entries ?? [];
+  const [deleteTarget, setDeleteTarget] = useState<DeleteFileTarget | null>(null);
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
     [entries],
@@ -143,6 +178,7 @@ export default function FileBrowserPanel({
       return;
     }
     const relativePath = item.path.replace(/\/$/, "");
+    const isDirectory = item.path.endsWith("/");
     const mention = serializeComposerFileLink(relativePath);
     const pointer = contextMenuPointerRef.current;
     const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
@@ -150,14 +186,17 @@ export default function FileBrowserPanel({
     const position = pointerIsFresh
       ? { x: pointer.x, y: pointer.y }
       : { x: anchorRect.left, y: anchorRect.bottom };
+    const menuItems: Array<{ id: string; label: string }> = [
+      { id: "copy-mention", label: "Copy mention" },
+      { id: "add-to-chat", label: "Add to chat" },
+    ];
+    if (isDirectory) {
+      menuItems.push({ id: "new-file-here", label: "New file here" });
+      menuItems.push({ id: "new-folder-here", label: "New folder here" });
+    }
+    menuItems.push({ id: "delete", label: "Delete" });
     try {
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
-        ],
-        position,
-      );
+      const clicked = await api.contextMenu.show(menuItems, position);
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);
@@ -189,6 +228,19 @@ export default function FileBrowserPanel({
             description: "The chat isn't ready to accept input right now.",
           });
         }
+        return;
+      }
+      if (clicked === "new-file-here") {
+        openCreateFileDialog({ mode: "file", initialPath: relativePath });
+        return;
+      }
+      if (clicked === "new-folder-here") {
+        openCreateFileDialog({ mode: "folder", initialPath: relativePath });
+        return;
+      }
+      if (clicked === "delete") {
+        setDeleteTarget({ relativePath, kind: isDirectory ? "directory" : "file" });
+        return;
       }
     } finally {
       context.close();
@@ -319,6 +371,35 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId, treePaths]);
 
+  // Directory reveals (e.g. right after creating a folder) expand ancestors
+  // and select the row once per request, without touching the file-selection
+  // sync above.
+  const handledDirectoryRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  useEffect(() => {
+    const request = revealDirectoryRequest;
+    if (!request) {
+      handledDirectoryRevealRef.current = null;
+      return;
+    }
+    const handled = handledDirectoryRevealRef.current;
+    if (handled?.path === request.path && handled.revealId === request.revealId) return;
+    if (entryKinds.get(request.path) !== "directory") return;
+    const directoryPath = `${request.path}/`;
+    const selectedItem = model.getItem(directoryPath);
+    if (!selectedItem) return;
+    handledDirectoryRevealRef.current = request;
+
+    const segments = request.path.split("/");
+    let ancestorPath = "";
+    for (const segment of segments.slice(0, -1)) {
+      ancestorPath = ancestorPath ? `${ancestorPath}/${segment}` : segment;
+      const item = model.getItem(`${ancestorPath}/`) ?? model.getItem(ancestorPath);
+      if (item && "expand" in item) item.expand();
+    }
+    selectedItem.select();
+    model.scrollToPath(directoryPath, { focus: true, offset: "center" });
+  }, [entryKinds, model, revealDirectoryRequest, treePaths]);
+
   // Tag tree drags with the composer mention payload. The row is read from
   // the composed event path (the tree's shadow root is open), so this does
   // not depend on running after the tree's own dragstart handler; the drag
@@ -351,6 +432,20 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div className="surface-subheader gap-1 px-2" data-surface-subheader>
+        <ToolbarIconButton
+          ariaLabel="New file"
+          tooltip="New file"
+          onClick={() => openCreateFileDialog({ mode: "file" })}
+        >
+          <FilePlus />
+        </ToolbarIconButton>
+        <ToolbarIconButton
+          ariaLabel="New folder"
+          tooltip="New folder"
+          onClick={() => openCreateFileDialog({ mode: "folder" })}
+        >
+          <FolderPlus />
+        </ToolbarIconButton>
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={entriesQuery.refresh} />
         <FileSearchField
           name="project-files-search"
@@ -373,6 +468,16 @@ export default function FileBrowserPanel({
           }}
         />
       )}
+      <DeleteFileDialog
+        environmentId={environmentId}
+        cwd={cwd}
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={(relativePath) => {
+          entriesQuery.refresh();
+          onDeletedPath?.(relativePath);
+        }}
+      />
     </div>
   );
 }

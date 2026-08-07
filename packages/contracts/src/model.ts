@@ -132,6 +132,9 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const PI_DRIVER_KIND = ProviderDriverKind.make("piAgent");
+const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
+const OPENCLAW_DRIVER_KIND = ProviderDriverKind.make("openclaw");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -153,6 +156,9 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [PI_DRIVER_KIND]: "anthropic/claude-sonnet-4-6",
+  [HERMES_DRIVER_KIND]: "anthropic/claude-sonnet-4.6",
+  [OPENCLAW_DRIVER_KIND]: "anthropic/claude-sonnet-4-6",
 };
 
 /** Per-provider text generation model defaults. */
@@ -163,6 +169,9 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [PI_DRIVER_KIND]: "anthropic/claude-haiku-4-5",
+  [HERMES_DRIVER_KIND]: "anthropic/claude-haiku-4.5",
+  [OPENCLAW_DRIVER_KIND]: "anthropic/claude-haiku-4-5",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -222,4 +231,7 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [PI_DRIVER_KIND]: "Pi",
+  [HERMES_DRIVER_KIND]: "Hermes",
+  [OPENCLAW_DRIVER_KIND]: "OpenClaw",
 };

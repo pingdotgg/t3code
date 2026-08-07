@@ -3,11 +3,24 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  HermesSettings,
+  OpenClawSettings,
   OpenCodeSettings,
+  PiAgentSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  HermesIcon,
+  type Icon,
+  OpenAI,
+  OpenClawIcon,
+  OpenCodeIcon,
+  PiAgentIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -66,6 +79,24 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("piAgent"),
+    label: "Pi",
+    icon: PiAgentIcon,
+    settingsSchema: PiAgentSettings,
+  },
+  {
+    value: ProviderDriverKind.make("hermes"),
+    label: "Hermes",
+    icon: HermesIcon,
+    settingsSchema: HermesSettings,
+  },
+  {
+    value: ProviderDriverKind.make("openclaw"),
+    label: "OpenClaw",
+    icon: OpenClawIcon,
+    settingsSchema: OpenClawSettings,
   },
 ];
 

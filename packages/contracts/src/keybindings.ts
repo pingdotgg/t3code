@@ -57,6 +57,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "rightPanel.toggle",
   "diff.toggle",
   "preview.toggle",
+  "files.toggle",
   "preview.refresh",
   "preview.focusUrl",
   "preview.zoomIn",

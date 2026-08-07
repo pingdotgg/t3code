@@ -265,4 +265,192 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
   });
+
+  describe("makeDirectory", () => {
+    it.effect("creates directories relative to the workspace root with parents", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const result = yield* workspaceFileSystem.makeDirectory({
+          cwd,
+          relativePath: "src/components/button",
+        });
+
+        expect(result).toEqual({ relativePath: "src/components/button" });
+        const stat = yield* fileSystem.stat(path.join(cwd, "src", "components", "button"));
+        expect(stat.type).toBe("Directory");
+      }),
+    );
+
+    it.effect("invalidates workspace entry search cache after creating directories", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        // The first list builds the cached index while the tree is empty.
+        const beforeCreate = yield* workspaceEntries.list({ cwd });
+        expect(
+          beforeCreate.entries.some((entry) => entry.path === "src/components/button.ts"),
+        ).toBe(false);
+
+        // The file exists before makeDirectory's refresh rescans, so the
+        // directory + file are only visible if makeDirectory invalidated the
+        // cached index (the raw write below never refreshes on its own).
+        yield* writeTextFile(cwd, "src/components/button.ts", "export {};\n");
+        yield* workspaceFileSystem.makeDirectory({ cwd, relativePath: "src/components" });
+
+        const afterCreate = yield* workspaceEntries.list({ cwd });
+        expect(afterCreate.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: "src/components", kind: "directory" }),
+            expect.objectContaining({ path: "src/components/button.ts", kind: "file" }),
+          ]),
+        );
+      }),
+    );
+
+    it.effect("is idempotent for an existing directory", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        yield* workspaceFileSystem.makeDirectory({ cwd, relativePath: "src" });
+        yield* workspaceFileSystem.makeDirectory({ cwd, relativePath: "src" });
+
+        const stat = yield* fileSystem.stat(path.join(cwd, "src"));
+        expect(stat.type).toBe("Directory");
+      }),
+    );
+
+    it.effect("rejects paths outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const error = yield* workspaceFileSystem
+          .makeDirectory({ cwd, relativePath: "../escape-dir" })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape-dir",
+        );
+
+        const escapedPath = path.resolve(cwd, "..", "escape-dir");
+        const escapedStat = yield* fileSystem
+          .stat(escapedPath)
+          .pipe(Effect.orElseSucceed(() => null));
+        expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+
+  describe("deleteFile", () => {
+    it.effect("deletes a file relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "notes.md", "delete me\n");
+
+        const result = yield* workspaceFileSystem.deleteFile({ cwd, relativePath: "notes.md" });
+
+        expect(result).toEqual({ relativePath: "notes.md" });
+        const stat = yield* fileSystem
+          .stat(path.join(cwd, "notes.md"))
+          .pipe(Effect.orElseSucceed(() => null));
+        expect(stat).toBeNull();
+      }),
+    );
+
+    it.effect("deletes a directory recursively when requested", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/a.ts", "a\n");
+        yield* writeTextFile(cwd, "src/nested/b.ts", "b\n");
+
+        const result = yield* workspaceFileSystem.deleteFile({
+          cwd,
+          relativePath: "src",
+          recursive: true,
+        });
+
+        expect(result).toEqual({ relativePath: "src" });
+        const stat = yield* fileSystem
+          .stat(path.join(cwd, "src"))
+          .pipe(Effect.orElseSucceed(() => null));
+        expect(stat).toBeNull();
+      }),
+    );
+
+    it.effect("rejects deleting a directory without recursive", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/a.ts", "a\n");
+
+        const error = yield* workspaceFileSystem
+          .deleteFile({ cwd, relativePath: "src" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceDirectoryRequiresRecursiveError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "src",
+        });
+        const stat = yield* fileSystem.stat(path.join(cwd, "src"));
+        expect(stat.type).toBe("Directory");
+      }),
+    );
+
+    it.effect("invalidates workspace entry search cache after deletes", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/notes.md", "notes\n");
+
+        yield* workspaceFileSystem.deleteFile({ cwd, relativePath: "src/notes.md" });
+
+        const afterDelete = yield* workspaceEntries.list({ cwd });
+        expect(afterDelete.entries.some((entry) => entry.path === "src/notes.md")).toBe(false);
+      }),
+    );
+
+    it.effect("rejects paths outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "keep.md", "keep\n");
+
+        const error = yield* workspaceFileSystem
+          .deleteFile({ cwd, relativePath: "../escape.md" })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
+        const escapedPath = path.resolve(cwd, "..", "escape.md");
+        const escapedStat = yield* fileSystem
+          .stat(escapedPath)
+          .pipe(Effect.orElseSucceed(() => null));
+        expect(escapedStat).toBeNull();
+      }),
+    );
+  });
 });

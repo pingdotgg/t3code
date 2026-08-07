@@ -24,12 +24,51 @@ export class ClipboardWriteError extends Schema.TaggedErrorClass<ClipboardWriteE
   }
 }
 
+/**
+ * Legacy copy path via a hidden textarea and `document.execCommand("copy")`.
+ *
+ * The async Clipboard API only exists in secure contexts (HTTPS or
+ * localhost) and can be denied in embedded webviews or when the document
+ * lost focus, so this fallback keeps copy buttons working over plain HTTP
+ * LAN/tailnet origins. It must run inside a user gesture (our click
+ * handlers), and does not need `navigator.clipboard` at all.
+ */
+function legacyCopyTextToClipboard(value: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+
+  const previouslyFocused = document.activeElement;
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, value.length);
+
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    textarea.remove();
+    if (typeof HTMLElement !== "undefined" && previouslyFocused instanceof HTMLElement) {
+      previouslyFocused.focus();
+    }
+  }
+  return copied;
+}
+
 export async function writeTextToClipboard(value: string, target = "text") {
-  if (
-    typeof window === "undefined" ||
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.writeText
-  ) {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
     throw new ClipboardApiUnavailableError({
       target,
     });
@@ -37,15 +76,30 @@ export async function writeTextToClipboard(value: string, target = "text") {
 
   if (!value) return false;
 
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch (cause) {
-    throw new ClipboardWriteError({
-      target,
-      cause,
-    });
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (cause) {
+      // The async API is present but was denied (insecure origin, embedded
+      // webview, permission policy). Try the legacy path before giving up.
+      if (!legacyCopyTextToClipboard(value)) {
+        throw new ClipboardWriteError({
+          target,
+          cause,
+        });
+      }
+      return true;
+    }
   }
+
+  if (legacyCopyTextToClipboard(value)) {
+    return true;
+  }
+
+  throw new ClipboardApiUnavailableError({
+    target,
+  });
 }
 
 export function useCopyToClipboard<TContext = void>({

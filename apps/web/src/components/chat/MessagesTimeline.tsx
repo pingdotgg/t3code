@@ -1070,6 +1070,23 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </div>
         ) : null}
+        {/* While the turn runs the meta row is withheld, so show when this
+            message started on its own line — right-aligned like the work
+            entry timestamps, and never competing with the markdown for space. */}
+        {row.assistantTurnInProgress ? (
+          <div className="mt-1 flex justify-end">
+            <Tooltip>
+              <TooltipTrigger
+                render={<p className="text-muted-foreground/45 text-[11px] tabular-nums" />}
+              >
+                {formatShortTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
+          </div>
+        ) : null}
       </div>
     </>
   );
@@ -1186,7 +1203,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   if (nonEmptyEntries.length === 0) return null;
 
   return (
-    <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
+    <section className="@container/work -mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
       {!onlyToolEntries && (
         <p className="px-0.5 pb-0.5 font-medium text-[11px] text-muted-foreground/65">
           {groupLabel}
@@ -2057,6 +2074,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
+  const { timestampFormat } = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2137,6 +2155,21 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
+            {/* When the row runs out of room, the label/preview truncate first
+                (min-w-0 above); below the container breakpoint the stamp hides
+                so the tool name keeps priority. */}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="me-1.5 cursor-default text-[11px] tabular-nums text-muted-foreground/45 @max-[300px]/work:hidden" />
+                }
+              >
+                {formatShortTimestamp(workEntry.createdAt, timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(workEntry.createdAt, timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
             <span
               className="flex size-4 shrink-0 items-center justify-center"
               aria-hidden={!canExpand}

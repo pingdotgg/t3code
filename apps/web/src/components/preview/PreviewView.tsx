@@ -12,6 +12,7 @@ import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -278,21 +279,9 @@ export function PreviewView({
             let toastId: ReturnType<typeof toastManager.add>;
 
             const copyPath = () => {
-              if (!navigator.clipboard?.writeText) {
-                toastManager.update(
-                  toastId,
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Unable to copy recording path",
-                    description: "Clipboard API unavailable.",
-                    actionProps: revealAction,
-                  }),
-                );
-                return;
-              }
-
-              void navigator.clipboard.writeText(artifact.path).then(
-                () => {
+              void writeTextToClipboard(artifact.path, "recording path").then(
+                (didCopy) => {
+                  if (!didCopy) return;
                   pathCopied = true;
                   updateRecordingToast();
                   window.setTimeout(() => {
@@ -419,17 +408,9 @@ export function PreviewView({
           };
 
           const copyPath = () => {
-            if (!navigator.clipboard?.writeText) {
-              updateScreenshotToast(
-                "error",
-                "Unable to copy screenshot path",
-                "Clipboard API unavailable.",
-              );
-              return;
-            }
-
-            void navigator.clipboard.writeText(artifact.path).then(
-              () => {
+            void writeTextToClipboard(artifact.path, "screenshot path").then(
+              (didCopy) => {
+                if (!didCopy) return;
                 pathCopied = true;
                 updateScreenshotToast();
                 window.setTimeout(() => {

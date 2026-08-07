@@ -41,6 +41,8 @@ Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refre
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
 
+`files.toggle` opens or closes the Files panel for the active project and defaults to `mod+shift+e`.
+
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
 keeping the thread's project, branch, and machine context visible. Message search begins after two
