@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -17,6 +19,9 @@ export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   targets: Schema.Array(PersistedConnectionTarget),
+  disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   profiles: Schema.Array(ConnectionProfile),
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
@@ -26,6 +31,7 @@ export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 export const EMPTY_CONNECTION_CATALOG_DOCUMENT: ConnectionCatalogDocument = Object.freeze({
   schemaVersion: 1,
   targets: [],
+  disabledEnvironmentIds: [],
   profiles: [],
   credentials: [],
   remoteDpopTokens: [],
@@ -93,6 +99,7 @@ function removeConnectionMetadata(
 export function registerConnectionInCatalog(
   document: ConnectionCatalogDocument,
   registration: ConnectionRegistration,
+  options: { readonly enabled: boolean },
 ): ConnectionCatalogDocument {
   const target = registration.target;
   const previous = document.targets.find(
@@ -103,6 +110,11 @@ export function registerConnectionInCatalog(
   const next: ConnectionCatalogDocument = {
     ...cleaned,
     targets: replaceCatalogValue(cleaned.targets, (value) => value.environmentId, target),
+    disabledEnvironmentIds: options.enabled
+      ? cleaned.disabledEnvironmentIds.filter(
+          (environmentId) => environmentId !== target.environmentId,
+        )
+      : [...new Set([...cleaned.disabledEnvironmentIds, target.environmentId])],
   };
 
   switch (registration._tag) {
@@ -137,5 +149,10 @@ export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
   target: ConnectionTarget,
 ): ConnectionCatalogDocument {
-  return removeConnectionMetadata(document, target, true);
+  return {
+    ...removeConnectionMetadata(document, target, true),
+    disabledEnvironmentIds: document.disabledEnvironmentIds.filter(
+      (environmentId) => environmentId !== target.environmentId,
+    ),
+  };
 }

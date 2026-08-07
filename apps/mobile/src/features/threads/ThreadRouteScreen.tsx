@@ -62,6 +62,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { threadEnvironmentActivationAction } from "./threadEnvironmentActivation";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -189,7 +190,7 @@ function ThreadRouteContent(
     togglePrimarySidebar,
   } = useAdaptiveWorkspaceLayout();
   const { connectionState } = useRemoteConnectionStatus();
-  const { onReconnectEnvironment } = useRemoteConnections();
+  const { onReconnectEnvironment, onSetEnvironmentEnabled } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
@@ -326,12 +327,16 @@ function ThreadRouteContent(
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
   );
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
-  const handleReconnectEnvironment = useCallback(() => {
-    if (!environmentId) {
+  const handleActivateEnvironment = useCallback(() => {
+    if (!environmentId || routeEnvironmentRuntime === null) {
+      return;
+    }
+    if (threadEnvironmentActivationAction(routeEnvironmentRuntime.enabled) === "enable") {
+      void onSetEnvironmentEnabled(environmentId, true);
       return;
     }
     onReconnectEnvironment(environmentId);
-  }, [environmentId, onReconnectEnvironment]);
+  }, [environmentId, onReconnectEnvironment, onSetEnvironmentEnabled, routeEnvironmentRuntime]);
 
   /* ─── Git action progress (for overlay banner) ──────────────────── */
   const gitActionProgressTarget = useMemo(
@@ -800,7 +805,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
-          onReconnectEnvironment={handleReconnectEnvironment}
+          onReconnectEnvironment={handleActivateEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
           onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}

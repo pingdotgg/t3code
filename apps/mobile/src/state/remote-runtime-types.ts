@@ -2,6 +2,7 @@ import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { EnvironmentId, ThreadId, type ServerConfig } from "@t3tools/contracts";
 
 export interface EnvironmentRuntimeState {
+  readonly enabled: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
@@ -16,6 +17,7 @@ export interface ConnectedEnvironmentSummary {
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
+  readonly enabled: boolean;
 }
 
 export interface SelectedThreadRef {

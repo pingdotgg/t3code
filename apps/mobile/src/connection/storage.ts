@@ -1,5 +1,6 @@
 import {
   ConnectionPersistenceError,
+  ConnectionActivationStore,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   registerConnectionInCatalog,
@@ -20,7 +21,12 @@ import * as Option from "effect/Option";
 import * as CatalogStore from "./catalog-store";
 
 function targetPersistenceError(
-  operation: "list-targets" | "register-connection" | "remove-connection",
+  operation:
+    | "list-targets"
+    | "register-connection"
+    | "remove-connection"
+    | "list-activation"
+    | "set-activation",
   error: ConnectionTransientError,
 ) {
   return new ConnectionPersistenceError({
@@ -40,14 +46,29 @@ export const connectionStorageLayer = Layer.effectContext(
       ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
-      register: (registration) =>
+      register: (registration, options) =>
         catalog
-          .update((document) => registerConnectionInCatalog(document, registration))
+          .update((document) => registerConnectionInCatalog(document, registration, options))
           .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
       remove: (target) =>
         catalog
           .update((document) => removeConnectionFromCatalog(document, target))
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
+    });
+    const activationStore = ConnectionActivationStore.of({
+      listDisabled: catalog.read.pipe(
+        Effect.map((document) => new Set(document.disabledEnvironmentIds)),
+        Effect.mapError((error) => targetPersistenceError("list-activation", error)),
+      ),
+      setEnabled: (environmentId, enabled) =>
+        catalog
+          .update((document) => ({
+            ...document,
+            disabledEnvironmentIds: enabled
+              ? document.disabledEnvironmentIds.filter((candidate) => candidate !== environmentId)
+              : [...new Set([...document.disabledEnvironmentIds, environmentId])],
+          }))
+          .pipe(Effect.mapError((error) => targetPersistenceError("set-activation", error))),
     });
     const profileStore = ProfileStore.make({
       get: (connectionId) =>
@@ -130,6 +151,7 @@ export const connectionStorageLayer = Layer.effectContext(
     });
     return Context.make(ConnectionTargetStore, targetStore).pipe(
       Context.add(ConnectionRegistrationStore, registrationStore),
+      Context.add(ConnectionActivationStore, activationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
