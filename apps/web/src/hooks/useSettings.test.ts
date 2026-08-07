@@ -17,6 +17,37 @@ describe("resolveEnvironmentIdentificationMode", () => {
       "pill",
     );
   });
+
+  it("uses a pill instead of artwork with a palette theme", () => {
+    expect(
+      resolveEnvironmentIdentificationMode({
+        mode: "artwork",
+        settingsHydrated: true,
+        paletteThemeActive: true,
+      }),
+    ).toBe("pill");
+  });
+
+  it("respects none with a palette theme", () => {
+    expect(
+      resolveEnvironmentIdentificationMode({
+        mode: "none",
+        settingsHydrated: true,
+        paletteThemeActive: true,
+      }),
+    ).toBe("none");
+  });
+
+  it("keeps artwork when the palette theme opts into it", () => {
+    expect(
+      resolveEnvironmentIdentificationMode({
+        mode: "artwork",
+        settingsHydrated: true,
+        paletteThemeActive: true,
+        paletteThemeAllowsArtwork: true,
+      }),
+    ).toBe("artwork");
+  });
 });
 
 describe("mergeEnvironmentSettings", () => {
