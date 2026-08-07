@@ -72,6 +72,7 @@ minimumReleaseAgeExclude:
   - "@effect/sql-pg@4.0.0-beta.103"
   - "@effect/sql-sqlite-bun@4.0.0-beta.103"
   - "@effect/vitest@4.0.0-beta.103"
+  - "@opencode-ai/sdk@0.0.0-beta-202608061351"
   - alchemy@2.0.0-beta.65
   - effect@4.0.0-beta.103
 
