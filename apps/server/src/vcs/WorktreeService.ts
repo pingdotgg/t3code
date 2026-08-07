@@ -437,27 +437,38 @@ export const make = Effect.gen(function* () {
     const normalizedProjects = yield* Effect.forEach(
       selectedProjects,
       (project) =>
-        canonicalizePath(project.workspaceRoot).pipe(
-          Effect.map((canonicalWorkspaceRoot) => ({
+        Effect.gen(function* () {
+          const canonicalWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
+          const commonDir = yield* executeLenient(
+            "WorktreeService.listWorktrees.repositoryKey",
+            canonicalWorkspaceRoot,
+            ["rev-parse", "--git-common-dir"],
+          );
+          const repositoryKey =
+            commonDir === null || commonDir.trim().length === 0
+              ? canonicalWorkspaceRoot
+              : yield* canonicalizePath(path.resolve(canonicalWorkspaceRoot, commonDir.trim()));
+          return {
             id: project.id,
             title: project.title,
             workspaceRoot: project.workspaceRoot,
             canonicalWorkspaceRoot,
-          })),
-        ),
+            repositoryKey,
+          };
+        }),
       { concurrency: PROJECT_SCAN_CONCURRENCY },
     );
 
     const groups = new Map<string, ProjectGroup>();
     for (const project of normalizedProjects) {
-      const existing = groups.get(project.canonicalWorkspaceRoot);
+      const existing = groups.get(project.repositoryKey);
       if (existing === undefined) {
-        groups.set(project.canonicalWorkspaceRoot, {
+        groups.set(project.repositoryKey, {
           canonicalWorkspaceRoot: project.canonicalWorkspaceRoot,
           projects: [project],
         });
       } else {
-        groups.set(project.canonicalWorkspaceRoot, {
+        groups.set(project.repositoryKey, {
           ...existing,
           projects: [...existing.projects, project],
         });

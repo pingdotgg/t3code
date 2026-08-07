@@ -347,3 +347,91 @@ it.effect("lists V2-managed worktrees and preserves shared project/thread refere
     assert.isTrue(Exit.isFailure(occupiedReviveExit));
   }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );
+
+it.effect("combines thread safety across nested projects in the same repository", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+
+    const repositoryRoot = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-worktree-v2-nested-repo-",
+    });
+    yield* driver.execute({
+      operation: "WorktreeServiceNestedTest.init",
+      cwd: repositoryRoot,
+      args: ["init", "-b", "main"],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServiceNestedTest.userEmail",
+      cwd: repositoryRoot,
+      args: ["config", "user.email", "test@example.com"],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServiceNestedTest.userName",
+      cwd: repositoryRoot,
+      args: ["config", "user.name", "T3 Test"],
+    });
+    yield* fs.writeFileString(path.join(repositoryRoot, "README.md"), "hello\n");
+    yield* driver.execute({
+      operation: "WorktreeServiceNestedTest.add",
+      cwd: repositoryRoot,
+      args: ["add", "README.md"],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServiceNestedTest.commit",
+      cwd: repositoryRoot,
+      args: ["commit", "-m", "initial"],
+    });
+
+    const nestedProjectRoot = path.join(repositoryRoot, "packages", "nested");
+    yield* fs.makeDirectory(nestedProjectRoot, { recursive: true });
+    const worktreePath = path.join(config.worktreesDir, "nested", "active");
+    yield* driver.createWorktree({
+      cwd: repositoryRoot,
+      refName: "main",
+      newRefName: "feature/nested-active",
+      path: worktreePath,
+    });
+
+    const activeThread = makeShell({
+      id: ThreadId.make("thread-worktree-v2-nested-active"),
+      projectId: projectA,
+      worktreePath,
+      settledOverride: "active",
+      updatedAt: DateTime.makeUnsafe("2026-01-05T00:00:00.000Z"),
+    });
+    const layer = makeTestLayer(
+      () => [makeProject(projectA, nestedProjectRoot), makeProject(projectB, repositoryRoot)],
+      () => [activeThread],
+    );
+
+    const inventory = yield* Effect.gen(function* () {
+      const service = yield* WorktreeService;
+      return yield* service.listWorktrees({});
+    }).pipe(Effect.provide(layer));
+
+    assert.equal(inventory.worktrees.length, 1);
+    const worktree = inventory.worktrees[0];
+    assert.isDefined(worktree);
+    assert.deepEqual(
+      worktree?.projects.map((project) => project.workspaceRoot),
+      [nestedProjectRoot, repositoryRoot],
+    );
+    assert.deepEqual(
+      worktree?.threads.map((thread) => thread.threadId),
+      [activeThread.id],
+    );
+    assert.isFalse(worktree?.safeToPrune);
+    assert.deepEqual(worktree?.pruneBlockers, ["active_thread"]);
+
+    const pruneResult = yield* Effect.gen(function* () {
+      const service = yield* WorktreeService;
+      return yield* service.pruneWorktrees({ paths: [worktreePath] });
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(pruneResult.removed, []);
+    assert.deepEqual(pruneResult.skipped, [{ path: worktreePath, reason: "active_thread" }]);
+    assert.isTrue(yield* fs.exists(worktreePath));
+  }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
+);
