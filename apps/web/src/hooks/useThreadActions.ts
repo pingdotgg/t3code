@@ -100,8 +100,8 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedErrorClass<ThreadSnoo
 }
 
 /** Key that sorts before every arranged pinned thread, so a fresh pin lands
-    at the top of the run. Null (keyless, sorts with the legacy block) when
-    key math can't produce one — pinning must never fail on placement. */
+    at the top of the run. Undefined (keyless, sorts with the legacy block)
+    when key math can't produce one — pinning must never fail on placement. */
 function topOfPinnedRunOrderKey(): string | undefined {
   let firstKey: string | null = null;
   for (const shell of readThreadShells()) {
