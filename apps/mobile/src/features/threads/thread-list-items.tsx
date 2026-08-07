@@ -26,6 +26,7 @@ import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
+import { getSidebarRowTextColor } from "./thread-list-theme";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
@@ -491,6 +492,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedBackgroundColor = themeColors?.messageAction ?? selectedBackgroundFallback;
   const selectedForegroundColor =
     themeColors?.messageActionForeground ?? selectedForegroundFallback;
+  const sidebarForeground = compact ? undefined : getSidebarRowTextColor(themeColors, "foreground");
+  const sidebarMutedForeground = compact ? undefined : getSidebarRowTextColor(themeColors, "muted");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
   const status = resolveThreadStatus(thread);
@@ -556,6 +559,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 !compact && (selected ? "text-user-bubble-foreground" : "text-foreground-muted"),
               )}
               numberOfLines={1}
+              style={
+                !compact && !selected && sidebarMutedForeground
+                  ? { color: sidebarMutedForeground }
+                  : undefined
+              }
             >
               {subtitleParts.join(" · ")}
             </Text>
@@ -631,6 +639,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 compact
                 match={props.searchMatch}
                 query={props.searchQuery ?? ""}
+                sidebarForeground={sidebarForeground}
+                sidebarMutedForeground={sidebarMutedForeground}
               />
             ) : null}
             {subtitleRow}
@@ -671,6 +681,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 selected ? "text-user-bubble-foreground" : "text-foreground",
               )}
               numberOfLines={1}
+              style={!selected && sidebarForeground ? { color: sidebarForeground } : undefined}
             >
               {thread.title}
             </Text>
@@ -682,6 +693,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                   selected ? "text-user-bubble-foreground" : "text-foreground-muted",
                 )}
                 numberOfLines={1}
+                style={
+                  !selected && sidebarMutedForeground
+                    ? { color: sidebarMutedForeground }
+                    : undefined
+                }
               >
                 {timestamp}
               </Text>
@@ -692,6 +708,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               match={props.searchMatch}
               query={props.searchQuery ?? ""}
               selected={selected}
+              sidebarForeground={sidebarForeground}
+              sidebarMutedForeground={sidebarMutedForeground}
             />
           ) : null}
           {subtitleRow}

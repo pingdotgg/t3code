@@ -48,6 +48,8 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly query: string;
   readonly selected?: boolean;
   readonly compact?: boolean;
+  readonly sidebarForeground?: string;
+  readonly sidebarMutedForeground?: string;
 }) {
   const isUser = props.match.source === "user";
   const parts = splitHighlightParts(props.match.snippet, props.query);
@@ -57,6 +59,11 @@ export function ThreadSearchMatchExcerpt(props: {
         props.compact ? "text-sm" : "text-xs",
         props.selected ? "text-user-bubble-foreground" : "text-foreground-muted",
       )}
+      style={
+        !props.selected && props.sidebarMutedForeground
+          ? { color: props.sidebarMutedForeground }
+          : undefined
+      }
       numberOfLines={1}
     >
       <Text
@@ -71,22 +78,28 @@ export function ThreadSearchMatchExcerpt(props: {
       >
         {isUser ? "You:" : "Agent:"}{" "}
       </Text>
-      {parts.map((part) => (
-        <Text
-          className={cn(
-            props.compact ? "text-sm" : "text-xs",
-            part.highlighted && "font-t3-bold",
-            props.selected
-              ? "text-user-bubble-foreground"
-              : part.highlighted
-                ? "text-foreground"
-                : "text-foreground-muted",
-          )}
-          key={part.start}
-        >
-          {part.text}
-        </Text>
-      ))}
+      {parts.map((part) => {
+        const sidebarColor = part.highlighted
+          ? props.sidebarForeground
+          : props.sidebarMutedForeground;
+        return (
+          <Text
+            className={cn(
+              props.compact ? "text-sm" : "text-xs",
+              part.highlighted && "font-t3-bold",
+              props.selected
+                ? "text-user-bubble-foreground"
+                : part.highlighted
+                  ? "text-foreground"
+                  : "text-foreground-muted",
+            )}
+            key={part.start}
+            style={!props.selected && sidebarColor ? { color: sidebarColor } : undefined}
+          >
+            {part.text}
+          </Text>
+        );
+      })}
     </Text>
   );
 }

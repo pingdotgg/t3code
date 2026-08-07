@@ -1,6 +1,8 @@
 import { DarkTheme, DefaultTheme } from "@react-navigation/native";
 import type { ThemeAppearance, ThemeColors } from "@t3tools/themes";
 
+import { getDefaultMobileCSSVariables } from "./mobileTheme";
+
 /**
  * React Navigation owns native headers and sheet chrome separately from
  * Uniwind. Keep its semantic colors on the same active palette so a theme
@@ -12,7 +14,15 @@ export function createMobileNavigationTheme(
 ) {
   const baseTheme = appearance === "dark" ? DarkTheme : DefaultTheme;
   if (themeColors === null) {
-    return baseTheme;
+    const defaultVariables = getDefaultMobileCSSVariables(appearance);
+    return {
+      ...baseTheme,
+      colors: {
+        ...baseTheme.colors,
+        background: defaultVariables["--color-screen"] ?? baseTheme.colors.background,
+        card: defaultVariables["--color-sheet"] ?? baseTheme.colors.card,
+      },
+    };
   }
 
   return {

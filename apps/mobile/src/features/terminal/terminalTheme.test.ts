@@ -43,11 +43,14 @@ describe("buildGhosttyThemeConfig", () => {
     const colors = createManagedThemeColors("dark", "#18212b", "#5ba8ff");
     const theme = getTerminalThemeForColors("dark", colors);
     const config = buildGhosttyThemeConfig(theme);
+    const selectionEntry = config
+      .split("\n")
+      .find((line) => line.startsWith("selection-background = "));
 
     expect(config).toContain(`background = ${colors.terminalBackground}`);
     expect(config).toContain(`foreground = ${colors.terminalForeground}`);
     expect(config).toContain(`cursor-color = ${colors.terminalCursor}`);
-    expect(config).toContain(`selection-background = ${colors.terminalSelection}`);
+    expect(selectionEntry?.split("=", 2)[1]?.trim()).toBe(colors.terminalSelection);
     expect(theme.palette).toEqual(getPierreTerminalTheme("dark").palette);
   });
 });

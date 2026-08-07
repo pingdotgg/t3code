@@ -22,6 +22,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { getSidebarRowTextColor } from "./thread-list-theme";
 import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -241,8 +242,12 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   const { themeColors } = useAppearancePreferences();
   const sidebarBackgroundColor = themeColors?.sidebar ?? drawerColor;
   const sidebarHoverColor = themeColors?.sidebarRowHover ?? pressedBackgroundColor;
-  const sidebarForeground = sidebarPane ? themeColors?.sidebarForeground : undefined;
-  const sidebarMutedForeground = sidebarPane ? themeColors?.sidebarMutedForeground : undefined;
+  const sidebarForeground = sidebarPane
+    ? getSidebarRowTextColor(themeColors, "foreground")
+    : undefined;
+  const sidebarMutedForeground = sidebarPane
+    ? getSidebarRowTextColor(themeColors, "muted")
+    : undefined;
   const projectTitle =
     props.projectTitle ?? props.project?.title ?? pendingTask.creation.projectTitle ?? "";
   const branch = pendingTask.creation.branch;
@@ -474,9 +479,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selectedBackgroundColor = themeColors?.messageAction ?? selectedBackgroundFallback;
   const selectedForegroundColor =
     themeColors?.messageActionForeground ?? selectedForegroundFallback;
+  const sidebarForeground = sidebarPane
+    ? getSidebarRowTextColor(themeColors, "foreground")
+    : undefined;
+  const sidebarMutedForeground = sidebarPane
+    ? getSidebarRowTextColor(themeColors, "muted")
+    : undefined;
   const pinTintColor = selected
     ? selectedForegroundColor
-    : (themeColors?.sidebarMutedForeground ?? pinTintFallback);
+    : (sidebarMutedForeground ?? pinTintFallback);
   const sidebarBackgroundColor = themeColors?.sidebar ?? drawerColor;
   const sidebarHoverColor = themeColors?.sidebarRowHover ?? pressedBackgroundColor;
 
@@ -676,6 +687,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             selected ? "text-user-bubble-foreground" : "text-foreground-muted",
           )}
           numberOfLines={1}
+          style={
+            !selected && sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined
+          }
         >
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
@@ -689,6 +703,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               ? "text-user-bubble-foreground"
               : (statusLabel?.className ?? "text-foreground-tertiary"),
           )}
+          style={
+            !selected && !statusLabel && sidebarMutedForeground
+              ? { color: sidebarMutedForeground }
+              : undefined
+          }
         >
           {statusLabel?.label ?? timeLabel}
         </Text>
@@ -699,6 +718,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           selected ? "text-user-bubble-foreground" : "text-foreground",
         )}
         numberOfLines={2}
+        style={!selected && sidebarForeground ? { color: sidebarForeground } : undefined}
       >
         {thread.title}
       </Text>
@@ -708,6 +728,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             match={props.searchMatch}
             query={props.searchQuery ?? ""}
             selected={selected}
+            sidebarForeground={sidebarForeground}
+            sidebarMutedForeground={sidebarMutedForeground}
           />
         </View>
       ) : null}
@@ -732,6 +754,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               selected ? "text-user-bubble-foreground" : "text-foreground-muted",
             )}
             numberOfLines={1}
+            style={
+              !selected && sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined
+            }
           >
             {thread.branch ? (
               <Text
@@ -739,7 +764,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   "text-xs",
                   selected ? "text-user-bubble-foreground" : "text-foreground-muted",
                 )}
-                style={{ fontFamily: MONO_FONT }}
+                style={{
+                  color: !selected ? sidebarMutedForeground : undefined,
+                  fontFamily: MONO_FONT,
+                }}
               >
                 {thread.branch}
               </Text>
@@ -751,6 +779,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   "text-xs",
                   selected ? "text-user-bubble-foreground" : "text-foreground-tertiary",
                 )}
+                style={
+                  !selected && sidebarMutedForeground
+                    ? { color: sidebarMutedForeground }
+                    : undefined
+                }
               >
                 {props.environmentLabel}
               </Text>
@@ -866,6 +899,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 selected ? "text-user-bubble-foreground" : "text-foreground-muted",
               )}
               numberOfLines={1}
+              style={
+                !selected && sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined
+              }
             >
               {thread.title}
             </Text>
@@ -874,6 +910,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 match={props.searchMatch}
                 query={props.searchQuery ?? ""}
                 selected={selected}
+                sidebarForeground={sidebarForeground}
+                sidebarMutedForeground={sidebarMutedForeground}
               />
             ) : null}
           </View>
@@ -886,7 +924,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ? "text-blue-600 dark:text-blue-400"
                   : "text-foreground-tertiary",
             )}
-            style={{ fontFamily: MONO_FONT }}
+            style={{
+              color: !selected && !snoozedRow ? sidebarMutedForeground : undefined,
+              fontFamily: MONO_FONT,
+            }}
           >
             {snoozedRow && props.snoozeWakeLabelText !== undefined
               ? props.snoozeWakeLabelText
