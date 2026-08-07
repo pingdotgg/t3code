@@ -122,7 +122,8 @@ layer("ThreadColdStorage", (it) => {
         Effect.gen(function* () {
           yield* sql`
             UPDATE projection_thread_sessions
-            SET status = 'stopped', updated_at = '2026-07-02T00:01:00.000Z'
+            SET status = 'stopped', active_turn_id = NULL,
+                updated_at = '2026-07-02T00:01:00.000Z'
             WHERE thread_id = ${threadId}
           `;
           yield* sql`
@@ -154,32 +155,59 @@ layer("ThreadColdStorage", (it) => {
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
       `;
-      assert.deepStrictEqual(coldActivities, [{ count: 0 }]);
-      assert.deepStrictEqual(coldSessions, [{ count: 0 }]);
-
-      assert.isTrue(yield* storage.restoreTree(threadId));
-      const restoredActivities = yield* sql<{ readonly kind: string }>`
-        SELECT kind
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-        ORDER BY sequence ASC
-      `;
-      const restoredSessions = yield* sql<{ readonly status: string }>`
-        SELECT status
-        FROM projection_thread_sessions
-        WHERE thread_id = ${threadId}
-      `;
-      const restoredShells = yield* sql<{ readonly pendingUserInputCount: number }>`
+      const postArchiveShells = yield* sql<{ readonly pendingUserInputCount: number }>`
         SELECT pending_user_input_count AS "pendingUserInputCount"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `;
+      assert.deepStrictEqual(coldActivities, [{ count: 0 }]);
+      assert.deepStrictEqual(coldSessions, [{ count: 0 }]);
+      // The lightweight shell deliberately stays hot while child projections
+      // move cold, so verify its post-quiescence value before any restore.
+      assert.deepStrictEqual(postArchiveShells, [{ pendingUserInputCount: 0 }]);
+
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      const restoredActivities = yield* sql<{
+        readonly kind: string;
+        readonly payloadJson: string;
+        readonly createdAt: string;
+        readonly sequence: number;
+      }>`
+        SELECT kind, payload_json AS "payloadJson", created_at AS "createdAt", sequence
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+        ORDER BY sequence ASC
+      `;
+      const restoredSessions = yield* sql<{
+        readonly status: string;
+        readonly activeTurnId: string | null;
+        readonly updatedAt: string;
+      }>`
+        SELECT status, active_turn_id AS "activeTurnId", updated_at AS "updatedAt"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
       assert.deepStrictEqual(restoredActivities, [
-        { kind: "user-input.requested" },
-        { kind: "user-input.resolved" },
+        {
+          kind: "user-input.requested",
+          payloadJson: '{"requestId":"request-pending-user-input"}',
+          createdAt: "2026-07-02T00:00:00.000Z",
+          sequence: 1,
+        },
+        {
+          kind: "user-input.resolved",
+          payloadJson: '{"requestId":"request-pending-user-input"}',
+          createdAt: "2026-07-02T00:01:00.000Z",
+          sequence: 2,
+        },
       ]);
-      assert.deepStrictEqual(restoredSessions, [{ status: "stopped" }]);
-      assert.deepStrictEqual(restoredShells, [{ pendingUserInputCount: 0 }]);
+      assert.deepStrictEqual(restoredSessions, [
+        {
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: "2026-07-02T00:01:00.000Z",
+        },
+      ]);
     }),
   );
 
