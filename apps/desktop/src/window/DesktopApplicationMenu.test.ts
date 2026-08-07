@@ -69,7 +69,10 @@ const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   install: Effect.die("unexpected install"),
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
-const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
+const makeDesktopWindowLayer = (
+  selectedAction: Deferred.Deferred<string>,
+  appearanceSynced?: Deferred.Deferred<void>,
+) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected createMain"),
     ensureMain: Effect.die("unexpected ensureMain"),
@@ -81,7 +84,9 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
-    syncAppearance: Effect.void,
+    syncAppearance: appearanceSynced
+      ? Deferred.succeed(appearanceSynced, undefined).pipe(Effect.asVoid)
+      : Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
 const makeElectronMenuLayer = (
@@ -136,6 +141,59 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+
+  it.effect("updates zoom and syncs window appearance from the native View menu", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const appearanceSynced = yield* Deferred.make<void>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* Effect.gen(function* () {
+        const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+        yield* menu.configure;
+      }).pipe(
+        Effect.provide(
+          DesktopApplicationMenu.layer.pipe(
+            Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
+            Layer.provideMerge(makeDesktopWindowLayer(selectedAction, appearanceSynced)),
+            Layer.provideMerge(desktopUpdatesLayer),
+            Layer.provideMerge(electronDialogLayer),
+            Layer.provideMerge(electronAppLayer),
+            Layer.provideMerge(
+              DesktopEnvironment.layer(environmentInput).pipe(
+                Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const viewMenu = template.find((item) => item.label === "View");
+      assert.isDefined(viewMenu);
+      if (!Array.isArray(viewMenu.submenu)) {
+        throw new Error("Expected View menu submenu to be an array.");
+      }
+      const zoomInItem = viewMenu.submenu.find(
+        (item) => item.label === "Zoom In" && item.visible !== false,
+      );
+      assert.isDefined(zoomInItem);
+      if (typeof zoomInItem.click !== "function") {
+        throw new Error("Expected Zoom In menu item to have a click handler.");
+      }
+
+      const webContents = { zoomLevel: 1 };
+      zoomInItem.click(
+        {} as Electron.MenuItem,
+        { webContents } as Electron.BrowserWindow,
+        {} as KeyboardEvent,
+      );
+
+      yield* Deferred.await(appearanceSynced);
+      assert.equal(webContents.zoomLevel, 1.5);
     }),
   );
 });

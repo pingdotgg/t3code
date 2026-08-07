@@ -58,12 +58,13 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-function makeFakeBrowserWindow() {
+function makeFakeBrowserWindow(initialZoomFactor = 1) {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContents = {
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
+    getZoomFactor: vi.fn(() => initialZoomFactor),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
@@ -107,6 +108,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    getZoomFactor: webContents.getZoomFactor,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -117,6 +119,7 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     send: webContents.send,
     setAutoHideCursor: window.setAutoHideCursor,
+    setTitleBarOverlay: window.setTitleBarOverlay,
     webContentsListeners,
     windowListeners,
   };
@@ -158,17 +161,18 @@ const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const makeDesktopEnvironmentLayer = (platform: NodeJS.Platform = environmentInput.platform) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -186,6 +190,7 @@ function makeTestLayer(input: {
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
+  readonly platform?: NodeJS.Platform;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -244,7 +249,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        makeDesktopEnvironmentLayer(input.platform),
         desktopAppSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
@@ -343,7 +348,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       Layer.provide(
         Layer.mergeAll(
           desktopAssetsLayer,
-          desktopEnvironmentLayer,
+          makeDesktopEnvironmentLayer(),
           DesktopAppSettings.layerTest(),
           desktopServerExposureLayer,
           electronMenuLayer,
@@ -404,6 +409,64 @@ describe("DesktopWindow", () => {
       }),
     );
   });
+
+  it("grows the title bar overlay with renderer zoom", () => {
+    assert.equal(DesktopWindow.resolveTitleBarOverlayHeight(0.8), 40);
+    assert.equal(DesktopWindow.resolveTitleBarOverlayHeight(1), 40);
+    assert.equal(DesktopWindow.resolveTitleBarOverlayHeight(1.5), 60);
+    assert.equal(DesktopWindow.resolveTitleBarOverlayHeight(Number.NaN), 40);
+  });
+
+  it.effect("keeps the Linux title bar overlay in sync with renderer zoom", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow(1.5);
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "linux",
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const didFinishLoad = fakeWindow.webContentsListeners.get("did-finish-load");
+        const beforeInputEvent = fakeWindow.webContentsListeners.get("before-input-event");
+        if (!didFinishLoad || !beforeInputEvent) {
+          return yield* Effect.die("renderer zoom listeners were not registered");
+        }
+
+        didFinishLoad();
+        assert.deepEqual(fakeWindow.setTitleBarOverlay.mock.calls.at(-1), [{ height: 60 }]);
+
+        yield* desktopWindow.syncAppearance;
+        assert.deepEqual(fakeWindow.setTitleBarOverlay.mock.calls.at(-1), [
+          {
+            color: "#01000000",
+            height: 60,
+            symbolColor: "#1f2937",
+          },
+        ]);
+
+        fakeWindow.getZoomFactor.mockReturnValue(2);
+        beforeInputEvent(
+          {},
+          {
+            type: "keyDown",
+            control: true,
+            meta: false,
+            alt: false,
+            key: "+",
+          },
+        );
+        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        assert.deepEqual(fakeWindow.setTitleBarOverlay.mock.calls.at(-1), [{ height: 80 }]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 
   it.effect("does not open a development window until the backend is ready", () =>
     Effect.gen(function* () {
