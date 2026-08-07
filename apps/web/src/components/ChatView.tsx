@@ -4035,10 +4035,12 @@ function ChatViewContent(props: ChatViewProps) {
       now: `${nowMinute}:00.000Z`,
       autoSettleAfterDays,
       changeRequestState: activeThreadPr?.state ?? null,
+      suppressAutoSettle: activeThreadWokeAt !== null,
     });
   }, [
     activeThreadPr?.state,
     activeThreadShell,
+    activeThreadWokeAt,
     autoSettleAfterDays,
     nowMinute,
     supportsSettlement,

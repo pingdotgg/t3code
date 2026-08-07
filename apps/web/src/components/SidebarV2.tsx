@@ -6,6 +6,12 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  resolveSettledTimestamp,
+  sortSettledThreadsForListV2,
+  sortThreadsForListV2,
+  threadListV2Priority,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -117,14 +123,11 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
-  resolveSettledTimestamp,
   resolveSidebarV2Status,
   searchSidebarThreadsByTitle,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
-  sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -490,9 +493,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // flag must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
-  // A woken thread reappears at its original position (the sort is
-  // deliberately static), so the pill has to carry the weight. Snoozing is
-  // an explicit act, so the pill clears only when the user re-engages:
+  // The visual Woke treatment clears only when the user re-engages:
   // reading a completion-triggered wake, clicking the pill, sending a
   // message, settling, archiving — or finishing the work outright (merged
   // or closed PR). Timer wakes survive a mere visit. An unparseable visit
@@ -505,15 +506,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     prState !== "merged" &&
     prState !== "closed";
-  // In-flight rows (working, or waiting on approval/input) fade as a whole:
-  // there is nothing for the user to do yet, so prominence is reserved for
-  // rows that need a human — done (unread), read-but-unsettled, failed, and
-  // freshly woken. The status label keeps its hue, so waiting rows stay
-  // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
-  // working threads aren't your problem yet) — only the colored status label
-  // stands out.
-  const isInFlight =
-    status === "working" || status === "monitoring" || status === "approval" || status === "input";
+  // Background work and approvals recede when read. Input requests stay
+  // fully prominent because the agent cannot continue without the user.
+  const isInFlight = status === "working" || status === "monitoring" || status === "approval";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
@@ -547,9 +542,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             }
           : status === "input"
             ? {
-                label: "Input",
-                icon: null,
-                className: "text-indigo-600 dark:text-indigo-300",
+                label: "Input needed",
+                icon: "input" as const,
+                className:
+                  "rounded-full bg-indigo-500/10 px-1.5 py-0.5 text-indigo-700 ring-1 ring-inset ring-indigo-500/25 dark:bg-indigo-400/10 dark:text-indigo-200 dark:ring-indigo-400/25",
               }
             : status === "failed"
               ? {
@@ -1050,6 +1046,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                           <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                         ) : topStatus.icon === "done" ? (
                           <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                        ) : topStatus.icon === "input" ? (
+                          <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
                         ) : null}
                         {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
@@ -1695,6 +1693,7 @@ export default function SidebarV2() {
       const active: EnvironmentThreadShell[] = [];
       const snoozed: EnvironmentThreadShell[] = [];
       const settled: EnvironmentThreadShell[] = [];
+      const wokeAtByThreadKey = new Map<string, string>();
       for (const thread of visible) {
         // Threads on servers without the settlement capability (old server,
         // or descriptor not loaded yet) never classify as settled: the user
@@ -1707,12 +1706,13 @@ export default function SidebarV2() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
         const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
+        const wokeAt = supportsSnooze ? threadWokeAt(thread, { now: preciseNow }) : null;
+        if (wokeAt !== null) wokeAtByThreadKey.set(threadKey, wokeAt);
         // Snooze outranks everything, including a pin: "hide until Tuesday"
         // temporarily suspends "keep on top". The pin survives underneath —
-        // pinned cards are creation-ordered, so on wake the thread reappears
-        // at its original spot in the pinned block. (For unpinned threads
-        // this is also the snooze-beats-auto-settle rule: the wake time is a
-        // stronger statement about when the thread matters again.)
+        // pinned cards keep their explicit block. For unpinned threads this
+        // is also the snooze-beats-auto-settle rule: the wake time is a
+        // stronger statement about when the thread matters again.
         if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
           snoozed.push(thread);
           // A pin otherwise overrides the lifecycle: pinned threads never
@@ -1723,7 +1723,12 @@ export default function SidebarV2() {
           pinned.push(thread);
         } else if (
           supportsSettlement &&
-          effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+          effectiveSettled(thread, {
+            now,
+            autoSettleAfterDays,
+            changeRequestState,
+            suppressAutoSettle: wokeAt !== null,
+          })
         ) {
           settled.push(thread);
         } else {
@@ -1733,15 +1738,22 @@ export default function SidebarV2() {
       return {
         // Same static creation order as the inbox: a pin freezes prominence,
         // it does not introduce a new ordering scheme.
-        pinnedThreads: sortThreadsForSidebarV2(pinned),
-        activeThreads: sortThreadsForSidebarV2(active),
+        pinnedThreads: sortThreadsForListV2(pinned),
+        activeThreads: sortThreadsForListV2(active, (thread) =>
+          threadListV2Priority(thread, {
+            wokeAt:
+              wokeAtByThreadKey.get(
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+              ) ?? null,
+          }),
+        ),
         // Soonest wake first: "what comes back next" is the shelf's question.
         snoozedThreads: snoozed.toSorted(
           (left, right) =>
             firstValidTimestampMs(left.snoozedUntil ?? null) -
             firstValidTimestampMs(right.snoozedUntil ?? null),
         ),
-        settledThreads: sortSettledThreadsForSidebarV2(settled),
+        settledThreads: sortSettledThreadsForListV2(settled),
         snoozeNow: preciseNow,
       };
     }, [

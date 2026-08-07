@@ -68,7 +68,7 @@ export function BetaSettingsPanel() {
       <SettingsSection title="Beta features">
         <SettingsRow
           {...searchableSetting("sidebar-v2")}
-          description="One flat thread list in creation order. Active work renders as rich cards; settled threads collapse to compact rows. Settling requires an up-to-date server — on older servers threads simply stay active. Switch back any time."
+          description="One flat thread list. Woke and un-settled work comes first; settled threads collapse to compact rows. Settling requires an up-to-date server. Switch back any time."
           control={
             <Switch
               checked={sidebarV2Enabled}

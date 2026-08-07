@@ -556,8 +556,8 @@ function BetaSettingsSection() {
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        One flat thread list in creation order. Active work renders as cards; settled threads
-        collapse to compact rows. Switch back any time.
+        One flat thread list. Woke and un-settled work comes first; settled threads collapse to
+        compact rows. Switch back any time.
       </Text>
     </View>
   );

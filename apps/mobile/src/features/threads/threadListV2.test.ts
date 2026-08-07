@@ -21,7 +21,6 @@ import {
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
-  sortThreadsForListV2,
 } from "./threadListV2";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -247,17 +246,6 @@ describe("resolveThreadListV2SnoozeGateExpiryMs", () => {
   });
 });
 
-describe("sortThreadsForListV2", () => {
-  it("orders by creation time, newest first, ignoring activity", () => {
-    const sorted = sortThreadsForListV2([
-      { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
-      { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
-      { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
-    ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
-  });
-});
-
 describe("buildThreadListV2Items", () => {
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
@@ -282,10 +270,51 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    // Same createdAt → static sort tiebreaks by id; the point is the woken
-    // thread is BACK in the card block and the snoozed one is gone.
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["woken", "active"]);
     expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("shares web attention priority while preserving the pinned block", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("woke"),
+          title: "Woke",
+          createdAt: "2026-05-01T00:00:00.000Z",
+          latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+          snoozedAt: "2026-05-29T00:00:00.000Z",
+          snoozedUntil: "2026-05-30T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("unsettled"),
+          title: "Un-settled",
+          createdAt: "2026-06-01T08:00:00.000Z",
+          settledOverride: "active",
+        }),
+        makeThread({
+          id: ThreadId.make("default"),
+          title: "Default",
+          createdAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("pinned"),
+          title: "Pinned",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      autoSettleAfterDays: 3,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["pinned", "card"],
+      ["woke", "card"],
+      ["unsettled", "card"],
+      ["default", "card"],
+    ]);
   });
 
   it("renders pinned threads first and exempts them from auto-settle — parity with web", () => {
@@ -678,7 +707,7 @@ describe("buildThreadListV2Items settled paging", () => {
           id: ThreadId.make(`settled-${index}`),
           title: `Settled ${index}`,
           settledOverride: "settled",
-          settledAt: NOW,
+          settledAt: `2026-06-01T0${index}:20:00.000Z`,
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
           // A turn adopted the message (same requestedAt): without it the
           // thread reads as a queued turn start, which never settles.

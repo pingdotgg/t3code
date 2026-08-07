@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { resolveSettledTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import {
@@ -812,7 +813,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {snoozedRow && props.snoozeWakeLabelText !== undefined
               ? props.snoozeWakeLabelText
-              : relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt)}
+              : relativeTime(resolveSettledTimestamp(thread) ?? thread.createdAt)}
           </Text>
         </View>
       </Pressable>

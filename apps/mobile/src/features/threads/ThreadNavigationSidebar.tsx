@@ -644,8 +644,8 @@ function ThreadNavigationSidebarPane(
               ],
             },
           ] satisfies MenuAction[])),
-      // v2 lays the list out in fixed creation order — offering sort/group
-      // controls it silently ignores would be a lie. Environment still
+      // v2 owns ordering (attention priority, then creation) — offering
+      // sort/group controls it silently ignores would be a lie. Environment still
       // scopes the v2 partition, so it stays.
       ...(threadListV2Enabled
         ? []

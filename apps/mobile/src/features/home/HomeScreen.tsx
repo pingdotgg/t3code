@@ -475,7 +475,8 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
     [v2ScopedProjectGroup],
   );
-  // Thread List v2 (beta): one flat list in creation order, no grouping.
+  // Thread List v2 (beta): one flat list, attention priority then creation
+  // order, with no grouping.
   // Settled threads collapse into a recency tail below the card block.
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
