@@ -172,7 +172,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newDraftId, newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
@@ -297,6 +297,13 @@ import {
   startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+import {
+  MAX_QUEUED_MESSAGES,
+  useMessageQueueStore,
+  useThreadMessageQueue,
+} from "../messageQueueStore";
+import { ComposerQueueList } from "./chat/ComposerQueueList";
+import { canFlushQueuedMessage, shouldQueueOutgoingMessage } from "./chat/messageQueue.logic";
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -463,6 +470,29 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
   return true;
+}
+
+/**
+ * Folds every composer context into the prompt text. Queued prompts run this
+ * when they enter the queue, not when they are sent: terminal and element
+ * contexts are session bound and would be gone by the time the agent is free.
+ */
+function foldComposerContextsIntoPrompt(input: {
+  prompt: string;
+  terminalContexts: Parameters<typeof appendTerminalContextsToPrompt>[1];
+  elementContexts: Parameters<typeof appendElementContextsToPrompt>[1];
+  previewAnnotations: ReadonlyArray<Parameters<typeof appendPreviewAnnotationPrompt>[1]>;
+  reviewComments: Parameters<typeof appendReviewCommentsToPrompt>[1];
+}): string {
+  const withContexts = appendElementContextsToPrompt(
+    appendTerminalContextsToPrompt(input.prompt, input.terminalContexts),
+    input.elementContexts,
+  );
+  const withPreviewAnnotations = input.previewAnnotations.reduce(
+    (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+    withContexts,
+  );
+  return appendReviewCommentsToPrompt(withPreviewAnnotations, input.reviewComments);
 }
 
 function formatOutgoingPrompt(params: {
@@ -1531,6 +1561,14 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const queuedMessages = useThreadMessageQueue(activeThreadKey);
+  const enqueueQueuedMessage = useMessageQueueStore((store) => store.enqueueMessage);
+  const requeueQueuedMessage = useMessageQueueStore((store) => store.requeueMessage);
+  const takeQueuedMessage = useMessageQueueStore((store) => store.takeMessage);
+  const discardQueuedMessage = useMessageQueueStore((store) => store.discardMessage);
+  // A failed flush must not retry in a loop: the requeue would immediately
+  // satisfy the flush condition again. Held until the user acts on the queue.
+  const [queueFlushHaltedThreadKey, setQueueFlushHaltedThreadKey] = useState<string | null>(null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -4791,6 +4829,21 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // Sending always returns to the live edge. The new row becomes the anchored
+  // end-space target so it lands near the top while the response streams into
+  // the reserved space below it.
+  const anchorTimelineToOutgoingMessage = useCallback((threadKey: string, messageId: MessageId) => {
+    isAtEndRef.current = true;
+    timelineScrollModeRef.current = "anchoring-new-turn";
+    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    setTimelineLiveFollowEnabled(true);
+    pendingTimelineAnchorRef.current = messageId;
+    activeTimelineAnchorIndexRef.current = null;
+    showScrollDebouncer.current.cancel();
+    setShowScrollToBottom(false);
+    setTimelineAnchor({ threadKey, messageId });
+  }, []);
+
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -4963,6 +5016,63 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
+    // Anything submitted while the agent is busy waits in the queue instead of
+    // steering the running turn. Nothing is dispatched here, so the prompt is
+    // not part of the conversation until it is actually flushed.
+    if (
+      isServerThread &&
+      activeThreadKey &&
+      shouldQueueOutgoingMessage({
+        phase,
+        isSendBusy,
+        hasPendingApproval: activePendingApproval !== null,
+        hasPendingUserInput: pendingUserInputs.length > 0,
+        queuedCount: queuedMessages.length,
+      })
+    ) {
+      const queuedText = foldComposerContextsIntoPrompt({
+        prompt: promptForSend,
+        terminalContexts: sendableComposerTerminalContexts,
+        elementContexts: composerElementContexts,
+        previewAnnotations: composerPreviewAnnotations,
+        reviewComments: composerReviewComments,
+      });
+      const enqueued = enqueueQueuedMessage(activeThreadKey, {
+        id: randomUUID(),
+        text: queuedText,
+        images: [...composerImages],
+        createdAt: new Date().toISOString(),
+      });
+      if (!enqueued) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Queue is full",
+            description: `Send or remove a queued message before adding more (limit ${MAX_QUEUED_MESSAGES}).`,
+          }),
+        );
+        return;
+      }
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          }),
+        );
+      }
+      setQueueFlushHaltedThreadKey(null);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      return;
+    }
+
     sendInFlightRef.current = true;
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -4986,18 +5096,13 @@ function ChatViewContent(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
-    const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
-      composerElementContextsSnapshot,
-    );
-    const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
-      (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
-      messageTextWithContexts,
-    );
-    const messageTextForSend = appendReviewCommentsToPrompt(
-      messageTextWithPreviewAnnotations,
-      composerReviewCommentsSnapshot,
-    );
+    const messageTextForSend = foldComposerContextsIntoPrompt({
+      prompt: promptForSend,
+      terminalContexts: composerTerminalContextsSnapshot,
+      elementContexts: composerElementContextsSnapshot,
+      previewAnnotations: composerPreviewAnnotationsSnapshot,
+      reviewComments: composerReviewCommentsSnapshot,
+    });
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
@@ -5024,21 +5129,10 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Sending always returns to the live edge. The new row becomes the
-    // anchored end-space target so it lands near the top while the response
-    // streams into the reserved space below it.
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "anchoring-new-turn";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = messageIdForSend;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageId: messageIdForSend,
-    });
+    anchorTimelineToOutgoingMessage(
+      scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      messageIdForSend,
+    );
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -5243,6 +5337,182 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  /**
+   * Dispatches one queued prompt. Shared by the automatic flush and the
+   * per-entry send action — the latter deliberately works mid-turn, because
+   * sending by hand is how the user steers a running agent.
+   */
+  const sendQueuedMessage = useCallback(
+    async (queuedMessageId: string) => {
+      const threadKey = activeThreadKey;
+      const thread = activeThread;
+      if (!threadKey || !thread || !isServerThread || sendInFlightRef.current) {
+        return;
+      }
+      const queued = takeQueuedMessage(threadKey, queuedMessageId);
+      if (!queued) {
+        return;
+      }
+      sendInFlightRef.current = true;
+      // Without a mounted composer there is no model context to read, so the
+      // prompt goes out unprefixed rather than not at all.
+      const sendCtx = composerRef.current?.getSendContext();
+      const queuedText = queued.text || IMAGE_ONLY_BOOTSTRAP_PROMPT;
+      const outgoingMessageText = sendCtx
+        ? formatOutgoingPrompt({
+            provider: sendCtx.selectedProvider,
+            model: sendCtx.selectedModel,
+            models: sendCtx.selectedProviderModels,
+            effort: sendCtx.selectedPromptEffort,
+            text: queuedText,
+          })
+        : queuedText;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const optimisticAttachments = queued.images.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+      anchorTimelineToOutgoingMessage(threadKey, messageIdForSend);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      setThreadError(thread.id, null);
+      beginLocalDispatch({ preparingWorktree: false });
+
+      let dispatchError: unknown = null;
+      let turnStartSucceeded = false;
+      try {
+        const attachments = await Promise.all(
+          queued.images.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+        const startResult = await startThreadTurn({
+          environmentId,
+          input: {
+            threadId: thread.id,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+              attachments,
+            },
+            modelSelection: sendCtx?.selectedModelSelection ?? thread.modelSelection,
+            runtimeMode,
+            interactionMode,
+            createdAt: messageCreatedAt,
+          },
+        });
+        if (startResult._tag === "Failure") {
+          dispatchError = isAtomCommandInterrupted(startResult)
+            ? null
+            : squashAtomCommandFailure(startResult);
+        } else {
+          turnStartSucceeded = true;
+        }
+      } catch (cause) {
+        dispatchError = cause;
+      }
+      sendInFlightRef.current = false;
+
+      if (!turnStartSucceeded) {
+        // The optimistic row and the queued entry share the same blob preview
+        // URLs, so dropping the row must not revoke them: the entry goes back
+        // into the queue and still needs its previews.
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        requeueQueuedMessage(threadKey, queued);
+        setQueueFlushHaltedThreadKey(threadKey);
+        resetLocalDispatch();
+        if (dispatchError !== null) {
+          setThreadError(
+            thread.id,
+            dispatchError instanceof Error ? dispatchError.message : "Failed to send message.",
+          );
+        }
+        return;
+      }
+      acknowledgeActiveThreadWoke();
+    },
+    [
+      acknowledgeActiveThreadWoke,
+      activeThread,
+      activeThreadKey,
+      anchorTimelineToOutgoingMessage,
+      beginLocalDispatch,
+      environmentId,
+      interactionMode,
+      isServerThread,
+      requeueQueuedMessage,
+      resetLocalDispatch,
+      runtimeMode,
+      setThreadError,
+      startThreadTurn,
+      takeQueuedMessage,
+    ],
+  );
+
+  const queueHeadId = queuedMessages[0]?.id ?? null;
+  const canFlushQueue =
+    queueHeadId !== null &&
+    activeThreadKey !== null &&
+    queueFlushHaltedThreadKey !== activeThreadKey &&
+    canFlushQueuedMessage({
+      phase,
+      hasActiveTurn: (activeThread?.session?.activeTurnId ?? null) !== null,
+      isSendBusy,
+      isSendInFlight: sendInFlightRef.current,
+      hasPendingApproval: activePendingApproval !== null,
+      hasPendingUserInput: pendingUserInputs.length > 0,
+      hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
+    });
+
+  useEffect(() => {
+    if (!canFlushQueue || queueHeadId === null) {
+      return;
+    }
+    void sendQueuedMessage(queueHeadId);
+  }, [canFlushQueue, queueHeadId, sendQueuedMessage]);
+
+  const onSendQueuedMessageNow = useCallback(
+    (queuedMessageId: string) => {
+      setQueueFlushHaltedThreadKey(null);
+      void sendQueuedMessage(queuedMessageId);
+    },
+    [sendQueuedMessage],
+  );
+
+  const onDiscardQueuedMessage = useCallback(
+    (queuedMessageId: string) => {
+      if (!activeThreadKey) {
+        return;
+      }
+      setQueueFlushHaltedThreadKey(null);
+      discardQueuedMessage(activeThreadKey, queuedMessageId);
+    },
+    [activeThreadKey, discardQueuedMessage],
+  );
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6202,6 +6472,12 @@ function ChatViewContent(props: ChatViewProps) {
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
+                  <ComposerQueueList
+                    messages={queuedMessages}
+                    disabled={activeEnvironmentUnavailable}
+                    onSendNow={onSendQueuedMessageNow}
+                    onDiscard={onDiscardQueuedMessage}
+                  />
                   <div
                     className="relative"
                     style={
