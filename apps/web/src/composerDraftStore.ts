@@ -527,17 +527,20 @@ function providerSelectionsFromModelSelection(
   return { [modelSelection.instanceId]: options };
 }
 
-function modelSelectionByProviderToOptions(
+/**
+ * Options for a single instance key from a modelSelectionByProvider map.
+ * Returns null when that key has no non-empty options — callers must not
+ * treat options for other instances as a hit for the selected one.
+ */
+function optionsForInstance(
   map: Partial<Record<string, ModelSelection>> | null | undefined,
+  instanceId: string,
 ): ProviderOptionSelectionsByProvider | null {
-  if (!map) return null;
-  const result: ProviderOptionSelectionsByProvider = {};
-  for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options && selection.options.length > 0) {
-      result[provider] = selection.options;
-    }
+  const selection = map?.[instanceId];
+  if (!selection?.options || selection.options.length === 0) {
+    return null;
   }
-  return Object.keys(result).length > 0 ? result : null;
+  return { [instanceId]: selection.options };
 }
 
 function cloneModelSelection(selection: ModelSelection): DeepMutable<ModelSelection> {
@@ -974,6 +977,12 @@ export function deriveEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  /**
+   * Cross-thread sticky selection options (e.g. last chosen Grok effort).
+   * Only supplies options when the per-thread draft has none; does not
+   * override the thread/project model slug.
+   */
+  stickyModelSelectionByProvider?: Partial<Record<ProviderInstanceId, ModelSelection>> | null;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const baseModelCandidate =
@@ -998,32 +1007,70 @@ export function deriveEffectiveComposerModelState(input: {
   // Look up the instance's saved selection first; fall back to the
   // driver-kind bucket so legacy kind-keyed drafts still resolve. Every
   // `ProviderDriverKind` literal is a valid `ProviderInstanceId` slug, so the
-  // cast to the branded type is safe.
+  // cast to the branded type is safe. Sticky is options-only and never
+  // participates in the model path.
   const instanceSelection = input.selectedInstanceId
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
   const legacySelection =
     input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
-  const activeSelection = instanceSelection ?? legacySelection;
-  const activeSelectionInstanceId = instanceSelection
+  const draftSelection = instanceSelection ?? legacySelection;
+  const draftSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
-  const selectedModel = activeSelection?.model
+  const stickyInstanceKey =
+    input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider);
+  const stickySelection =
+    input.stickyModelSelectionByProvider?.[stickyInstanceKey] ??
+    input.stickyModelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
+  const selectedModel = draftSelection?.model
     ? (resolveAppModelSelectionForInstance(
-        activeSelectionInstanceId,
+        draftSelectionInstanceId,
         input.settings,
         input.providers,
-        activeSelection.model,
+        draftSelection.model,
       ) ??
       resolveAppModelSelection(
         input.selectedProvider,
         input.settings,
         input.providers,
-        activeSelection.model,
+        draftSelection.model,
       ))
     : baseModel;
+  // Prefer draft options for the *selected* instance only. Options for
+  // another instance (e.g. codex effort on a draft while Grok is selected)
+  // must not short-circuit sticky/thread/project for the current selection.
+  // Sticky (and legacy kind-keyed draft hits) are re-keyed under
+  // stickyInstanceKey so custom instances resolve options.
+  //
+  // Mirror the model path: only fall back to the kind-keyed draft when the
+  // selected instance has *no* draft entry. An entry that exists without
+  // options must not pull sibling/kind options ahead of sticky.
+  const legacyProviderKey = ProviderInstanceId.make(input.selectedProvider);
+  const hasInstanceDraftEntry =
+    input.draft?.modelSelectionByProvider?.[stickyInstanceKey] !== undefined;
+  const draftOptionsAtInstance = optionsForInstance(
+    input.draft?.modelSelectionByProvider,
+    stickyInstanceKey,
+  );
+  const legacyDraftOptions =
+    !hasInstanceDraftEntry && String(stickyInstanceKey) !== String(legacyProviderKey)
+      ? optionsForInstance(input.draft?.modelSelectionByProvider, legacyProviderKey)?.[
+          String(legacyProviderKey)
+        ]
+      : undefined;
+  const draftOptionsForSelected =
+    draftOptionsAtInstance ??
+    (legacyDraftOptions && legacyDraftOptions.length > 0
+      ? { [stickyInstanceKey]: legacyDraftOptions }
+      : null);
+  const stickyOptions =
+    stickySelection?.options && stickySelection.options.length > 0
+      ? { [stickyInstanceKey]: stickySelection.options }
+      : null;
   const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
+    draftOptionsForSelected ??
+    stickyOptions ??
     providerSelectionsFromModelSelection(input.threadModelSelection) ??
     providerSelectionsFromModelSelection(input.projectModelSelection) ??
     null;
@@ -2665,7 +2712,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = { ...base.modelSelectionByProvider };
-            for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
+            for (const provider of [
+              "codex",
+              "claudeAgent",
+              "cursor",
+              "opencode",
+              "grok",
+            ] as const) {
               if (!modelOptions || !(provider in modelOptions)) continue;
               const opts = modelOptions[provider];
               const driverKind = ProviderDriverKind.make(provider);
@@ -3506,6 +3559,9 @@ export function useEffectiveComposerModelState(input: {
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
+  const stickyModelSelectionByProvider = useComposerDraftStore(
+    (state) => state.stickyModelSelectionByProvider,
+  );
 
   return useMemo(
     () =>
@@ -3516,6 +3572,7 @@ export function useEffectiveComposerModelState(input: {
         selectedInstanceId: input.selectedInstanceId,
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
+        stickyModelSelectionByProvider,
         settings: input.settings,
       }),
     [
@@ -3526,6 +3583,7 @@ export function useEffectiveComposerModelState(input: {
       input.selectedInstanceId,
       input.selectedProvider,
       input.threadModelSelection,
+      stickyModelSelectionByProvider,
     ],
   );
 }
