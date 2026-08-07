@@ -488,21 +488,26 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const showRegenerateTitle =
     props.titleRegenerationSupported === true && onRegenerateTitle != null;
+  // A regeneration already running owns the title until it lands: disable the
+  // item and label it "Regenerating…" so a second long-press reads as inert
+  // rather than actionable (mirrors web's action menu).
+  const regeneratingTitle = thread.titleRegeneration != null;
   const menuActions = useMemo<MenuAction[]>(
     () => [
       ...(showRegenerateTitle
         ? [
             {
               id: "regenerate-title",
-              title: "Regenerate title",
+              title: regeneratingTitle ? "Regenerating…" : "Regenerate title",
               image: "arrow.clockwise",
+              attributes: { disabled: regeneratingTitle },
             } satisfies MenuAction,
           ]
         : []),
       THREAD_ROW_MENU_ARCHIVE,
       THREAD_ROW_MENU_DELETE,
     ],
-    [showRegenerateTitle],
+    [regeneratingTitle, showRegenerateTitle],
   );
   const primaryAction = useMemo(
     () => ({

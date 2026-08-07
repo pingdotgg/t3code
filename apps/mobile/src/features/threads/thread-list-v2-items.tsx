@@ -447,12 +447,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // regardless of settle/snooze/pin state.
   const showRegenerateTitle =
     props.titleRegenerationSupported === true && onRegenerateTitle != null;
+  // A regeneration already running owns the title until it lands: disable the
+  // item and label it "Regenerating…" so a second long-press reads as inert
+  // rather than actionable (mirrors web's action menu).
+  const regeneratingTitle = thread.titleRegeneration != null;
   const titleMenuItems = useMemo<MenuAction[]>(
     () =>
       showRegenerateTitle
-        ? [{ id: "regenerate-title", title: "Regenerate title", image: "arrow.clockwise" }]
+        ? [
+            {
+              id: "regenerate-title",
+              title: regeneratingTitle ? "Regenerating…" : "Regenerate title",
+              image: "arrow.clockwise",
+              attributes: { disabled: regeneratingTitle },
+            },
+          ]
         : [],
-    [showRegenerateTitle],
+    [regeneratingTitle, showRegenerateTitle],
   );
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
