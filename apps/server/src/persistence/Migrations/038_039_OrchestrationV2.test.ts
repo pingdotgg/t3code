@@ -8,12 +8,12 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("037_038_OrchestrationV2", (it) => {
+layer("038_039_OrchestrationV2", (it) => {
   it.effect("keeps released and private migration ids contiguous", () =>
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 45 }, (_, index) => index + 1),
+        Array.from({ length: 46 }, (_, index) => index + 1),
       );
     }),
   );
@@ -22,7 +22,7 @@ layer("037_038_OrchestrationV2", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 39 });
 
       const migrations = yield* sql<{
         readonly migration_id: number;
@@ -30,24 +30,24 @@ layer("037_038_OrchestrationV2", (it) => {
       }>`
         SELECT migration_id, name
         FROM effect_sql_migrations
-        WHERE migration_id IN (35, 36, 37, 38)
+        WHERE migration_id IN (36, 37, 38, 39)
         ORDER BY migration_id
       `;
       assert.deepStrictEqual(migrations, [
-        {
-          migration_id: 35,
-          name: "ProjectionThreadTitleRegeneration",
-        },
         {
           migration_id: 36,
           name: "ProjectionThreadsPinned",
         },
         {
           migration_id: 37,
-          name: "OrchestrationV2",
+          name: "ProjectionTurnsKeysetIndex",
         },
         {
           migration_id: 38,
+          name: "OrchestrationV2",
+        },
+        {
+          migration_id: 39,
           name: "OrchestrationV2Subagents",
         },
       ]);
@@ -67,7 +67,7 @@ layer("037_038_OrchestrationV2", (it) => {
   it.effect("backfills provider-session thread bindings in migration 038", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 40 });
       yield* sql`
         INSERT INTO orchestration_v2_projection_provider_sessions (
           provider_session_id,
@@ -92,7 +92,7 @@ layer("037_038_OrchestrationV2", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 40 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
 
       const bindings = yield* sql<{
         readonly provider_session_id: string;
@@ -113,7 +113,7 @@ layer("037_038_OrchestrationV2", (it) => {
   it.effect("preserves turn items with colliding ordinals in migration 037", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 39 });
       yield* sql`
         INSERT INTO orchestration_v2_projection_runs (
           run_id,
@@ -150,7 +150,7 @@ layer("037_038_OrchestrationV2", (it) => {
           ('turn-item:d', 'thread:two', NULL, 42, 'assistant_message', 'completed', '2026-01-01T00:00:00.000Z', '{}')
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 40 });
 
       const positions = yield* sql<{
         readonly thread_id: string;
@@ -171,18 +171,18 @@ layer("037_038_OrchestrationV2", (it) => {
   );
 });
 
-it.effect("upgrades a database already at released main migration 036", () =>
+it.effect("upgrades a database already at released main migration 037", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    yield* runMigrations({ toMigrationInclusive: 36 });
+    yield* runMigrations({ toMigrationInclusive: 37 });
     const snoozeColumns = yield* sql<{ readonly name: string }>`
       PRAGMA table_info(projection_threads)
     `;
     assert.ok(snoozeColumns.some((column) => column.name === "snoozed_until"));
     assert.ok(snoozeColumns.some((column) => column.name === "snoozed_at"));
 
-    yield* runMigrations({ toMigrationInclusive: 45 });
+    yield* runMigrations({ toMigrationInclusive: 46 });
 
     const migrations = yield* sql<{
       readonly migration_id: number;
@@ -190,23 +190,23 @@ it.effect("upgrades a database already at released main migration 036", () =>
     }>`
       SELECT migration_id, name
       FROM effect_sql_migrations
-      WHERE migration_id BETWEEN 35 AND 45
+      WHERE migration_id BETWEEN 36 AND 46
       ORDER BY migration_id
     `;
     assert.deepStrictEqual(
       migrations.map(({ migration_id, name }) => [migration_id, name]),
       [
-        [35, "ProjectionThreadTitleRegeneration"],
         [36, "ProjectionThreadsPinned"],
-        [37, "OrchestrationV2"],
-        [38, "OrchestrationV2Subagents"],
-        [39, "OrchestrationV2Foundation"],
-        [40, "OrchestrationV2ProviderSessionBindings"],
-        [41, "OrchestrationV2ThreadLaunchWorkflows"],
-        [42, "ApplicationEventSource"],
-        [43, "OrchestrationV2EffectCancellation"],
-        [44, "ScheduledTasks"],
-        [45, "LegacyV1ImportState"],
+        [37, "ProjectionTurnsKeysetIndex"],
+        [38, "OrchestrationV2"],
+        [39, "OrchestrationV2Subagents"],
+        [40, "OrchestrationV2Foundation"],
+        [41, "OrchestrationV2ProviderSessionBindings"],
+        [42, "OrchestrationV2ThreadLaunchWorkflows"],
+        [43, "ApplicationEventSource"],
+        [44, "OrchestrationV2EffectCancellation"],
+        [45, "ScheduledTasks"],
+        [46, "LegacyV1ImportState"],
       ],
     );
 
