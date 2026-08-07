@@ -1,4 +1,4 @@
-import { EDITORS, EditorId, EnvironmentId } from "@t3tools/contracts";
+import { EDITORS, EditorId, EnvironmentId, isTerminalId, TerminalId } from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
   type AtomCommandFailure,
@@ -13,6 +13,7 @@ import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_TERMINAL_KEY = "t3code:last-terminal";
 
 export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedErrorClass<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",
@@ -43,10 +44,32 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
 
   const effectiveEditor = useMemo(() => {
     if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
-    return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
+    // Terminals are launch targets too, but they belong to the Terminal action,
+    // not the Open-in picker — never fall back into one.
+    return (
+      EDITORS.find((editor) => availableEditors.includes(editor.id) && !isTerminalId(editor.id))
+        ?.id ?? null
+    );
   }, [lastEditor, availableEditors]);
 
   return [effectiveEditor, setLastEditor] as const;
+}
+
+/**
+ * Terminal the Terminal action opens, plus the setter its menu uses. Mirrors
+ * {@link usePreferredEditor}: the last pick wins, and a pick the environment no
+ * longer offers falls through to the first installed terminal rather than
+ * leaving a dead button.
+ */
+export function usePreferredTerminal(availableTerminals: ReadonlyArray<TerminalId>) {
+  const [lastTerminal, setLastTerminal] = useLocalStorage(LAST_TERMINAL_KEY, null, TerminalId);
+
+  const effectiveTerminal = useMemo(() => {
+    if (lastTerminal && availableTerminals.includes(lastTerminal)) return lastTerminal;
+    return availableTerminals[0] ?? null;
+  }, [lastTerminal, availableTerminals]);
+
+  return [effectiveTerminal, setLastTerminal] as const;
 }
 
 export function resolveAndPersistPreferredEditor(
@@ -55,7 +78,9 @@ export function resolveAndPersistPreferredEditor(
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  const editor =
+    EDITORS.find((editor) => availableEditorIds.has(editor.id) && !isTerminalId(editor.id))?.id ??
+    null;
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
 }

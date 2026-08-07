@@ -15,6 +15,7 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
+import { OpenTerminalPicker } from "./OpenTerminalPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -150,6 +151,13 @@ export const ChatHeader = memo(function ChatHeader({
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
             onDeleteScript={onDeleteProjectScript}
+          />
+        )}
+        {showOpenInPicker && (
+          <OpenTerminalPicker
+            environmentId={activeThreadEnvironmentId}
+            availableEditors={availableEditors}
+            openInCwd={openInCwd}
           />
         )}
         {showOpenInPicker && (

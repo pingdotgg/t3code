@@ -155,6 +155,132 @@ it.effect("discovers editors through the service API", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("opens a terminal at the directory holding the launch target", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminals-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "ghostty"), "#!/bin/sh\n");
+    yield* fileSystem.chmod(path.join(binDir, "ghostty"), 0o755);
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workspace-" });
+    const file = path.join(workspace, "index.ts");
+    yield* fileSystem.writeFileString(file, "");
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      // A file with a position, as the "open this config file" flows send.
+      yield* launcher.launchEditor({ editor: "ghostty", cwd: `${file}:12:4` });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "ghostty");
+    assert.deepEqual(spawned.args, [`--working-directory=${workspace}`]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// A colon is legal in a POSIX directory name, so the position suffix must not
+// be stripped off a path that is already a directory.
+it.effect("keeps a directory whose name ends in a colon-number intact", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminals-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "ghostty"), "#!/bin/sh\n");
+    yield* fileSystem.chmod(path.join(binDir, "ghostty"), 0o755);
+    const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workspace-" });
+    const workspace = path.join(parent, "project:12");
+    yield* fileSystem.makeDirectory(workspace);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "ghostty", cwd: workspace });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.deepEqual(spawned.args, [`--working-directory=${workspace}`]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// `open` is macOS-only, so a stray .app path on another platform must not
+// hijack the launch away from a plain command-not-found.
+it.effect("does not fall back to a macOS app bundle off darwin", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-home-" });
+    yield* fileSystem.makeDirectory(path.join(home, "Applications", "Ghostty.app"), {
+      recursive: true,
+    });
+
+    const error = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.launchEditor({ editor: "ghostty", cwd: "/tmp" }).pipe(Effect.flip);
+    }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "", HOME: home } })));
+
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherCommandNotFoundError);
+    assert.equal(error.command, "ghostty");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("opens a CLI-less macOS terminal through its app bundle", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminals-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "open"), "#!/bin/sh\n");
+    yield* fileSystem.chmod(path.join(binDir, "open"), 0o755);
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workspace-" });
+    // The bundle lives under a temp HOME so the test does not depend on the
+    // machine it runs on having Terminal.app.
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-home-" });
+    yield* fileSystem.makeDirectory(path.join(home, "Applications", "Terminal.app"), {
+      recursive: true,
+    });
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "apple-terminal", cwd: workspace });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { PATH: binDir, HOME: home },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "open");
+    assert.deepEqual(spawned.args, ["-a", "Terminal", workspace]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;

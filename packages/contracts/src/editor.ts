@@ -1,8 +1,16 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals([
+  "direct-path",
+  "goto",
+  "line-column",
+  "working-directory",
+]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
+
+/** Stands in for the resolved directory inside {@link EditorDefinition.cwdArgs}. */
+export const EDITOR_CWD_PLACEHOLDER = "{cwd}";
 
 type EditorDefinition = {
   readonly id: string;
@@ -10,6 +18,18 @@ type EditorDefinition = {
   readonly commands: readonly [string, ...string[]] | null;
   readonly baseArgs?: readonly string[];
   readonly launchStyle: EditorLaunchStyle;
+  readonly macAppName?: string;
+  /**
+   * Integrations that open a directory rather than a file, and so need their
+   * own launch path on the server.
+   */
+  readonly kind?: "file-manager" | "terminal";
+  /**
+   * Arguments a `working-directory` launch passes to the CLI, with
+   * {@link EDITOR_CWD_PLACEHOLDER} standing in for the resolved directory.
+   * Omitted means "pass the directory as the only argument".
+   */
+  readonly cwdArgs?: readonly [string, ...string[]];
 };
 
 export const EDITORS = [
@@ -38,11 +58,112 @@ export const EDITORS = [
   { id: "rubymine", label: "RubyMine", commands: ["rubymine"], launchStyle: "line-column" },
   { id: "rustrover", label: "RustRover", commands: ["rustrover"], launchStyle: "line-column" },
   { id: "webstorm", label: "WebStorm", commands: ["webstorm"], launchStyle: "line-column" },
-  { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
+  // Terminals open the project directory rather than a file. `macAppName` is
+  // set only for the ones whose macOS bundle opens a folder argument in that
+  // directory; the rest would silently start in the user's home, so they show
+  // up only when their CLI is on PATH. They sit after the editors so a fresh
+  // install with no stored preference still falls back to an editor.
+  {
+    id: "apple-terminal",
+    label: "Terminal",
+    commands: null,
+    launchStyle: "working-directory",
+    macAppName: "Terminal",
+    kind: "terminal",
+  },
+  {
+    id: "iterm2",
+    label: "iTerm",
+    commands: null,
+    launchStyle: "working-directory",
+    macAppName: "iTerm",
+    kind: "terminal",
+  },
+  {
+    id: "ghostty",
+    label: "Ghostty",
+    commands: ["ghostty"],
+    cwdArgs: ["--working-directory={cwd}"],
+    launchStyle: "working-directory",
+    macAppName: "Ghostty",
+    kind: "terminal",
+  },
+  {
+    id: "warp",
+    label: "Warp",
+    commands: null,
+    launchStyle: "working-directory",
+    macAppName: "Warp",
+    kind: "terminal",
+  },
+  {
+    id: "wezterm",
+    label: "WezTerm",
+    commands: ["wezterm"],
+    cwdArgs: ["start", "--cwd", "{cwd}"],
+    launchStyle: "working-directory",
+    kind: "terminal",
+  },
+  {
+    id: "kitty",
+    label: "kitty",
+    commands: ["kitty"],
+    cwdArgs: ["--directory", "{cwd}"],
+    launchStyle: "working-directory",
+    kind: "terminal",
+  },
+  {
+    id: "alacritty",
+    label: "Alacritty",
+    commands: ["alacritty"],
+    cwdArgs: ["--working-directory", "{cwd}"],
+    launchStyle: "working-directory",
+    kind: "terminal",
+  },
+  {
+    id: "windows-terminal",
+    label: "Windows Terminal",
+    commands: ["wt"],
+    cwdArgs: ["-d", "{cwd}"],
+    launchStyle: "working-directory",
+    kind: "terminal",
+  },
+  {
+    id: "file-manager",
+    label: "File Manager",
+    commands: null,
+    launchStyle: "direct-path",
+    kind: "file-manager",
+  },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
 export type EditorId = typeof EditorId.Type;
+
+/**
+ * Terminals are launch targets like the editors, but they are not an "open
+ * this in an app" choice: they open a shell in the project, so the UI surfaces
+ * them as their own action rather than as a row in the Open-in picker.
+ */
+export type TerminalId = Extract<(typeof EDITORS)[number], { kind: "terminal" }>["id"];
+
+export const TERMINAL_IDS = EDITORS.filter(
+  (editor): editor is Extract<(typeof EDITORS)[number], { kind: "terminal" }> =>
+    "kind" in editor && editor.kind === "terminal",
+).map((editor) => editor.id);
+
+export const TerminalId = Schema.Literals(TERMINAL_IDS);
+
+const TERMINAL_ID_SET: ReadonlySet<string> = new Set(TERMINAL_IDS);
+
+export function isTerminalId(id: EditorId): id is TerminalId {
+  return TERMINAL_ID_SET.has(id);
+}
+
+/** Label a terminal shows in the UI, or null when the id is not a terminal. */
+export function terminalLabel(id: EditorId): string | null {
+  return EDITORS.find((editor) => editor.id === id && isTerminalId(editor.id))?.label ?? null;
+}
 
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,

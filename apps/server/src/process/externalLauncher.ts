@@ -7,6 +7,7 @@
  * @module ExternalLauncher
  */
 import {
+  EDITOR_CWD_PLACEHOLDER,
   EDITORS,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -104,6 +105,7 @@ const CommandLookupEnvConfig = Config.all({
   Path: Config.string("Path").pipe(Config.option),
   path: Config.string("path").pipe(Config.option),
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  HOME: Config.string("HOME").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -146,6 +148,11 @@ function resolveCommandEditorArgs(
           path,
         ],
       });
+    // `target` is already the resolved directory here — see resolveWorkingDirectory.
+    case "working-directory":
+      return "cwdArgs" in editor && editor.cwdArgs
+        ? editor.cwdArgs.map((arg) => arg.replaceAll(EDITOR_CWD_PLACEHOLDER, target))
+        : [target];
   }
 }
 
@@ -167,6 +174,59 @@ const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableComm
     }
   }
   return Option.none();
+});
+
+const isMacAppAvailable = Effect.fn("externalLauncher.isMacAppAvailable")(function* (
+  appName: string,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const candidates = [
+    `/Applications/${appName}.app`,
+    // Apple's own bundles (Terminal) live under /System, not /Applications.
+    `/System/Applications/${appName}.app`,
+    `/System/Applications/Utilities/${appName}.app`,
+    ...(env.HOME ? [`${env.HOME}/Applications/${appName}.app`] : []),
+  ];
+  for (const candidate of candidates) {
+    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      return true;
+    }
+  }
+  return false;
+});
+
+/**
+ * Directory a `working-directory` launch should start in.
+ *
+ * The launch target is whatever the caller wanted opened, which may carry a
+ * `:line:column` suffix and may be a file rather than a directory — a terminal
+ * takes neither, so strip the position and step up to the containing folder.
+ *
+ * The target is tested as-is first: a colon is legal in a POSIX directory
+ * name, so stripping a position before looking would send a real directory
+ * named `project:12` to its parent instead.
+ */
+const resolveWorkingDirectory = Effect.fn("externalLauncher.resolveWorkingDirectory")(function* (
+  target: string,
+): Effect.fn.Return<string, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const isDirectory = (candidate: string) =>
+    fileSystem.stat(candidate).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+
+  if (yield* isDirectory(target)) {
+    return target;
+  }
+
+  const withoutPosition = Option.match(parseTargetPathAndPosition(target), {
+    onNone: () => target,
+    onSome: (parsed) => parsed.path,
+  });
+  return (yield* isDirectory(withoutPosition)) ? withoutPosition : path.dirname(withoutPosition);
 });
 
 function encodeUtf16LeBase64(input: string): string {
@@ -267,7 +327,7 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
-    if (editor.commands === null) {
+    if ("kind" in editor && editor.kind === "file-manager") {
       const command = fileManagerCommandForPlatform(platform);
       if (yield* isCommandAvailable(command, { env })) {
         available.push(editor.id);
@@ -275,9 +335,18 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
       continue;
     }
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
+    if (editor.commands !== null) {
+      const command = yield* resolveAvailableCommand(editor.commands, env);
+      if (Option.isSome(command)) {
+        available.push(editor.id);
+        continue;
+      }
+    }
+
+    if ("macAppName" in editor && editor.macAppName && platform === "darwin") {
+      if (yield* isMacAppAvailable(editor.macAppName, env)) {
+        available.push(editor.id);
+      }
     }
   }
 
@@ -335,28 +404,62 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  const target =
+    editorDef.launchStyle === "working-directory"
+      ? yield* resolveWorkingDirectory(input.cwd)
+      : input.cwd;
+  const macAppName = "macAppName" in editorDef ? editorDef.macAppName : undefined;
+
   if (editorDef.commands) {
-    const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
-      () => editorDef.commands[0],
-    );
+    const resolved = yield* resolveAvailableCommand(editorDef.commands, env);
+    if (
+      Option.isNone(resolved) &&
+      macAppName &&
+      platform === "darwin" &&
+      (yield* isMacAppAvailable(macAppName, env))
+    ) {
+      return {
+        editor: editorDef.id,
+        target,
+        command: "open",
+        args: ["-a", macAppName, target],
+      };
+    }
+
     return {
       editor: editorDef.id,
-      target: input.cwd,
-      command,
-      args: resolveEditorArgs(editorDef, input.cwd),
+      target,
+      command: Option.getOrElse(resolved, () => editorDef.commands[0]),
+      args: resolveEditorArgs(editorDef, target),
     };
   }
 
-  if (editorDef.id !== "file-manager") {
+  // No CLI at all: a GUI-only bundle handed the path to open, which is how the
+  // macOS terminals (Terminal, iTerm, Warp) take a working directory. The
+  // bundle is checked first because `open` detaches with stdio ignored, so a
+  // missing app would otherwise look like success and simply do nothing.
+  if (macAppName && platform === "darwin") {
+    if (!(yield* isMacAppAvailable(macAppName, env))) {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    }
+
+    return {
+      editor: editorDef.id,
+      target,
+      command: "open",
+      args: ["-a", macAppName, target],
+    };
+  }
+
+  if (!("kind" in editorDef) || editorDef.kind !== "file-manager") {
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command: fileManagerCommandForPlatform(platform),
-    args: [input.cwd],
+    args: [target],
   };
 });
 
