@@ -1403,66 +1403,71 @@ function FontFamilySettingsRow({
   // Everyone starts on the plain input; focusing it is the user gesture that
   // runs font discovery. Where the engine can enumerate, the control then
   // upgrades to the picker - popped open when the swap happens under focus,
-  // so the interaction continues without a second click.
+  // so the interaction continues without a second click. When discovery is
+  // denied or unsupported, sans rows still open the picker over the curated
+  // (bundled) catalog; monospace rows keep the free-text input until a
+  // bundled mono ships.
   const inputFocusedRef = useRef(false);
-  const familyControl =
-    fontEnumeration.status === "granted" ? (
-      <FontFamilyPicker
-        ariaLabel={`${title} family`}
-        defaultFamily={defaultFamily}
-        selectedFamily={trimmed}
-        requireMonospace={requireMonospace}
-        initialOpen={inputFocusedRef.current}
-        onSelect={onValueChange}
-      />
-    ) : (
-      <Input
-        aria-label={`${title} family`}
-        aria-invalid={draftPending || undefined}
-        autoCapitalize="off"
-        autoComplete="off"
-        className="min-w-0 flex-1"
-        maxLength={200}
-        onFocus={() => {
-          inputFocusedRef.current = true;
-          discoverInstalledFonts();
-        }}
-        onBlur={() => {
-          inputFocusedRef.current = false;
-          flushDraft();
-        }}
-        onChange={(event) => {
-          const next = event.currentTarget.value;
-          setDraft(next);
-          setDraftSettled(false);
+  const showFontPicker =
+    fontEnumeration.status === "granted" ||
+    (fontEnumeration.status === "unavailable" && !requireMonospace);
+  const familyControl = showFontPicker ? (
+    <FontFamilyPicker
+      ariaLabel={`${title} family`}
+      defaultFamily={defaultFamily}
+      selectedFamily={trimmed}
+      requireMonospace={requireMonospace}
+      initialOpen={inputFocusedRef.current}
+      onSelect={onValueChange}
+    />
+  ) : (
+    <Input
+      aria-label={`${title} family`}
+      aria-invalid={draftPending || undefined}
+      autoCapitalize="off"
+      autoComplete="off"
+      className="min-w-0 flex-1"
+      maxLength={200}
+      onFocus={() => {
+        inputFocusedRef.current = true;
+        discoverInstalledFonts();
+      }}
+      onBlur={() => {
+        inputFocusedRef.current = false;
+        flushDraft();
+      }}
+      onChange={(event) => {
+        const next = event.currentTarget.value;
+        setDraft(next);
+        setDraftSettled(false);
+        if (commitTimerRef.current !== null) {
+          window.clearTimeout(commitTimerRef.current);
+        }
+        commitTimerRef.current = window.setTimeout(() => {
+          commitTimerRef.current = null;
+          commitDraft(next);
+        }, 400);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") flushDraft();
+        if (event.key === "Escape") {
+          // Discard uncommitted typing without closing the settings page,
+          // which is what an unhandled Escape does.
+          event.preventDefault();
+          event.stopPropagation();
           if (commitTimerRef.current !== null) {
             window.clearTimeout(commitTimerRef.current);
-          }
-          commitTimerRef.current = window.setTimeout(() => {
             commitTimerRef.current = null;
-            commitDraft(next);
-          }, 400);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") flushDraft();
-          if (event.key === "Escape") {
-            // Discard uncommitted typing without closing the settings page,
-            // which is what an unhandled Escape does.
-            event.preventDefault();
-            event.stopPropagation();
-            if (commitTimerRef.current !== null) {
-              window.clearTimeout(commitTimerRef.current);
-              commitTimerRef.current = null;
-            }
-            setDraft(value);
-            setDraftSettled(true);
           }
-        }}
-        placeholder={defaultFamily}
-        spellCheck={false}
-        value={draft}
-      />
-    );
+          setDraft(value);
+          setDraftSettled(true);
+        }
+      }}
+      placeholder={defaultFamily}
+      spellCheck={false}
+      value={draft}
+    />
+  );
   const control = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>

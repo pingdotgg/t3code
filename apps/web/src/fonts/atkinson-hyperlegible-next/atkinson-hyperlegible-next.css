@@ -1,0 +1,16 @@
+/* Bundled Atkinson Hyperlegible Next — Settings → Appearance curated option. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("./AtkinsonHyperlegibleNext-Variable.woff2") format("woff2-variations");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("./AtkinsonHyperlegibleNext-Italic-Variable.woff2") format("woff2-variations");
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: swap;
+}

@@ -2,13 +2,17 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   areFontAdvancesMonospace,
+  BUNDLED_SANS_FONT_FAMILIES,
   clampCodeFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
+  curatedFontFamilies,
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
   appearanceFontStack,
   cssFontFamilies,
+  isBundledSansFontFamily,
+  mergeFontFamilyCatalog,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
 } from "./appearanceFonts";
@@ -23,6 +27,34 @@ describe("areFontAdvancesMonospace", () => {
   it("fails open when canvas metrics are unavailable", () => {
     expect(areFontAdvancesMonospace([])).toBe(true);
     expect(areFontAdvancesMonospace([Number.NaN, Number.NaN])).toBe(true);
+  });
+});
+
+describe("bundled font catalog", () => {
+  it("offers Atkinson Hyperlegible Next as a curated sans option", () => {
+    expect(BUNDLED_SANS_FONT_FAMILIES).toContain("Atkinson Hyperlegible Next");
+    expect(isBundledSansFontFamily("Atkinson Hyperlegible Next")).toBe(true);
+    expect(isBundledSansFontFamily("  Atkinson Hyperlegible Next  ")).toBe(true);
+    expect(isBundledSansFontFamily("Inter")).toBe(false);
+  });
+
+  it("keeps proportional curated faces out of monospace rows", () => {
+    expect(curatedFontFamilies(false)).toEqual(["Atkinson Hyperlegible Next"]);
+    expect(curatedFontFamilies(true)).toEqual([]);
+  });
+
+  it("merges curated faces into the installed list without duplicates", () => {
+    expect(mergeFontFamilyCatalog(["Inter", "Roboto"], ["Atkinson Hyperlegible Next"])).toEqual([
+      "Atkinson Hyperlegible Next",
+      "Inter",
+      "Roboto",
+    ]);
+    expect(
+      mergeFontFamilyCatalog(
+        ["Atkinson Hyperlegible Next", "Inter"],
+        ["Atkinson Hyperlegible Next"],
+      ),
+    ).toEqual(["Atkinson Hyperlegible Next", "Inter"]);
   });
 });
 

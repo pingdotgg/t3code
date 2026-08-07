@@ -1,7 +1,12 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import {
+  curatedFontFamilies,
+  isMonospaceFamily,
+  mergeFontFamilyCatalog,
+  queryInstalledFontFamilies,
+} from "../../appearanceFonts";
 import {
   Combobox,
   ComboboxEmpty,
@@ -139,8 +144,12 @@ export function FontFamilyPicker({
   };
 
   const families = useMemo(() => {
-    if (enumeration.status !== "granted") return [];
-    return requireMonospace ? enumeration.families.filter(isMonospaceFamily) : enumeration.families;
+    const curated = curatedFontFamilies(requireMonospace);
+    if (enumeration.status !== "granted") return [...curated];
+    const installed = requireMonospace
+      ? enumeration.families.filter(isMonospaceFamily)
+      : enumeration.families;
+    return mergeFontFamilyCatalog(installed, curated);
   }, [enumeration, requireMonospace]);
 
   const items = useMemo(() => {

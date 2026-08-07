@@ -28,6 +28,38 @@ export const DEFAULT_CODE_FONT_STACK =
 export const TYPOGRAPHY_ADVANCED_STORAGE_KEY = "t3code:typography-advanced";
 
 /**
+ * Sans faces the app ships as webfonts. Always offered in the Appearance
+ * pickers (and treated as available) so users can pick them without installing
+ * the face locally or granting Local Font Access.
+ */
+export const BUNDLED_SANS_FONT_FAMILIES = ["Atkinson Hyperlegible Next"] as const;
+
+const BUNDLED_SANS_FONT_FAMILY_SET: ReadonlySet<string> = new Set(BUNDLED_SANS_FONT_FAMILIES);
+
+export function isBundledSansFontFamily(family: string): boolean {
+  return BUNDLED_SANS_FONT_FAMILY_SET.has(family.trim());
+}
+
+/**
+ * Curated faces shown even when Local Font Access is denied or unsupported.
+ * Monospace rows stay empty until a bundled mono ships — proportional faces
+ * must not appear there.
+ */
+export function curatedFontFamilies(requireMonospace: boolean): readonly string[] {
+  return requireMonospace ? [] : BUNDLED_SANS_FONT_FAMILIES;
+}
+
+/** Installed families plus curated faces, de-duplicated and sorted. */
+export function mergeFontFamilyCatalog(
+  installed: readonly string[],
+  curated: readonly string[],
+): string[] {
+  const families = new Set(installed);
+  for (const family of curated) families.add(family);
+  return [...families].sort((left, right) => left.localeCompare(right));
+}
+
+/**
  * Simple typography treats the terminal as another monospace surface. In
  * Advanced mode an empty terminal preference means the terminal default,
  * keeping later code-font changes isolated to code surfaces.
@@ -168,6 +200,8 @@ export function isFontFamilyAvailable(family: string): boolean {
   const families = cssFontFamilies(family);
   if (families === null) return false;
   if (/^(system-ui|sans-serif|serif|monospace|ui-monospace)$/i.test(families)) return true;
+  // Bundled webfonts are offered before document.fonts has finished loading.
+  if (isBundledSansFontFamily(family)) return true;
   try {
     for (const generic of ["monospace", "serif", "sans-serif"]) {
       const baseline = probeWidth(generic);
@@ -344,7 +378,7 @@ export interface InstalledFontFamiliesResult {
   /**
    * "unsupported" - the engine has no Local Font Access API (Safari,
    * Firefox); "denied" - the API exists but the user declined the permission
-   * prompt. Both fall back to the curated catalog.
+   * prompt. Both leave the picker on the curated (bundled) catalog alone.
    */
   readonly status: "granted" | "denied" | "unsupported";
 }

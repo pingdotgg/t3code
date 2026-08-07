@@ -5,6 +5,7 @@ import { passkeys } from "@clerk/electron/passkeys";
 import { ClerkProvider as ElectronClerkProvider } from "@clerk/electron/react";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+import "./fonts/atkinson-hyperlegible-next/atkinson-hyperlegible-next.css";
 import "./index.css";
 
 import { isElectron } from "./env";
