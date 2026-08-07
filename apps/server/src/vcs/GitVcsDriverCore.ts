@@ -397,18 +397,36 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
 }
 
 /**
- * Record what a failing git command actually printed, at debug level.
+ * Normalized category for a failing git command, for the log annotation.
  *
- * `GitCommandError` keeps only bounded attributes — lengths, not text — and
- * deliberately so: git echoes back its arguments and any hook output, so the
- * text can carry credentials, and #3253 removed it from the error for exactly
- * that reason. But dropping it everywhere leaves a failing git command
- * undiagnosable from outside the process: neither the error, the RPC response,
- * nor the server log says why git exited non-zero.
+ * Mirrors the vocabulary `VcsProcess.classifyNonZeroExit` already uses, so a
+ * log line says *what kind* of failure it was without carrying the text that
+ * says so. Kept deliberately coarse: the point is a bounded, safe value.
+ */
+const classifyGitFailure = (stderr: string): "authentication" | "not-found" | "command-failed" => {
+  const normalized = stderr.toLowerCase();
+  if (
+    normalized.includes("permission denied") ||
+    normalized.includes("authentication failed") ||
+    normalized.includes("could not read username") ||
+    normalized.includes("access rights")
+  ) {
+    return "authentication";
+  }
+  if (normalized.includes("not found") || normalized.includes("does not exist")) {
+    return "not-found";
+  }
+  return "command-failed";
+};
+
+/**
+ * Log annotation for a failing git command.
  *
- * Logging it at debug keeps the diagnostic reachable when someone goes looking,
- * without putting unbounded, possibly secret-bearing output into a value that
- * crosses RPC, UI, and persistence boundaries.
+ * Bounded and safe by construction — a category plus counts, never the output
+ * itself. Git echoes back its arguments and any hook output, so `stdout` and
+ * `stderr` can carry credentials and are capped only by `maxOutputBytes`
+ * (megabytes at some call sites); a log payload has to be as safe as a direct
+ * error attribute. The exact text is preserved on the error's `cause`.
  */
 const logFailedGitCommandOutput = (
   command: {
@@ -423,7 +441,11 @@ const logFailedGitCommandOutput = (
   Effect.logDebug(
     `GitVcsDriver.commandFailed: ${command.operation} in ${command.cwd} ` +
       `exited ${exitCode ?? "null"} (${command.args.length} arguments)`,
-    { stdout, stderr },
+    {
+      failureKind: classifyGitFailure(stderr),
+      stdoutLength: stdout.length,
+      stderrLength: stderr.length,
+    },
   );
 
 function isMissingGitCwdError(error: GitCommandError): boolean {
@@ -831,6 +853,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
+            cause: stderr.text,
           });
         }
 
@@ -919,6 +942,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
                 stdoutLength: result.stdout.length,
                 stderrLength: result.stderr.length,
+                cause: result.stderr,
               }),
             ),
           ),
