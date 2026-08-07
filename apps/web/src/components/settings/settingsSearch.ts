@@ -182,6 +182,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/beta",
   },
   {
+    id: "sidebar-v3",
+    title: "Sidebar v3",
+    to: "/settings/beta",
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/beta",

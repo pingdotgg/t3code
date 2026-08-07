@@ -25,6 +25,18 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+// Sidebar v3 groups the live list into status sections; "flat" keeps the
+// v2-style single inbox while the beta compares both.
+export const SidebarV3Grouping = Schema.Literals(["status", "flat"]);
+export type SidebarV3Grouping = typeof SidebarV3Grouping.Type;
+export const DEFAULT_SIDEBAR_V3_GROUPING: SidebarV3Grouping = "status";
+
+// Order WITHIN a v3 section (or the flat list): static creation order, or
+// most recent activity first.
+export const SidebarV3ThreadSortOrder = Schema.Literals(["created", "activity"]);
+export type SidebarV3ThreadSortOrder = typeof SidebarV3ThreadSortOrder.Type;
+export const DEFAULT_SIDEBAR_V3_THREAD_SORT_ORDER: SidebarV3ThreadSortOrder = "created";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -197,6 +209,15 @@ export const ClientSettingsSchema = Schema.Struct({
   // there is no way to tell that apart from "left alone", and a channel-derived
   // default could never reach them. Mirrors `updateChannelConfiguredByUser`.
   sidebarV2ConfiguredByUser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Sidebar v3 is a plain opt-in with no per-channel default, so unlike v2 it
+  // needs no companion configured-by-user bit.
+  sidebarV3Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarV3Grouping: SidebarV3Grouping.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V3_GROUPING)),
+  ),
+  sidebarV3ThreadSortOrder: SidebarV3ThreadSortOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V3_THREAD_SORT_ORDER)),
+  ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -796,6 +817,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   sidebarV2ConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  sidebarV3Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarV3Grouping: Schema.optionalKey(SidebarV3Grouping),
+  sidebarV3ThreadSortOrder: Schema.optionalKey(SidebarV3ThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
