@@ -227,6 +227,7 @@ export function ThemeSearchSection({
                       <ShieldCheckIcon className="size-3" /> {extension.license}
                     </span>
                     <Button
+                      aria-label={`${isInstalling ? "Adding" : "Add"} ${extension.name}`}
                       disabled={installingId !== null}
                       size="xs"
                       variant="outline"

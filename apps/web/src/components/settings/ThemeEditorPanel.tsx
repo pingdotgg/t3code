@@ -645,8 +645,8 @@ export function ThemeEditorPanel({
           return;
         }
         mergedAppearance = editedModes[0] ?? null;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -658,7 +658,8 @@ export function ThemeEditorPanel({
             },
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
         retiredTheme = editingTheme;
         try {
           removeCustomTheme(editingTheme.id);
@@ -702,8 +703,8 @@ export function ThemeEditorPanel({
         // survives when every palette in the theme came from the guided
         // editor.
         mergedAppearance = activeAppearance;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -715,7 +716,8 @@ export function ThemeEditorPanel({
             },
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
       } else {
         savedTheme = installCustomTheme(
           parseThemeFile({
