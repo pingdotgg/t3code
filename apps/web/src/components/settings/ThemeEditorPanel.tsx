@@ -321,13 +321,16 @@ export function ThemeEditorPanel({
   const mergeTargetId = mergeTarget?.id ?? null;
   const takenAppearancesKey = takenAppearances.join(",");
   useEffect(() => {
-    if (isEditing || previousMergeTargetIdRef.current === mergeTargetId) return;
+    if (previousMergeTargetIdRef.current === mergeTargetId) return;
     previousMergeTargetIdRef.current = mergeTargetId;
-    // Creating with an existing theme's name adds its missing appearance.
-    // Seed theme-level options from that target so adding a palette does not
-    // silently reset them; the user can still change the toggle afterward.
-    setSidebarArtwork(mergeTarget?.sidebarArtwork === true);
-  }, [isEditing, mergeTarget, mergeTargetId]);
+    // A matching name makes that existing theme the surviving merge target.
+    // Seed theme-level options from it so adding a palette or renaming onto it
+    // does not silently reset them. Leaving the merge restores the edited
+    // theme's option (or the off-by-default choice for a new theme).
+    setSidebarArtwork(
+      mergeTarget ? mergeTarget.sidebarArtwork === true : editingTheme?.sidebarArtwork === true,
+    );
+  }, [editingTheme, mergeTarget, mergeTargetId]);
 
   useEffect(() => {
     if (isEditing || mergeTargetId === null) return;
