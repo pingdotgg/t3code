@@ -174,7 +174,8 @@ public struct ThreadDetailView: View {
                 // duration; idle threads render a static status instead of
                 // waking every second forever.
                 Group {
-                    if currentThread.homeStatus == .working {
+                    if currentThread.homeStatus == .working,
+                       currentThread.workingStartedAt != nil {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
@@ -184,7 +185,6 @@ public struct ThreadDetailView: View {
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
-            .padding(.trailing, 10)
             .font(T3Typography.navigationMetadata)
             .foregroundStyle(T3Colors.textTertiary)
         }
@@ -1187,14 +1187,20 @@ private struct FeatureThreadWorkingIndicator: View {
         // without one the row stays static instead of waking every second.
         if let startedAt {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                content(duration: HomeWorkingDuration.compact(since: startedAt, now: context.date))
+                content(
+                    duration: HomeWorkingDuration.compact(since: startedAt, now: context.date),
+                    accessibilityDuration: HomeWorkingDuration.accessibility(
+                        since: startedAt,
+                        now: context.date
+                    )
+                )
             }
         } else {
-            content(duration: nil)
+            content(duration: nil, accessibilityDuration: nil)
         }
     }
 
-    private func content(duration: String?) -> some View {
+    private func content(duration: String?, accessibilityDuration: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "circle.dotted")
                 .font(.system(size: 17, weight: .semibold))
@@ -1202,16 +1208,17 @@ private struct FeatureThreadWorkingIndicator: View {
                 .frame(width: 22, height: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                if let duration {
+                    (
+                        Text("Agent is working for ")
+                            + Text(duration).monospacedDigit()
+                    )
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.statusRunning)
+                } else {
                     Text("Agent is working")
                         .font(T3Typography.supportingStrong)
                         .foregroundStyle(T3Colors.statusRunning)
-                    if let duration {
-                        Text(duration)
-                            .font(T3Typography.supportingStrong)
-                            .monospacedDigit()
-                            .foregroundStyle(T3Colors.statusRunning)
-                    }
                 }
                 Text("New output will appear here")
                     .font(T3Typography.supporting)
@@ -1222,7 +1229,9 @@ private struct FeatureThreadWorkingIndicator: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            duration.map { "Agent has been working for \($0). New output will appear here." }
+            accessibilityDuration.map {
+                "Agent is working for \($0). New output will appear here."
+            }
                 ?? "Agent is working. New output will appear here."
         )
     }
