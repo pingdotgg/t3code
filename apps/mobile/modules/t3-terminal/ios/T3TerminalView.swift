@@ -535,6 +535,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       return
     }
 
+    if buffer.isEmpty {
+      feedData(Data("\u{1B}[3J\u{1B}[H\u{1B}[2J".utf8))
+      lastAppliedBuffer = ""
+      return
+    }
+
     if buffer.hasPrefix(lastAppliedBuffer) {
       let suffix = String(buffer.dropFirst(lastAppliedBuffer.count))
       feedData(Data(suffix.utf8))
