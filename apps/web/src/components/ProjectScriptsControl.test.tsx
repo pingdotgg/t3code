@@ -69,13 +69,13 @@ describe("ProjectScriptsControl compact controls", () => {
     );
   });
 
-  it("offers a dropdown with detected package scripts even without any actions or t3.json scripts", () => {
+  it("keeps the standalone Add control even when package scripts are detected", () => {
     const html = renderControl([], [{ name: "test", command: "npm run test", source: "npm" }]);
 
-    // With no actions and no t3.json scripts but a detected package.json
-    // script, the standalone "Add action" button must become a dropdown
-    // trigger ("Project actions") so the detected script is reachable.
-    expect(buttonTag(html, "Project actions")).toBeDefined();
-    expect(buttonTag(html, "Add action")).toBeUndefined();
+    // Detected package.json/composer.json scripts are only offered inside
+    // the Add Action dialog (via the Command field's "+" picker), so they
+    // must not turn the standalone button into a dropdown trigger.
+    expect(buttonTag(html, "Add action")).toBeDefined();
+    expect(buttonTag(html, "Project actions")).toBeUndefined();
   });
 });
