@@ -32,6 +32,15 @@ That gives you:
 - transport security at the network layer
 - less exposure than opening the server to the public internet
 
+## Naming This Host
+
+In the web or desktop app, open **Settings** → **Connections** and edit **Host name** under
+**This environment**. T3 Code uses that name in T3 Connect and as the default label when another
+client adds the environment through a manual pairing connection.
+
+Clear the field to return to the name detected from the host operating system. This setting changes
+the environment name shown by T3 Code; it does not change the machine's operating-system hostname.
+
 ## Enabling Network Access
 
 There are three ways to reach your server from another device: expose the desktop app's backend,

@@ -187,6 +187,19 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings environment label", () => {
+  it("uses an empty override for legacy configs", () => {
+    expect(decodeServerSettings({}).environmentLabel).toBe("");
+  });
+
+  it("trims environment label updates and allows clearing the override", () => {
+    expect(decodeServerSettingsPatch({ environmentLabel: "  Studio Mac  " }).environmentLabel).toBe(
+      "Studio Mac",
+    );
+    expect(decodeServerSettingsPatch({ environmentLabel: "   " }).environmentLabel).toBe("");
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});
@@ -247,6 +260,7 @@ describe("ServerSettingsPatch.providerInstances", () => {
 describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
+      environmentLabel: "  Studio Mac  ",
       addProjectBaseDirectory: "  ~/Development  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
       observability: {
@@ -268,6 +282,7 @@ describe("ServerSettingsPatch string normalization", () => {
       },
     });
 
+    expect(patch.environmentLabel).toBe("Studio Mac");
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");

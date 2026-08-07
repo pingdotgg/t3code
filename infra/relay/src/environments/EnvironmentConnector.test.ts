@@ -226,6 +226,7 @@ function makeLinks(
         environmentPublicKey: environmentKeyPair.publicKey,
         ...overrides,
       }),
+    updateLabelForUser: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
   };
 }
@@ -321,6 +322,64 @@ describe("EnvironmentConnector", () => {
         },
       });
     }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect("persists a label reported by a verified environment health response", () => {
+    const updates: Array<{ userId: string; environmentId: string; label: string }> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        const healthRequest = decodeHealthRequestBody(requestBodyText(request));
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            signHealthResponse(
+              healthRequest,
+              environmentKeyPair.privateKey,
+              {},
+              {
+                descriptor: {
+                  environmentId: "env-connector-test" as never,
+                  label: "Studio Mac",
+                  platform: { os: "darwin", arch: "arm64" },
+                  serverVersion: "0.0.0-test",
+                  capabilities: { repositoryIdentity: true },
+                },
+              },
+            ),
+            { status: 200 },
+          ),
+        );
+      });
+    const links = makeLinks();
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* connector.status({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+      });
+
+      expect(result.descriptor?.label).toBe("Studio Mac");
+      expect(updates).toEqual([
+        {
+          userId: "user_123",
+          environmentId: "env-connector-test",
+          label: "Studio Mac",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        connectorTestLayer(execute, {
+          links: {
+            ...links,
+            updateLabelForUser: (input) =>
+              Effect.sync(() => {
+                updates.push(input);
+              }),
+          },
+        }),
+      ),
+    );
   });
 
   it.effect("rejects manual endpoints before sending a health request", () => {

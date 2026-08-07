@@ -271,14 +271,19 @@ describe("server state projection", () => {
       config: CONFIG,
     });
     const settings = { ...CONFIG.settings };
+    const environment = {
+      ...CONFIG.environment,
+      label: "Renamed environment",
+    } as ServerConfig["environment"];
     const projected = applyServerConfigProjection(snapshot, {
       version: 1,
       type: "settingsUpdated",
-      payload: { settings },
+      payload: { settings, environment },
     });
 
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
+    expect(result.config.environment).toBe(environment);
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 

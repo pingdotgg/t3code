@@ -185,6 +185,7 @@ function relayUnlinkTestLayer(input?: {
         listPublicKeysForEnvironment: () => Effect.die("unused listPublicKeysForEnvironment"),
         listForUser: () => Effect.die("unused listForUser"),
         getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
+        updateLabelForUser: () => Effect.die("unused updateLabelForUser"),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
       }),
     ),

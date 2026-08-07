@@ -83,6 +83,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { Textarea } from "../ui/textarea";
@@ -126,6 +127,7 @@ import {
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
@@ -1728,6 +1730,8 @@ export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const environmentLabel = usePrimarySettings((settings) => settings.environmentLabel);
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
@@ -1861,6 +1865,9 @@ export function ConnectionsSettings() {
   );
   const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
+  const canEditEnvironmentLabel =
+    primaryEnvironmentId !== null &&
+    (currentSessionScopes?.includes(AuthOrchestrationOperateScope) ?? false);
   const authAccessChanges = useEnvironmentQuery(
     canManageLocalBackend && primaryEnvironmentId !== null
       ? authEnvironment.accessChanges({
@@ -2556,6 +2563,23 @@ export function ConnectionsSettings() {
       aria-label="Enable network access"
     />
   );
+  const renderEnvironmentLabelRow = () => (
+    <SettingsRow
+      title="Host name"
+      description="Shown in T3 Connect and used as the default name for new manual connections. Clear it to use this computer’s name."
+      control={
+        <DraftInput
+          className="w-full sm:w-64"
+          value={environmentLabel}
+          onCommit={(next) => updatePrimarySettings({ environmentLabel: next })}
+          placeholder="Use this computer’s name"
+          aria-label="Host name"
+          disabled={!canEditEnvironmentLabel}
+          spellCheck={false}
+        />
+      }
+    />
+  );
   const renderEndpointRows = (presentation: AccessSectionPresentation) =>
     isAdvertisedEndpointListExpanded
       ? visibleDesktopNetworkAdvertisedEndpoints.map((endpoint) => {
@@ -3041,6 +3065,7 @@ export function ConnectionsSettings() {
                 }
               />
             ) : null}
+            {renderEnvironmentLabelRow()}
             {desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
@@ -3345,6 +3370,7 @@ export function ConnectionsSettings() {
         </>
       ) : (
         <SettingsSection title="This environment">
+          {renderEnvironmentLabelRow()}
           <SettingsRow
             title="Administrative access"
             description="Pairing links and client-session management require the access:write scope for this backend."
