@@ -3,9 +3,7 @@ import {
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
-  buildSidebarV2ThreadContextMenuSlots,
   canArchiveSettledSidebarThread,
-  composeSidebarV2ThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   filterArchivableSidebarThreads,
   formatArchiveSkippedDescription,
@@ -35,6 +33,9 @@ import {
   shouldRenderSidebarV2ArchiveAll,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+  sortPinnedThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -506,95 +507,6 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
-  });
-});
-
-describe("buildSidebarV2ThreadContextMenuSlots", () => {
-  it("offers archive for active and settled threads", () => {
-    const activeSlots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: false,
-      isArchiveBlocked: false,
-    });
-    const settledSlots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: true,
-      isArchiveBlocked: false,
-    });
-
-    expect(activeSlots.lifecycleItems.map((item) => item.id)).toEqual(["settle", "archive"]);
-    expect(settledSlots.lifecycleItems.map((item) => item.id)).toEqual(["unsettle", "archive"]);
-    expect(activeSlots.renameItem.id).toBe("rename");
-    expect(activeSlots.markUnreadItem.id).toBe("mark-unread");
-    expect(activeSlots.destructiveItems).toEqual([
-      { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-    ]);
-  });
-
-  it("keeps archive visible but disabled while a thread has active work", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: true,
-      isArchiveBlocked: true,
-    });
-
-    expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
-      disabled: true,
-    });
-  });
-
-  it("leaves capability-gated slots empty", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: false,
-      supportsSettlement: false,
-      isSettled: false,
-      isArchiveBlocked: false,
-    });
-
-    expect(slots.lifecycleItems).toEqual([]);
-    expect(slots.renameItem).toEqual({ id: "rename", label: "Rename thread" });
-    expect(slots.markUnreadItem).toEqual({ id: "mark-unread", label: "Mark unread" });
-    expect(slots.destructiveItems).toEqual([]);
-  });
-
-  it("composes pin, snooze, and archive actions around the fork-owned slots", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: false,
-      isArchiveBlocked: false,
-    });
-
-    const items = composeSidebarV2ThreadContextMenuItems({
-      slots,
-      leadingItems: [
-        { id: "new-thread-on-branch", label: "New thread on branch" },
-        { id: "pin", label: "Pin thread" },
-      ],
-      snoozeItems: [{ id: "snooze", label: "Snooze" }],
-      titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
-      copyItems: [
-        { id: "copy-path", label: "Copy path" },
-        { id: "copy-branch", label: "Copy branch" },
-      ],
-    });
-
-    expect(items.map((item) => item.id)).toEqual([
-      "new-thread-on-branch",
-      "pin",
-      "settle",
-      "archive",
-      "snooze",
-      "rename",
-      "regenerate-title",
-      "mark-unread",
-      "copy-path",
-      "copy-branch",
-      "delete",
-    ]);
   });
 });
 
@@ -1211,6 +1123,136 @@ describe("sortThreadsForSidebarV2", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
       sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("pinOrderKeyBetween", () => {
+  it("produces keys that sort between their bounds", () => {
+    const middle = pinOrderKeyBetween(null, null)!;
+    const top = pinOrderKeyBetween(null, middle)!;
+    const bottom = pinOrderKeyBetween(middle, null)!;
+    expect(top < middle).toBe(true);
+    expect(middle < bottom).toBe(true);
+
+    const between = pinOrderKeyBetween(top, middle)!;
+    expect(top < between && between < middle).toBe(true);
+  });
+
+  it("extends into new digits when bounds are adjacent", () => {
+    const key = pinOrderKeyBetween("g", "h")!;
+    expect("g" < key && key < "h").toBe(true);
+  });
+
+  it("stays strictly ordered under repeated top insertion", () => {
+    // Every new pin lands at the head of the arranged run; keys must keep
+    // sorting before the previous head without ever bottoming out.
+    let head: string | null = null;
+    const keys: string[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      const key: string = pinOrderKeyBetween(null, head)!;
+      expect(key).not.toBeNull();
+      if (head !== null) expect(key < head).toBe(true);
+      keys.push(key);
+      head = key;
+    }
+    expect(new Set(keys).size).toBe(100);
+  });
+
+  it("stays strictly ordered under repeated middle insertion", () => {
+    let low = pinOrderKeyBetween(null, null)!;
+    let high = pinOrderKeyBetween(low, null)!;
+    for (let i = 0; i < 100; i += 1) {
+      const key: string = pinOrderKeyBetween(low, high)!;
+      expect(low < key && key < high).toBe(true);
+      if (i % 2 === 0) low = key;
+      else high = key;
+    }
+  });
+
+  it("returns null for corrupt or out-of-order bounds instead of throwing", () => {
+    expect(pinOrderKeyBetween("z", "a")).toBeNull();
+    expect(pinOrderKeyBetween("A!", null)).toBeNull();
+    expect(pinOrderKeyBetween(null, "ma")).toBeNull();
+    expect(pinOrderKeyBetween("m", "m")).toBeNull();
+  });
+});
+
+describe("planPinnedReorder", () => {
+  it("writes only the moved thread when neighbors are keyed", () => {
+    const assignments = planPinnedReorder({
+      orderedIds: ["a", "c", "b"],
+      keysById: new Map([
+        ["a", "f"],
+        ["b", "m"],
+        ["c", "t"],
+      ]),
+      movedId: "c",
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.id).toBe("c");
+    expect(assignments[0]!.orderKey > "f" && assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it("treats list edges as open bounds", () => {
+    const assignments = planPinnedReorder({
+      orderedIds: ["b", "a"],
+      keysById: new Map([
+        ["a", "m"],
+        ["b", null],
+      ]),
+      movedId: "b",
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it("materializes keys for the whole section when a neighbor is keyless", () => {
+    const assignments = planPinnedReorder({
+      orderedIds: ["b", "a", "c"],
+      keysById: new Map([
+        ["a", null],
+        ["b", "m"],
+        ["c", null],
+      ]),
+      movedId: "b",
+    });
+    expect(assignments.map((entry) => entry.id)).toEqual(["b", "a", "c"]);
+    const keys = assignments.map((entry) => entry.orderKey);
+    expect([...keys].sort()).toEqual(keys);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("sortPinnedThreadsForSidebarV2", () => {
+  const pinnable = (input: { id: string; createdAt: string; pinOrderKey?: string | null }) => ({
+    id: input.id,
+    createdAt: input.createdAt,
+    pinOrderKey: input.pinOrderKey ?? null,
+  });
+
+  it("sorts keyed threads by key ahead of keyless threads in creation order", () => {
+    const sorted = sortPinnedThreadsForSidebarV2([
+      pinnable({ id: "keyless-old", createdAt: "2026-03-09T08:00:00.000Z" }),
+      pinnable({ id: "second", createdAt: "2026-03-09T09:00:00.000Z", pinOrderKey: "t" }),
+      pinnable({ id: "keyless-new", createdAt: "2026-03-09T12:00:00.000Z" }),
+      pinnable({ id: "first", createdAt: "2026-03-09T07:00:00.000Z", pinOrderKey: "g" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "first",
+      "second",
+      "keyless-new",
+      "keyless-old",
+    ]);
+  });
+
+  it("breaks equal keys by id so raced writes render identically everywhere", () => {
+    const sorted = sortPinnedThreadsForSidebarV2([
+      pinnable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z", pinOrderKey: "m" }),
+      pinnable({ id: "a", createdAt: "2026-03-09T11:00:00.000Z", pinOrderKey: "m" }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);

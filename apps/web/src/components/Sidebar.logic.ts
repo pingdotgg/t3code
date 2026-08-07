@@ -201,66 +201,6 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export interface SidebarV2ThreadContextMenuSlots {
-  lifecycleItems: readonly ContextMenuItem<"settle" | "unsettle" | "archive">[];
-  renameItem: ContextMenuItem<"rename">;
-  markUnreadItem: ContextMenuItem<"mark-unread">;
-  destructiveItems: readonly ContextMenuItem<"delete">[];
-}
-
-export function buildSidebarV2ThreadContextMenuSlots(input: {
-  canUseLifecycleActions: boolean;
-  supportsSettlement: boolean;
-  isSettled: boolean;
-  isArchiveBlocked: boolean;
-}): SidebarV2ThreadContextMenuSlots {
-  return {
-    lifecycleItems: [
-      ...(input.supportsSettlement
-        ? [
-            input.isSettled
-              ? ({ id: "unsettle", label: "Un-settle thread" } as const)
-              : ({ id: "settle", label: "Settle thread" } as const),
-          ]
-        : []),
-      ...(input.canUseLifecycleActions
-        ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isArchiveBlocked }]
-        : []),
-    ],
-    renameItem: { id: "rename", label: "Rename thread" },
-    markUnreadItem: { id: "mark-unread", label: "Mark unread" },
-    destructiveItems: input.canUseLifecycleActions
-      ? [
-          {
-            id: "delete" as const,
-            label: "Delete",
-            destructive: true,
-            icon: "trash" as const,
-          },
-        ]
-      : [],
-  };
-}
-
-export function composeSidebarV2ThreadContextMenuItems(input: {
-  slots: SidebarV2ThreadContextMenuSlots;
-  leadingItems: readonly ContextMenuItem<string>[];
-  snoozeItems: readonly ContextMenuItem<string>[];
-  titleRegenerationItems: readonly ContextMenuItem<string>[];
-  copyItems: readonly ContextMenuItem<string>[];
-}): readonly ContextMenuItem<string>[] {
-  return [
-    ...input.leadingItems,
-    ...input.slots.lifecycleItems,
-    ...input.snoozeItems,
-    input.slots.renameItem,
-    ...input.titleRegenerationItems,
-    input.slots.markUnreadItem,
-    ...input.copyItems,
-    ...input.slots.destructiveItems,
-  ];
-}
-
 export function isThreadSessionRunning(
   session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined,
 ): boolean {
@@ -707,6 +647,15 @@ export function sortThreadsForSidebarV2<
       left.id.localeCompare(right.id),
   );
 }
+
+// Pinned-reorder key math and the keyed sort live in client-runtime
+// (state/thread-sort) so web and mobile compute identical pinned orders.
+export {
+  generateSpreadPinOrderKeys,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+} from "@t3tools/client-runtime/state/thread-sort";
+export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebarV2 } from "@t3tools/client-runtime/state/thread-sort";
 
 /**
  * Search the already-ordered sidebar thread collection by title only.
