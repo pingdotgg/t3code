@@ -9,7 +9,17 @@ export function composerAgentSelectionKey(input: {
 }): string {
   const target =
     typeof input.composerDraftTarget === "string"
-      ? input.composerDraftTarget
-      : `${input.composerDraftTarget.environmentId}:${input.composerDraftTarget.threadId}`;
-  return `${input.activeEnvironmentId ?? ""}:${input.activeProjectId ?? ""}:${input.activeThreadId ?? ""}:${input.draftId ?? ""}:${target}`;
+      ? (["draft", input.composerDraftTarget] as const)
+      : ([
+          "thread",
+          input.composerDraftTarget.environmentId,
+          input.composerDraftTarget.threadId,
+        ] as const);
+  return JSON.stringify([
+    input.activeEnvironmentId,
+    input.activeProjectId,
+    input.activeThreadId,
+    input.draftId,
+    target,
+  ]);
 }
