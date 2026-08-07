@@ -14,13 +14,15 @@ import { renderToIR } from "@copilotkit/channels-ui";
 import {
   assistantResponseText,
   channelBranchName,
-  createDiscordProfileClient,
+  channelTaskState,
+  createDiscordClient,
   discordModelOptions,
   isDeliverableTaskResponse,
   isDiscordChannelConfigured,
   resolveDiscordModel,
   taskStatusText,
   taskStatusUi,
+  taskResponseUi,
 } from "./T3CodeDiscordChannel.ts";
 
 const decodeDiscordChannelSettings = Schema.decodeSync(DiscordChannelSettings);
@@ -158,7 +160,7 @@ describe("Discord channel model selection", () => {
         state: "done",
         assistantResponse: "Fixed the login flow and added coverage.",
       }),
-    ).toBe("Fix login ✅\n\nFixed the login flow and added coverage.");
+    ).toBe("Fix login ✅");
     expect(taskStatusText(task)).not.toContain("Model:");
     expect(taskStatusText(task)).not.toContain("Target:");
     const rendered = renderToIR(taskStatusUi(task));
@@ -172,6 +174,9 @@ describe("Discord channel model selection", () => {
       },
     ]);
     expect(JSON.stringify(rendered)).toContain("Powered by CopilotKit");
+    expect(JSON.stringify(renderToIR(taskResponseUi("Final response")))).toContain(
+      "Final response",
+    );
     expect(
       isDeliverableTaskResponse(false, { ...task, state: "done", assistantResponse: "old" }),
     ).toBe(false);
@@ -182,6 +187,13 @@ describe("Discord channel model selection", () => {
         assistantResponse: "Final response",
       }),
     ).toBe(true);
+    expect(
+      channelTaskState({
+        latestTurnState: null,
+        sessionStatus: "ready",
+        assistantResponse: "Final response",
+      }),
+    ).toBe("done");
   });
 
   it("uses the final assistant message as the completed Discord response", () => {
@@ -202,7 +214,7 @@ describe("Discord channel model selection", () => {
     ).toBe("The requested change is complete.");
   });
 
-  it("updates the Discord bot profile without handling message rendering", async () => {
+  it("updates the bot profile and sends a rendered reply to the status message", async () => {
     const requests: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
@@ -219,15 +231,25 @@ describe("Discord channel model selection", () => {
         },
       );
     }) as typeof fetch;
-    const client = createDiscordProfileClient("secret", fetchImpl);
+    const client = createDiscordClient("secret", fetchImpl);
 
     await client.ensureBotUsername("copilot");
     await client.setGuildNickname("guild-1", "copilot");
+    await client.reply(
+      { id: "status-1", channelId: "channel-1" },
+      taskResponseUi("The task is complete."),
+    );
 
-    expect(requests.map(({ init }) => init?.method)).toEqual(["GET", "PATCH", "PATCH"]);
+    expect(requests.map(({ init }) => init?.method)).toEqual(["GET", "PATCH", "PATCH", "POST"]);
     expect(requests[1]?.url).toContain("/users/@me");
     expect(requests[2]?.url).toContain("/guilds/guild-1/members/@me");
     expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({ username: "copilot" });
     expect(JSON.parse(String(requests[2]?.init?.body))).toEqual({ nick: "copilot" });
+    const replyBody = JSON.parse(String(requests[3]?.init?.body));
+    expect(replyBody.message_reference).toEqual({
+      message_id: "status-1",
+      channel_id: "channel-1",
+    });
+    expect(JSON.stringify(replyBody.components)).toContain("The task is complete.");
   });
 });
