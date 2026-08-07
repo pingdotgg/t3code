@@ -356,9 +356,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("nativePackageTool"),
           packageName: "@example/native-package-tool",
           update: {
-            command: "native-package-tool update",
+            command: `${nativePackageToolPath} update`,
 
-            executable: "native-package-tool",
+            executable: nativePackageToolPath,
 
             args: ["update"],
 
@@ -393,9 +393,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
-            command: "scoped-package-tool upgrade",
+            command: `${scopedPackageToolPath} upgrade`,
 
-            executable: "scoped-package-tool",
+            executable: scopedPackageToolPath,
 
             args: ["upgrade"],
 
@@ -570,15 +570,48 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
-            command: "scoped-package-tool upgrade",
+            // The symlink is what was classified, so it is what gets updated —
+            // not the bare command name, which may resolve elsewhere on PATH.
+            command: `${symlinkPath} upgrade`,
 
-            executable: "scoped-package-tool",
+            executable: symlinkPath,
 
             args: ["upgrade"],
 
             lockKey: "scoped-package-tool-native",
           },
         });
+      }),
+  );
+
+  it.effect(
+    "runs native updates against the configured binary rather than a different one on PATH",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-configured-binary-capabilities");
+        const nativeBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
+        const otherBinDir = NodePath.join(tempDir, "other", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        NodeFS.mkdirSync(otherBinDir, { recursive: true });
+        const configuredPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+        const otherPath = NodePath.join(otherBinDir, "scoped-package-tool");
+        for (const binaryPath of [configuredPath, otherPath]) {
+          NodeFS.writeFileSync(binaryPath, "#!/bin/sh\n");
+          NodeFS.chmodSync(binaryPath, 0o755);
+        }
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          scopedPackageToolUpdate,
+          {
+            binaryPath: configuredPath,
+            env: {
+              PATH: otherBinDir,
+            },
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities.update?.executable).toBe(configuredPath);
+        expect(capabilities.update?.executable).not.toBe(otherPath);
       }),
   );
 

@@ -197,8 +197,18 @@ function makeHomebrewProviderMaintenanceCapabilities(
   });
 }
 
+/**
+ * Native updaters are self-updates: the binary rewrites its own install. The
+ * update therefore has to run *the binary that was classified as native*, not
+ * whatever the bare command name happens to resolve to at spawn time. Those
+ * differ whenever a provider's `binaryPath` points somewhere other than the
+ * first match on `PATH` — exactly the multi-install case this classification
+ * exists to handle — so prefer the resolved command path and fall back to the
+ * bare executable only when nothing was resolved.
+ */
 function makeNativeProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  resolvedCommandPath?: string | null,
 ): ProviderMaintenanceCapabilities | null {
   if (!definition.nativeUpdate) {
     return null;
@@ -207,7 +217,7 @@ function makeNativeProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
-    updateExecutable: definition.nativeUpdate.executable,
+    updateExecutable: resolvedCommandPath ?? definition.nativeUpdate.executable,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
   });
@@ -287,7 +297,7 @@ export function resolvePackageManagedProviderMaintenance(
       commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
     ) {
       return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
+        makeNativeProviderMaintenanceCapabilities(definition, resolvedCommandPath) ??
         makeNpmGlobalProviderMaintenanceCapabilities(definition)
       );
     }
