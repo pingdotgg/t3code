@@ -29,9 +29,13 @@ There's now a dedicated Git tab in the right panel (`Cmd/Ctrl+Shift+G`). Per sel
 
 The panel reads and writes the real git index, so staging done here shows up in a terminal and vice versa — it's not a separate shadow state. The existing chat-header commit flow is unchanged and still commits everything the agent touched.
 
+<img src="docs/images/githistory.png" alt="Right panel surface picker with a Git tile" width="420"> <img src="docs/images/githistory-2.webp" alt="Git panel with staging, commit box, and commit history" width="420">
+
 ### Multiple source folders per project
 
 A project used to be bound to exactly one directory. Now a project can reference several source folders — e.g. a design-system repo, a sibling service, and a docs folder — with one marked as primary. Every existing single-folder project keeps working identically; this is purely additive.
+
+<img src="docs/images/multiplefoldersinproject.png" alt="Create project dialog with an empty source folders list" width="420"> <img src="docs/images/multiplefoldersinproject2.png" alt="Create project dialog with three source folders and one marked primary" width="420">
 
 ### Selectable color themes (Settings → Appearance)
 
@@ -42,6 +46,8 @@ Nine built-in color palettes on top of the existing light/dark mode, picked from
 - **Midnight**, **Ember**, **Mono**, **Cyberpunk**, **Slate**
 
 Each palette carries its own semantic tokens, nav-panel surfaces, and syntax highlighting theme for chat code blocks, diffs, and file previews.
+
+![Settings → Appearance theme picker showing nine palettes](docs/images/themes.png)
 
 ## Installation
 
