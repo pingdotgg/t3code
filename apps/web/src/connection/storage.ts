@@ -40,22 +40,7 @@ const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
-<<<<<<< HEAD
-// v2 stores the snapshot sequence alongside the thread so a warm cache can
-// resume via `afterSequence` instead of re-downloading the full thread body.
-// v3 adds windowed (paginated) snapshots carrying `page` metadata. The bump
-// exists for rollback safety: a pre-pagination client would decode a windowed
-// v2 record, silently drop the unknown `page` field, and treat the partial
-// thread as complete forever. Older entries fail to decode → cold cache.
-const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(3),
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  snapshot: OrchestrationThreadDetailSnapshot,
-});
-=======
 const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
->>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
 const StoredServerConfig = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -561,11 +546,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-<<<<<<< HEAD
-            schemaVersion: 3,
-=======
             schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
->>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
             environmentId,
             threadId: snapshot.projection.thread.id,
             snapshot,
