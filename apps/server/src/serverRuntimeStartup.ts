@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
-import { startEmbeddedCuaDriver } from "./cua/CuaDriverEmbedded.ts";
+import { installDesktopCuaDriver, startEmbeddedCuaDriver } from "./cua/CuaDriverEmbedded.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
@@ -417,7 +417,10 @@ export const make = (options?: StartupOptions) =>
         );
       yield* runStartupPhase(
         "cua-driver.start",
-        startEmbeddedCuaDriver().pipe(
+        (serverConfig.cuaDriverMcp === undefined
+          ? startEmbeddedCuaDriver()
+          : installDesktopCuaDriver(serverConfig.cuaDriverMcp)
+        ).pipe(
           Effect.catchTags({
             CuaDriverModuleLoadError: (error) =>
               logCuaUnavailable({ modulePath: error.modulePath, cause: error.cause }),

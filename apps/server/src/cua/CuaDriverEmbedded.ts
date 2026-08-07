@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { EmbeddedDriverConnection, EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
+import type { EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
+import type { CuaDriverMcpConfiguration } from "@t3tools/contracts";
 
 import { T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
 
@@ -35,7 +36,9 @@ export class CuaDriverModuleLoadError extends Schema.TaggedErrorClass<CuaDriverM
 
 const tomlString = (value: string): string => JSON.stringify(value);
 
-export const buildCodexLaunchArgs = (connection: Pick<EmbeddedDriverConnection, "mcp">): string => {
+export const buildCodexLaunchArgs = (connection: {
+  readonly mcp: CuaDriverMcpConfiguration;
+}): string => {
   const proxyArgs = connection.mcp.args.map(tomlString).join(",");
   const proxyEnv = connection.mcp.environment
     .map(({ name, value }) => `${name}=${tomlString(value)}`)
@@ -80,6 +83,20 @@ export const installCodexLaunchArgs = Effect.fn("server.installCodexLaunchArgs")
   yield* Effect.addFinalizer(() => deactivate.pipe(Effect.asVoid));
   process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = launchArgs;
   return () => deactivate;
+});
+
+/**
+ * Uses the descriptor supplied by the permission-owning desktop host. The
+ * server launches only the stdio proxy; it does not own or restart the daemon.
+ */
+export const installDesktopCuaDriver = Effect.fn("server.installDesktopCuaDriver")(function* (
+  mcp: CuaDriverMcpConfiguration,
+) {
+  yield* installCodexLaunchArgs(buildCodexLaunchArgs({ mcp }));
+  yield* Effect.logInfo("desktop-hosted cua-driver ready", {
+    component: "embedded-cua-driver",
+    command: mcp.command,
+  });
 });
 
 /**

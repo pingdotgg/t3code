@@ -29,10 +29,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
-import {
-  configureCuaDriverServerEnvironment,
-  disableCuaDriverServerEnvironment,
-} from "../cua/CuaDriverServerEnvironment.ts";
+import * as DesktopCuaDriver from "../cua/DesktopCuaDriver.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -233,6 +230,7 @@ const startup = Effect.gen(function* () {
   const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const cuaDriver = yield* DesktopCuaDriver.DesktopCuaDriver;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
@@ -298,8 +296,7 @@ const startup = Effect.gen(function* () {
     const continueWithoutCua = Effect.fn("desktop.continueWithoutCua")(function* (
       context: Readonly<Record<string, unknown>>,
     ) {
-      yield* disableCuaDriverServerEnvironment();
-      yield* logStartupError("embedded cua-driver failed to configure", context);
+      yield* logStartupError("embedded cua-driver failed to start", context);
       yield* electronDialog
         .showMessageBox({
           type: "error",
@@ -311,19 +308,20 @@ const startup = Effect.gen(function* () {
         })
         .pipe(Effect.ignore);
     });
-    yield* configureCuaDriverServerEnvironment(
-      environment.appUserModelId,
-      environment.platform,
-      environment.isPackaged ? environment.resourcesPath : undefined,
-    ).pipe(
+    yield* cuaDriver.start.pipe(
       Effect.catchTags({
-        CuaDriverConfigurationError: (error) =>
+        CuaDriverModuleLoadError: (error) =>
           continueWithoutCua({ modulePath: error.modulePath, cause: error.cause }),
         CuaDriverNotConfiguredError: () => continueWithoutCua({}),
+        CuaDriverPermissionError: (error) =>
+          continueWithoutCua({
+            accessibility: error.accessibility,
+            screenRecording: error.screenRecording,
+          }),
+        CuaDriverStartError: (error) =>
+          continueWithoutCua({ binaryPath: error.binaryPath, cause: error.cause }),
       }),
     );
-  } else {
-    yield* disableCuaDriverServerEnvironment();
   }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
@@ -352,6 +350,8 @@ const scopedProgram = Effect.scoped(
         yield* Effect.forEach(instances, (instance) => instance.stop(), {
           concurrency: "unbounded",
         });
+        const cuaDriver = yield* DesktopCuaDriver.DesktopCuaDriver;
+        yield* cuaDriver.stop;
       }).pipe(Effect.ensuring(shutdown.markComplete)),
     );
 
