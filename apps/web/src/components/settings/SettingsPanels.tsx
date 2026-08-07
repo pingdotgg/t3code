@@ -1527,7 +1527,13 @@ function LegacyFeaturesSection() {
   // the section back up without the still-set target immediately reopening it.
   const lastExpandedTargetRef = useRef<string | null>(null);
   useEffect(() => {
-    if (searchTargetId === null || !LEGACY_FEATURE_TARGET_IDS.has(searchTargetId)) return;
+    if (searchTargetId === null) {
+      // A handled jump clears the target; forgetting it here lets a later
+      // jump to the same row expand the section again.
+      lastExpandedTargetRef.current = null;
+      return;
+    }
+    if (!LEGACY_FEATURE_TARGET_IDS.has(searchTargetId)) return;
     if (lastExpandedTargetRef.current === searchTargetId) return;
     lastExpandedTargetRef.current = searchTargetId;
     setOpen(true);
