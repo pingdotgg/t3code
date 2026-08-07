@@ -71,6 +71,12 @@ export class EnvironmentRegistry extends Context.Service<
       registration: ConnectionRegistration,
       options?: { readonly enabled?: boolean },
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly updateRegistration: (
+      registration: ConnectionRegistration,
+    ) => Effect.Effect<
+      void,
+      Persistence.ConnectionPersistenceError | EnvironmentNotRegisteredError
+    >;
     readonly registerPlatform: (
       registration: PrimaryConnectionRegistration,
     ) => Effect.Effect<void>;
@@ -474,35 +480,60 @@ export const make = Effect.gen(function* () {
     yield* createServiceScope(entry, options?.initiallyDesired);
   });
 
+  const installRegistrationLocked = Effect.fn(
+    "EnvironmentRegistry.installRegistrationLocked",
+  )(function* (registration: ConnectionRegistration, enabled: boolean) {
+    const entry = connectionRegistrationCatalogEntry(registration);
+    const environmentId = entry.target.environmentId;
+    yield* activationStateLock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* registrations.register(registration, { enabled });
+        if (enabled) {
+          disabledEnvironmentIds.delete(environmentId);
+        } else {
+          disabledEnvironmentIds.add(environmentId);
+        }
+        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+          const next = new Map(current);
+          next.set(environmentId, registration.target);
+          return next;
+        });
+      }),
+    );
+    yield* installEntryLocked(entry, { initiallyDesired: enabled });
+  });
+
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
     options?: { readonly enabled?: boolean },
   ) {
-    const entry = connectionRegistrationCatalogEntry(registration);
-    const environmentId = entry.target.environmentId;
-    const enabled = options?.enabled ?? true;
+    const environmentId = registration.target.environmentId;
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return;
         }
-        yield* activationStateLock.withPermits(1)(
-          Effect.gen(function* () {
-            yield* registrations.register(registration, { enabled });
-            if (enabled) {
-              disabledEnvironmentIds.delete(environmentId);
-            } else {
-              disabledEnvironmentIds.add(environmentId);
-            }
-            yield* Ref.update(persistedTargetsByEnvironment, (current) => {
-              const next = new Map(current);
-              next.set(environmentId, registration.target);
-              return next;
-            });
-          }),
+        yield* installRegistrationLocked(registration, options?.enabled ?? true);
+      }),
+    );
+  });
+
+  const updateRegistration = Effect.fn("EnvironmentRegistry.updateRegistration")(function* (
+    registration: ConnectionRegistration,
+  ) {
+    const environmentId = registration.target.environmentId;
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        yield* getEntry(environmentId);
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return;
+        }
+        yield* installRegistrationLocked(
+          registration,
+          !disabledEnvironmentIds.has(environmentId),
         );
-        yield* installEntryLocked(entry, { initiallyDesired: enabled });
       }),
     );
   });
@@ -853,6 +884,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
+    updateRegistration,
     registerPlatform,
     reconcilePlatform,
     remove,

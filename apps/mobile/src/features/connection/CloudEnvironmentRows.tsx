@@ -23,11 +23,18 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
-import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
+import {
+  type RelayEnvironmentView,
+  useConnectionController,
+} from "./useConnectionController";
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onSetEnvironmentEnabled: (
+    environmentId: EnvironmentId,
+    enabled: boolean,
+  ) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -54,7 +61,9 @@ export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   // is never mounted and any `useAuth` call throws — the fixture states whether
   // the rows are signed in instead of asking Clerk.
   if (props.showcaseSignedIn !== undefined) {
-    return props.showcaseSignedIn ? <CloudEnvironmentRowsContent {...props} /> : null;
+    return props.showcaseSignedIn ? (
+      <CloudEnvironmentRowsContent {...props} />
+    ) : null;
   }
   // No cloud config means no `ClerkProvider` either, so `useAuth` would throw.
   if (!hasCloudPublicConfig()) {
@@ -81,24 +90,24 @@ function CloudEnvironmentRowsContent(
   const iconColor = useThemeColor("--color-icon");
   const discoveryAvailable = props.discoveryAvailable ?? true;
   const availableCloudEnvironments = discoveryAvailable
-    ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
+    ? (props.showcaseAvailableEnvironments ??
+      controller.availableRelayEnvironments)
     : [];
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   const hasCloudRows =
-    props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
+    props.connectedCloudEnvironments.length > 0 ||
+    availableCloudEnvironments.length > 0;
 
   const handleConnectCloudEnvironment = useCallback(
-    (entry: RelayEnvironmentView) => controller.connectRelayEnvironment(entry.environment),
-    [controller],
-  );
-
-  const handleDisconnectCloudEnvironment = useCallback(
-    (environmentId: EnvironmentId) => controller.removeEnvironment(environmentId),
+    (entry: RelayEnvironmentView) =>
+      controller.connectRelayEnvironment(entry.environment),
     [controller],
   );
 
   const handleToggleCloudError = useCallback((environmentId: string) => {
-    setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
+    setExpandedErrorId((current) =>
+      current === environmentId ? null : environmentId,
+    );
   }, []);
 
   const showHeader = props.showHeader ?? true;
@@ -107,7 +116,9 @@ function CloudEnvironmentRowsContent(
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>
       {showHeader ? (
         <View className="flex-row items-center justify-between px-1">
-          <Text className="text-sm font-t3-bold uppercase text-foreground-muted">T3 Connect</Text>
+          <Text className="text-sm font-t3-bold uppercase text-foreground-muted">
+            T3 Connect
+          </Text>
           {discoveryAvailable ? (
             <Pressable
               accessibilityRole="button"
@@ -133,31 +144,53 @@ function CloudEnvironmentRowsContent(
       ) : null}
 
       {hasCloudRows ? (
-        <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
+        <View
+          collapsable={false}
+          className="overflow-hidden rounded-[24px] bg-card"
+        >
           {props.connectedCloudEnvironments.map((environment, index) => (
             <ConnectedCloudEnvironmentRow
               key={environment.environmentId}
               environment={environment}
               borderTop={index !== 0}
-              onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
-              onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
+              onConnect={() => {
+                if (environment.enabled) {
+                  props.onReconnectEnvironment(environment.environmentId);
+                  return;
+                }
+                props.onSetEnvironmentEnabled(environment.environmentId, true);
+              }}
+              onDisconnect={() =>
+                props.onSetEnvironmentEnabled(environment.environmentId, false)
+              }
               errorExpanded={expandedErrorId === environment.environmentId}
-              onToggleError={() => handleToggleCloudError(environment.environmentId)}
+              onToggleError={() =>
+                handleToggleCloudError(environment.environmentId)
+              }
             />
           ))}
           {availableCloudEnvironments.map((environment, index) => (
             <CloudEnvironmentRow
               key={environment.environment.environmentId}
               environment={environment}
-              borderTop={props.connectedCloudEnvironments.length > 0 || index !== 0}
+              borderTop={
+                props.connectedCloudEnvironments.length > 0 || index !== 0
+              }
               onConnect={() => handleConnectCloudEnvironment(environment)}
-              errorExpanded={expandedErrorId === environment.environment.environmentId}
-              onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
+              errorExpanded={
+                expandedErrorId === environment.environment.environmentId
+              }
+              onToggleError={() =>
+                handleToggleCloudError(environment.environment.environmentId)
+              }
             />
           ))}
         </View>
       ) : controller.relayDiscovery.isRefreshing ? (
-        <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card p-6">
+        <View
+          collapsable={false}
+          className="items-center gap-3 rounded-[24px] bg-card p-6"
+        >
           <ActivityIndicator color={iconColor} />
           <Text className="text-center text-sm leading-normal text-foreground-muted">
             Loading linked cloud environments.
@@ -180,9 +213,13 @@ function CloudEnvironmentRowsContent(
           <Text className="text-base font-t3-bold text-foreground">
             Could not load T3 Connect environments
           </Text>
-          <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
+          <Text className="text-sm text-foreground-muted">
+            {controller.relayDiscovery.error}
+          </Text>
           {controller.relayDiscovery.errorTraceId ? (
-            <CopyTraceIdButton traceId={controller.relayDiscovery.errorTraceId} />
+            <CopyTraceIdButton
+              traceId={controller.relayDiscovery.errorTraceId}
+            />
           ) : null}
           <Pressable
             accessibilityRole="button"
@@ -191,7 +228,9 @@ function CloudEnvironmentRowsContent(
             }}
             className="self-start rounded-full bg-subtle px-3.5 py-2 active:opacity-70"
           >
-            <Text className="text-xs font-t3-bold text-foreground">Try again</Text>
+            <Text className="text-xs font-t3-bold text-foreground">
+              Try again
+            </Text>
           </Pressable>
         </View>
       ) : null}
@@ -210,9 +249,11 @@ function ConnectedCloudEnvironmentRow(props: {
   return (
     <CloudEnvironmentRowShell
       borderTop={props.borderTop}
-      connectionError={props.environment.connectionError}
-      connectionErrorTraceId={props.environment.connectionErrorTraceId}
-      connectionState={props.environment.connectionState}
+      connectionError={props.environment.enabled ? props.environment.connectionError : null}
+      connectionErrorTraceId={
+        props.environment.enabled ? props.environment.connectionErrorTraceId : null
+      }
+      connectionState={props.environment.enabled ? props.environment.connectionState : "available"}
       errorExpanded={props.errorExpanded}
       label={props.environment.environmentLabel}
       onValueChange={(enabled) => {
@@ -223,7 +264,8 @@ function ConnectedCloudEnvironmentRow(props: {
         props.onDisconnect();
       }}
       onToggleError={props.onToggleError}
-      value={props.environment.connectionState !== "available"}
+      statusText={props.environment.enabled ? undefined : "Disabled"}
+      value={props.environment.enabled}
     />
   );
 }
@@ -279,7 +321,8 @@ function CloudEnvironmentRowShell(props: {
   const track = String(useThemeColor("--color-secondary-border"));
   const chevron = useThemeColor("--color-chevron");
   const isRetrying =
-    props.connectionState === "connecting" || props.connectionState === "reconnecting";
+    props.connectionState === "connecting" ||
+    props.connectionState === "reconnecting";
   const shouldPulse = isRetrying;
   const statusText =
     props.statusText ??
@@ -296,9 +339,13 @@ function CloudEnvironmentRowShell(props: {
     readonly lineCount: number;
   } | null>(null);
   const errorTraceId = props.connectionErrorTraceId;
-  const measuredErrorText = errorTraceId ? `${statusText} Trace ID: ${errorTraceId}` : statusText;
+  const measuredErrorText = errorTraceId
+    ? `${statusText} Trace ID: ${errorTraceId}`
+    : statusText;
   const errorLineCount =
-    errorMeasurement?.text === measuredErrorText ? errorMeasurement.lineCount : 0;
+    errorMeasurement?.text === measuredErrorText
+      ? errorMeasurement.lineCount
+      : 0;
   const errorCanExpand = props.connectionError !== null && errorLineCount > 1;
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
@@ -327,7 +374,11 @@ function CloudEnvironmentRowShell(props: {
     >
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="min-w-0 flex-row items-center gap-2">
-          <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
+          <ConnectionStatusDot
+            state={props.connectionState}
+            pulse={shouldPulse}
+            size={7}
+          />
           <Text
             className="min-w-0 flex-shrink text-base font-t3-bold leading-snug text-foreground"
             numberOfLines={1}
@@ -339,14 +390,20 @@ function CloudEnvironmentRowShell(props: {
           <Text
             aria-hidden
             onTextLayout={onMeasuredErrorTextLayout}
-            className={cn("absolute inset-x-0 -z-[1] text-xs opacity-0", statusClassName)}
+            className={cn(
+              "absolute inset-x-0 -z-[1] text-xs opacity-0",
+              statusClassName,
+            )}
           >
             {measuredErrorText}
           </Text>
         ) : null}
         <StatusContainer
           {...(errorCanExpand
-            ? { accessibilityRole: "button" as const, onPress: props.onToggleError }
+            ? {
+                accessibilityRole: "button" as const,
+                onPress: props.onToggleError,
+              }
             : {})}
           className="min-w-0 flex-row items-start gap-1"
         >
@@ -361,10 +418,15 @@ function CloudEnvironmentRowShell(props: {
                 <Text
                   accessibilityHint="Copies the trace ID"
                   accessibilityRole="button"
-                  className={cn("text-xs underline decoration-dotted", statusClassName)}
+                  className={cn(
+                    "text-xs underline decoration-dotted",
+                    statusClassName,
+                  )}
                   onLongPress={(event) => {
                     event.stopPropagation();
-                    copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
+                    copyTextWithHaptic(errorTraceId, {
+                      target: "connection-trace-id",
+                    });
                   }}
                   onPress={(event) => {
                     event.stopPropagation();
@@ -411,8 +473,15 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
       }}
       className="self-start flex-row items-center gap-1.5 rounded-full bg-subtle px-3 py-2 active:opacity-70"
     >
-      <SymbolView name="doc.on.doc" size={12} tintColor={iconColor} type="monochrome" />
-      <Text className="text-xs font-t3-bold text-foreground">Copy trace ID</Text>
+      <SymbolView
+        name="doc.on.doc"
+        size={12}
+        tintColor={iconColor}
+        type="monochrome"
+      />
+      <Text className="text-xs font-t3-bold text-foreground">
+        Copy trace ID
+      </Text>
     </Pressable>
   );
 }

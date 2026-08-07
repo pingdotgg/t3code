@@ -622,6 +622,34 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("preserves disabled state while updating a registration", () =>
+    Effect.gen(function* () {
+      const updatedTarget = new RelayConnectionTarget({
+        environmentId: RELAY_TARGET.environmentId,
+        label: "Updated relay environment",
+      });
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        initiallyDisabled: [RELAY_TARGET.environmentId],
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.updateRegistration(
+          new RelayConnectionRegistration({ target: updatedTarget }),
+        );
+
+        expect(yield* Ref.get(harness.storedTargets)).toEqual(
+          new Map([[updatedTarget.environmentId, updatedTarget]]),
+        );
+        expect(yield* Ref.get(harness.disabledEnvironmentIds)).toEqual(
+          new Set([updatedTarget.environmentId]),
+        );
+        expect((yield* registry.state(updatedTarget.environmentId)).phase).toBe("available");
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect(
     "reconciles registrations added before startup from the current target set",
     () =>

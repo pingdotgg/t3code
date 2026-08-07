@@ -10,6 +10,7 @@ import { serverEnvironment } from "./server";
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
+  enabledAtom: environmentCatalog.enabledAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 

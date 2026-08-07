@@ -88,6 +88,7 @@ function toRuntimeState(
   serverConfig: ServerConfig | null,
 ): EnvironmentRuntimeState {
   return {
+    enabled: environment.enabled,
     connectionState: environment.connection.phase,
     connectionError: environment.connection.error,
     connectionErrorTraceId: environment.connection.traceId,
@@ -140,6 +141,7 @@ export function useRemoteConnectionStatus() {
         connectionState: environment.connectionState,
         connectionError: environment.connectionError,
         connectionErrorTraceId: environment.connectionErrorTraceId,
+        enabled: environment.enabled,
       })),
     [workspace.environments],
   );
@@ -227,6 +229,7 @@ export function useRemoteConnections() {
     onChangeConnectionPairingUrl,
     onConnectPress,
     onReconnectEnvironment,
+    onSetEnvironmentEnabled: controller.setEnvironmentEnabled,
     onUpdateEnvironment,
     onRemoveEnvironmentPress,
   };

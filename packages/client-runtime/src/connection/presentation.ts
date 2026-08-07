@@ -20,6 +20,7 @@ export interface EnvironmentConnectionPresentation {
 
 export interface EnvironmentPresentation {
   readonly entry: ConnectionCatalogEntry;
+  readonly enabled: boolean;
   readonly connection: EnvironmentConnectionPresentation;
   readonly serverConfig: ServerConfig | null;
 }

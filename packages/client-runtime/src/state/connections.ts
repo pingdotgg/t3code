@@ -76,6 +76,23 @@ export function createEnvironmentCatalogAtoms<R, E>(
       { initialValue: AVAILABLE_CONNECTION_STATE },
     ),
   );
+  const enabledAtom = Atom.family((environmentId: EnvironmentIdType) =>
+    runtime.atom(
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.state).pipe(
+                Stream.map((state) => state.desired),
+              ),
+            ),
+          ),
+        ),
+      ),
+      { initialValue: null as boolean | null },
+    ),
+  );
 
   const register = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
@@ -131,6 +148,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    enabledAtom,
     register,
     remove,
     removeRelayEnvironments,

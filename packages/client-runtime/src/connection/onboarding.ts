@@ -145,7 +145,17 @@ export const updateBearerConnection = Effect.fn(
     entry: Option.fromUndefinedOr(entry),
     credential,
   });
-  yield* registry.register(registration);
+  yield* registry.updateRegistration(registration).pipe(
+    Effect.catchTags({
+      EnvironmentNotRegisteredError: () =>
+        Effect.fail(
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "The saved environment is no longer registered.",
+          }),
+        ),
+    }),
+  );
 });
 
 export const prepareBearerConnectionUpdate = Effect.fn(
