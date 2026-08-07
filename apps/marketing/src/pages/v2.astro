@@ -30,7 +30,6 @@ const endorsementRows = [
   <section class="v2-hero">
     <div class="v2-shell">
       <header class="v2-hero-card">
-        <p class="v2-kicker v2-hero-kicker">Open-source agent control</p>
         <div class="v2-hero-message">
           <h1>Bring the agents.<br />Keep the control.</h1>
           <p class="v2-lede">
@@ -40,7 +39,7 @@ const endorsementRows = [
         </div>
         <div class="v2-actions">
           <div class="v2-download-row">
-            <a class="v2-button v2-button--primary" href="/download" data-v2-download>
+            <a class="btn btn-primary btn-lg" href="/download" data-v2-download>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path fill="currentColor" d="M16.67 13.71c.02 2.25 1.97 3 1.99 3.01-.02.05-.31 1.07-1.03 2.12-.62.91-1.28 1.82-2.31 1.84-1 .02-1.32-.6-2.47-.6-1.16 0-1.51.58-2.46.62-1 .04-1.75-.99-2.38-1.9-1.29-1.86-2.27-5.25-.95-7.54a3.69 3.69 0 0 1 3.13-1.9c.98-.02 1.9.66 2.48.66.57 0 1.65-.82 2.79-.7.47.02 1.8.19 2.65 1.44-.07.04-1.59.93-1.57 2.95ZM14.72 8.1c.52-.63.87-1.51.77-2.39-.75.03-1.66.5-2.2 1.13-.48.55-.9 1.45-.79 2.31.84.07 1.7-.43 2.22-1.05Z" />
               </svg>
@@ -58,7 +57,7 @@ const endorsementRows = [
               </div>
             </div>
           </div>
-          <a class="v2-button" href="https://github.com/pingdotgg/t3code">View source</a>
+          <a class="btn btn-ghost" href="https://github.com/pingdotgg/t3code">View source</a>
         </div>
       </header>
     </div>
@@ -67,7 +66,6 @@ const endorsementRows = [
   <section class="v2-system" aria-labelledby="v2-system-title">
     <div class="v2-shell">
       <div class="v2-section-heading">
-        <p class="v2-kicker">One system, not five windows</p>
         <h2 id="v2-system-title">The workspace follows the work.</h2>
       </div>
 
@@ -123,7 +121,6 @@ const endorsementRows = [
   <section class="v2-connect" aria-labelledby="v2-connect-title">
     <div class="v2-shell v2-connect-grid">
       <header>
-        <p class="v2-kicker">Remote ready by design</p>
         <h2 id="v2-connect-title"><span>T3</span> Connect</h2>
         <p>Pair once. Control the same live threads from the web, iPhone, iPad, or Android.</p>
         <code>npx t3 pair</code>
@@ -306,15 +303,6 @@ const endorsementRows = [
     margin-inline: auto;
   }
 
-  .v2-kicker {
-    color: #8b8b92;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-  }
-
   .v2-hero {
     padding: 150px 0 96px;
     border-bottom: 1px solid var(--border);
@@ -323,6 +311,7 @@ const endorsementRows = [
 
   .v2-hero-card {
     display: grid;
+    grid-template-rows: 1fr auto;
     min-height: 610px;
     border: 1px solid var(--border-strong);
     background: #070708;
@@ -334,11 +323,6 @@ const endorsementRows = [
     font-weight: 500;
     letter-spacing: -0.055em;
     line-height: 0.98;
-  }
-
-  .v2-hero-kicker {
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--border);
   }
 
   .v2-hero-message {
@@ -365,6 +349,7 @@ const endorsementRows = [
   .v2-actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 10px;
     padding: 22px 24px;
     border-top: 1px solid var(--border);
@@ -372,19 +357,14 @@ const endorsementRows = [
 
   .v2-download-row {
     display: flex;
-    align-items: stretch;
-    gap: 8px;
+    align-items: center;
+    gap: 12px;
   }
 
-  .v2-download-row .v2-button--primary {
-    min-width: 190px;
-  }
-
-  .v2-download-row .v2-button--primary svg {
+  .v2-download-row .btn-primary svg {
     width: 16px;
     height: 16px;
     flex: 0 0 auto;
-    margin-right: 8px;
   }
 
   .v2-channel-picker {
@@ -392,18 +372,21 @@ const endorsementRows = [
   }
 
   .v2-channel-picker > button {
-    height: 100%;
-    min-width: 92px;
+    height: 51px;
+    min-width: 94px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 7px;
-    padding: 0 14px;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
+    padding: 0 15px;
+    border: 0;
+    border-radius: 10px;
     color: #aaaab2;
-    background: #08080a;
-    font-size: 12px;
+    background: rgba(0, 0, 0, 0.05);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.12);
+    font-size: 13px;
+    font-weight: 500;
+    backdrop-filter: blur(18px);
   }
 
   .v2-channel-picker > button svg {
@@ -443,32 +426,6 @@ const endorsementRows = [
     background: rgba(255, 255, 255, 0.07);
   }
 
-  .v2-button {
-    display: inline-flex;
-    min-height: 42px;
-    align-items: center;
-    justify-content: center;
-    padding: 0 17px;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    color: #b7b7bf;
-    font-size: 13px;
-    transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
-  }
-
-  .v2-button:hover {
-    border-color: rgba(255, 255, 255, 0.28);
-    color: #fff;
-    transform: translateY(-1px);
-  }
-
-  .v2-button--primary {
-    border-color: #fff;
-    color: #050505;
-    background: #fff;
-    font-weight: 600;
-  }
-
   .v2-system,
   .v2-connect {
     padding: 150px 0;
@@ -476,10 +433,6 @@ const endorsementRows = [
   }
 
   .v2-section-heading {
-    display: grid;
-    grid-template-columns: 0.68fr 1.32fr;
-    align-items: end;
-    gap: 48px;
     margin-bottom: 70px;
   }
 
@@ -611,7 +564,6 @@ const endorsementRows = [
   }
 
   .v2-connect h2 {
-    margin-top: 20px;
     font-size: clamp(62px, 8vw, 124px);
   }
 
@@ -619,7 +571,7 @@ const endorsementRows = [
     font-weight: 700;
   }
 
-  .v2-connect header > p:not(.v2-kicker) {
+  .v2-connect header > p {
     max-width: 480px;
     margin: 28px 0;
     color: #898991;
@@ -931,7 +883,7 @@ const endorsementRows = [
       width: 100%;
     }
 
-    .v2-download-row .v2-button--primary {
+    .v2-download-row .btn-primary {
       flex: 1;
       min-width: 0;
     }
