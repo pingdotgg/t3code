@@ -1413,6 +1413,36 @@ const makeWsRpcLayer = (
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverListProviderSkills]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListProviderSkills,
+            Effect.gen(function* () {
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(input.projectId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              if (Option.isNone(project)) {
+                return { skills: [] };
+              }
+
+              let cwd = project.value.workspaceRoot;
+              if (input.threadId !== undefined) {
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadShellById(input.threadId)
+                  .pipe(Effect.orElseSucceed(() => Option.none()));
+                if (Option.isNone(thread) || thread.value.projectId !== input.projectId) {
+                  return { skills: [] };
+                }
+                cwd = thread.value.worktreePath ?? cwd;
+              }
+
+              const skills = yield* providerRegistry.listSkills({
+                instanceId: input.instanceId,
+                cwd,
+              });
+              return { skills };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,

@@ -6240,6 +6240,7 @@ function ChatViewContent(props: ChatViewProps) {
                             routeKind={routeKind}
                             routeThreadRef={routeThreadRef}
                             draftId={draftId}
+                            activeProjectId={activeProject?.id ?? null}
                             activeThreadId={activeThreadId}
                             activeThreadEnvironmentId={activeThread?.environmentId}
                             activeThread={activeThread}
