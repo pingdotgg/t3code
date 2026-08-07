@@ -1,0 +1,113 @@
+export type ConfirmDialogState =
+  | { readonly status: "idle" }
+  | { readonly status: "confirming"; readonly message: string }
+  | { readonly status: "closing"; readonly message: string };
+
+type PendingConfirmation = {
+  readonly message: string;
+  readonly resolve: (confirmed: boolean) => void;
+};
+
+const idleState: ConfirmDialogState = { status: "idle" };
+let state: ConfirmDialogState = idleState;
+let activeConfirmation: PendingConfirmation | null = null;
+let queuedConfirmations: PendingConfirmation[] = [];
+let registeredHostCount = 0;
+const listeners = new Set<() => void>();
+
+function publish(next: ConfirmDialogState): void {
+  state = next;
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function resolvePendingConfirmations(confirmed: boolean): void {
+  activeConfirmation?.resolve(confirmed);
+  for (const confirmation of queuedConfirmations) {
+    confirmation.resolve(confirmed);
+  }
+  activeConfirmation = null;
+  queuedConfirmations = [];
+}
+
+export function readConfirmDialogState(): ConfirmDialogState {
+  return state;
+}
+
+export function subscribeConfirmDialog(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/**
+ * Registers the renderer host that can present themed confirmations. Returning
+ * an unavailable result lets the local API retain a host-specific fallback.
+ */
+export function registerConfirmDialogHost(): () => void {
+  registeredHostCount += 1;
+  let registered = true;
+
+  return () => {
+    if (!registered) return;
+    registered = false;
+    registeredHostCount = Math.max(0, registeredHostCount - 1);
+
+    if (registeredHostCount === 0) {
+      resolvePendingConfirmations(false);
+      publish(idleState);
+    }
+  };
+}
+
+/**
+ * Requests a themed confirmation when a host is mounted. An undefined result
+ * means the caller should use its environment-specific fallback.
+ */
+export function requestConfirmDialog(message: string): Promise<boolean> | undefined {
+  if (registeredHostCount === 0) return undefined;
+
+  const confirmation = new Promise<boolean>((resolve) => {
+    const pending = { message, resolve } satisfies PendingConfirmation;
+    if (activeConfirmation || state.status === "closing") {
+      queuedConfirmations.push(pending);
+      return;
+    }
+
+    activeConfirmation = pending;
+    publish({ status: "confirming", message });
+  });
+
+  return confirmation;
+}
+
+export function respondToConfirmDialog(confirmed: boolean): void {
+  if (state.status !== "confirming" || !activeConfirmation) return;
+
+  const confirmation = activeConfirmation;
+  activeConfirmation = null;
+  confirmation.resolve(confirmed);
+  publish({ status: "closing", message: state.message });
+}
+
+export function completeConfirmDialogClose(): void {
+  if (state.status !== "closing") return;
+
+  const next = queuedConfirmations.shift();
+  if (!next) {
+    publish(idleState);
+    return;
+  }
+
+  activeConfirmation = next;
+  publish({ status: "confirming", message: next.message });
+}
+
+export function resetConfirmDialogForTests(): void {
+  resolvePendingConfirmations(false);
+  registeredHostCount = 0;
+  publish(idleState);
+  listeners.clear();
+}

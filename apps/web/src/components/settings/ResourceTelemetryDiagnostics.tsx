@@ -38,6 +38,7 @@ import {
   useResourceTelemetryHistory,
 } from "../../lib/resourceTelemetryState";
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -850,14 +851,14 @@ export function ResourceTelemetryDiagnostics() {
   const allT3 = snapshot?.groups.allT3;
 
   const signalProcess = useCallback(
-    (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
-      if (
-        signal === "SIGKILL" &&
-        !window.confirm(
+    async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
+      if (signal === "SIGKILL") {
+        const confirmed = await ensureLocalApi().dialogs.confirm(
           `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
-        )
-      ) {
-        return;
+        );
+        if (!confirmed) {
+          return;
+        }
       }
       const identityKey = processIdentityKey(process);
       const environmentId = primaryEnvironment?.environmentId;

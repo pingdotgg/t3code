@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
@@ -895,12 +896,14 @@ export function DiagnosticsSettingsPanel() {
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
   const signalProcess = useCallback(
-    (pid: number, signal: ServerProcessSignal) => {
-      if (
-        signal === "SIGKILL" &&
-        !window.confirm(`Send SIGKILL to process ${pid}? This cannot be handled by the process.`)
-      ) {
-        return;
+    async (pid: number, signal: ServerProcessSignal) => {
+      if (signal === "SIGKILL") {
+        const confirmed = await ensureLocalApi().dialogs.confirm(
+          `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
+        );
+        if (!confirmed) {
+          return;
+        }
       }
       if (environmentId === null) {
         return;

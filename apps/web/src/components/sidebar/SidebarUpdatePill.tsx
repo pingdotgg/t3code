@@ -1,6 +1,7 @@
 import { DownloadIcon, RotateCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { isElectron } from "../../env";
+import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -80,7 +81,7 @@ export function SidebarUpdatePill() {
   const arm64Description =
     state && showArm64Warning ? getArm64IntelBuildWarningDescription(state) : null;
 
-  const handleAction = useCallback(() => {
+  const handleAction = useCallback(async () => {
     const bridge = window.desktopBridge;
     if (!bridge || !state) return;
     if (disabled || action === "none") return;
@@ -116,7 +117,7 @@ export function SidebarUpdatePill() {
     }
 
     if (action === "install") {
-      const confirmed = window.confirm(
+      const confirmed = await ensureLocalApi().dialogs.confirm(
         getDesktopUpdateInstallConfirmationMessage(state, navigator.platform),
       );
       if (!confirmed) return;
