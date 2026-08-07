@@ -79,7 +79,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
->>>>>>> ab978b6ee3 (fix: reconcile rebase with latest main)
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <button
