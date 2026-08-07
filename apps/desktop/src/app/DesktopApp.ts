@@ -157,6 +157,13 @@ export const restartBackendAfterCuaDriverExit = Effect.fn(
   return true;
 });
 
+export const reportCuaDriverRecoveryFailure = (cause: Cause.Cause<never>) =>
+  Cause.hasInterruptsOnly(cause)
+    ? Effect.failCause(cause)
+    : logStartupError("failed to remove unavailable cua-driver from desktop backend", {
+        cause,
+      });
+
 const bootstrap = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const primaryBackend = yield* pool.primary;
@@ -354,11 +361,7 @@ const startup = Effect.gen(function* () {
             ? logStartupInfo("desktop backend restarted without unavailable cua-driver")
             : Effect.void,
         ),
-        Effect.catchCause((cause) =>
-          logStartupError("failed to remove unavailable cua-driver from desktop backend", {
-            cause,
-          }),
-        ),
+        Effect.catchCause(reportCuaDriverRecoveryFailure),
         Effect.forkScoped,
       );
     }
