@@ -7,6 +7,7 @@ import {
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -32,6 +33,112 @@ import {
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
 
+const THREAD_EVENT_BATCH_WINDOW = Duration.millis(16);
+const THREAD_EVENT_BATCH_MAX_SIZE = 64;
+
+interface ThreadStreamBatchReduction {
+  readonly state: EnvironmentThreadState;
+  readonly lastSequence: number;
+  readonly awaitingCompletion: boolean;
+  readonly threadDeleted: boolean;
+  readonly persistableSnapshot: OrchestrationThreadDetailSnapshot | null;
+}
+
+export interface EnvironmentThreadStateOptions {
+  readonly eventBatchSize?: number;
+}
+
+function reduceThreadStreamItems(
+  currentState: EnvironmentThreadState,
+  currentSequence: number,
+  currentAwaitingCompletion: boolean,
+  items: ReadonlyArray<OrchestrationThreadStreamItem>,
+): ThreadStreamBatchReduction {
+  let state = currentState;
+  let lastSequence = currentSequence;
+  let awaitingCompletion = currentAwaitingCompletion;
+  let thread = Option.getOrNull(currentState.data);
+  let threadDeleted = false;
+  let persistableSnapshot: OrchestrationThreadDetailSnapshot | null = null;
+
+  for (const item of items) {
+    if (item.kind === "synchronized") {
+      awaitingCompletion = false;
+      if (thread !== null && state.status !== "deleted") {
+        state = {
+          data: state.data,
+          status: "live",
+          error: Option.none(),
+        };
+      }
+      continue;
+    }
+
+    if (item.kind === "snapshot") {
+      lastSequence = item.snapshot.snapshotSequence;
+      thread = item.snapshot.thread;
+      threadDeleted = false;
+      persistableSnapshot = shouldPersistThread(thread) ? item.snapshot : null;
+      state = {
+        data: Option.some(thread),
+        status: awaitingCompletion ? "synchronizing" : "live",
+        error: Option.none(),
+      };
+      continue;
+    }
+
+    if (item.event.sequence <= lastSequence) {
+      continue;
+    }
+    lastSequence = item.event.sequence;
+
+    if (thread === null) {
+      if (item.event.type === "thread.deleted") {
+        awaitingCompletion = false;
+        threadDeleted = true;
+        persistableSnapshot = null;
+        state = {
+          data: Option.none(),
+          status: "deleted",
+          error: Option.none(),
+        };
+      }
+      continue;
+    }
+
+    const result = applyThreadDetailEvent(thread, item.event);
+    if (result.kind === "updated") {
+      thread = result.thread;
+      if (shouldPersistThread(thread)) {
+        persistableSnapshot = { snapshotSequence: lastSequence, thread };
+      }
+      state = {
+        data: Option.some(thread),
+        status: awaitingCompletion ? "synchronizing" : "live",
+        error: Option.none(),
+      };
+    } else if (result.kind === "deleted") {
+      awaitingCompletion = false;
+      thread = null;
+      threadDeleted = true;
+      persistableSnapshot = null;
+      state = {
+        data: Option.none(),
+        status: "deleted",
+        error: Option.none(),
+      };
+    }
+  }
+
+  return {
+    state,
+    lastSequence,
+    awaitingCompletion,
+    threadDeleted,
+    persistableSnapshot,
+  };
+}
+
 function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
@@ -50,12 +157,14 @@ function shouldPersistThread(thread: OrchestrationThread): boolean {
 
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
+  options?: EnvironmentThreadStateOptions,
 ) {
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
   const snapshotLoader = yield* ThreadSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
+  const eventBatchSize = options?.eventBatchSize ?? THREAD_EVENT_BATCH_MAX_SIZE;
   const cached = yield* cache.loadThread(environmentId, threadId).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Could not load cached thread.").pipe(
@@ -141,81 +250,40 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ),
     );
 
-  const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
-    thread: OrchestrationThread,
+  const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
+    items: ReadonlyArray<OrchestrationThreadStreamItem>,
   ) {
-    const waiting = yield* Ref.get(awaitingCompletion);
-    yield* SubscriptionRef.set(state, {
-      data: Option.some(thread),
-      status: waiting ? "synchronizing" : "live",
-      error: Option.none(),
-    });
-    // Active threads can update many times per second and retain large tool
-    // payloads. The server remains the source of truth while a turn is active;
-    // persist once it settles so cache encoding stays off the streaming path.
-    if (shouldPersistThread(thread)) {
-      const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
-      yield* Queue.offer(persistence, { snapshotSequence, thread });
-    }
-  });
-
-  const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
-    yield* Ref.set(awaitingCompletion, false);
-    yield* SubscriptionRef.set(state, {
-      data: Option.none(),
-      status: "deleted",
-      error: Option.none(),
-    });
-    yield* cache.removeThread(environmentId, threadId).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not remove the cached thread.").pipe(
-          Effect.annotateLogs({
-            environmentId,
-            threadId,
-            error: error.message,
-          }),
-        ),
-      ),
+    const currentState = yield* SubscriptionRef.get(state);
+    const reduction = reduceThreadStreamItems(
+      currentState,
+      yield* SubscriptionRef.get(lastSequence),
+      yield* Ref.get(awaitingCompletion),
+      items,
     );
-  });
 
-  const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
-    item: OrchestrationThreadStreamItem,
-  ) {
-    if (item.kind === "synchronized") {
-      yield* Ref.set(awaitingCompletion, false);
-      yield* SubscriptionRef.update(state, (current) =>
-        Option.isSome(current.data) && current.status !== "deleted"
-          ? { ...current, status: "live" as const, error: Option.none() }
-          : current,
+    yield* SubscriptionRef.set(lastSequence, reduction.lastSequence);
+    yield* Ref.set(awaitingCompletion, reduction.awaitingCompletion);
+    if (reduction.state !== currentState) {
+      yield* SubscriptionRef.set(state, reduction.state);
+    }
+
+    if (reduction.threadDeleted) {
+      yield* cache.removeThread(environmentId, threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove the cached thread.").pipe(
+            Effect.annotateLogs({
+              environmentId,
+              threadId,
+              error: error.message,
+            }),
+          ),
+        ),
       );
       return;
     }
 
-    if (item.kind === "snapshot") {
-      yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
-      yield* setThread(item.snapshot.thread);
-      return;
-    }
-
-    const sequence = yield* SubscriptionRef.get(lastSequence);
-    if (item.event.sequence <= sequence) {
-      return;
-    }
-    yield* SubscriptionRef.set(lastSequence, item.event.sequence);
-
-    const current = yield* SubscriptionRef.get(state);
-    if (Option.isNone(current.data)) {
-      if (item.event.type === "thread.deleted") {
-        yield* setDeleted();
-      }
-      return;
-    }
-    const result = applyThreadDetailEvent(current.data.value, item.event);
-    if (result.kind === "updated") {
-      yield* setThread(result.thread);
-    } else if (result.kind === "deleted") {
-      yield* setDeleted();
+    if (reduction.persistableSnapshot !== null) {
+      yield* Queue.offer(persistence, reduction.persistableSnapshot);
     }
   });
 
@@ -269,7 +337,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           );
           const httpSnapshot = yield* snapshotLoader.load(prepared, threadId);
           if (Option.isSome(httpSnapshot)) {
-            yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+            yield* applyItems([{ kind: "snapshot", snapshot: httpSnapshot.value }]);
             current = yield* SubscriptionRef.get(state);
           }
         }
@@ -295,7 +363,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEach(applyItem)),
+    ).pipe(
+      Stream.groupedWithin(eventBatchSize, THREAD_EVENT_BATCH_WINDOW),
+      Stream.runForEach(applyItems),
+    ),
   );
 
   yield* Effect.addFinalizer(() =>
