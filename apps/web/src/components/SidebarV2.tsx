@@ -2182,6 +2182,40 @@ export default function SidebarV2() {
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
+  const performSnooze = useCallback(
+    async (
+      threadRef: ScopedThreadRef,
+      preset: SnoozePreset,
+      opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
+    ) => {
+      const threadKey = scopedThreadKey(threadRef);
+      if (snoozingThreadKeysRef.current.has(threadKey)) {
+        return { status: "skipped" } as const;
+      }
+      snoozingThreadKeysRef.current.add(threadKey);
+      try {
+        // Snoozing the open thread moves you forward, same as settle —
+        // both park the thread you're done with for now.
+        const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
+        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        if (result._tag === "Failure") {
+          // Never navigate away from a thread that did not snooze.
+          return isAtomCommandInterrupted(result)
+            ? ({ status: "interrupted" } as const)
+            : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
+        }
+        // Only move forward if the user is still on the snoozed thread —
+        // a navigation made during the await wins over ours.
+        if (routeThreadKeyRef.current === threadKey) {
+          navigateAfterSnooze?.();
+        }
+        return { status: "success" } as const;
+      } finally {
+        snoozingThreadKeysRef.current.delete(threadKey);
+      }
+    },
+    [planForwardNavigation, snoozeThread],
+  );
   const attemptSnooze = useCallback(
     (
       threadRef: ScopedThreadRef,
@@ -2189,52 +2223,35 @@ export default function SidebarV2() {
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       void (async () => {
-        const threadKey = scopedThreadKey(threadRef);
-        if (snoozingThreadKeysRef.current.has(threadKey)) return;
-        snoozingThreadKeysRef.current.add(threadKey);
-        try {
-          // Snoozing the open thread moves you forward, same as settle —
-          // both park the thread you're done with for now.
-          const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-          const result = await snoozeThread(threadRef, preset.snoozedUntil);
-          if (result._tag === "Failure") {
-            // Never navigate away from a thread that did not snooze.
-            if (!isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Failed to snooze thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                }),
-              );
-            }
-            return;
-          }
-          // Snooze hides the row, so the toast is the only confirmation —
-          // and the Undo is the escape hatch for a mis-click.
+        const outcome = await performSnooze(threadRef, preset, opts);
+        if (outcome.status === "failure") {
           toastManager.add(
             stackedThreadToast({
-              type: "success",
-              title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
-              timeout: 5_000,
-              actionProps: {
-                children: "Undo",
-                onClick: () => attemptUnsnooze(threadRef),
-              },
+              type: "error",
+              title: "Failed to snooze thread",
+              description:
+                outcome.error instanceof Error ? outcome.error.message : "An error occurred.",
             }),
           );
-          // Only move forward if the user is still on the snoozed thread —
-          // a navigation made during the await wins over ours.
-          if (routeThreadKeyRef.current === threadKey) {
-            navigateAfterSnooze?.();
-          }
-        } finally {
-          snoozingThreadKeysRef.current.delete(threadKey);
+          return;
         }
+        if (outcome.status !== "success") return;
+        // Snooze hides the row, so the toast is the only confirmation —
+        // and the Undo is the escape hatch for a mis-click.
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
+            timeout: 5_000,
+            actionProps: {
+              children: "Undo",
+              onClick: () => attemptUnsnooze(threadRef),
+            },
+          }),
+        );
       })();
     },
-    [attemptUnsnooze, planForwardNavigation, snoozeThread, timestampFormat],
+    [attemptUnsnooze, performSnooze, timestampFormat],
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
@@ -2308,12 +2325,55 @@ export default function SidebarV2() {
           // Post-snooze navigation must skip threads snoozing in this same
           // batch — they are all leaving the card block together.
           const coSnoozingKeys = new Set(threadKeys);
-          for (const thread of selectedThreads) {
-            attemptSnooze(scopeThreadRef(thread.environmentId, thread.id), preset, {
-              coSnoozingKeys,
-            });
-          }
           clearSelection();
+          const outcomes = await Promise.all(
+            selectedThreads.map(async (thread) => {
+              const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+              const outcome = await performSnooze(threadRef, preset, { coSnoozingKeys });
+              return { outcome, threadRef };
+            }),
+          );
+          const snoozedThreadRefs = outcomes.flatMap(({ outcome, threadRef }) =>
+            outcome.status === "success" ? [threadRef] : [],
+          );
+          const failures = outcomes.flatMap(({ outcome }) =>
+            outcome.status === "failure" ? [outcome.error] : [],
+          );
+
+          if (snoozedThreadRefs.length > 0) {
+            const snoozedCount = snoozedThreadRefs.length;
+            const failedCount = failures.length;
+            toastManager.add(
+              stackedThreadToast({
+                type: failedCount > 0 ? "warning" : "success",
+                title:
+                  failedCount > 0
+                    ? `Snoozed ${snoozedCount} of ${selectedThreads.length} threads`
+                    : `Snoozed ${snoozedCount} thread${snoozedCount === 1 ? "" : "s"}`,
+                description:
+                  failedCount > 0
+                    ? `${failedCount} thread${failedCount === 1 ? "" : "s"} couldn't be snoozed.`
+                    : undefined,
+                timeout: 5_000,
+                actionProps: {
+                  children: "Undo",
+                  onClick: () => {
+                    for (const threadRef of snoozedThreadRefs) attemptUnsnooze(threadRef);
+                  },
+                },
+              }),
+            );
+          } else if (failures.length > 0) {
+            const firstError = failures[0];
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to snooze threads",
+                description:
+                  firstError instanceof Error ? firstError.message : "An error occurred.",
+              }),
+            );
+          }
         }
         return;
       }
@@ -2409,8 +2469,10 @@ export default function SidebarV2() {
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
+      performSnooze,
       removeFromSelection,
       serverConfigs,
+      attemptUnsnooze,
       updateThreadMetadata,
       timestampFormat,
     ],
