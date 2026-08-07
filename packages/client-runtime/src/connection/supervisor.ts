@@ -10,7 +10,6 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
@@ -224,7 +223,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
-  const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
     network: yield* connectivity.status,
@@ -766,11 +764,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   yield* Connectivity.followNetworkStatus({
     apply: applyNetworkStatus,
+    onWakeup: (reason) => signal({ _tag: "Wakeup", reason }),
   });
-  yield* wakeups.changes.pipe(
-    Stream.runForEach((reason) => signal({ _tag: "Wakeup", reason })),
-    Effect.forkScoped,
-  );
   yield* run().pipe(Effect.forkScoped);
 
   const connect = Ref.update(intent, (current) => ({
