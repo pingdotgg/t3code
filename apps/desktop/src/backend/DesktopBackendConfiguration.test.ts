@@ -32,6 +32,7 @@ const cuaDriverLayer = (enabled: boolean) =>
       start: Effect.die("unexpected start"),
       stop: Effect.void,
       mcpConfiguration: Effect.succeed(enabled ? Option.some(testCuaDriverMcp) : Option.none()),
+      awaitUnavailable: Effect.never,
     }),
   );
 

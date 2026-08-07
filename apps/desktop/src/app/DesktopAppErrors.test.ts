@@ -1,8 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import {
   DesktopBackendPortUnavailableError,
   DesktopDevelopmentBackendPortRequiredError,
+  restartBackendAfterCuaDriverExit,
 } from "./DesktopApp.ts";
 
 describe("DesktopApp errors", () => {
@@ -26,5 +29,34 @@ describe("DesktopApp errors", () => {
     const error = new DesktopDevelopmentBackendPortRequiredError();
 
     assert.equal(error.message, "T3CODE_PORT is required in desktop development.");
+  });
+
+  it.effect("restarts a running backend so stale Cua launch args are discarded", () => {
+    const events: Array<string> = [];
+    const backend = {
+      snapshot: Effect.succeed({
+        desiredRunning: true,
+        ready: true,
+        activePid: Option.some(42),
+        restartAttempt: 0,
+        restartScheduled: false,
+      }),
+      stop: () =>
+        Effect.sync(() => {
+          events.push("stop");
+        }),
+      start: Effect.sync(() => {
+        events.push("start");
+      }),
+    };
+
+    return restartBackendAfterCuaDriverExit(backend, Effect.succeed(false)).pipe(
+      Effect.tap((restarted) =>
+        Effect.sync(() => {
+          assert.isTrue(restarted);
+          assert.deepEqual(events, ["stop", "start"]);
+        }),
+      ),
+    );
   });
 });

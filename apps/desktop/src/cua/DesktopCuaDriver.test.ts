@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -133,6 +134,46 @@ describe("DesktopCuaDriver", () => {
         const error = yield* service.start.pipe(Effect.flip);
         expect(error).toBeInstanceOf(CuaDriverPermissionError);
         expect(loadedEmbedded).toBe(false);
+      }),
+    ).pipe(Effect.provide(environmentLayer(true)));
+  });
+
+  it.effect("reports an unexpected daemon exit after clearing its MCP descriptor", () => {
+    return Effect.scoped(
+      Effect.gen(function* () {
+        let resolveExit: (exit: EmbeddedDriverExit) => void = () => {};
+        const exit = new Promise<EmbeddedDriverExit>((resolve) => {
+          resolveExit = resolve;
+        });
+
+        class ExitingEmbeddedCuaDriverHost {
+          start = () => Promise.resolve(connection);
+          stop = () => Promise.resolve();
+          waitForExit = () => exit;
+          uniffiDestroy = () => {};
+        }
+
+        const service = yield* make({
+          loadElectron: () =>
+            Promise.resolve({
+              requestMacOSPermissions: () => ({
+                accessibility: true,
+                screenRecording: true,
+              }),
+              hasRequiredMacOSPermissions: () => true,
+            } as unknown as typeof import("@trycua/cua-driver/electron")),
+          loadEmbedded: () =>
+            Promise.resolve({
+              EmbeddedCuaDriverHost: ExitingEmbeddedCuaDriverHost,
+            } as unknown as typeof import("@trycua/cua-driver/embedded")),
+        });
+
+        yield* service.start;
+        const unavailable = yield* service.awaitUnavailable.pipe(Effect.forkScoped);
+        resolveExit({ generation: connection.generation, code: 9, success: false });
+        yield* Fiber.await(unavailable);
+
+        expect(Option.isNone(yield* service.mcpConfiguration)).toBe(true);
       }),
     ).pipe(Effect.provide(environmentLayer(true)));
   });

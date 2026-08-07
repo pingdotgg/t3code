@@ -1,5 +1,6 @@
 import type { CuaDriverMcpConfiguration } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -110,6 +111,7 @@ export class DesktopCuaDriver extends Context.Service<
     readonly start: Effect.Effect<CuaDriverMcpConfiguration, DesktopCuaDriverError, Scope.Scope>;
     readonly stop: Effect.Effect<void>;
     readonly mcpConfiguration: Effect.Effect<Option.Option<CuaDriverMcpConfiguration>>;
+    readonly awaitUnavailable: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/cua/DesktopCuaDriver") {}
 
@@ -121,6 +123,7 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
 ) {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const state = yield* Ref.make(Option.none<HostedDriver>());
+  const unavailable = yield* Deferred.make<void>();
 
   const stop = Ref.getAndSet(state, Option.none()).pipe(
     Effect.flatMap(
@@ -195,7 +198,11 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
                   generation: exit.generation,
                   code: exit.code,
                   success: exit.success,
-                }).pipe(Effect.ensuring(destroyHost(host)))
+                }).pipe(
+                  Effect.andThen(Deferred.succeed(unavailable, undefined)),
+                  Effect.asVoid,
+                  Effect.ensuring(destroyHost(host)),
+                )
               : Effect.void,
           ),
         ),
@@ -215,7 +222,11 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
               ? Effect.logWarning(
                   "embedded cua-driver exit monitor failed; computer use is unavailable",
                   { component: "embedded-cua-driver", cause },
-                ).pipe(Effect.ensuring(destroyHost(host)))
+                ).pipe(
+                  Effect.andThen(Deferred.succeed(unavailable, undefined)),
+                  Effect.asVoid,
+                  Effect.ensuring(destroyHost(host)),
+                )
               : Effect.void,
           ),
         ),
@@ -237,6 +248,7 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
     mcpConfiguration: Ref.get(state).pipe(
       Effect.map(Option.map(({ connection }) => connection.mcp)),
     ),
+    awaitUnavailable: Deferred.await(unavailable),
   });
 });
 
