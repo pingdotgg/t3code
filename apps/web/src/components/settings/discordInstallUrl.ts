@@ -1,4 +1,4 @@
-const DISCORD_CHANNEL_PERMISSIONS = "309237713920";
+const DISCORD_CHANNEL_PERMISSIONS = "309304822784";
 
 export function buildDiscordInstallUrl(applicationId: string, guildId: string): string | null {
   const clientId = applicationId.trim();

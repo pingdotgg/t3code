@@ -148,14 +148,14 @@ describe("Discord channel model selection", () => {
       assistantResponse: null,
     } as const;
 
-    expect(taskStatusText(task)).toBe("🔄 Fix login");
+    expect(taskStatusText(task)).toBe("Fix login 🔄");
     expect(
       taskStatusText({
         ...task,
         state: "done",
         assistantResponse: "Fixed the login flow and added coverage.",
       }),
-    ).toBe("✅ Fix login\n\nFixed the login flow and added coverage.");
+    ).toBe("Fix login ✅\n\nFixed the login flow and added coverage.");
     expect(taskStatusText(task)).not.toContain("Model:");
     expect(taskStatusText(task)).not.toContain("Target:");
   });
@@ -181,21 +181,41 @@ describe("Discord channel model selection", () => {
   it("sends and edits native Discord content without Channels UI components", async () => {
     const requests: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
-      requests.push({ url: String(url), ...(init ? { init } : {}) });
-      return new Response(JSON.stringify({ id: "message-1" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      const requestUrl = String(url);
+      requests.push({ url: requestUrl, ...(init ? { init } : {}) });
+      return new Response(
+        JSON.stringify(
+          requestUrl.endsWith("/users/@me") && init?.method === "GET"
+            ? { username: "copilotkit-ad" }
+            : { id: "message-1" },
+        ),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
     const client = createDiscordTextClient("secret", fetchImpl);
 
     const ref = await client.post("channel-1", "Queued");
     await client.update(ref, "Running");
+    await client.ensureBotUsername("copilot");
+    await client.setGuildNickname("guild-1", "copilot");
 
-    expect(requests.map(({ init }) => init?.method)).toEqual(["POST", "PATCH"]);
+    expect(requests.map(({ init }) => init?.method)).toEqual([
+      "POST",
+      "PATCH",
+      "GET",
+      "PATCH",
+      "PATCH",
+    ]);
     expect(requests[1]?.url).toContain("/channels/channel-1/messages/message-1");
+    expect(requests[3]?.url).toContain("/users/@me");
+    expect(requests[4]?.url).toContain("/guilds/guild-1/members/@me");
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
       content: "Queued",
     });
+    expect(JSON.parse(String(requests[3]?.init?.body))).toEqual({ username: "copilot" });
+    expect(JSON.parse(String(requests[4]?.init?.body))).toEqual({ nick: "copilot" });
   });
 });

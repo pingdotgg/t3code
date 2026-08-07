@@ -12,7 +12,7 @@ describe("buildDiscordInstallUrl", () => {
     expect(Object.fromEntries(url.searchParams)).toEqual({
       client_id: "1535085613399933028",
       integration_type: "0",
-      permissions: "309237713920",
+      permissions: "309304822784",
       scope: "bot applications.commands",
     });
   });

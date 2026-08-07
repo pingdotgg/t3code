@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { z } from "zod";
@@ -107,11 +108,14 @@ interface DiscordTextMessageRef {
 interface DiscordTextClient {
   readonly post: (channelId: string, text: string) => Promise<DiscordTextMessageRef>;
   readonly update: (ref: DiscordTextMessageRef, text: string) => Promise<void>;
+  readonly ensureBotUsername: (username: string) => Promise<void>;
+  readonly setGuildNickname: (guildId: string, nickname: string) => Promise<void>;
 }
 
 interface ActiveDiscordChannel {
   readonly fingerprint: string;
   readonly refreshTask: (threadId: ThreadId) => Promise<void>;
+  readonly refreshPendingTasks: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
 
@@ -179,13 +183,13 @@ function readConversationState(value: unknown): LinkedConversationState {
 export function taskStatusText(task: ChannelTaskStatus): string {
   switch (task.state) {
     case "queued":
-      return `⏳ ${task.title}`;
+      return `${task.title} ⏳`;
     case "running":
-      return `🔄 ${task.title}`;
+      return `${task.title} 🔄`;
     case "done":
-      return `✅ ${task.title}\n\n${task.assistantResponse ?? "Done."}`;
+      return `${task.title} ✅\n\n${task.assistantResponse ?? "Done."}`;
     case "failed":
-      return `❌ ${task.title}\n\nTask failed.`;
+      return `${task.title} ❌\n\nTask failed.`;
   }
 }
 
@@ -215,17 +219,17 @@ export function createDiscordTextClient(
   botToken: string,
   fetchImpl: typeof fetch = fetch,
 ): DiscordTextClient {
-  const request = async (url: string, method: "POST" | "PATCH", text: string) => {
+  const request = async (url: string, method: "GET" | "POST" | "PATCH", body?: unknown) => {
     const response = await fetchImpl(url, {
       method,
       headers: {
         Authorization: `Bot ${botToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ content: text.slice(0, 2_000) }),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!response.ok) {
-      throw new Error(`Discord text message request failed (${response.status})`);
+      throw new Error(`Discord API request failed (${response.status})`);
     }
     return response;
   };
@@ -235,7 +239,7 @@ export function createDiscordTextClient(
       const response = await request(
         `https://discord.com/api/v10/channels/${channelId}/messages`,
         "POST",
-        text,
+        { content: text.slice(0, 2_000) },
       );
       const payload = (await response.json()) as { readonly id?: unknown };
       if (typeof payload.id !== "string") {
@@ -247,8 +251,19 @@ export function createDiscordTextClient(
       await request(
         `https://discord.com/api/v10/channels/${ref.channelId}/messages/${ref.messageId}`,
         "PATCH",
-        text,
+        { content: text.slice(0, 2_000) },
       );
+    },
+    async ensureBotUsername(username) {
+      const current = await request("https://discord.com/api/v10/users/@me", "GET");
+      const user = (await current.json()) as { readonly username?: unknown };
+      if (user.username === username) return;
+      await request("https://discord.com/api/v10/users/@me", "PATCH", { username });
+    },
+    async setGuildNickname(guildId, nickname) {
+      await request(`https://discord.com/api/v10/guilds/${guildId}/members/@me`, "PATCH", {
+        nick: nickname,
+      });
     },
   };
 }
@@ -268,7 +283,14 @@ function createT3CodeChannel(input: {
   readonly models: ReadonlyArray<DiscordModelOption>;
 }) {
   const textClient = createDiscordTextClient(input.config.botToken);
-  const linkedTasks = new Map<string, { readonly messageRef: DiscordTextMessageRef }>();
+  const linkedTasks = new Map<
+    string,
+    {
+      readonly messageRef: DiscordTextMessageRef;
+      lastText: string;
+      terminal: boolean;
+    }
+  >();
   const channel = createChannel({
     name: "t3-code",
     identifyUser: "platform",
@@ -284,6 +306,18 @@ function createT3CodeChannel(input: {
   const postText = (thread: ChannelThread, text: string) =>
     textClient.post(discordChannelId(thread), text);
 
+  const updateLinkedTask = async (threadId: ThreadId, status: ChannelTaskStatus) => {
+    const linked = linkedTasks.get(threadId);
+    if (!linked) return;
+    const nextText = taskStatusText(status);
+    if (nextText !== linked.lastText) {
+      await textClient.update(linked.messageRef, nextText);
+      linked.lastText = nextText;
+    }
+    linked.terminal =
+      status.state === "failed" || (status.state === "done" && status.assistantResponse !== null);
+  };
+
   const postStatus = async (thread: ChannelThread, threadId: ThreadId) => {
     const status = await input.operations.getTaskStatus(threadId);
     if (!status) {
@@ -292,7 +326,7 @@ function createT3CodeChannel(input: {
     }
     const linked = linkedTasks.get(threadId);
     if (linked) {
-      await textClient.update(linked.messageRef, taskStatusText(status));
+      await updateLinkedTask(threadId, status);
       return;
     }
     await postText(thread, taskStatusText(status));
@@ -310,10 +344,7 @@ function createT3CodeChannel(input: {
       return;
     }
     if (text.length === 0) {
-      await postText(
-        thread,
-        "Mention me with a coding task, or send `status` to check the linked run.",
-      );
+      await postText(thread, "Use `/t3` with a coding task.");
       return;
     }
 
@@ -331,8 +362,9 @@ function createT3CodeChannel(input: {
         ...state,
         t3ThreadId: task.threadId,
       } satisfies LinkedConversationState);
-      const messageRef = await postText(thread, taskStatusText(task));
-      linkedTasks.set(task.threadId, { messageRef });
+      const initialText = taskStatusText(task);
+      const messageRef = await postText(thread, initialText);
+      linkedTasks.set(task.threadId, { messageRef, lastText: initialText, terminal: false });
       await postStatus(thread, task.threadId);
     } catch {
       await postText(
@@ -344,7 +376,6 @@ function createT3CodeChannel(input: {
     }
   };
 
-  channel.onMention(({ thread, message }) => handleText(thread, message.text));
   channel.onCommand(
     defineChannelCommand({
       name: "t3",
@@ -410,15 +441,35 @@ function createT3CodeChannel(input: {
     }),
   );
 
+  const refreshTask = async (threadId: ThreadId) => {
+    const linked = linkedTasks.get(threadId);
+    if (!linked || linked.terminal) return;
+    const task = await input.operations.getTaskStatus(threadId);
+    if (!task) return;
+    await updateLinkedTask(threadId, task);
+  };
+
   return {
     channel,
-    refreshTask: async (threadId: ThreadId) => {
-      const linked = linkedTasks.get(threadId);
-      if (!linked) return;
-      const task = await input.operations.getTaskStatus(threadId);
-      if (!task) return;
-      await textClient.update(linked.messageRef, taskStatusText(task));
+    refreshTask,
+    refreshPendingTasks: async () => {
+      await Promise.all(
+        Array.from(linkedTasks)
+          .filter(([, linked]) => !linked.terminal)
+          .map(([threadId]) => refreshTask(ThreadId.make(threadId))),
+      );
     },
+    setDisplayName: async () => {
+      const updates = [textClient.ensureBotUsername("copilot")];
+      if (input.config.guildId.length > 0) {
+        updates.push(textClient.setGuildNickname(input.config.guildId, "copilot"));
+      }
+      const results = await Promise.allSettled(updates);
+      if (results.some((result) => result.status === "fulfilled")) return;
+      const failure = results.find((result) => result.status === "rejected");
+      throw failure?.reason ?? new Error("Discord bot display name could not be updated");
+    },
+    stop: () => channel.ɵruntime.stop(),
   };
 }
 
@@ -630,15 +681,18 @@ export const layer = Layer.effectDiscard(
         Effect.catchCause(() => Effect.succeed(false)),
       );
       if (!connected) {
-        yield* Effect.tryPromise(() => created.channel.ɵruntime.stop()).pipe(
-          Effect.ignoreCause({ log: true }),
-        );
+        yield* Effect.tryPromise(() => created.stop()).pipe(Effect.ignoreCause({ log: true }));
         return;
       }
+      yield* Effect.tryPromise(() => created.setDisplayName()).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.ignoreCause({ log: true }),
+      );
       yield* Ref.set(activeRef, {
         fingerprint,
         refreshTask: created.refreshTask,
-        stop: () => created.channel.ɵruntime.stop(),
+        refreshPendingTasks: created.refreshPendingTasks,
+        stop: created.stop,
       });
     });
 
@@ -671,6 +725,18 @@ export const layer = Layer.effectDiscard(
           ),
         );
       }),
+    );
+    yield* forkParked(
+      Ref.get(activeRef).pipe(
+        Effect.flatMap((active) =>
+          active
+            ? Effect.tryPromise(() => active.refreshPendingTasks()).pipe(
+                Effect.ignoreCause({ log: true }),
+              )
+            : Effect.void,
+        ),
+        Effect.repeat(Schedule.spaced("1 second")),
+      ),
     );
   }),
 );
