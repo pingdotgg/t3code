@@ -187,6 +187,8 @@ public struct ThreadDetailView: View {
             .font(T3Typography.navigationMetadata)
             .foregroundStyle(T3Colors.textTertiary)
         }
+        // Leave compact-width clearance for the trailing thread menu.
+        .padding(.trailing, horizontalSizeClass == .compact ? 10 : 0)
         .frame(maxWidth: horizontalSizeClass == .compact ? 260 : 460, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
