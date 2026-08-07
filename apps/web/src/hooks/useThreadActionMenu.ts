@@ -152,7 +152,11 @@ export function useThreadActionMenu(input: {
               actionProps: {
                 children: "Undo",
                 onClick: () => {
-                  void unsnoozeThread(threadRef);
+                  void unsnoozeThread(threadRef).then((undone) => {
+                    if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {
+                      failureToast("Failed to wake thread", squashAtomCommandFailure(undone));
+                    }
+                  });
                 },
               },
             }),
