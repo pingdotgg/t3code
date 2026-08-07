@@ -5,8 +5,32 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  grokAcpRuntimeProcessOwnership,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
+
+describe("grokAcpRuntimeProcessOwnership", () => {
+  it("opts Grok into detached process-tree ownership on the injected host platform", () => {
+    expect(grokAcpRuntimeProcessOwnership("linux")).toEqual({
+      ownDescendantProcessGroups: true,
+      ownDetachedProcessGroup: true,
+      processGroupPlatform: "linux",
+    });
+  });
+
+  it("uses the prior provider-group path on Darwin and Windows", () => {
+    expect(grokAcpRuntimeProcessOwnership("darwin")).toEqual({
+      ownDescendantProcessGroups: false,
+      ownDetachedProcessGroup: true,
+      processGroupPlatform: "darwin",
+    });
+    expect(grokAcpRuntimeProcessOwnership("win32")).toEqual({
+      ownDescendantProcessGroups: false,
+      ownDetachedProcessGroup: true,
+      processGroupPlatform: "win32",
+    });
+  });
+});
 
 describe("resolveGrokAcpBaseModelId", () => {
   it("normalizes empty and custom Grok model ids", () => {

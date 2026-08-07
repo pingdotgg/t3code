@@ -1,7 +1,7 @@
 import type {
   EnvironmentId,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadShell,
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadShell,
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
@@ -10,7 +10,7 @@ import type {
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
-import { scopeThreadShell } from "./models.ts";
+import { presentThreadShell } from "./models.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -21,9 +21,9 @@ import {
   threadRefsEqual,
 } from "./entities.ts";
 
-const EMPTY_THREADS: ReadonlyArray<OrchestrationThreadShell> = Object.freeze([]);
+const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
-const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationThreadShell> = new Map();
+const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> = new Map();
 const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ProjectId,
   ReadonlyArray<ScopedThreadRef>
@@ -33,17 +33,17 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
-  ) => Atom.Atom<OrchestrationShellSnapshot | null>;
+  ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
 }) {
   const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
-      (get): ReadonlyArray<OrchestrationThreadShell> =>
+      (get): ReadonlyArray<OrchestrationV2ThreadShell> =>
         get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
     ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
   );
 
   const environmentThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): ReadonlyMap<ThreadId, OrchestrationThreadShell> => {
+    Atom.make((get): ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> => {
       const threads = get(environmentThreadsAtom(environmentId));
       if (threads.length === 0) {
         return EMPTY_THREAD_INDEX;
@@ -102,7 +102,7 @@ export function createEnvironmentThreadShellAtoms(input: {
 
   const threadShellAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
-    let previousSource: OrchestrationThreadShell | null = null;
+    let previousSource: OrchestrationV2ThreadShell | null = null;
     let previousValue: EnvironmentThreadShell | null = null;
     return Atom.make((get) => {
       const source = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId) ?? null;
@@ -110,7 +110,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         return previousValue;
       }
       previousSource = source;
-      previousValue = source === null ? null : scopeThreadShell(ref.environmentId, source);
+      previousValue = source === null ? null : presentThreadShell(ref.environmentId, source);
       return previousValue;
     }).pipe(Atom.withLabel(`environment-thread-shell:${key}`));
   });

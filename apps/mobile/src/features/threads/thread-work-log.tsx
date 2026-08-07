@@ -1,14 +1,22 @@
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useNavigation } from "@react-navigation/native";
+import { LayoutAnimation, Pressable, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { T3_CODE_BRAND_MARK_SOURCE } from "../../components/brandAssets";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import Animated, { FadeIn } from "react-native-reanimated";
+import { useV2ItemSupport } from "../../state/v2-item-support";
+import { ThreadActivityInspector } from "./ThreadActivityInspector";
+import { threadWorkLogOverflowNoun } from "./thread-work-log-labels";
 
+const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 const WORK_LOG_LAYOUT_ANIMATION = {
   duration: 180,
   create: {
@@ -71,6 +79,87 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
   }
 }
 
+function WorkRowIcon(props: {
+  readonly row: ThreadFeedActivity;
+  readonly iconSubtleColor: import("react-native").ColorValue;
+}) {
+  const iconIsDestructive = props.row.icon === "alert" || props.row.icon === "warning";
+  if (props.row.logo === "t3-code") {
+    return (
+      <Image
+        source={T3_CODE_BRAND_MARK_SOURCE}
+        accessibilityIgnoresInvertColors
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+        }}
+      />
+    );
+  }
+
+  return (
+    <SymbolView
+      name={workRowSymbolName(props.row.icon)}
+      size={14}
+      weight="medium"
+      tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
+      type="monochrome"
+    />
+  );
+}
+
+function ThreadActivityThreadLink(props: {
+  readonly activity: ThreadFeedActivity;
+  readonly environmentId: EnvironmentId;
+  readonly iconColor: import("react-native").ColorValue;
+}) {
+  const row = props.activity.projectedItem;
+  const support = useV2ItemSupport({
+    environmentId: props.environmentId,
+    sourceThreadId: row.sourceThreadId,
+    sourceItemId: row.sourceItemId,
+  });
+  const navigation = useNavigation();
+  const item = row.item;
+  let targetThreadId: ThreadId | null = null;
+  let label = "Open related thread";
+
+  if (item.type === "thread_created") {
+    targetThreadId = item.targetThreadId;
+    label = "Open created thread";
+  } else if (item.type === "subagent") {
+    targetThreadId = support.subagent?.childThreadId ?? item.childThreadId;
+    label = "Open subagent thread";
+  } else if (item.type === "fork") {
+    targetThreadId =
+      item.targetThreadId === row.sourceThreadId && item.source.type === "run"
+        ? item.source.threadId
+        : item.targetThreadId;
+    label = targetThreadId === item.targetThreadId ? "Open forked thread" : "Open parent thread";
+  }
+
+  if (targetThreadId === null) return null;
+
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={label}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        navigation.navigate("Thread", {
+          environmentId: props.environmentId,
+          threadId: targetThreadId,
+        });
+      }}
+      className="mx-2 mb-2 min-h-9 flex-row items-center justify-center gap-1.5 rounded-lg border border-neutral-300/50 px-2 dark:border-white/[0.08]"
+    >
+      <Text className="font-t3-medium text-2xs text-foreground">{label}</Text>
+      <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
+    </Pressable>
+  );
+}
+
 // Entering fades only for rows created moments ago: rows remount whenever the
 // list scrolls them back into view, and old rows must not replay an entrance.
 const FRESH_ROW_WINDOW_MS = 3_000;
@@ -122,10 +211,15 @@ export function collapsedWorkLogHeight(
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
+  readonly currentThreadId: ThreadId;
+  readonly environmentId: EnvironmentId;
+  readonly expanded: boolean;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
+  readonly onToggleGroup: () => void;
   readonly onToggleRow: (rowId: string) => void;
+  readonly workspaceRoot?: string | null;
 }) {
   const colorScheme = useColorScheme();
   const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
@@ -138,10 +232,15 @@ export function ThreadWorkLog(props: {
     return null;
   }
 
+  const hasOverflow = rows.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleRows =
+    hasOverflow && !props.expanded ? rows.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : rows;
+  const hiddenCount = rows.length - visibleRows.length;
   const onlyToolRows = rows.every((row) => row.toolLike);
+  const overflowNoun = threadWorkLogOverflowNoun(onlyToolRows, hiddenCount);
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View className="-mx-1 mb-3 px-1 py-0.5">
       {!onlyToolRows ? (
         <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
           work log
@@ -149,17 +248,21 @@ export function ThreadWorkLog(props: {
       ) : null}
 
       <View className="gap-px">
-        {rows.map((row) => {
+        {visibleRows.map((row) => {
           const expanded = props.expandedRows[row.id] ?? false;
           const canExpand = row.canExpand;
-          const fullDetail = expanded ? row.getFullDetail() : null;
-          const displayText = row.detail ? `${row.summary} ${row.detail}` : row.summary;
-          const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
+          const detail = compactActivityDetail(row.detail);
+          const displayText = detail ? `${row.summary} ${detail}` : row.summary;
+          const textIsDestructive = row.icon === "alert" || row.icon === "warning";
 
           return (
             <Animated.View
               key={row.id}
               {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
+              className={cn(
+                row.prominent &&
+                  "mb-2 overflow-hidden rounded-xl border border-neutral-300/60 bg-card dark:border-white/[0.1]",
+              )}
             >
               <Pressable
                 accessibilityRole={canExpand ? "button" : undefined}
@@ -181,30 +284,24 @@ export function ThreadWorkLog(props: {
                 style={({ pressed }) => ({
                   backgroundColor: pressed ? pressedBackground : "transparent",
                 })}
-                className="rounded-md px-0.5 py-0"
+                className="rounded-md px-0.5 py-0.5"
               >
-                <View className="min-h-8 flex-row items-center gap-1.5">
-                  <View className="h-[18px] w-5 shrink-0 items-center justify-center">
-                    <SymbolView
-                      name={workRowSymbolName(row.icon)}
-                      size={13}
-                      weight="medium"
-                      tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
-                      type="monochrome"
-                    />
+                <View className="min-h-9 flex-row items-center gap-1.5">
+                  <View className="h-5 w-5 shrink-0 items-center justify-center">
+                    <WorkRowIcon row={row} iconSubtleColor={props.iconSubtleColor} />
                   </View>
 
                   <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
                     <Text
                       className={cn(
                         "font-t3-medium text-foreground",
-                        iconIsDestructive && "text-rose-600 dark:text-rose-400",
+                        textIsDestructive && "text-rose-600 dark:text-rose-400",
                       )}
                     >
                       {row.summary}
                     </Text>
-                    {row.detail ? (
-                      <Text className="text-foreground-muted opacity-60"> {row.detail}</Text>
+                    {detail ? (
+                      <Text className="text-foreground-muted opacity-60"> {detail}</Text>
                     ) : null}
                   </Text>
 
@@ -248,28 +345,63 @@ export function ThreadWorkLog(props: {
                 </View>
               </Pressable>
 
-              {fullDetail ? (
-                <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
-                  <ScrollView
-                    nestedScrollEnabled
-                    directionalLockEnabled
-                    showsVerticalScrollIndicator
-                    className="max-h-60"
-                    contentContainerStyle={{ paddingRight: 8 }}
-                  >
-                    <Text
-                      selectable
-                      className="font-mono text-2xs leading-normal text-foreground-muted"
-                    >
-                      {fullDetail}
-                    </Text>
-                  </ScrollView>
+              {expanded && canExpand ? (
+                <View className="ml-7 border-l border-neutral-300/60 pb-1.5 pl-3 pt-0.5 dark:border-white/[0.12]">
+                  <ThreadActivityInspector
+                    activity={row}
+                    currentThreadId={props.currentThreadId}
+                    environmentId={props.environmentId}
+                    iconColor={props.iconSubtleColor}
+                    workspaceRoot={props.workspaceRoot}
+                  />
                 </View>
+              ) : null}
+              {row.prominent ? (
+                <ThreadActivityThreadLink
+                  activity={row}
+                  environmentId={props.environmentId}
+                  iconColor={props.iconSubtleColor}
+                />
               ) : null}
             </Animated.View>
           );
         })}
       </View>
+
+      {hasOverflow ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: props.expanded }}
+          accessibilityLabel={
+            props.expanded
+              ? `Show fewer ${overflowNoun}`
+              : `Show ${hiddenCount} previous ${overflowNoun}`
+          }
+          hitSlop={4}
+          onPress={() => {
+            triggerDisclosureFeedback();
+            props.onToggleGroup();
+          }}
+          style={({ pressed }) => ({
+            backgroundColor: pressed ? pressedBackground : "transparent",
+          })}
+          className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0.5"
+        >
+          <View className="h-5 w-5 items-center justify-center">
+            <SymbolView
+              name={props.expanded ? "chevron.up" : "chevron.down"}
+              size={13}
+              tintColor={props.iconSubtleColor}
+              type="monochrome"
+            />
+          </View>
+          <Text className="font-t3-medium text-xs text-foreground opacity-80">
+            {props.expanded
+              ? `Show fewer ${overflowNoun}`
+              : `+${hiddenCount} previous ${overflowNoun}`}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -283,48 +415,36 @@ export function ThreadWorkGroupToggle(props: {
 }) {
   const colorScheme = useColorScheme();
   const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
-  const noun = props.onlyToolActivities
-    ? props.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : props.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
-  const collapsedLabel = `Show ${props.hiddenCount} previous ${noun}`;
-  const expandedLabel = props.onlyToolActivities
-    ? "Show fewer tool calls"
-    : "Show fewer log entries";
+  const noun = threadWorkLogOverflowNoun(props.onlyToolActivities, props.hiddenCount);
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View className="-mx-1 mb-1 px-1">
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
-        accessibilityLabel={props.expanded ? expandedLabel : collapsedLabel}
+        accessibilityLabel={
+          props.expanded ? `Show fewer ${noun}` : `Show ${props.hiddenCount} previous ${noun}`
+        }
         hitSlop={4}
         onPress={() => {
-          void Haptics.selectionAsync();
+          triggerDisclosureFeedback();
           props.onToggle();
         }}
         style={({ pressed }) => ({
           backgroundColor: pressed ? pressedBackground : "transparent",
         })}
-        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0"
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5"
       >
         <View className="h-[18px] w-5 items-center justify-center">
           <SymbolView
-            name={
-              props.expanded
-                ? { ios: "chevron.up", android: "keyboard_arrow_up" }
-                : { ios: "chevron.down", android: "keyboard_arrow_down" }
-            }
+            name={props.expanded ? "chevron.up" : "chevron.down"}
             size={12}
             tintColor={props.iconSubtleColor}
             type="monochrome"
           />
         </View>
         <Text className="font-t3-medium text-xs text-foreground opacity-80">
-          {props.expanded ? expandedLabel : `+${props.hiddenCount} previous ${noun}`}
+          {props.expanded ? `Show fewer ${noun}` : `+${props.hiddenCount} previous ${noun}`}
         </Text>
       </Pressable>
     </View>

@@ -14,6 +14,7 @@ export interface ShortcutEventLike {
   type?: string;
   code?: string;
   key: string;
+  repeat?: boolean;
   metaKey: boolean;
   ctrlKey: boolean;
   shiftKey: boolean;
@@ -440,7 +441,10 @@ export function isOpenFavoriteEditorShortcut(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  return matchesCommandShortcut(event, keybindings, "editor.openFavorite", options);
+  return (
+    event.repeat !== true &&
+    matchesCommandShortcut(event, keybindings, "editor.openFavorite", options)
+  );
 }
 
 export function isTerminalClearShortcut(
