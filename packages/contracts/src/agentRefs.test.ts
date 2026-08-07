@@ -4,8 +4,11 @@ import * as Schema from "effect/Schema";
 import { AgentProfileRef } from "./agentRefs.ts";
 import { ThreadCreatedPayload } from "./orchestration.ts";
 
+const decodeAgentProfileRef = Schema.decodeUnknownSync(AgentProfileRef);
+const decodeThreadCreatedPayload = Schema.decodeUnknownSync(ThreadCreatedPayload);
+
 it("decodes pinned profile references and keeps historical thread payloads valid", () => {
-  const profile = Schema.decodeUnknownSync(AgentProfileRef)({
+  const profile = decodeAgentProfileRef({
     id: "reviewer",
     scope: "environment",
     revision: "a".repeat(64),
@@ -16,7 +19,7 @@ it("decodes pinned profile references and keeps historical thread payloads valid
     revision: "a".repeat(64),
   });
 
-  const payload = Schema.decodeUnknownSync(ThreadCreatedPayload)({
+  const payload = decodeThreadCreatedPayload({
     threadId: "thread-agent-profile",
     projectId: "project-agent-profile",
     title: "Thread",

@@ -8,7 +8,6 @@ import {
   AgentProfileRef,
   AgentWorkspaceMode,
   AgentRunId,
-  AgentRunStatus,
   ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -39,7 +38,6 @@ export const AgentRunWaitReason = Schema.Literals(["children", "input"]);
 export type AgentRunWaitReason = typeof AgentRunWaitReason.Type;
 
 const NullableRunId = Schema.NullOr(AgentRunId);
-const NullableThreadId = Schema.NullOr(ThreadId);
 
 const RequestedEvent = Schema.Struct({
   type: Schema.Literal("agent-run.requested"),

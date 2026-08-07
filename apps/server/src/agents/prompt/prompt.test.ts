@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 
 import {
-  AgentRuleContentOverflowError,
   compileAgentPrompt,
   compileAgentRules,
   isAgentRuleContentOverflowError,
@@ -18,8 +17,10 @@ import {
 } from "./index.ts";
 
 const revision = "a".repeat(64);
+const decodeAgentProfileDocument = Schema.decodeUnknownSync(AgentProfileDocument);
+const decodeAgentRuleDocument = Schema.decodeUnknownSync(AgentRuleDocument);
 
-const profile: AgentProfileDocumentType = Schema.decodeUnknownSync(AgentProfileDocument)({
+const profile: AgentProfileDocumentType = decodeAgentProfileDocument({
   id: "reviewer",
   scope: "environment",
   revision,
@@ -46,7 +47,7 @@ const makeRule = (
   body: string,
   overrides: Readonly<Record<string, unknown>> = {},
 ): AgentRuleDocumentType =>
-  Schema.decodeUnknownSync(AgentRuleDocument)({
+  decodeAgentRuleDocument({
     id,
     scope: "environment",
     revision,

@@ -1,9 +1,7 @@
 import * as Schema from "effect/Schema";
 import type {
-  AgentHook,
   AgentProfileDocument,
   AgentProfileScope,
-  AgentRuleRef,
   ModelSelection,
   ProviderInteractionMode,
   RuntimeMode,
@@ -53,6 +51,12 @@ export interface AgentProfileDraftSource {
 }
 
 const EMPTY_JSON_ARRAY = "[]";
+const decodeAgentProfileLocators = Schema.decodeUnknownSync(
+  Schema.Array(AgentProfileLocatorSchema),
+);
+const decodeAgentHooks = Schema.decodeUnknownSync(Schema.Array(AgentHookSchema));
+const decodeAgentRuleRefs = Schema.decodeUnknownSync(Schema.Array(AgentRuleRefSchema));
+const decodeAgentProfileDocument = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
 
 function jsonValue(value: unknown): string {
   return JSON.stringify(value, null, 2) ?? "null";
@@ -144,15 +148,11 @@ export function buildAgentProfileDocument(
   now = new Date().toISOString(),
 ): AgentProfileDocument {
   const defaultModelSelection = parseJson(draft.defaultModelSelection, "Default model selection");
-  const delegatedProfiles = Schema.decodeUnknownSync(Schema.Array(AgentProfileLocatorSchema))(
+  const delegatedProfiles = decodeAgentProfileLocators(
     parseJson(draft.delegatedProfiles, "Delegated profiles") ?? [],
   );
-  const hooks = Schema.decodeUnknownSync(Schema.Array(AgentHookSchema))(
-    parseJson(draft.hooks, "Hooks") ?? [],
-  );
-  const rules = Schema.decodeUnknownSync(Schema.Array(AgentRuleRefSchema))(
-    parseJson(draft.rules, "Rules") ?? [],
-  );
+  const hooks = decodeAgentHooks(parseJson(draft.hooks, "Hooks") ?? []);
+  const rules = decodeAgentRuleRefs(parseJson(draft.rules, "Rules") ?? []);
   const document = {
     id: draft.id.trim(),
     scope: draft.scope,
@@ -207,7 +207,7 @@ export function buildAgentProfileDocument(
     rules,
     createdAt: baseline?.createdAt ?? now,
   };
-  return Schema.decodeUnknownSync(AgentProfileDocumentSchema)(document);
+  return decodeAgentProfileDocument(document);
 }
 
 export function sortAgentProfiles<

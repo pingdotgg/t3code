@@ -553,9 +553,11 @@ export function projectEvent(
       ).pipe(
         Effect.map((payload) => ({
           ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.agentProfile !== undefined ? { agentProfile: payload.agentProfile } : {}),
-          }),
+          threads: updateThread(
+            nextBase.threads,
+            payload.threadId,
+            payload.agentProfile !== undefined ? { agentProfile: payload.agentProfile } : {},
+          ),
         })),
       );
 

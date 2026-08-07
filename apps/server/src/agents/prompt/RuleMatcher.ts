@@ -35,6 +35,8 @@ export class AgentRulePathError extends Schema.TaggedErrorClass<AgentRulePathErr
   }
 }
 
+const isAgentRulePathError = Schema.is(AgentRulePathError);
+
 export const AgentRuleMatchDiagnostic = Schema.Struct({
   code: Schema.Literals(["invalid-path", "invalid-glob"]),
   message: Schema.String,
@@ -192,7 +194,7 @@ export const matchAgentRules = (input: AgentRuleMatchInput): AgentRuleMatchResul
       const normalized = normalizeWorkspaceRelativePath(file);
       if (!contextFiles.includes(normalized)) contextFiles.push(normalized);
     } catch (error) {
-      if (Schema.is(AgentRulePathError)(error)) {
+      if (isAgentRulePathError(error)) {
         diagnostics.push({ code: "invalid-path", message: error.message, value: file });
       } else throw error;
     }

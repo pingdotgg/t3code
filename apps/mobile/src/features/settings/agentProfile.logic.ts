@@ -5,6 +5,8 @@ import {
   type AgentProfileDocument,
 } from "@t3tools/contracts";
 
+const decodeAgentProfileDocument = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
+
 export type AgentProfileDraft = {
   readonly id: string;
   readonly name: string;
@@ -58,7 +60,7 @@ export function buildAgentProfileDocument(
   baseline: AgentProfileDocument | null,
   now = new Date().toISOString(),
 ): AgentProfileDocument {
-  return Schema.decodeUnknownSync(AgentProfileDocumentSchema)({
+  return decodeAgentProfileDocument({
     id: draft.id.trim(),
     scope: draft.scope,
     revision: baseline?.revision ?? "a".repeat(64),

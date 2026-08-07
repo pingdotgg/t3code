@@ -26,6 +26,7 @@ const decodeArchive = Schema.decodeUnknownSync(AgentProfileArchiveInput);
 const decodeSpawn = Schema.decodeUnknownSync(AgentMcpSpawnInput);
 const decodeWait = Schema.decodeUnknownSync(AgentMcpWaitInput);
 const decodeRunList = Schema.decodeUnknownSync(AgentRunListResult);
+const decodeAgentProfileRef = Schema.decodeUnknownSync(AgentProfileRef);
 
 const profile = {
   id: "reviewer",
@@ -168,9 +169,7 @@ describe("native agent contracts", () => {
 
   it("keeps branded identifiers and pinned refs available to consumers", () => {
     expect(AgentProfileId.make("reviewer")).toBe("reviewer");
-    expect(
-      Schema.decodeUnknownSync(AgentProfileRef)({ id: "reviewer", scope: "environment", revision }),
-    ).toEqual({
+    expect(decodeAgentProfileRef({ id: "reviewer", scope: "environment", revision })).toEqual({
       id: "reviewer",
       scope: "environment",
       revision,

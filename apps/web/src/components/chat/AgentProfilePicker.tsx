@@ -51,9 +51,7 @@ export const AgentProfilePicker = memo(function AgentProfilePicker(props: {
   const catalog = useEnvironmentQuery(
     agentEnvironment.catalog({
       environmentId: props.environmentId,
-      input: {
-        ...(props.projectId === null ? {} : { projectId: props.projectId }),
-      },
+      input: props.projectId === null ? {} : { projectId: props.projectId },
     }),
   );
   const profiles = useMemo(() => {
@@ -66,7 +64,7 @@ export const AgentProfilePicker = memo(function AgentProfilePicker(props: {
         : (activeProfiles.find(
             (profile) => profile.id === selectedValue.id && profile.scope === selectedValue.scope,
           ) ?? null);
-    return [...selectChatAgentProfiles(activeProfiles, selectedProfile)].sort(
+    return Array.from(selectChatAgentProfiles(activeProfiles, selectedProfile)).sort(
       (left, right) =>
         Number(right.scope === "project") - Number(left.scope === "project") ||
         left.name.localeCompare(right.name),
