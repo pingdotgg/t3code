@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
@@ -6,6 +8,7 @@ struct FeatureComposerView: View {
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
+    @State private var attachmentErrorMessage: String?
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -108,6 +111,17 @@ struct FeatureComposerView: View {
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
             }
+            .alert(
+                "Couldn’t paste image",
+                isPresented: Binding(
+                    get: { attachmentErrorMessage != nil },
+                    set: { if !$0 { attachmentErrorMessage = nil } }
+                )
+            ) {
+                Button("OK") { attachmentErrorMessage = nil }
+            } message: {
+                Text(attachmentErrorMessage ?? "")
+            }
     }
 
     private var composerSurface: some View {
@@ -184,20 +198,27 @@ struct FeatureComposerView: View {
                     .padding(.horizontal, 13)
             }
 
-            TextField(
-                isWorking ? "Message to queue…" : "Ask anything…",
-                text: $text,
-                axis: .vertical
-            )
-                .font(T3Typography.composer)
-                .lineLimit(1...7)
-                .focused(focused)
-                // Return is always editing input. Sending is deliberately button-only.
-                .submitLabel(.return)
+            ZStack(alignment: .topLeading) {
+                FeatureComposerTextInput(
+                    text: $text,
+                    focused: focused,
+                    acceptsImages: canPasteImages,
+                    onPasteImages: loadPastedImages
+                )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, 7)
-                .frame(minHeight: 62, alignment: .top)
+
+                if text.isEmpty {
+                    Text(isWorking ? "Message to queue…" : "Ask anything…")
+                        .font(T3Typography.composer)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .allowsHitTesting(false)
+                }
+            }
+            .padding(.bottom, 7)
+            .frame(minHeight: 62, alignment: .top)
 
             if !attachments.isEmpty, !imagesAllowed {
                 Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
@@ -219,6 +240,47 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+        }
+    }
+
+    private var canPasteImages: Bool {
+        imagesAllowed
+            && attachments.count + attachmentPreparation.pendingItemCount < 8
+    }
+
+    private func loadPastedImages(_ providers: [NSItemProvider]) {
+        guard canPasteImages else { return }
+        let remainingCount = max(
+            0,
+            8 - attachments.count - attachmentPreparation.pendingItemCount
+        )
+        let imageProviders = Array(
+            providers.filter {
+                $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+            }.prefix(remainingCount)
+        )
+        guard !imageProviders.isEmpty else { return }
+
+        let firstOrdinal = attachments.count + attachmentPreparation.pendingItemCount + 1
+        let operation = attachmentPreparation.begin(itemCount: imageProviders.count)
+
+        Task { @MainActor in
+            defer { attachmentPreparation.finish(operation) }
+            for (offset, provider) in imageProviders.enumerated() {
+                do {
+                    let data = try await FeatureImagePasteLoader.data(from: provider)
+                    let attachment = try await Task.detached(priority: .userInitiated) {
+                        try FeatureImageProcessor.attachment(
+                            from: data,
+                            ordinal: firstOrdinal + offset
+                        )
+                    }.value
+                    attachments.append(attachment)
+                } catch {
+                    attachmentErrorMessage = error.localizedDescription
+                    break
+                }
+            }
         }
     }
 
@@ -438,6 +500,110 @@ struct FeatureComposerView: View {
         }
     }
 
+}
+
+private struct FeatureComposerTextInput: UIViewRepresentable {
+    @Binding var text: String
+    let focused: FocusState<Bool>.Binding
+    let acceptsImages: Bool
+    let onPasteImages: ([NSItemProvider]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.pasteDelegate = context.coordinator
+        textView.pasteConfiguration = pasteConfiguration
+        textView.backgroundColor = .clear
+        textView.textColor = .white
+        textView.tintColor = .systemBlue
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.isScrollEnabled = false
+        textView.accessibilityIdentifier = "message-composer"
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        textView.pasteConfiguration = pasteConfiguration
+
+        if textView.text != text {
+            textView.text = text
+        }
+
+        if focused.wrappedValue, !textView.isFirstResponder {
+            textView.becomeFirstResponder()
+        } else if !focused.wrappedValue, textView.isFirstResponder {
+            textView.resignFirstResponder()
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let fittingSize = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let maximumHeight = (uiView.font?.lineHeight ?? 22) * 7
+        uiView.isScrollEnabled = fittingSize.height > maximumHeight
+        return CGSize(width: width, height: min(fittingSize.height, maximumHeight))
+    }
+
+    private var pasteConfiguration: UIPasteConfiguration {
+        let acceptableTypes = acceptsImages
+            ? [UTType.text.identifier, UTType.image.identifier]
+            : [UTType.text.identifier]
+        return UIPasteConfiguration(acceptableTypeIdentifiers: acceptableTypes)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate, UITextPasteDelegate {
+        var parent: FeatureComposerTextInput
+
+        init(_ parent: FeatureComposerTextInput) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard parent.text != textView.text else { return }
+            parent.text = textView.text
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if !parent.focused.wrappedValue {
+                parent.focused.wrappedValue = true
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if parent.focused.wrappedValue {
+                parent.focused.wrappedValue = false
+            }
+        }
+
+        func textPasteConfigurationSupporting(
+            _ textPasteConfigurationSupporting: any UITextPasteConfigurationSupporting,
+            transform item: any UITextPasteItem
+        ) {
+            let provider = item.itemProvider
+            guard parent.acceptsImages,
+                  provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
+                item.setDefaultResult()
+                return
+            }
+
+            item.setNoResult()
+            parent.onPasteImages([provider])
+        }
+    }
 }
 
 private struct FeatureComposerPathSearchRequest: Hashable {
