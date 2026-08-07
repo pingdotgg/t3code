@@ -57,6 +57,38 @@ const makeFailingHandle = (stderr: string, exitCode = 128) =>
     getOutputFd: () => Stream.empty,
   });
 
+/**
+ * A driver whose every git command exits non-zero with `stderr`.
+ *
+ * `spawns` records what was actually launched, so a test can prove the stub —
+ * and not real git on the developer's machine — produced the failure it is
+ * asserting about.
+ */
+const makeFailingGitLayer = (stderr: string) => {
+  const spawns: Array<ReadonlyArray<string>> = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      spawns.push(command.args);
+      return makeFailingHandle(stderr);
+    }),
+  );
+  return {
+    spawns,
+    layer: GitVcsDriver.layer.pipe(
+      Layer.provide(ServerConfigLayer),
+      Layer.provideMerge(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    ),
+  };
+};
+
 const makeSuccessfulHandle = (stdout: string) =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
@@ -650,6 +682,75 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("classifies an authentication failure without retaining the remote it names", () => {
+  // The failure that motivated surfacing this at all: a host with no key
+  // registered for the remote. Git names the remote back on stderr, which is
+  // why the text itself cannot travel with the error.
+  const token = "ghp_secret_token_value";
+  const failing = makeFailingGitLayer(
+    `Cloning into 'projects'...\n` +
+      `remote: Invalid username or password for https://${token}@github.com/owner/repo.git\n` +
+      `git@github.com: Permission denied (publickey).\r\n` +
+      `fatal: Could not read from remote repository.\n`,
+  );
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const error = yield* driver
+        .execute({
+          operation: "GitVcsDriver.test.authFailure",
+          cwd,
+          args: ["clone", "git@github.com:owner/repo.git", "projects"],
+        })
+        .pipe(Effect.flip);
+
+      // Guards against the stub being bypassed and real git answering instead.
+      assert.equal(failing.spawns.length, 1);
+      assert.instanceOf(error, GitCommandError);
+      // The reason survives...
+      assert.equal(error.failureKind, "authentication");
+      assert.include(error.detail.toLowerCase(), "authentication");
+      // ...while nothing git wrote does.
+      assert.notInclude(error.detail, token);
+      assert.notInclude(error.message, token);
+      assert.notInclude(String(error.cause), token);
+      assert.notInclude(error.detail, "Permission denied");
+      assert.isAbove(error.stderrLength ?? 0, 0);
+    }),
+  ).pipe(Effect.provide(failing.layer));
+});
+
+it.effect("does not read a local permission error as an authentication failure", () => {
+  // `git init` into an unwritable directory says "Permission denied" too.
+  // Matching that bare phrase would answer a filesystem problem with advice
+  // about remote credentials, which is worse than saying nothing.
+  const failing = makeFailingGitLayer(
+    `error: could not create work tree dir 'projects': Permission denied\n`,
+  );
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const error = yield* driver
+        .execute({
+          operation: "GitVcsDriver.test.localPermissionFailure",
+          cwd,
+          args: ["init", "projects"],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(failing.spawns.length, 1);
+      assert.instanceOf(error, GitCommandError);
+      assert.equal(error.failureKind, "command-failed");
+      assert.notInclude(error.detail.toLowerCase(), "authentication");
+      assert.notInclude(error.detail.toLowerCase(), "credentials");
+    }),
+  ).pipe(Effect.provide(failing.layer));
+});
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>
@@ -736,57 +837,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.oneOf(error.failureKind, ["authentication", "not-found", "command-failed"]);
       }),
     );
-
-    it.effect("classifies an authentication failure without retaining the remote it names", () => {
-      // The failure that motivated surfacing this at all: a host with no key
-      // registered for the remote. Git names the remote back on stderr, which
-      // is why the text itself cannot travel with the error.
-      const token = "ghp_secret_token_value";
-      const spawner = ChildProcessSpawner.make(() =>
-        Effect.succeed(
-          makeFailingHandle(
-            `Cloning into 'projects'...\n` +
-              `remote: Invalid username or password for https://${token}@github.com/owner/repo.git\n` +
-              `git@github.com: Permission denied (publickey).\r\n` +
-              `fatal: Could not read from remote repository.\n`,
-          ),
-        ),
-      );
-      const layer = GitVcsDriver.layer.pipe(
-        Layer.provide(ServerConfigLayer),
-        Layer.provideMerge(
-          Layer.merge(
-            NodeServices.layer,
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          ),
-        ),
-      );
-
-      return Effect.scoped(
-        Effect.gen(function* () {
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const cwd = yield* makeTmpDir();
-          const error = yield* driver
-            .execute({
-              operation: "GitVcsDriver.test.authFailure",
-              cwd,
-              args: ["clone", "git@github.com:owner/repo.git", "projects"],
-            })
-            .pipe(Effect.flip);
-
-          assert.instanceOf(error, GitCommandError);
-          // The reason survives...
-          assert.equal(error.failureKind, "authentication");
-          assert.include(error.detail.toLowerCase(), "authentication");
-          // ...while nothing git wrote does.
-          assert.notInclude(error.detail, token);
-          assert.notInclude(error.message, token);
-          assert.notInclude(String(error.cause), token);
-          assert.notInclude(error.detail, "Permission denied");
-          assert.isAbove(error.stderrLength ?? 0, 0);
-        }),
-      ).pipe(Effect.provide(layer));
-    });
 
     it.effect("recovers a structurally identified missing cwd as a non-repository", () =>
       Effect.gen(function* () {

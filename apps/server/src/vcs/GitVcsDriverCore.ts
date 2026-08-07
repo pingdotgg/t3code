@@ -408,10 +408,20 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
 const classifyGitFailure = (stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
   if (
-    normalized.includes("permission denied") ||
     normalized.includes("authentication failed") ||
     normalized.includes("could not read username") ||
-    normalized.includes("access rights")
+    normalized.includes("could not read password") ||
+    normalized.includes("invalid username or password") ||
+    normalized.includes("authentication required") ||
+    // "...make sure you have the correct access rights and the repository exists."
+    normalized.includes("access rights") ||
+    // ssh names the methods it tried: "Permission denied (publickey)." A bare
+    // "permission denied" is a local filesystem error — `git init` into an
+    // unwritable directory reaches this function too, and telling someone to
+    // check their remote credentials would bury the actual problem.
+    normalized.includes("permission denied (") ||
+    // GitHub over https: "remote: Permission to owner/repo.git denied to user."
+    /remote:[^\n]*permission to [^\n]*denied/.test(normalized)
   ) {
     return "authentication";
   }
@@ -434,7 +444,10 @@ const detailForGitFailure = (failureKind: VcsProcessExitFailureKind, fallback: s
     case "authentication":
       return "Git authentication failed. Check the credentials available to this host for the remote.";
     case "not-found":
-      return "Git could not find the requested repository, remote, or ref.";
+      // Deliberately covers paths too: the match is broad enough to catch
+      // `path 'x' does not exist in 'HEAD'`, so the sentence must not promise
+      // the missing thing was a repository.
+      return "Git could not find something the command referred to — a repository, remote, ref, or path.";
     case "command-failed":
       return fallback;
   }
