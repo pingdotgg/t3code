@@ -33,7 +33,7 @@ interface PrimaryServerState {
 }
 
 const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
-const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_PRIMARY_SERVER_STATE: PrimaryServerState = {
   config: null,
   latestEvent: null,
