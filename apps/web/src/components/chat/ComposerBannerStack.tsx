@@ -22,6 +22,17 @@ const exitTransitionStyle = {
   transition: `transform ${DISMISS_TRANSITION_MS}ms ease-in, opacity ${DISMISS_TRANSITION_MS}ms ease-in`,
 } satisfies CSSProperties;
 
+// The collapsed cap peeking above the front banner is the only hint that more
+// banners are stacked behind it, so its border must match the severity of the
+// first hidden banner — a neutral banner must not masquerade as a warning.
+const stackCapBorderClass: Record<ComposerBannerStackItem["variant"], string> = {
+  default: "border-border",
+  error: "border-destructive/24",
+  info: "border-info/24",
+  success: "border-success/24",
+  warning: "border-warning/24",
+};
+
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: "default" | "error" | "info" | "success" | "warning";
@@ -67,6 +78,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   const stackedItems = items.slice(1);
   const hasStack = stackedItems.length > 0;
   const showCollapsedStackCap = hasStack && exitingItemId !== frontItem.id;
+  const firstStackedItem = stackedItems[0];
 
   const requestDismiss = (item: ComposerBannerStackItem) => {
     if (!item.onDismiss || exitingItemId) {
@@ -90,11 +102,12 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
           hasStack ? "group-hover/banner-stack:z-50 group-focus-within/banner-stack:z-50" : null,
         )}
       >
-        {showCollapsedStackCap ? (
+        {showCollapsedStackCap && firstStackedItem ? (
           <div
             className={cn(
               "pointer-events-none absolute inset-x-0 -top-3 z-0 mx-auto h-3 rounded-t-[22px]",
-              "border border-b-0 border-warning/24 bg-background/96 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
+              "border border-b-0 bg-background/96 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
+              stackCapBorderClass[firstStackedItem.variant],
               "transition-opacity duration-150 ease-out",
               "group-hover/banner-stack:opacity-0 group-focus-within/banner-stack:opacity-0",
             )}

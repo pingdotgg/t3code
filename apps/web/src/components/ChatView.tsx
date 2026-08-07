@@ -4372,8 +4372,12 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: system banners, then the branch-mismatch notice,
-  // and the informational parked-thread banner last — it must never cover another.
+  // ordering is priority: urgent system banners (connection down, update
+  // failed), then background liveness — its Stop button is the only stop
+  // affordance for settled turns, so a calm "update available" notice must not
+  // cover it — then calm system banners, the woke and branch-mismatch
+  // notices, and the informational parked-thread banner last — it must never
+  // cover another.
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -4423,21 +4427,29 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const urgentSystemItems = systemComposerBannerItems.filter(
+      (item) => item.variant === "error" || item.variant === "warning",
+    );
+    const calmSystemItems = systemComposerBannerItems.filter(
+      (item) => item.variant !== "error" && item.variant !== "warning",
+    );
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
-        ...systemComposerBannerItems,
+        ...urgentSystemItems,
         ...backgroundLivenessItems,
+        ...calmSystemItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
       ];
     }
     return [
-      ...systemComposerBannerItems,
+      ...urgentSystemItems,
       ...backgroundLivenessItems,
+      ...calmSystemItems,
       ...wokeThreadItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
