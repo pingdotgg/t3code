@@ -55,6 +55,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -212,16 +213,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
-      Effect.tap((credential) =>
-        credential
-          ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
-          : Effect.void,
-      ),
-    );
+  const prepareMcpSession = Effect.fn("ProviderService.prepareMcpSession")(function* (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+  ) {
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    if (!settings.enableBuiltInBrowser) {
+      yield* McpSessionRegistry.revokeActiveMcpThread(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
+      return;
+    }
+
+    const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
+      threadId,
+      providerInstanceId,
+    });
+    if (credential) {
+      McpProviderSession.setMcpProviderSession(credential.config);
+    }
+  });
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
