@@ -12,12 +12,12 @@ import {
 } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import ImageViewing from "react-native-image-viewing";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { ControlPill } from "../../components/ControlPill";
+import { FullScreenImageViewer } from "../../components/FullScreenImageViewer";
 import { cn } from "../../lib/cn";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -63,6 +63,10 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   >({});
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const previewSource = useMemo(
+    () => (previewImageUri === null ? null : { uri: previewImageUri }),
+    [previewImageUri],
+  );
 
   const selectedLines = useMemo(
     () => (target ? getSelectedReviewCommentLines(target) : []),
@@ -337,13 +341,9 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
           </View>
         </KeyboardStickyView>
       ) : null}
-      <ImageViewing
-        images={previewImageUri ? [{ uri: previewImageUri }] : []}
-        imageIndex={0}
-        visible={previewImageUri !== null}
+      <FullScreenImageViewer
+        source={previewSource}
         onRequestClose={() => setPreviewImageUri(null)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
       />
     </View>
   );

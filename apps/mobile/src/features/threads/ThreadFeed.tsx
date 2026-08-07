@@ -43,7 +43,6 @@ import {
   View,
 } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
-import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -58,6 +57,8 @@ import {
 
 import { AppText as Text } from "../../components/AppText";
 import { CopyTextButton } from "../../components/CopyTextButton";
+import { FullScreenImageViewer } from "../../components/FullScreenImageViewer";
+import { useShareImage } from "../../lib/useShareImage";
 import {
   parseReviewCommentMessageSegments,
   type ReviewInlineComment,
@@ -166,6 +167,7 @@ function MessageAttachmentImage(props: {
     _tag: "attachment",
     attachmentId: props.attachmentId,
   });
+  const share = useShareImage();
 
   if (uri === null) {
     return (
@@ -176,7 +178,11 @@ function MessageAttachmentImage(props: {
   }
 
   return (
-    <TouchableOpacity activeOpacity={0.7} onPress={() => props.onPressImage(uri)}>
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => props.onPressImage(uri)}
+      onLongPress={() => share({ uri })}
+    >
       <Image source={{ uri }} className={props.className} resizeMode="cover" />
     </TouchableOpacity>
   );
@@ -1949,23 +1955,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         ) : null}
       </View>
 
-      <ImageViewing
-        images={
-          expandedImage
-            ? [
-                {
-                  uri: expandedImage.uri,
-                  headers: expandedImage.headers,
-                },
-              ]
-            : []
-        }
-        imageIndex={0}
-        visible={expandedImage !== null}
-        onRequestClose={() => setExpandedImage(null)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
-      />
+      <FullScreenImageViewer source={expandedImage} onRequestClose={() => setExpandedImage(null)} />
     </>
   );
 });

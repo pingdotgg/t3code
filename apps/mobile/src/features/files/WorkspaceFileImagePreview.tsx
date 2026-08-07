@@ -1,11 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, View } from "react-native";
-import ImageViewing from "react-native-image-viewing";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
+import { FullScreenImageViewer } from "../../components/FullScreenImageViewer";
+import type { FullScreenImageSource } from "../../lib/fullScreenImageActions";
 import { workspaceFileImageAtom } from "./workspace-file-image-cache";
 
 function ResolvedWorkspaceFileImagePreview(props: {
@@ -13,12 +14,11 @@ function ResolvedWorkspaceFileImagePreview(props: {
   readonly uri: string;
 }) {
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [fullScreenVisible, setFullScreenVisible] = useState(false);
+  const [fullScreenSource, setFullScreenSource] = useState<FullScreenImageSource | null>(null);
   const imageSource = useMemo(
     () => ({ uri: props.uri, cache: "force-cache" as const }),
     [props.uri],
   );
-  const fullScreenImages = useMemo(() => [imageSource], [imageSource]);
 
   return (
     <View className="relative flex-1 bg-subtle">
@@ -27,7 +27,13 @@ function ResolvedWorkspaceFileImagePreview(props: {
         accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
         disabled={loadError !== null}
         className="flex-1 p-4 active:bg-subtle-strong"
-        onPress={() => setFullScreenVisible(true)}
+        onPress={() =>
+          setFullScreenSource({
+            uri: props.uri,
+            fileName: props.accessibilityLabel,
+            cache: "force-cache",
+          })
+        }
       >
         <Image
           accessible={false}
@@ -47,13 +53,9 @@ function ResolvedWorkspaceFileImagePreview(props: {
         </View>
       ) : null}
 
-      <ImageViewing
-        images={fullScreenImages}
-        imageIndex={0}
-        visible={fullScreenVisible}
-        onRequestClose={() => setFullScreenVisible(false)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
+      <FullScreenImageViewer
+        source={fullScreenSource}
+        onRequestClose={() => setFullScreenSource(null)}
       />
     </View>
   );

@@ -26,7 +26,6 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
-import ImageViewing from "react-native-image-viewing";
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -52,6 +51,7 @@ import {
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { FullScreenImageViewer } from "../../components/FullScreenImageViewer";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { buildModelMenuActions, buildModelOptions, groupByProvider } from "../../lib/modelOptions";
@@ -278,6 +278,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const previewSource = useMemo(
+    () => (previewImageUri === null ? null : { uri: previewImageUri }),
+    [previewImageUri],
+  );
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
   const canSend = hasContent;
@@ -916,14 +920,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
       </Animated.View>
 
-      <ImageViewing
-        images={previewImageUri ? [{ uri: previewImageUri }] : []}
-        imageIndex={0}
-        visible={previewImageUri !== null}
-        onRequestClose={closePreview}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
-      />
+      <FullScreenImageViewer source={previewSource} onRequestClose={closePreview} />
     </Animated.View>
   );
 });
