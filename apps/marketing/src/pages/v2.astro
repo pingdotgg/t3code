@@ -14,6 +14,13 @@ const surfaces = [
   { id: "tablet", label: "on your tablet too", image: "/mobile-states/ipad-threads.png" },
 ] as const;
 
+const heroRotatorProviders = [
+  { name: "Claude", icon: "/harnesses/claude-ai-icon.svg", accent: "#d97757" },
+  { name: "Cursor", icon: "/harnesses/cursor_light.svg", accent: "#e4e4e7" },
+  { name: "Codex", icon: "/harnesses/openai_dark.svg", accent: "#21b791" },
+  { name: "Grok", icon: "/harnesses/grok-dark.svg", accent: "#ffffff" },
+] as const;
+
 const endorsementRows = [
   tweets.filter((_, index) => index % 2 === 0),
   tweets.filter((_, index) => index % 2 === 1),
@@ -31,7 +38,23 @@ const endorsementRows = [
     <div class="v2-shell">
       <header class="v2-hero-card">
         <div class="v2-hero-message">
-          <h1>Bring the agents.<br />Keep the control.</h1>
+          <h1 aria-label="Bring your Claude, Cursor, Codex, or Grok. Rest is on us.">
+            <span class="v2-hero-provider-line">
+              <span>Bring your</span>
+              <span class="v2-hero-rotator" aria-hidden="true">
+                {heroRotatorProviders.map((provider, providerIndex) => (
+                  <span
+                    class="v2-hero-rotator-item"
+                    style={`--rotator-index: ${providerIndex}; --rotator-accent: ${provider.accent}; --rotator-icon: url("${provider.icon}")`}
+                  >
+                    <i aria-hidden="true" />
+                    <span>{provider.name}</span>
+                  </span>
+                ))}
+              </span>
+            </span>
+            <span>Rest is on us.</span>
+          </h1>
           <p class="v2-lede">
             Run Claude, Cursor, Codex, Grok, and OpenCode in one fast workspace—using the
             subscriptions you already have.
@@ -87,7 +110,7 @@ const endorsementRows = [
           </div>
           <div class="v2-system-message">
             <p>Enable T3 Connect and use T3 Code from anywhere.</p>
-            <code><span>$</span> npx t3</code>
+            <code><span>$</span> npx t3 pair</code>
           </div>
         </article>
 
@@ -333,7 +356,68 @@ const endorsementRows = [
   .v2-hero-card h1 {
     align-self: end;
     padding: 58px 42px;
-    font-size: clamp(64px, 7.6vw, 112px);
+    font-size: clamp(58px, 6.4vw, 92px);
+  }
+
+  .v2-hero-card h1 > span {
+    display: block;
+  }
+
+  .v2-hero-provider-line {
+    display: flex !important;
+    align-items: baseline;
+    gap: 0.18em;
+    white-space: nowrap;
+  }
+
+  .v2-hero-rotator {
+    display: inline-grid !important;
+    width: 3.4em;
+    height: 1.08em;
+    align-items: baseline;
+    overflow: hidden;
+  }
+
+  .v2-hero-rotator-item {
+    grid-area: 1 / 1;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.18em;
+    color: var(--rotator-accent, currentColor);
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(105%);
+    animation: v2HeroRotator 12s calc((var(--rotator-index) * 3s) - 0.48s) infinite both;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .v2-hero-rotator-item i {
+    width: 0.74em;
+    height: 0.74em;
+    flex: 0 0 auto;
+    background: currentColor;
+    mask: var(--rotator-icon) center / contain no-repeat;
+    -webkit-mask: var(--rotator-icon) center / contain no-repeat;
+    transform: translateY(0.04em);
+  }
+
+  @keyframes v2HeroRotator {
+    0% {
+      opacity: 0;
+      transform: translateY(105%);
+    }
+
+    4%,
+    25% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    29%,
+    100% {
+      opacity: 0;
+      transform: translateY(-105%);
+    }
   }
 
   .v2-lede {
@@ -463,6 +547,8 @@ const endorsementRows = [
     padding: 0 28px;
     border-bottom: 1px solid var(--border);
     color: #66666f;
+    font-size: 15px;
+    font-weight: 600;
     text-align: left;
     transition: background 0.18s ease, color 0.18s ease;
   }
@@ -471,10 +557,6 @@ const endorsementRows = [
   .v2-surface-tabs button[aria-selected="true"] {
     color: #fff;
     background: #0c0c0e;
-  }
-
-  .v2-surface-tabs button[data-v2-surface="tablet"] {
-    font-weight: 600;
   }
 
   .v2-system-message {
@@ -872,7 +954,7 @@ const endorsementRows = [
     }
 
     .v2-hero-card h1 {
-      font-size: 52px;
+      font-size: 40px;
     }
 
     .v2-actions {
@@ -891,7 +973,7 @@ const endorsementRows = [
     .v2-surface-tabs button {
       min-height: 60px;
       padding-inline: 20px;
-      font-size: 13px;
+      font-size: 14px;
     }
 
     .v2-surface-panel {
@@ -926,6 +1008,15 @@ const endorsementRows = [
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .v2-hero-rotator-item {
+      animation: none;
+    }
+
+    .v2-hero-rotator-item:first-child {
+      opacity: 1;
+      transform: none;
+    }
+
     .v2-endorsement-track {
       animation-play-state: paused;
     }

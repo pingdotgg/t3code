@@ -31,7 +31,6 @@ import {
         <img class="download-app-icon--dev" src={devAppIcon} alt="" />
       </div>
       <h1 class="heading">Download T3 Code</h1>
-      <p class="download-channel-copy">Choose the channel that matches how you work.</p>
       <div class="download-stage-picker" aria-label="Desktop release channel">
         <button type="button" data-download-stage="latest" aria-pressed="true">
           <span>Latest</span>
@@ -43,10 +42,6 @@ import {
           <span>Dev</span>
         </button>
       </div>
-      <p class="subheading">
-        <span id="version-label">Loading latest desktop release&hellip;</span>
-        <a id="changelog-link" class="changelog-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">View changelog<span aria-hidden="true"> &#8599;</span></a>
-      </p>
     </div>
   </section>
 
@@ -425,13 +420,7 @@ import {
     flex-direction: column;
     padding: 56px 28px;
     text-align: center;
-    transform: translateY(-26vh);
-  }
-
-  .download-channel-copy {
-    margin-top: 10px;
-    color: rgba(235, 237, 246, 0.82);
-    font-size: 1rem;
+    transform: translateY(-22vh);
   }
 
   .download-app-icon {
