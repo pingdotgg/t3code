@@ -1798,6 +1798,18 @@ function permissionResultFromDecision(input: {
   };
 }
 
+/**
+ * First user-facing error from a non-success result. "[ede_diagnostic] ..."
+ * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
+ * so they must never become the error banner (#5557).
+ */
+function resultUserFacingError(result: SDKResultMessage): string | undefined {
+  if (result.subtype === "success" || !Array.isArray(result.errors)) {
+    return undefined;
+  }
+  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+}
+
 function terminalStatusFromResult(
   message: SDKResultMessage,
 ): Extract<
@@ -1808,6 +1820,15 @@ function terminalStatusFromResult(
     // The SDK reports API-level failures (401 auth, 529 overloaded, …) as
     // subtype "success" with is_error set; the turn produced no real work.
     return message.is_error ? "failed" : "completed";
+  }
+  // The CLI stamps user aborts explicitly: interrupting mid-tool-call yields
+  // "aborted_tools" (with an internal "[ede_diagnostic] ..." error and
+  // is_error: true), interrupting mid-stream yields "aborted_streaming".
+  if (
+    message.terminal_reason === "aborted_tools" ||
+    message.terminal_reason === "aborted_streaming"
+  ) {
+    return "interrupted";
   }
   const errorText = message.errors.join("\n").toLowerCase();
   if (errorText.includes("interrupt")) {
@@ -1841,7 +1862,7 @@ function providerFailureFromResult(
 ): OrchestrationV2ProviderFailure | null {
   if (message.subtype !== "success") {
     return makeProviderFailure({
-      message: message.errors.join("\n"),
+      message: resultUserFacingError(message) ?? message.errors.join("\n"),
       code: message.subtype,
       class: "provider_error",
     });

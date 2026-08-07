@@ -227,7 +227,7 @@ describe("rightPanelStore", () => {
 
   it("closes the popover atomically when the real right panel opens", () => {
     useRightPanelStore.getState().setThreadPanelOpen(refA, "popover", true);
-    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().open(refA, "diff");
 
     expect(
       selectThreadPanelVisibility(
@@ -239,7 +239,7 @@ describe("rightPanelStore", () => {
 
   it("keeps an open popover visible by promoting it to inline when the real panel closes", () => {
     const store = useRightPanelStore.getState();
-    store.open(refA, "plan");
+    store.open(refA, "diff");
     store.setThreadPanelOpen(refA, "inline", false);
     store.setThreadPanelOpen(refA, "popover", true);
     store.close(refA);
