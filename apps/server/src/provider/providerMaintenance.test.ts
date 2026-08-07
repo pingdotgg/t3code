@@ -541,6 +541,47 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect(
+    "selects native updates when only a symlink's real path matches the native install layout",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-realpath-capabilities");
+        const localBinDir = NodePath.join(tempDir, ".local", "bin");
+        const releaseBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
+        NodeFS.mkdirSync(localBinDir, { recursive: true });
+        NodeFS.mkdirSync(releaseBinDir, { recursive: true });
+        const releaseBinPath = NodePath.join(releaseBinDir, "scoped-package-tool");
+        const symlinkPath = NodePath.join(localBinDir, "scoped-package-tool");
+        NodeFS.writeFileSync(releaseBinPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(releaseBinPath, 0o755);
+        NodeFS.symlinkSync(releaseBinPath, symlinkPath);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          scopedPackageToolUpdate,
+          {
+            binaryPath: "scoped-package-tool",
+            env: {
+              PATH: localBinDir,
+            },
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities).toEqual({
+          provider: driver("scopedPackageTool"),
+          packageName: "@example/scoped-package-tool",
+          update: {
+            command: "scoped-package-tool upgrade",
+
+            executable: "scoped-package-tool",
+
+            args: ["upgrade"],
+
+            lockKey: "scoped-package-tool-native",
+          },
+        });
+      }),
+  );
+
   it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
     expect(
       packageToolUpdate.resolve({
