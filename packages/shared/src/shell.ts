@@ -498,29 +498,43 @@ function resolveCommandCandidates(
 // (platform, PATH, PATHEXT, command) for a short window: repeat scans hit the
 // cache while any change to the search environment invalidates immediately.
 // Explicit-path resolution is never cached - callers probe paths they have
-// just written (e.g. managed binary installs).
+// just written (e.g. managed binary installs). A "not-found" outcome is also
+// cached for the TTL, so a just-installed binary can stay invisible for up to
+// 30s unless resolved by explicit path.
 // TTL expiry uses the monotonic clock (Clock.currentTimeNanos) so backward
 // wall-clock adjustments cannot keep expired entries alive.
 const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
 const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
 const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
-const commandResolutionCache = new Map<
-  string,
-  { readonly resolvedPath: string | null; readonly expiresAtNanos: bigint }
->();
+
+interface CommandResolutionCacheEntry {
+  readonly resolvedPath: string | null;
+  readonly expiresAtNanos: bigint;
+}
+
+// The cache lives in the Effect environment (like HostProcessPlatform above)
+// so tests and embedders can provide an isolated instance; the default is a
+// single process-wide map shared by all consumers.
+export const CommandResolutionCache = Context.Reference<Map<string, CommandResolutionCacheEntry>>(
+  "@t3tools/shared/shell/CommandResolutionCache",
+  {
+    defaultValue: () => new Map(),
+  },
+);
 
 function cacheCommandResolution(
+  cache: Map<string, CommandResolutionCacheEntry>,
   cacheKey: string,
   resolvedPath: string | null,
   nowNanos: bigint,
 ): void {
-  if (commandResolutionCache.size >= COMMAND_RESOLUTION_CACHE_MAX_ENTRIES) {
-    const oldestKey = commandResolutionCache.keys().next().value;
+  if (cache.size >= COMMAND_RESOLUTION_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
     if (oldestKey !== undefined) {
-      commandResolutionCache.delete(oldestKey);
+      cache.delete(oldestKey);
     }
   }
-  commandResolutionCache.set(cacheKey, {
+  cache.set(cacheKey, {
     resolvedPath,
     expiresAtNanos: nowNanos + COMMAND_RESOLUTION_CACHE_TTL_NANOS,
   });
@@ -577,8 +591,9 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
     COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
   );
+  const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = commandResolutionCache.get(cacheKey);
+  const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     if (cached.resolvedPath === null) {
       return yield* new CommandResolutionError({ command, reason: "not-found" });
@@ -598,12 +613,12 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     for (const candidate of commandCandidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cacheKey, candidatePath, nowNanos);
+        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
         return candidatePath;
       }
     }
   }
-  cacheCommandResolution(cacheKey, null, nowNanos);
+  cacheCommandResolution(cache, cacheKey, null, nowNanos);
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
 

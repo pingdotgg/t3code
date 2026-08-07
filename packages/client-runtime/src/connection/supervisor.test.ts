@@ -358,7 +358,7 @@ describe("EnvironmentSupervisor", () => {
       );
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
-      for (const [index, delay] of [3_000, 2_000, 4_000, 8_000, 16_000, 16_000].entries()) {
+      for (const [index, delay] of [3_000, 4_000, 8_000, 16_000, 16_000, 16_000].entries()) {
         yield* TestClock.adjust(delay);
         yield* eventuallyState(
           supervisor.state,
@@ -741,7 +741,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(secondFailure.retryAt).not.toBeNull();
 
-      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("3 seconds");
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
 
       yield* TestClock.adjust("1 second");

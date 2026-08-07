@@ -29,7 +29,7 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
-const RETRY_DELAYS_MS = [3_000, 2_000, 4_000, 8_000, 16_000] as const;
+const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";

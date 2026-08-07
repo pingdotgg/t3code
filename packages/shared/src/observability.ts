@@ -253,21 +253,52 @@ const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
 const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
+// Clamps strings nested inside already-normalized attribute values (arrays and
+// plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
+// input reference when nothing was clamped.
+function truncateNestedValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
+      ? value
+      : `${value.slice(0, TRACE_ATTRIBUTE_MAX_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+  }
+  if (Array.isArray(value)) {
+    const truncated = value.map(truncateNestedValue);
+    return truncated.some((entry, index) => entry !== value[index]) ? truncated : value;
+  }
+  if (isPlainObject(value)) {
+    let truncated: Record<string, unknown> | undefined;
+    for (const [key, entry] of Object.entries(value)) {
+      const next = truncateNestedValue(entry);
+      if (next === entry) continue;
+      truncated ??= { ...value };
+      truncated[key] = next;
+    }
+    return truncated ?? value;
+  }
+  return value;
+}
+
 /**
  * Clamps oversized attribute values on the serialized trace record so the file
- * sink stays small. Returns a new record when anything was clamped; never
+ * sink stays small, including strings nested inside arrays and objects (e.g.
+ * error stacks). Returns a new record when anything was clamped; never
  * mutates the input (the live span's attributes are shared with other tracers).
  */
-function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
+export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(attributes)) {
-    if (typeof value !== "string") continue;
-    const maxLength = ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)
-      ? TRACE_ATTRIBUTE_TRUNCATED_LENGTH
-      : TRACE_ATTRIBUTE_MAX_LENGTH;
-    if (value.length <= maxLength) continue;
+    if (typeof value === "string" && ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)) {
+      if (value.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH) continue;
+      truncated ??= { ...attributes };
+      truncated[key] =
+        `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      continue;
+    }
+    const next = truncateNestedValue(value);
+    if (next === value) continue;
     truncated ??= { ...attributes };
-    truncated[key] = `${value.slice(0, maxLength)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+    truncated[key] = next;
   }
   return truncated ?? attributes;
 }
