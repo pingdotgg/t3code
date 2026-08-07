@@ -28,10 +28,17 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { APP_STAGE_LABEL } from "~/branding";
 import { resolveSidebarV2Enabled } from "~/branding.logic";
 import { ensureLocalApi } from "~/localApi";
+import {
+  getThemeDefinition,
+  getThemePreviewSidebarArtwork,
+  resolveThemeHalf,
+  subscribeToThemePreview,
+} from "~/themePalette";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useTheme } from "./useTheme";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -226,15 +233,36 @@ export function useClientSettings<T = ClientSettings>(
 export function resolveEnvironmentIdentificationMode(input: {
   mode: EnvironmentIdentificationMode;
   settingsHydrated: boolean;
+  paletteThemeActive?: boolean;
+  paletteThemeAllowsArtwork?: boolean;
 }): EnvironmentIdentificationMode {
   // Avoid briefly rendering the default artwork before a persisted pill/none choice loads.
-  return input.settingsHydrated ? input.mode : "none";
+  if (!input.settingsHydrated) return "none";
+  // Stage artwork has fixed colors that can clash with palette themes. Keep an
+  // explicit "none", but use the theme-aware pill in place of artwork.
+  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && input.mode === "artwork"
+    ? "pill"
+    : input.mode;
 }
 
 export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMode {
   const settingsHydrated = useClientSettingsHydrated();
   const mode = useClientSettingsValue().environmentIdentificationMode;
-  return resolveEnvironmentIdentificationMode({ mode, settingsHydrated });
+  const { resolvedTheme, theme, themeHalves } = useTheme();
+  const previewSidebarArtwork = useSyncExternalStore(
+    subscribeToThemePreview,
+    getThemePreviewSidebarArtwork,
+    () => null,
+  );
+  const activeTheme = resolveThemeHalf(theme, themeHalves, resolvedTheme);
+  const activeThemeDefinition = getThemeDefinition(activeTheme);
+  return resolveEnvironmentIdentificationMode({
+    mode,
+    settingsHydrated,
+    paletteThemeActive: previewSidebarArtwork !== null || activeThemeDefinition !== null,
+    paletteThemeAllowsArtwork:
+      previewSidebarArtwork ?? activeThemeDefinition?.sidebarArtwork === true,
+  });
 }
 
 /**
